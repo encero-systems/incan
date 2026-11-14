@@ -143,7 +143,7 @@ def checked_json_function(
         checked,
         span,
     )
-    builder.owned.append(checked.local)
+    builder.own(checked.local)
     instantiated_external_call(
         builder,
         "incan_native_runtime::checked_json_result",

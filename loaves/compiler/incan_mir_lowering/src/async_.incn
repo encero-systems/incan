@@ -169,7 +169,7 @@ pub def construct_boxed_future(
     builder.synthesized.append(boxed_future_constructor(name, callee, types, output, span))
     builder.forget_moved_arguments(arguments)
     builder.terminate_call(CalleeKind.Planned(name), arguments, destination, span)
-    builder.owned.append(destination.local)
+    builder.own(destination.local)
     return Ok(None)
 
 
@@ -251,26 +251,26 @@ pub def await_future(
     incoming = builder.owned
     current = builder.current
     cancelled = builder.new_block(span)
-    builder.current = cancelled
+    builder.continue_at(cancelled)
     builder.drop_all_owned(span)
     builder.finish(TerminatorKind.CoroutineDrop, span)
-    builder.current = current
-    builder.owned = incoming
+    builder.continue_at(current)
+    builder.restore_owners(incoming)
     after = builder.new_block(span)
     unwind = Unwind.Cleanup(builder.cleanup_exit(span))
     builder.forget_owned(future.local)
     match place_type(builder.locals, destination):
-        PlanType.String => builder.owned.append(destination.local)
-        PlanType.Future(_output) => builder.owned.append(destination.local)
-        PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
-        PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
-        PlanType.List(_leaf, _depth) => builder.owned.append(destination.local)
-        PlanType.Set(_leaf) => builder.owned.append(destination.local)
-        PlanType.Dict(_key, _value) => builder.owned.append(destination.local)
+        PlanType.String => builder.own(destination.local)
+        PlanType.Future(_output) => builder.own(destination.local)
+        PlanType.Enum(_owner, _name) => builder.own(destination.local)
+        PlanType.Model(_owner, _name) => builder.own(destination.local)
+        PlanType.List(_leaf, _depth) => builder.own(destination.local)
+        PlanType.Set(_leaf) => builder.own(destination.local)
+        PlanType.Dict(_key, _value) => builder.own(destination.local)
         _ => pass
     drop_unwind = Unwind.Cleanup(builder.cleanup_exit(span))
     builder.finish(TerminatorKind.Await(future, destination, after, cancelled, unwind, drop_unwind), span)
-    builder.current = after
+    builder.continue_at(after)
     return Ok(None)
 
 

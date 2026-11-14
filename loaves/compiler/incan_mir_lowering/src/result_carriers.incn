@@ -74,7 +74,7 @@ pub def lower_try_propagation(
     source = builder.temporary(ty, span)
     builder.track_rvalue_moves(RvalueKind.Use(value))
     builder.emit(plan_assign(source, RvalueKind.Use(value), span))
-    builder.owned.append(source.local)
+    builder.own(source.local)
     target = assignment_place(builder, destination, span)?
     return propagate_result(builder, source, target, span)
 

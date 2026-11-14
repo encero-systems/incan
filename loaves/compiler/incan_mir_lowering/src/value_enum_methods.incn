@@ -198,7 +198,7 @@ pub def select_value_enum_raw(
     branches = tag_branches(builder, source, len(declaration.variants), span)
     # 2. Materialize that variant's retained scalar value.
     for slot in range(len(branches)):
-        builder.current = branches[slot]
+        builder.continue_at(branches[slot])
         raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
         operand: RustOperand = RustOperand.Constant(raw_value)
         if result_type == PlanType.String:
@@ -208,11 +208,11 @@ pub def select_value_enum_raw(
             value = value_operand(builder, operand, span)?
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.finish(TerminatorKind.Goto(join), span)
-        builder.owned = owners
+        builder.restore_owners(owners)
     # 3. Join the branches and retain owned text for cleanup.
-    builder.current = join
+    builder.continue_at(join)
     if result_type == PlanType.String:
-        builder.owned.append(output.local)
+        builder.own(output.local)
     return Ok(None)
 
 
@@ -243,7 +243,7 @@ def tag_branches(mut builder: Builder, source: Place, count: int, span: SourceSp
         )
         builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next, selected), span)
         branches.append(selected)
-        builder.current = next
+        builder.continue_at(next)
     return branches
 
 
@@ -269,7 +269,7 @@ pub def lower_value_enum_from_value(
     builder.track_rvalue_moves(RvalueKind.Use(value))
     builder.emit(plan_assign(raw, RvalueKind.Use(value), span))
     if raw_type == PlanType.String:
-        builder.owned.append(raw.local)
+        builder.own(raw.local)
     output = call_destination(builder, destination, PlanType.Unit, span)?
     carrier, declaration = carrier_layout(builder, place_type(builder.locals, output))?
     element = PlanType.Enum(layout, str(builder.enums[layout].name))
@@ -287,18 +287,18 @@ pub def lower_value_enum_from_value(
         matched = builder.new_block(span)
         next = builder.new_block(span)
         builder.finish(TerminatorKind.SwitchBool(condition, next, matched), span)
-        builder.current = matched
+        builder.continue_at(matched)
         variant = builder.temporary(element, span)
         builder.emit(plan_assign(variant, RvalueKind.Enum(layout, slot, []), span))
         assign_carrier(builder, output, carrier, 1, [read_place(variant, true, span)], span)
         builder.finish(TerminatorKind.Goto(join), span)
-        builder.owned = owners
-        builder.current = next
+        builder.restore_owners(owners)
+        builder.continue_at(next)
     assign_carrier(builder, output, carrier, 0, [], span)
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.owned = owners
-    builder.current = join
-    builder.owned.append(output.local)
+    builder.restore_owners(owners)
+    builder.continue_at(join)
+    builder.own(output.local)
     builder.drop_owned(raw.local, span)
     return Ok(None)
 
@@ -362,7 +362,7 @@ pub def lower_enum_message(
     owners = builder.owned
     branches = tag_branches(builder, source, len(variants), span)
     for slot in range(len(branches)):
-        builder.current = branches[slot]
+        builder.continue_at(branches[slot])
         name = str(variants[slot].name)
         texts = [text_literal(name, span), text_literal("", span)]
         builder.external_call(
@@ -374,7 +374,7 @@ pub def lower_enum_message(
             span,
         )
         builder.finish(TerminatorKind.Goto(join), span)
-        builder.owned = owners
-    builder.current = join
-    builder.owned.append(output.local)
+        builder.restore_owners(owners)
+    builder.continue_at(join)
+    builder.own(output.local)
     return Ok(None)

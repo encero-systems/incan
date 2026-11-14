@@ -73,5 +73,5 @@ pub def lower_type_metadata(
             builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
             if result == PlanType.String:
-                builder.owned.append(output.local)
+                builder.own(output.local)
     return Ok(None)

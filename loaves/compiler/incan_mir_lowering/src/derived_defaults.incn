@@ -70,7 +70,7 @@ pub def lower_derived_default(
                 OperandKind.Move(result) => builder.forget_owned(result.local)
                 _ => pass
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
         None => pass
     return Ok(None)
 
@@ -125,7 +125,7 @@ def default_value(module: &BodyIrModule, mut builder: Builder, ty: PlanType, spa
             operation = RvalueKind.Model(owner, operands)
             builder.track_rvalue_moves(operation)
             builder.emit(plan_assign(result, operation, span))
-            builder.owned.append(result.local)
+            builder.own(result.local)
             return Ok(read_place(result, true, span))
         _ => return Err("unsupported Body IR derived Default receiver")
 

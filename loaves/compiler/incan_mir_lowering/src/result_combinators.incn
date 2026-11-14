@@ -114,7 +114,7 @@ def owned_receiver(mut builder: Builder, argument: RustArgumentElement, span: So
             source = builder.temporary(ty, span)
             builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(source, RvalueKind.Use(value), span))
-            builder.owned.append(source.local)
+            builder.own(source.local)
             return Ok(source)
         Some(_value) => return Err("unsupported Body IR Result combinator nonplace receiver")
         None => return Err("unsupported Body IR Result combinator spread receiver")
@@ -165,14 +165,14 @@ def observe(
     owners = builder.owned
     condition = variant_condition(builder, source, slot, span)
     builder.finish(TerminatorKind.SwitchBool(condition, join, selected), span)
-    builder.current = selected
+    builder.continue_at(selected)
     payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
     argument = carrier_payload_value(builder, payload, span)?
     unit = builder.temporary(PlanType.Unit, span)
     call_callback(module, builder, callback, argument, payload_type, unit, PlanType.Unit, span)?
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = join
-    builder.owned = owners
+    builder.continue_at(join)
+    builder.restore_owners(owners)
     builder.forget_owned(source.local)
     replace_owned_destination(builder, output, RvalueKind.Use(read_place(source, true, span)), span)
     return Ok(None)
@@ -211,7 +211,7 @@ def transform(
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
     builder.forget_owned(source.local)
     owners = builder.owned
-    builder.current = other
+    builder.continue_at(other)
     kept_type = input.variants[1 - slot].fields[0]
     kept = Place(local=source.local, projection=Projection.VariantField(1 - slot, 0, kept_type), span=span)
     kept_target = result.variants[1 - slot].fields[0]
@@ -221,8 +221,8 @@ def transform(
     assign_carrier(builder, output, owner, 1 - slot, [converted], span)
     retained = builder.owned
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = selected
-    builder.owned = owners
+    builder.continue_at(selected)
+    builder.restore_owners(owners)
     payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
     argument = read_place(payload, true, span)
     if combinator.effect == "wrap":
@@ -232,8 +232,8 @@ def transform(
     else:
         call_callback(module, builder, callback, argument, payload_type, output, callback_result, span)?
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = join
-    builder.owned = retained
+    builder.continue_at(join)
+    builder.restore_owners(retained)
     return Ok(None)
 
 

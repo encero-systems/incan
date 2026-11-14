@@ -566,14 +566,14 @@ def lower_if(
     incoming = builder.owned
     mut branch_ends: list[int] = []
     mut branch_owners: list[list[int]] = []
-    builder.current = then_index
+    builder.continue_at(then_index)
     lower_block(module, builder, then_body)?
     if not builder.closed[builder.current]:
         branch_ends.append(builder.current)
         branch_owners.append(builder.owned)
 
-    builder.owned = incoming
-    builder.current = else_index
+    builder.restore_owners(incoming)
+    builder.continue_at(else_index)
     match else_body:
         Some(body) => lower_block(module, builder, body)?
         None => pass
@@ -581,10 +581,10 @@ def lower_if(
         branch_ends.append(builder.current)
         branch_owners.append(builder.owned)
 
-    builder.owned = incoming
+    builder.restore_owners(incoming)
     if len(branch_ends) != 0:
-        builder.owned = join_branch_owners(builder, after, branch_ends, branch_owners, span)?
-    builder.current = after
+        builder.restore_owners(join_branch_owners(builder, after, branch_ends, branch_owners, span)?)
+    builder.continue_at(after)
     builder.closed[after] = len(branch_ends) == 0
     return Ok(None)
 
@@ -622,7 +622,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     header = builder.new_block(span)
     after = builder.new_block(span)
     builder.finish(TerminatorKind.Goto(header), span)
-    builder.current = header
+    builder.continue_at(header)
     incoming = builder.owned
     builder.loops.append((header, after))
     builder.loop_owners.append(incoming)
@@ -638,10 +638,10 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     ends = builder.loop_exit_blocks.pop()
     owners = builder.loop_exit_owners.pop()
     builder.finish_fallthrough(header, span)
-    builder.owned = incoming
+    builder.restore_owners(incoming)
     if len(ends) != 0:
-        builder.owned = join_branch_owners(builder, after, ends, owners, span)?
-    builder.current = after
+        builder.restore_owners(join_branch_owners(builder, after, ends, owners, span)?)
+    builder.continue_at(after)
     # Exhaustion and break share this exit; drop the iterator once, including any unvisited items.
     for position in range(len(body.stmts)):
         statement = borrowed_at(body.stmts, position)

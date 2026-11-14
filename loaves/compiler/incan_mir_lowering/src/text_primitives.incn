@@ -30,7 +30,7 @@ pub def encode_utf8(
             output,
             span,
         )
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return output
 
 
@@ -46,7 +46,7 @@ pub def copy_frozen_bytes(mut builder: Builder, value: Operand, span: SourceSpan
         output,
         span,
     )
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return output
 
 
@@ -68,5 +68,5 @@ pub def decode_utf8(
         output,
         span,
     )
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return output

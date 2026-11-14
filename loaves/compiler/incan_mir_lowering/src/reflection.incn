@@ -303,19 +303,19 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
             owners = builder.owned
             condition = variant_condition(builder, field, 1, span)
             builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
-            builder.current = selected
+            builder.continue_at(selected)
             payload = appended_field(field, FieldProjection(slot=0, ty=layout.variants[1].fields[0], variant=1), span)?
             value = scalar_string(builder, payload, span)?
             replace_owned_destination(builder, output, RvalueKind.Use(value), span)
             builder.finish(TerminatorKind.Goto(join), span)
-            builder.current = missing
-            builder.owned = owners
+            builder.continue_at(missing)
+            builder.restore_owners(owners)
             text = owned_literal(builder, "None", span)
             replace_owned_destination(builder, output, RvalueKind.Use(read_place(text, true, span)), span)
             retained = builder.owned
             builder.finish(TerminatorKind.Goto(join), span)
-            builder.current = join
-            builder.owned = retained
+            builder.continue_at(join)
+            builder.restore_owners(retained)
             return Ok(read_place(output, true, span))
         _ => return scalar_string(builder, field, span)
 
@@ -376,7 +376,7 @@ def reflect_items(
                         operation = tuple_aggregate([read_place(name, true, span), value])
                         builder.track_rvalue_moves(operation)
                         builder.emit(plan_assign(tuple, operation, span))
-                        builder.owned.append(tuple.local)
+                        builder.own(tuple.local)
                         append_list_value(builder, output, read_place(tuple, true, span), leaf, depth, span)?
                     return Ok(None)
                 _ => return Err("unsupported Body IR reflection items element")
@@ -425,16 +425,16 @@ def reflect_value(
             )
             builder.drop_owned(text.local, span)
             builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), no, yes), span)
-            builder.current = yes
+            builder.continue_at(yes)
             field = reflected_field(builder, owner, receiver, slot, span)?
             value = field_value(builder, field, string, layout.variants[1].fields[0], span)?
             assign_carrier(builder, output, index, 1, [value], span)
             builder.finish(TerminatorKind.Goto(join), span)
-            builder.current = no
-            builder.owned = owners
+            builder.continue_at(no)
+            builder.restore_owners(owners)
     assign_carrier(builder, output, index, 0, [], span)
     retained = builder.owned
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = join
-    builder.owned = retained
+    builder.continue_at(join)
+    builder.restore_owners(retained)
     return Ok(None)

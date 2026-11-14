@@ -506,7 +506,7 @@ def lower_checked_int_assignment(
             cleanup = builder.cleanup_exit(span)
             assertion = TerminatorKind.AssertOverflow(flag, operator, left, right, next_block, Unwind.Cleanup(cleanup))
             builder.finish(assertion, span)
-            builder.current = next_block
+            builder.continue_at(next_block)
             result = read_place(Place(local=pair, projection=projection, span=span), false, span)
             builder.emit(plan_assign(target, RvalueKind.Use(result), span))
             return Ok(None)

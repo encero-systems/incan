@@ -67,7 +67,7 @@ pub def initialize_owned_list_iterator(
                 target,
                 span,
             )
-            builder.owned.append(target.local)
+            builder.own(target.local)
             return Ok(None)
         _ => return Err("unsupported Body IR consuming list iterator destination")
 
@@ -104,7 +104,7 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
                 poll,
                 span,
             )
-            builder.owned.append(poll.local)
+            builder.own(poll.local)
             raw = builder.temporary(PlanType.EnumTag, span)
             tag = builder.temporary(PlanType.Int, span)
             builder.emit(plan_assign(raw, RvalueKind.Discriminant(poll), span))
@@ -118,18 +118,18 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
             selected = builder.new_block(span)
             owners = builder.owned
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
-            builder.current = exhausted
+            builder.continue_at(exhausted)
             builder.drop_owned(poll.local, span)
             if builder.owned != builder.loop_owners[-1]:
                 return Err("unsupported Body IR consuming poll with initialized loop-local owners")
             builder.exhaust_loop(span)
-            builder.current = selected
-            builder.owned = owners
+            builder.continue_at(selected)
+            builder.restore_owners(owners)
             builder.drop_owned(target.local, span)
             payload = Place(local=poll.local, projection=Projection.VariantField(1, 0, element), span=span)
             builder.emit(plan_assign(target, RvalueKind.Use(read_place(payload, true, span)), span))
             # Some's payload has moved; its empty shell cannot be dropped. The iterator stays owned until the common loop exit.
             builder.forget_owned(poll.local)
-            builder.owned.append(target.local)
+            builder.own(target.local)
             return Ok(None)
         _ => return Err("unsupported Body IR consuming list poll receiver")

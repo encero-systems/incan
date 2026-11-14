@@ -173,7 +173,7 @@ pub def collection_call(
     )
     builder.terminate_call(CalleeKind.Instantiated(path, arguments), admitted, destination, span)
     if result == PlanType.String or is_owned_collection(result):
-        builder.owned.append(destination.local)
+        builder.own(destination.local)
     return Ok(None)
 
 
@@ -273,7 +273,7 @@ pub def finish_collection(mut builder: Builder, destination: Place, output: Plac
     builder.drop_owned(destination.local, span)
     builder.forget_owned(output.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
-    builder.owned.append(destination.local)
+    builder.own(destination.local)
 
 
 pub def transfer_collection(
@@ -292,7 +292,7 @@ pub def transfer_collection(
         _ => return Err("unsupported Body IR collection transfer without owned value")
     builder.drop_owned(destination.local, span)
     builder.emit(plan_assign(destination, RvalueKind.Use(argument), span))
-    builder.owned.append(destination.local)
+    builder.own(destination.local)
     return Ok(None)
 
 

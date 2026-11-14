@@ -100,7 +100,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
                 output,
                 span,
             )
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(read_place(output, true, span))
         PlanType.ZipIterator(left, right) =>
             result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
@@ -118,7 +118,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
                 ),
             )
             builder.terminate_call(CalleeKind.Instantiated(path, [first, second]), [value], output, span)
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(read_place(output, true, span))
         _ => pass
     match generator_shape(ty):
@@ -143,7 +143,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
                 output,
                 span,
             )
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(read_place(output, true, span))
         None => return Err("unsupported Body IR generator expression source")
 

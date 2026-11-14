@@ -168,7 +168,7 @@ def make_string(
         output,
         span,
     )
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 
@@ -234,11 +234,11 @@ def copy_utf8(
     after = builder.new_block(span)
     begin_scan(builder, base, bound, header, null_view, invalid_bound, span)
     # 2. The bound is checked before every read; a terminator stops reads immediately.
-    builder.current = header
+    builder.continue_at(header)
     within = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(within, RvalueKind.Binary(BinaryOp.Less, read_place(index, false, span), bound), span))
     builder.finish(TerminatorKind.SwitchBool(read_place(within, false, span), missing, inspect), span)
-    builder.current = inspect
+    builder.continue_at(inspect)
     byte = scan_byte(builder, base, index, span)?
     terminated = builder.temporary(PlanType.Bool, span)
     zero = builder.temporary(PlanType.U8, span)
@@ -253,12 +253,12 @@ def copy_utf8(
         ),
     )
     builder.finish(TerminatorKind.SwitchBool(read_place(terminated, false, span), append, found), span)
-    builder.current = append
+    builder.continue_at(append)
     append_list_value(builder, copied, read_place(byte, false, span), ListLeaf.U8, 1, span)?
     increment_index(builder, index, span)
     builder.finish(TerminatorKind.Goto(header), span)
     # 3. Both outcomes initialize one ordinary owned Result and release the temporary buffer.
-    builder.current = found
+    builder.continue_at(found)
     reference = list_borrow(builder, copied, false, span)?
     decoded = primitive_decode_utf8(
         builder,
@@ -276,24 +276,24 @@ def copy_utf8(
     builder.forget_owned(decoded.local)
     decoded_owners = builder.owned
     owner = enum_owner(ty)?
-    builder.current = invalid_utf8
+    builder.continue_at(invalid_utf8)
     assign_carrier(builder, output, owner, 1, [read_place(decoded_fields[1], true, span)], span)
     builder.finish(TerminatorKind.Goto(decoded_after), span)
     decoded_retained = builder.owned
-    builder.current = valid_utf8
-    builder.owned = decoded_owners
+    builder.continue_at(valid_utf8)
+    builder.restore_owners(decoded_owners)
     assign_carrier(builder, output, owner, 0, [read_place(decoded_fields[1], true, span)], span)
     builder.finish(TerminatorKind.Goto(decoded_after), span)
-    builder.current = decoded_after
-    builder.owned = decoded_retained
+    builder.continue_at(decoded_after)
+    builder.restore_owners(decoded_retained)
     builder.finish(TerminatorKind.Goto(after), span)
-    builder.current = missing
+    builder.continue_at(missing)
     refuse_result(builder, output, ty, "C string has no terminator within max_bytes", after, span)?
-    builder.current = null_view
+    builder.continue_at(null_view)
     refuse_result(builder, output, ty, "C string pointer is null", after, span)?
-    builder.current = invalid_bound
+    builder.continue_at(invalid_bound)
     refuse_result(builder, output, ty, "max_bytes is not a valid bound", after, span)?
-    builder.current = after
+    builder.continue_at(after)
     builder.drop_owned(copied.local, span)
     return Ok(None)
 
@@ -339,13 +339,13 @@ def begin_scan(
     )
     check_bound = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(nonnull, false, span), null_view, check_bound), span)
-    builder.current = check_bound
+    builder.continue_at(check_bound)
     positive = builder.temporary(PlanType.Bool, span)
     no_bytes = literal(Constant.Int(0), span)
     builder.emit(plan_assign(positive, RvalueKind.Binary(BinaryOp.Greater, bound, no_bytes), span))
     check_offset = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(positive, false, span), invalid_bound, check_offset), span)
-    builder.current = check_offset
+    builder.continue_at(check_offset)
     offset = builder.temporary(PlanType.ISize, span)
     builder.emit(plan_assign(offset, RvalueKind.NumericCast(bound, PlanType.Int, PlanType.ISize), span))
     restored = builder.temporary(PlanType.Int, span)
@@ -412,7 +412,7 @@ def make_span(
         Some(value) =>
             buffer = value_operand(builder, value, span)?
             builder.emit(plan_assign(output, RvalueKind.Use(buffer), span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(None)
         None => return Err("invalid checked C span constructor spread")
 
@@ -482,14 +482,14 @@ def finish_span(
     after = builder.new_block(span)
     # 2. Both bounds are checked before any element is read.
     within_capacity(builder, written, capacity, keep, refuse, span)
-    builder.current = refuse
+    builder.continue_at(refuse)
     refuse_result(builder, output, ty, "written count is outside the span capacity", after, span)?
     # 3. The prefix is an owned copy, so the result never aliases the span's storage.
-    builder.current = keep
+    builder.continue_at(keep)
     kept = written_prefix(builder, buffer, written, span)?
     assign_carrier(builder, output, owner, 0, [read_place(kept, true, span)], span)
     builder.finish(TerminatorKind.Goto(after), span)
-    builder.current = after
+    builder.continue_at(after)
     return Ok(None)
 
 
@@ -543,7 +543,7 @@ def within_capacity(
     )
     check_capacity = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(nonnegative, false, span), refuse, check_capacity), span)
-    builder.current = check_capacity
+    builder.continue_at(check_capacity)
     fits = builder.temporary(PlanType.Bool, span)
     builder.emit(
         plan_assign(fits, RvalueKind.Binary(BinaryOp.LessEqual, count, read_place(capacity, false, span)), span),

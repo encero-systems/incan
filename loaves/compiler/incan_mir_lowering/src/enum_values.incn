@@ -48,7 +48,7 @@ pub def serialize_enum_operand(
                         destination,
                         span,
                     )
-                    builder.owned.append(destination.local)
+                    builder.own(destination.local)
                     return Ok(true)
                 _ => return Ok(false)
         _ => return Ok(false)

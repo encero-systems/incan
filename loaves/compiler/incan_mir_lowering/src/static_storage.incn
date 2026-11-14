@@ -313,7 +313,7 @@ pub def read_static(
     builder.external_call(read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
     if not is_owned_collection(ty):
         return Ok(read_place(target, ty == PlanType.String, span))
-    builder.owned.append(target.local)
+    builder.own(target.local)
     # An element read selects from the snapshot, which stays owned until its scope ends.
     if len(value.projection) == 0:
         return Ok(read_place(target, true, span))
@@ -434,7 +434,7 @@ def read_guarded_static_field(
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     output = builder.temporary(result, span)
     builder.terminate_call(CalleeKind.StaticMethod(slot, name), [], output, span)
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(Some(read_place(output, true, span)))
 
 
@@ -474,7 +474,7 @@ def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: So
     snapshot = builder.temporary(ty, span)
     builder.terminate_call(CalleeKind.StaticLoad(slot), [], snapshot, span)
     if snapshot_owns(ty):
-        builder.owned.append(snapshot.local)
+        builder.own(snapshot.local)
     return snapshot
 
 

@@ -317,7 +317,7 @@ pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: Sou
                 return Ok(read_place(place, false, span))
             if place_type(builder.locals, place) == PlanType.StrRef:
                 owner = owned_slice_text(builder, read_place(place, false, span), span)
-                builder.owned.append(owner.local)
+                builder.own(owner.local)
                 reference = builder.temporary(PlanType.StringRef, span)
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
@@ -419,7 +419,7 @@ pub def lower_text_helper(
             owns_result = result == PlanType.String or is_list(result)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, owns_result, span)), span))
             if owns_result:
-                builder.owned.append(output.local)
+                builder.own(output.local)
         None => builder.drop_owned(text.local, span)
     return Ok(None)
 
@@ -456,7 +456,7 @@ pub def assign_text_result(
             builder.forget_owned(text.local)
             builder.drop_owned(output.local, span)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, true, span)), span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
         None => builder.drop_owned(text.local, span)
     return Ok(None)
 

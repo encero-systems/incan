@@ -153,7 +153,7 @@ pub def move_closure(
     builder.drop_owned(target.local, span)
     hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
     builder.emit(plan_assign(target, RvalueKind.Use(value), span))
-    builder.owned.append(target.local)
+    builder.own(target.local)
     return Ok(None)
 
 
@@ -336,7 +336,7 @@ pub def lower_closure(
         if not scalar_capture(capture):
             scalar_environment = false
     record_scalar_closure(builder, target.local, scalar_environment)
-    builder.owned.append(target.local)
+    builder.own(target.local)
     return Ok(None)
 
 
@@ -606,7 +606,7 @@ pub def lower_generator_expression(
     builder.drop_owned(target.local, span)
     callable = step_callable(builder, name, item, place_type(builder.locals, target), capture_types, operands, span)
     construct_chain(builder, first, callable, target, span)?
-    builder.owned.append(target.local)
+    builder.own(target.local)
     return Ok(None)
 
 
@@ -623,7 +623,7 @@ def generator_source_value(mut builder: Builder, source: &RustOperand, span: Sou
                     result = PlanType.Generator(leaf, depth - 1)
                     output = builder.temporary(result, span)
                     borrowed_list_generator_call(builder, reference, leaf, depth, output, span)?
-                    builder.owned.append(output.local)
+                    builder.own(output.local)
                     return Ok(read_place(output, true, span))
                 None => pass
         _ => pass
@@ -646,7 +646,7 @@ pub def step_callable(
     synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, false, span))
     environment = builder.temporary(PlanType.Closure(signature), span)
     builder.terminate_call(CalleeKind.Planned(f"{name}_new"), operands, environment, span)
-    builder.owned.append(environment.local)
+    builder.own(environment.local)
     return read_place(environment, true, span)
 
 
@@ -795,7 +795,7 @@ def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Re
         _ => pass
     if ty == PlanType.String:
         text = clone_text(builder, place, span)?
-        builder.owned.append(text.local)
+        builder.own(text.local)
         return Ok(read_place(text, true, span))
     match list_shape(ty):
         Some((leaf, depth)) =>
@@ -811,7 +811,7 @@ def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Re
                 copy,
                 span,
             )
-            builder.owned.append(copy.local)
+            builder.own(copy.local)
             return Ok(read_place(copy, true, span))
         None => return Ok(read_place(place, false, span))
 
@@ -844,7 +844,7 @@ def bind_step_arguments(
             ),
         )
         if owned:
-            lifted.owned.append(destination)
+            lifted.own(destination)
     return Ok(None)
 
 
@@ -872,5 +872,5 @@ pub def bind_closure_input(
     value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
     if owned:
-        lifted.owned.append(destination)
+        lifted.own(destination)
     return Ok(None)

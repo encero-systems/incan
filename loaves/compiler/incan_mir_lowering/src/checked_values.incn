@@ -208,7 +208,7 @@ def retained_tuple_constant(
             builder.emit(plan_assign(output, operation, span))
             owned = tuple_has_owners(layout)
             if owned:
-                builder.owned.append(output.local)
+                builder.own(output.local)
             return Ok(read_place(output, owned, span))
         _ => return Err("unsupported Body IR retained constant without tuple layout")
 
@@ -360,7 +360,7 @@ pub def target_read(mut builder: Builder, target: Place, fact: OwnershipFact, sp
                     receiver = callable_object(builder, target, signature, span)?
                     result = builder.temporary(PlanType.Closure(signature), span)
                     builder.terminate_call(CalleeKind.CloneClosure(signature), [receiver], result, span)
-                    builder.owned.append(result.local)
+                    builder.own(result.local)
                     return Ok(read_place(result, true, span))
                 _ =>
                     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"

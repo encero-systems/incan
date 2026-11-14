@@ -81,7 +81,7 @@ def model_call(
             )
             builder.terminate_call(CalleeKind.Instantiated(path, [ty]), arguments, destination, span)
             if result == PlanType.String:
-                builder.owned.append(destination.local)
+                builder.own(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR model trait instantiation")
 
@@ -202,7 +202,7 @@ def display_checked_model(mut builder: Builder, owner: int, place: Place, span: 
                 reference = PlanType.ModelRef(owner, builder.nominals[owner].name)
                 builder.external_call(path, [reference], PlanType.String, [argument], result, span)
             _ => return Err("unsupported Body IR checked display callee kind")
-        builder.owned.append(result.local)
+        builder.own(result.local)
         return Ok(result)
     return Err(f"unsupported Body IR unavailable checked display body on {builder.nominals[owner].name}")
 

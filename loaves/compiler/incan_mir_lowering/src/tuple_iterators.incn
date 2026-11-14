@@ -90,7 +90,7 @@ pub def clone_zip(mut builder: Builder, source: Place, span: SourceSpan) -> Resu
                 output,
                 span,
             )
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(read_place(output, true, span))
 
 
@@ -138,11 +138,11 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
             selected = builder.new_block(span)
             owners = builder.owned
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
-            builder.current = exhausted
+            builder.continue_at(exhausted)
             builder.drop_owned(storage.local, span)
             builder.exhaust_loop(span)
-            builder.current = selected
-            builder.owned = owners
+            builder.continue_at(selected)
+            builder.restore_owners(owners)
             builder.drop_owned(output.local, span)
             final_reference = builder.temporary(PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1), span)
             builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))

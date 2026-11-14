@@ -577,12 +577,12 @@ pub def test_union_tag(mut builder: Builder, tag: Place, slots: list[int], span:
         builder.emit(plan_assign(condition, operation, span))
         missed = builder.new_block(span)
         builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), missed, matched), span)
-        builder.current = missed
+        builder.continue_at(missed)
     builder.finish(TerminatorKind.Goto(joined), span)
-    builder.current = matched
+    builder.continue_at(matched)
     builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
     builder.finish(TerminatorKind.Goto(joined), span)
-    builder.current = joined
+    builder.continue_at(joined)
     return RvalueKind.Use(read_place(output, false, span))
 
 

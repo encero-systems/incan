@@ -474,7 +474,7 @@ pub def source_method_symbol(
             wrapper.local_offset = 0
             wrapper.scoped_locals = []
             wrapper.scope_parents = []
-            wrapper.owned = [2]
+            wrapper.restore_owners([2])
             other = wrapper.temporary(reference, span)
             wrapper.emit(plan_assign(other, RvalueKind.Borrow(plan_place(2, span)), span))
             wrapper.terminate_call(

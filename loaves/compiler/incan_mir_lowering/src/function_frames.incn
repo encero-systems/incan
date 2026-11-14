@@ -324,7 +324,7 @@ def initialize_body_frame(
             Some((leaf, depth)) =>
                 handle = builder.temporary(PlanType.GeneratorYield(leaf, depth), span)
                 builder.generator_handle = handle.local
-                builder.owned.append(handle.local)
+                builder.own(handle.local)
             None => return Err("unsupported Body IR generator return type")
     for index in range(len(parameters)):
         if (
@@ -334,7 +334,7 @@ def initialize_body_frame(
             or is_future(parameters[index].ty)
             or owned_collection(parameters[index].ty)
         ):
-            builder.owned.append(index + 1)
+            builder.own(index + 1)
     # Computed statics initialize on module entry (RFC 052), before a program entry installs the panic hook.
     if enters_module_initialization(body):
         initialize_module_statics(builder, body_module_identity(body)?, span)

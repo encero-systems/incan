@@ -56,7 +56,7 @@ pub def shared_sdk_operands(
                 builder.synthesized.append(shared_constructor(name, signature, span))
                 target = builder.temporary(types[index], span)
                 builder.terminate_call(CalleeKind.Planned(name), [values[index]], target, span)
-                builder.owned.append(target.local)
+                builder.own(target.local)
                 result.append(Operand(kind=OperandKind.Move(target), span=span))
             _ => result.append(values[index])
     return Ok(result)

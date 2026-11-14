@@ -31,7 +31,7 @@ pub def format_parts(
         # Each displayed string moves into the array, so the array now owns it.
         builder.forget_owned(value.local)
     builder.emit(plan_assign(strings, RvalueKind.Array(operands), span))
-    builder.owned.append(strings.local)
+    builder.own(strings.local)
 
     # `&[T; N]` coerces to `&[T]`: borrow each array, then unsize the borrow into a slice.
     literal_reference = builder.temporary(PlanType.StrArrayRef(len(parts)), span)

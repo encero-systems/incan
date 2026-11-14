@@ -171,19 +171,19 @@ def conversion_function(
     if underlying == PlanType.String:
         builder.emit(plan_assign(payload, RvalueKind.Use(read_place(plan_place(1, span), true, span)), span))
         builder.forget_owned(1)
-        builder.owned.append(payload.local)
+        builder.own(payload.local)
     else:
         parsed = builder.temporary(underlying_result, span)
         callee = underlying_conversion(module, builder, declaration, underlying_result, span)?
         builder.terminate_call(callee, [read_place(plan_place(1, span), true, span)], parsed, span)
-        builder.owned.append(parsed.local)
+        builder.own(parsed.local)
         propagate_result(builder, parsed, payload, span)?
     owner = PlanType.Model(index, str(declaration.name))
     wrapped = builder.temporary(owner, span)
     construction = RvalueKind.Model(index, [read_place(payload, true, span)])
     builder.track_rvalue_moves(construction)
     builder.emit(plan_assign(wrapped, construction, span))
-    builder.owned.append(wrapped.local)
+    builder.own(wrapped.local)
     result_owner, _layout = result_layout(builder, result)?
     success = RvalueKind.Enum(result_owner, 0, [read_place(wrapped, true, span)])
     builder.track_rvalue_moves(success)

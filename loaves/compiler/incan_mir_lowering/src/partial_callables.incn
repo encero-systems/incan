@@ -196,7 +196,7 @@ pub def bind_defaulted_parameter(
     flag = read_place(plan_place(flag_slot, span), false, span)
     lifted.finish(TerminatorKind.SwitchBool(flag, omitted, supplied), span)
     incoming = lifted.owned
-    lifted.current = supplied
+    lifted.continue_at(supplied)
     owned = ty == PlanType.String
     passed = read_place(plan_place(flag_slot + 1, span), owned, span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(passed), span))
@@ -206,10 +206,10 @@ pub def bind_defaulted_parameter(
                 empty_list(lifted, plan_place(holder, span), leaf, depth, span)
         _ => pass
     lifted.finish(TerminatorKind.Goto(joined), span)
-    lifted.current = omitted
-    lifted.owned = incoming
+    lifted.continue_at(omitted)
+    lifted.restore_owners(incoming)
     if owned:
-        lifted.owned.append(flag_slot + 1)
+        lifted.own(flag_slot + 1)
         lifted.drop_owned(flag_slot + 1, span)
     value = default_value(module, lifted, parameter, ty, span)?
     # The preset's copy or the computed default moves into the parameter, so it needs no drop of its own.
@@ -221,12 +221,12 @@ pub def bind_defaulted_parameter(
     if lifted.owned != incoming:
         return Err("unsupported Body IR partial default leaving owned values")
     lifted.finish(TerminatorKind.Goto(joined), span)
-    lifted.current = joined
-    lifted.owned = incoming
+    lifted.continue_at(joined)
+    lifted.restore_owners(incoming)
     if owned:
-        lifted.owned.append(destination)
+        lifted.own(destination)
     if holder >= 0:
-        lifted.owned.append(holder)
+        lifted.own(holder)
     return Ok(None)
 
 

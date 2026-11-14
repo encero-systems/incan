@@ -466,7 +466,7 @@ def lower_primitive_decode(
 
     # Rejected options construct the legacy error without reading the receiver.
     policy_owners = builder.owned
-    builder.current = rejected
+    builder.continue_at(rejected)
     error = builder.temporary(PlanType.ValidationError, span)
     builder.external_call(
         "incan_native_runtime::invalid_decoder_options",
@@ -482,8 +482,8 @@ def lower_primitive_decode(
     retained = builder.owned
 
     # Accepted options decode through one byte-level implementation, then adapt only its strict failure detail.
-    builder.current = accepted
-    builder.owned = policy_owners
+    builder.continue_at(accepted)
+    builder.restore_owners(policy_owners)
     mut decoded = plan_place(0, span)
     if frozen:
         copied = copy_frozen_bytes(builder, operands[0], span)
@@ -513,7 +513,7 @@ def lower_primitive_decode(
     builder.forget_owned(decoded.local)
     decoded_owners = builder.owned
 
-    builder.current = invalid
+    builder.continue_at(invalid)
     adapted = builder.temporary(PlanType.ValidationError, span)
     builder.external_call(
         "incan_native_runtime::invalid_utf8_error",
@@ -527,16 +527,16 @@ def lower_primitive_decode(
     builder.finish(TerminatorKind.Goto(decoded_after), span)
     decoded_retained = builder.owned
 
-    builder.current = valid
-    builder.owned = decoded_owners
+    builder.continue_at(valid)
+    builder.restore_owners(decoded_owners)
     assign_carrier(builder, output, owner, 0, [read_place(decoded_fields[1], true, span)], span)
     builder.finish(TerminatorKind.Goto(decoded_after), span)
-    builder.current = decoded_after
-    builder.owned = decoded_retained
+    builder.continue_at(decoded_after)
+    builder.restore_owners(decoded_retained)
     builder.finish(TerminatorKind.Goto(after), span)
 
-    builder.current = after
-    builder.owned = retained
+    builder.continue_at(after)
+    builder.restore_owners(retained)
     return Ok(None)
 
 
@@ -672,5 +672,5 @@ pub def lower_generator_member(
     output = call_destination(builder, destination, receiver_ty, span)?
     builder.drop_owned(output.local, span)
     generator_adapter(builder, method, source, operands, output, span)?
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)

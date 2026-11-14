@@ -85,7 +85,7 @@ pub def lower_sequence_builtin(
             output,
             span,
         )
-        builder.owned.append(output.local)
+        builder.own(output.local)
     else:
         list_call(
             builder,
@@ -370,7 +370,7 @@ pub def lower_split_helper(
     result = PlanType.List(ListLeaf.Str, 1)
     output = call_destination(builder, destination, result, span)?
     builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, output, span)
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 

@@ -63,5 +63,5 @@ pub def emit_text_helper(
     text = builder.temporary(result, span)
     builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, text, span)
     if is_list(result):
-        builder.owned.append(text.local)
+        builder.own(text.local)
     return text

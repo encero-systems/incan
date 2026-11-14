@@ -84,7 +84,7 @@ pub def pattern_tests(
             for index in range(len(items)):
                 next_component = builder.new_block(span)
                 pattern_tests(builder, fields[index], items[index], next_component, rejected, span)?
-                builder.current = next_component
+                builder.continue_at(next_component)
             builder.finish(TerminatorKind.Goto(selected), span)
         RustPattern.Nominal(target=target, fields=fields) =>
             # Named fields are tested in written order, each against its own field of the borrowed scrutinee.
@@ -92,7 +92,7 @@ pub def pattern_tests(
                 next_field = builder.new_block(span)
                 field = nominal_field(builder, source, target, str(name), span)?
                 pattern_tests(builder, field, field_pattern, next_field, rejected, span)?
-                builder.current = next_field
+                builder.continue_at(next_field)
             builder.finish(TerminatorKind.Goto(selected), span)
         RustPattern.Or(alternatives) =>
             # An alternation that binds nothing selects on its first matching alternative; each failure tries the next.
@@ -101,7 +101,7 @@ pub def pattern_tests(
             for alternative in alternatives:
                 next_alternative = builder.new_block(span)
                 pattern_tests(builder, source, alternative, selected, next_alternative, span)?
-                builder.current = next_alternative
+                builder.continue_at(next_alternative)
             builder.finish(TerminatorKind.Goto(rejected), span)
         _ => return Err("unsupported Body IR structural match pattern")
     return Ok(None)
@@ -186,7 +186,7 @@ def carrier_tests(
     matched = builder.new_block(span)
     condition = variant_condition(builder, carrier, slot, span)
     builder.finish(TerminatorKind.SwitchBool(condition, rejected, matched), span)
-    builder.current = matched
+    builder.continue_at(matched)
     match pattern:
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
             return payload_tests(builder, carrier, owner, slot, fields, selected, rejected, span)
@@ -216,7 +216,7 @@ def payload_tests(
         payload = appended_field(source, FieldProjection(slot=index, ty=types[index], variant=slot), span)?
         next_payload = builder.new_block(span)
         pattern_tests(builder, payload, fields[index], next_payload, rejected, span)?
-        builder.current = next_payload
+        builder.continue_at(next_payload)
     builder.finish(TerminatorKind.Goto(selected), span)
     return Ok(None)
 
@@ -342,7 +342,7 @@ def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span
 def text_literal_test(mut builder: Builder, source: Place, text: str, span: SourceSpan) -> Result[Place, str]:
     """Borrow both strings for equality and keep the materialized literal in the frame's owner ledger."""
     value = owned_literal(builder, text, span)
-    builder.owned.append(value.local)
+    builder.own(value.local)
     source_ref = builder.temporary(PlanType.StringRef, span)
     value_ref = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(source_ref, RvalueKind.Borrow(source), span))

@@ -84,13 +84,13 @@ def union_payload_test(
     inspected = builder.new_block(span)
     joined = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(present, false, span), joined, inspected), span)
-    builder.current = inspected
+    builder.continue_at(inspected)
     member_place = appended_field(source, FieldProjection(slot=0, ty=payload, variant=1), span)?
     member_tag = enum_tag(builder, member_place, span)
     matched = test_union_tag(builder, member_tag, slots, span)
     builder.emit(plan_assign(output, matched, span))
     builder.finish(TerminatorKind.Goto(joined), span)
-    builder.current = joined
+    builder.continue_at(joined)
     return Ok(RvalueKind.Use(read_place(output, false, span)))
 
 

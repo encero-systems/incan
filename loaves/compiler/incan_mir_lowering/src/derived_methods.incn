@@ -197,7 +197,7 @@ def clone_string_into(
             builder.drop_owned(output.local, span)
             builder.forget_owned(cloned.local)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(cloned, true, span)), span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
         None =>
             cloned = clone_text(builder, source, span)?
             builder.drop_owned(cloned.local, span)
@@ -231,7 +231,7 @@ def clone_builtin_place(
             builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
             if owned:
-                builder.owned.append(output.local)
+                builder.own(output.local)
         None => pass
     return Ok(None)
 

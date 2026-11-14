@@ -396,7 +396,7 @@ pub def native_format_text(mut builder: Builder, operand: Operand, debug: bool, 
     ty = operand_type(builder, operand)?
     result = builder.temporary(PlanType.String, span)
     builder.terminate_call(CalleeKind.FormatValue(ty, debug), [operand], result, span)
-    builder.owned.append(result.local)
+    builder.own(result.local)
     return Ok(result)
 
 
@@ -452,13 +452,13 @@ pub def lower_string_assignment(
             builder.forget_owned(text.local)
             builder.drop_owned(destination.local, span)
             builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
-            builder.owned.append(destination.local)
+            builder.own(destination.local)
             return Ok(None)
         RustRvalue.Use(operand) =>
             text = display_operand(builder, operand, span)?
             builder.forget_owned(text.local)
             builder.drop_owned(destination.local, span)
             builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
-            builder.owned.append(destination.local)
+            builder.own(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR string Rvalue outside formatting")

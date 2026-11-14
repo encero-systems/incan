@@ -73,17 +73,17 @@ def compare_lists(mut builder: Builder, left: Place, right: Place, span: SourceS
     equal = builder.new_block(span)
     joined = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), joined, head), span)
-    builder.current = head
+    builder.continue_at(head)
     builder.emit(
         plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, read_place(index, false, span), left_length), span),
     )
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), body, equal), span)
-    builder.current = body
+    builder.continue_at(body)
     first = shared_list_element(builder, left, read_place(index, false, span), span)?
     second = shared_list_element(builder, right, read_place(index, false, span), span)?
     same = compare_elements(builder, first, second, span)?
     builder.finish(TerminatorKind.SwitchBool(same, joined, advance), span)
-    builder.current = advance
+    builder.continue_at(advance)
     builder.emit(
         plan_assign(
             index,
@@ -92,10 +92,10 @@ def compare_lists(mut builder: Builder, left: Place, right: Place, span: SourceS
         ),
     )
     builder.finish(TerminatorKind.Goto(head), span)
-    builder.current = equal
+    builder.continue_at(equal)
     builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
     builder.finish(TerminatorKind.Goto(joined), span)
-    builder.current = joined
+    builder.continue_at(joined)
     return Ok(read_place(output, false, span))
 
 

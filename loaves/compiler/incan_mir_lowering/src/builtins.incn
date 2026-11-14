@@ -40,11 +40,11 @@ pub def list_call(
     )
     builder.terminate_call(CalleeKind.Instantiated(path, [element]), arguments, destination, span)
     match result:
-        PlanType.Model(_index, _name) => builder.owned.append(destination.local)
-        PlanType.Enum(_index, _name) => builder.owned.append(destination.local)
+        PlanType.Model(_index, _name) => builder.own(destination.local)
+        PlanType.Enum(_index, _name) => builder.own(destination.local)
         _ =>
             if result == PlanType.String or is_owned_collection(result) or tuple_has_owners(result):
-                builder.owned.append(destination.local)
+                builder.own(destination.local)
 
 
 pub def emit_boolean_operator(

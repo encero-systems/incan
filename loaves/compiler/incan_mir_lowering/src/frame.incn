@@ -194,6 +194,18 @@ pub model Builder:
         """Append one operation to the selected native block."""
         self.blocks[self.current].statements.append(statement)
 
+    pub def continue_at(mut self, block: int) -> None:
+        """Make `block` the block that receives the statements emitted next."""
+        self.current = block
+
+    pub def own(mut self, local: int) -> None:
+        """Record that `local` now holds an initialized value this frame drops at scope exit or on unwind."""
+        self.owned.append(local)
+
+    pub def restore_owners(mut self, owners: list[int]) -> None:
+        """Replace the initialized owners with a state captured earlier, as a branch join or loop exit does."""
+        self.owned = owners
+
     pub def temporary(mut self, ty: PlanType, span: SourceSpan) -> Place:
         """Reserve one typed temporary without assuming it is already initialized."""
         index = len(self.locals)

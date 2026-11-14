@@ -130,7 +130,7 @@ pub def initialize_text_iterator(
                 target,
                 span,
             )
-            builder.owned.append(target.local)
+            builder.own(target.local)
             cursor = builder.temporary(PlanType.Int, span)
             builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
             builder.iterators.append((target.local, cursor.local))
@@ -218,7 +218,7 @@ def frozen_dictionary_value(
             output,
             span,
         )?
-        builder.owned.append(output.local)
+        builder.own(output.local)
         return Ok(output)
     match elements[1]:
         PlanType.FrozenCollection(_kind, _arguments) => return Ok(raw)
@@ -348,7 +348,7 @@ pub def frozen_list_snapshot(
                 path = "incan_native_runtime::frozen_list_byte_items"
             output = builder.temporary(snapshot, span)
             instantiated_external_call(builder, path, elements, [ty], snapshot, [value], output, span)?
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(output)
         _ => return Err("unsupported Body IR nonfrozen snapshot")
 
@@ -365,7 +365,7 @@ pub def set_constructor_source(mut builder: Builder, source: &RustOperand, span:
                 OperandKind.Move(receiver) =>
                     snapshot = builder.temporary(PlanType.List(leaf, depth + 1), span)
                     generator_collect(builder, receiver, snapshot, span)?
-                    builder.owned.append(snapshot.local)
+                    builder.own(snapshot.local)
                     return Ok(read_place(snapshot, true, span))
                 _ => return Err("unsupported Body IR set constructor without an owned generator")
         _ => return Ok(value)
@@ -451,11 +451,11 @@ pub def list_next(
     exhausted = builder.new_block(span)
     owners = builder.owned
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
-    builder.current = exhausted
+    builder.continue_at(exhausted)
     drop_loop_owners(builder, span)?
     builder.exhaust_loop(span)
-    builder.current = next_block
-    builder.owned = owners
+    builder.continue_at(next_block)
+    builder.restore_owners(owners)
     target = list_root_place(builder, destination, span)?
     if is_list(place_type(builder.locals, receiver)) and is_mutable_list_reference(place_type(builder.locals, receiver)):
         in_place_item(builder, receiver, target, element, position, span)?
@@ -476,7 +476,7 @@ pub def list_next(
             or is_owned_collection(element)
             or tuple_has_owners(element)
         ):
-            builder.owned.append(item.local)
+            builder.own(item.local)
         if widened:
             byte = read_place(item, false, span)
             builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))

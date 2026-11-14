@@ -117,7 +117,7 @@ pub def test_cleanup_chains_share_predecessor_tails() -> Result[None, str]:
     mut builder = cleanup_builder()
     mut final_root = -1
     for owner in range(1, 9):
-        builder.owned.append(owner)
+        builder.own(owner)
         final_root = builder.cleanup_exit(span)
         for _call in range(8):
             assert builder.cleanup_exit(span) == final_root
@@ -139,7 +139,7 @@ pub def test_cleanup_chains_share_predecessor_tails() -> Result[None, str]:
     builder.locals.append(
         Local(ty=PlanType.Tuple([TupleElement.String, TupleElement.String, TupleElement.String]), span=span),
     )
-    builder.owned.append(9)
+    builder.own(9)
     builder.moved_tuple_fields.append((9, 1))
     partial_root = builder.cleanup_exit(span)
     for _call in range(8):

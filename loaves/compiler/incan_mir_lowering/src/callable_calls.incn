@@ -211,7 +211,7 @@ def lower_validated_constructor(
                     construction = RvalueKind.Model(owner, fields)
                     builder.track_rvalue_moves(construction)
                     builder.emit(plan_assign(value, construction, span))
-                    builder.owned.append(value.local)
+                    builder.own(value.local)
                     match validated_method_body(module, builder, owner, contract.validator)?:
                         Some(body) =>
                             receiver_type = frame_type(
@@ -641,7 +641,7 @@ pub def lower_callable_result(
         # 1. Materialize the result in its declared return carrier.
         result = builder.temporary(result_type, span)
         builder.terminate_call(callee, operands, result, span)
-        builder.owned.append(result.local)
+        builder.own(result.local)
         # 2. Convert the checked boundary before replacing the old destination.
         target_type = place_type(builder.locals, output)
         value = boundary_plan_operand(builder, read_place(result, true, span), target_type, span)?
@@ -649,7 +649,7 @@ pub def lower_callable_result(
         # 3. Transfer exactly the selected owner to its destination.
         builder.forget_moved_arguments([value])
         builder.emit(plan_assign(output, RvalueKind.Use(value), span))
-        builder.owned.append(output.local)
+        builder.own(output.local)
     else:
         builder.terminate_call(callee, operands, output, span)
     return Ok(None)
@@ -852,7 +852,7 @@ def borrowed_callable_argument(
     synthesize(builder, closure_constructor(constructor, name, [capture], signature, false, span, borrowing=true))
     boxed = builder.temporary(PlanType.BorrowingClosure(signature), span)
     builder.terminate_call(CalleeKind.Planned(constructor), [source], boxed, span)
-    builder.owned.append(boxed.local)
+    builder.own(boxed.local)
     return Ok(read_place(boxed, true, span))
 
 
@@ -873,7 +873,7 @@ def pointer_callable_owner(
     )
     boxed = builder.temporary(PlanType.Closure(signature), span)
     builder.terminate_call(CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
-    builder.owned.append(boxed.local)
+    builder.own(boxed.local)
     return Ok(boxed)
 
 

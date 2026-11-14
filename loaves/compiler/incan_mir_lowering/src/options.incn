@@ -104,7 +104,7 @@ pub def propagate_result(
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
     builder.forget_owned(source.local)
     owners = builder.owned
-    builder.current = failure
+    builder.continue_at(failure)
     error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
     mut propagated = read_place(error, true, span)
     if owns_text:
@@ -113,16 +113,16 @@ pub def propagate_result(
     builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [propagated]), span))
     builder.drop_all_owned(span)
     builder.finish(TerminatorKind.Return, span)
-    builder.current = success
-    builder.owned = owners
+    builder.continue_at(success)
+    builder.restore_owners(owners)
     value = Place(local=source.local, projection=Projection.VariantField(0, 0, input.variants[0].fields[0]), span=span)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(value, true, span)), span))
     match frame_place_type(builder.locals, destination):
-        PlanType.ValidationError => builder.owned.append(destination.local)
-        PlanType.String => builder.owned.append(destination.local)
-        PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
-        PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
-        PlanType.List(_leaf, _depth) => builder.owned.append(destination.local)
+        PlanType.ValidationError => builder.own(destination.local)
+        PlanType.String => builder.own(destination.local)
+        PlanType.Enum(_owner, _name) => builder.own(destination.local)
+        PlanType.Model(_owner, _name) => builder.own(destination.local)
+        PlanType.List(_leaf, _depth) => builder.own(destination.local)
         _ => pass
     return Ok(None)
 
@@ -549,16 +549,16 @@ pub def replace_owned_destination(mut builder: Builder, target: Place, operation
         builder.track_rvalue_moves(operation)
         builder.drop_owned(target.local, span)
         builder.emit(plan_assign(target, operation, span))
-        builder.owned.append(target.local)
+        builder.own(target.local)
         return
     replacement = builder.temporary(frame_place_type(builder.locals, target), span)
     builder.track_rvalue_moves(operation)
     builder.emit(plan_assign(replacement, operation, span))
-    builder.owned.append(replacement.local)
+    builder.own(replacement.local)
     continuation = builder.new_block(span)
     cleanup = builder.cleanup_exit(span)
     builder.finish(TerminatorKind.Drop(target, continuation, Unwind.Cleanup(cleanup)), span)
-    builder.current = continuation
+    builder.continue_at(continuation)
     builder.forget_owned(replacement.local)
     builder.emit(plan_assign(target, RvalueKind.Use(read_place(replacement, true, span)), span))
 
@@ -592,7 +592,7 @@ pub def borrowed_native_value(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
     builder.terminate_call(CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return output
 
 
@@ -663,7 +663,7 @@ pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan
     builder.track_rvalue_moves(operation)
     builder.emit(plan_assign(result, operation, span))
     if tuple_has_owners(ty):
-        builder.owned.append(result.local)
+        builder.own(result.local)
     return Ok(read_place(result, true, span))
 
 
@@ -723,7 +723,7 @@ def lower_carrier_unwrap(
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
-    builder.current = missing
+    builder.continue_at(missing)
     unit = builder.temporary(PlanType.Unit, span)
     if declaration.carrier == Carrier.Option:
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
@@ -733,14 +733,14 @@ def lower_carrier_unwrap(
         error = carrier_payload_value(builder, error_place, span)?
         unwrap_failure(builder, "unwrap_err", [error_type], [error], unit, span)
     builder.finish(TerminatorKind.Unreachable, span)
-    builder.current = selected
-    builder.owned = incoming
+    builder.continue_at(selected)
+    builder.restore_owners(incoming)
     projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     builder.track_rvalue_moves(RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
     if not numeric_carrier(payload_type) and payload_type != PlanType.Bool and payload_type != PlanType.Unit:
-        builder.owned.append(target.local)
+        builder.own(target.local)
     return Ok(None)
 
 
@@ -787,7 +787,7 @@ def lower_carrier_default(
     owners = builder.owned
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
-    builder.current = selected
+    builder.continue_at(selected)
     projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     builder.track_rvalue_moves(RvalueKind.Use(payload))
@@ -796,14 +796,14 @@ def lower_carrier_default(
         OperandKind.Move(place) => builder.drop_owned(place.local, span)
         _ => pass
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = missing
-    builder.owned = owners
+    builder.continue_at(missing)
+    builder.restore_owners(owners)
     builder.track_rvalue_moves(RvalueKind.Use(fallback))
     builder.emit(plan_assign(target, RvalueKind.Use(fallback), span))
     retained = builder.owned
     builder.finish(TerminatorKind.Goto(join), span)
-    builder.current = join
-    builder.owned = retained
+    builder.continue_at(join)
+    builder.restore_owners(retained)
     if not numeric_carrier(payload_type) and payload_type != PlanType.Bool and payload_type != PlanType.Unit:
-        builder.owned.append(target.local)
+        builder.own(target.local)
     return Ok(None)

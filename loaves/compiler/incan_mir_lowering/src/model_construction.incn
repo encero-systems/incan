@@ -300,7 +300,7 @@ def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span
     )
     destination = builder.temporary(boxed, span)
     builder.terminate_call(CalleeKind.Instantiated(path, [referent]), [value], destination, span)
-    builder.owned.append(destination.local)
+    builder.own(destination.local)
     return read_place(destination, true, span)
 
 
@@ -319,7 +319,7 @@ pub def lower_string_field_assignment(
     continuation = builder.new_block(span)
     cleanup = builder.cleanup_exit(span)
     builder.finish(TerminatorKind.Drop(destination, continuation, Unwind.Cleanup(cleanup)), span)
-    builder.current = continuation
+    builder.continue_at(continuation)
     builder.forget_owned(replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)

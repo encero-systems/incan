@@ -49,10 +49,10 @@ pub def lower_assertion(
     passed = builder.new_block(span)
     incoming = builder.owned
     builder.finish(TerminatorKind.SwitchBool(operand, failed, passed), span)
-    builder.current = failed
+    builder.continue_at(failed)
     lower_failure(builder, message, span)?
-    builder.current = passed
-    builder.owned = incoming
+    builder.continue_at(passed)
+    builder.restore_owners(incoming)
     return Ok(None)
 
 
@@ -164,7 +164,7 @@ def lower_pattern_assertion(
     passed = builder.new_block(span)
     incoming = builder.owned
     builder.finish(TerminatorKind.SwitchBool(condition, failed, passed), span)
-    builder.current = failed
+    builder.continue_at(failed)
     failure = f"incan_native_runtime::{pattern_failure(declaration.carrier, slot)}"
     destination = builder.temporary(PlanType.Unit, span)
     if has_message:
@@ -173,8 +173,8 @@ def lower_pattern_assertion(
     else:
         builder.external_call(failure, [], PlanType.Unit, [], destination, span)
     builder.finish(TerminatorKind.Unreachable, span)
-    builder.current = passed
-    builder.owned = incoming
+    builder.continue_at(passed)
+    builder.restore_owners(incoming)
     return bind_enum_payload(builder, source, slot, pattern, span)
 
 

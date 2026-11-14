@@ -134,7 +134,7 @@ pub def checked_list_argument(
                     return Err("unsupported Body IR list argument without an owned range")
                 snapshot = builder.temporary(PlanType.List(ListLeaf.Int, 1), span)
                 generator_collect(builder, root, snapshot, span)?
-                builder.owned.append(snapshot.local)
+                builder.own(snapshot.local)
                 return list_borrow(builder, snapshot, mutable, span)
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
@@ -343,7 +343,7 @@ pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceS
             output,
             span,
         )
-        builder.owned.append(output.local)
+        builder.own(output.local)
         return Ok(output)
     return Ok(source)
 
@@ -708,12 +708,12 @@ pub def list_assignment(
                 OperandKind.Move(place) => builder.forget_owned(place.local)
                 _ => pass
             builder.emit(plan_assign(output, RvalueKind.Use(argument), span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
         _ => return Err("unsupported Body IR list assignment rvalue")
     builder.drop_owned(destination.local, span)
     builder.forget_owned(output.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
-    builder.owned.append(destination.local)
+    builder.own(destination.local)
     return Ok(None)
 
 

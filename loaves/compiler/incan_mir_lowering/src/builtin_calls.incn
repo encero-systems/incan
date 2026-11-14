@@ -294,7 +294,7 @@ def lower_file_builtin(
                 parameters.append(PlanType.StringRef)
     builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, output, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 
@@ -340,7 +340,7 @@ def lower_extrema_builtin(
         span,
     )
     if result == PlanType.String:
-        builder.owned.append(output.local)
+        builder.own(output.local)
     return Ok(None)
 
 
@@ -376,7 +376,7 @@ def lower_range_builtin(
         output,
         span,
     )
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 
@@ -397,7 +397,7 @@ def lower_zip_builtin(
             second = argument_value(builder, arguments, 1, span)?
             builder.drop_owned(output.local, span)
             zip_generators(builder, first, second, output, span)?
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(None)
         None => pass
     match zip_shape(borrowed_at(builder.locals, output.local).ty):
@@ -428,7 +428,7 @@ def lower_zip_builtin(
                 output,
                 span,
             )
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(None)
 
 
@@ -471,7 +471,7 @@ def lower_enumerate_builtin(
             output,
             span,
         )
-        builder.owned.append(output.local)
+        builder.own(output.local)
     else:
         if byte_source:
             reference = enumerated_byte_argument(builder, arguments, source_type, span)?
@@ -483,7 +483,7 @@ def lower_enumerate_builtin(
                 output,
                 span,
             )
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(None)
         receiver = shared_receiver_place(builder, arguments, 0, span)?
         leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate source layout")?
@@ -552,7 +552,7 @@ def serialize_scalar_json(
                     builder.forget_owned(text.local)
                     builder.drop_owned(result.local, span)
                     builder.emit(plan_assign(result, RvalueKind.Use(read_place(text, true, span)), span))
-                    builder.owned.append(result.local)
+                    builder.own(result.local)
                     return Ok(None)
                 _ => pass
         RustOperand.Place(read) =>
@@ -597,7 +597,7 @@ def serialize_json_list(
         ),
     )
     builder.terminate_call(CalleeKind.Instantiated(path, [owned]), [reference], result, span)
-    builder.owned.append(result.local)
+    builder.own(result.local)
     return Ok(None)
 
 
@@ -620,7 +620,7 @@ def serialize_json_text(
         ),
     )
     builder.terminate_call(CalleeKind.Instantiated(path, [PlanType.String]), [operand], result, span)
-    builder.owned.append(result.local)
+    builder.own(result.local)
     return Ok(None)
 
 
@@ -784,7 +784,7 @@ pub def clone_model_reference(
     """Call a source model's derived Clone on a shared reference to it, yielding the owned copy."""
     result = builder.temporary(PlanType.Model(index, name), span)
     builder.terminate_call(CalleeKind.CloneModel(index, name), [reference], result, span)
-    builder.owned.append(result.local)
+    builder.own(result.local)
     return read_place(result, true, span)
 
 
@@ -807,5 +807,5 @@ pub def clone_enum_reference(
         )
         callee = CalleeKind.Instantiated(path, [owned])
     builder.terminate_call(callee, [reference], result, span)
-    builder.owned.append(result.local)
+    builder.own(result.local)
     return read_place(result, true, span)

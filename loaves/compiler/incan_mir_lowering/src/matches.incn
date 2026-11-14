@@ -82,12 +82,12 @@ pub def lower_enum_match(
         mut slot = -2
         if binds_through_alternation(arm.pattern):
             bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
-            builder.current = selected
-            builder.owned = bound
+            builder.continue_at(selected)
+            builder.restore_owners(bound)
         else:
             slot = dispatch_enum_arm(builder, source, owner, arm.pattern, selected, missed, span)?
-            builder.current = selected
-            builder.owned = owners
+            builder.continue_at(selected)
+            builder.restore_owners(owners)
             bind_enum_payload(builder, source, slot, arm.pattern, span)?
         consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
@@ -109,12 +109,12 @@ pub def lower_enum_match(
     builder.finish(TerminatorKind.Unreachable, span)
     join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
     reaches_join = len(arm_ends) != 0
-    builder.current = join
+    builder.continue_at(join)
     builder.closed[join] = not reaches_join
-    builder.owned = join_owners
+    builder.restore_owners(join_owners)
     ty = place_type(builder.locals, target)
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
-        builder.owned.append(target.local)
+        builder.own(target.local)
     return Ok(None)
 
 
@@ -196,7 +196,7 @@ def bind_alternatives(
                     first = false
                 elif not same_owners(owners, bound):
                     return Err("unsupported Body IR binding alternation ownership")
-                builder.current = next_alternative
+                builder.continue_at(next_alternative)
             builder.finish(TerminatorKind.Goto(rejected), span)
             return Ok(bound)
         _ => return bind_alternative(builder, source, pattern, selected, rejected, incoming, span)
@@ -225,8 +225,8 @@ def bind_alternative(
         _ => pass
     matched = builder.new_block(span)
     pattern_tests(builder, source, alternative, matched, rejected, span)?
-    builder.current = matched
-    builder.owned = incoming
+    builder.continue_at(matched)
+    builder.restore_owners(incoming)
     bind_structural_pattern(builder, source, alternative, span)?
     owners = builder.owned
     builder.finish(TerminatorKind.Goto(selected), span)
@@ -252,7 +252,7 @@ def tuple_paths(
     alternative `choices` records for it, and selects the arm. The owners at `selected` are returned.
     """
     if index == len(items):
-        builder.owned = incoming
+        builder.restore_owners(incoming)
         for position in range(len(items)):
             bind_tuple_item(builder, fields[position], items[position], choices[position], span)?
         owners = builder.owned
@@ -261,7 +261,7 @@ def tuple_paths(
     if not is_binding_alternation(items[index]):
         next_item = builder.new_block(span)
         pattern_tests(builder, fields[index], items[index], next_item, rejected, span)?
-        builder.current = next_item
+        builder.continue_at(next_item)
         return tuple_paths(builder, fields, items, index + 1, choices, selected, rejected, incoming, span)
     mut bound: list[int] = []
     match items[index]:
@@ -271,7 +271,7 @@ def tuple_paths(
                 # A miss in this alternative or in any later item retries with the item's next alternative.
                 retry = builder.new_block(span)
                 pattern_tests(builder, fields[index], alternatives[choice], matched, retry, span)?
-                builder.current = matched
+                builder.continue_at(matched)
                 mut chosen = choices.clone()
                 chosen[index] = choice
                 owners = tuple_paths(builder, fields, items, index + 1, chosen, selected, retry, incoming, span)?
@@ -279,7 +279,7 @@ def tuple_paths(
                     bound = owners
                 elif not same_owners(owners, bound):
                     return Err("unsupported Body IR binding alternation ownership")
-                builder.current = retry
+                builder.continue_at(retry)
         _ => return Err("invalid Body IR binding alternation")
     builder.finish(TerminatorKind.Goto(rejected), span)
     return Ok(bound)
@@ -453,11 +453,11 @@ def lower_structural_match(
         next_arm = builder.new_block(span)
         if binds_through_alternation(arm.pattern):
             bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
-            builder.current = selected
-            builder.owned = bound
+            builder.continue_at(selected)
+            builder.restore_owners(bound)
         else:
             pattern_tests(builder, source, arm.pattern, selected, missed, span)?
-            builder.current = selected
+            builder.continue_at(selected)
             bind_structural_pattern(builder, source, arm.pattern, span)?
         consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
@@ -473,9 +473,9 @@ def lower_structural_match(
     # An arm or its guard may move an incoming owner the other arms keep; the join keeps only what every arm kept.
     join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
     reaches_join = len(arm_ends) != 0
-    builder.current = join
+    builder.continue_at(join)
     builder.closed[join] = not reaches_join
-    builder.owned = join_owners
+    builder.restore_owners(join_owners)
     if (
         reaches_join
         and (
@@ -485,7 +485,7 @@ def lower_structural_match(
             or is_owned_collection(result_type)
         )
     ):
-        builder.owned.append(target.local)
+        builder.own(target.local)
     return Ok(None)
 
 
@@ -531,11 +531,11 @@ def lower_arm_guard(
             refused = builder.new_block(span)
             builder.finish(TerminatorKind.SwitchBool(condition, refused, admitted), span)
             kept = builder.owned
-            builder.current = refused
+            builder.continue_at(refused)
             release_match_scratch(builder, incoming, span)
             builder.finish(TerminatorKind.Goto(rejected), span)
-            builder.current = admitted
-            builder.owned = kept
+            builder.continue_at(admitted)
+            builder.restore_owners(kept)
         None => pass
     return Ok(consumed)
 
@@ -554,8 +554,8 @@ def skip_consumed_guard(
     The arm's guard moved `consumed` on every path through it, so the miss path, which skips the guard, releases them
     too; both ways into the next arm then hold the same owners.
     """
-    builder.current = missed
-    builder.owned = owners
+    builder.continue_at(missed)
+    builder.restore_owners(owners)
     for local in consumed:
         builder.drop_owned(local, span)
     builder.finish(TerminatorKind.Goto(next_arm), span)
@@ -563,8 +563,8 @@ def skip_consumed_guard(
     for local in owners:
         if local not in consumed:
             remaining.append(local)
-    builder.current = next_arm
-    builder.owned = remaining
+    builder.continue_at(next_arm)
+    builder.restore_owners(remaining)
     return remaining
 
 
@@ -677,8 +677,8 @@ pub def join_branch_owners(
             if kept_by_every_arm(local, arm_owners):
                 live.append(local)
     for index in range(len(ends)):
-        builder.current = ends[index]
-        builder.owned = arm_owners[index]
+        builder.continue_at(ends[index])
+        builder.restore_owners(arm_owners[index])
         for local in arm_owners[index]:
             if local in live:
                 continue

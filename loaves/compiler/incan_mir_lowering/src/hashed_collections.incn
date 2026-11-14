@@ -282,7 +282,7 @@ pub def read_dictionary_element(
     )?
     # A cloned value that owns storage is a new owner, like a cloned list element; the final read moves it out.
     if is_nominal_type(types[1]) or is_owned_list(types[1]) or is_owned_collection(types[1]):
-        builder.owned.append(output.local)
+        builder.own(output.local)
     return Ok(output)
 
 
@@ -432,7 +432,7 @@ def optional_dictionary_get(
     )?
     builder.drop_owned(output.local, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 

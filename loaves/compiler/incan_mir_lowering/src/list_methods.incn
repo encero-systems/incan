@@ -210,7 +210,7 @@ pub def lower_list_iter(
                 span,
             )
         None => return Err("unsupported Body IR list iter spread")
-    builder.owned.append(output.local)
+    builder.own(output.local)
     return Ok(None)
 
 
@@ -256,7 +256,7 @@ pub def lower_iterator_method(
             output = call_destination(builder, destination, PlanType.List(leaf, depth + 1), span)?
             builder.drop_owned(output.local, span)
             generator_collect(builder, receiver, output, span)?
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(None)
         None => pass
     return Err("unsupported Body IR selected iterator Method")

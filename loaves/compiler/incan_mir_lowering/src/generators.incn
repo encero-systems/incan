@@ -366,7 +366,7 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             storage_type = PlanType.List(leaf, depth + 1)
             storage = builder.temporary(storage_type, span)
             generator_runtime_call(builder, "empty_list", element, [], storage_type, [], storage, span)
-            builder.owned.append(storage.local)
+            builder.own(storage.local)
             item_reference = builder.temporary(PlanType.ListMutRef(leaf, depth + 1), span)
             builder.emit(plan_assign(item_reference, RvalueKind.MutBorrow(storage), span))
             reference = generator_reference(builder, receiver, span)?
@@ -386,11 +386,11 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             owners = builder.owned
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
-            builder.current = exhausted
+            builder.continue_at(exhausted)
             builder.drop_owned(storage.local, span)
             builder.exhaust_loop(span)
-            builder.current = selected
-            builder.owned = owners
+            builder.continue_at(selected)
+            builder.restore_owners(owners)
             builder.drop_owned(output.local, span)
             final_reference = builder.temporary(PlanType.ListMutRef(leaf, depth + 1), span)
             builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))
@@ -405,6 +405,6 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
                 span,
             )
             if element == PlanType.String or depth > 0:
-                builder.owned.append(output.local)
+                builder.own(output.local)
             builder.drop_owned(storage.local, span)
             return Ok(None)

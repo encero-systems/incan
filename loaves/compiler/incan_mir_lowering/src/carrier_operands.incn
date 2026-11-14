@@ -198,13 +198,13 @@ pub def boundary_plan_operand(
             builder.forget_moved_arguments([result])
             builder.emit(plan_assign(alias, alias_operation, span))
             if snapshot_owns(target):
-                builder.owned.append(alias.local)
+                builder.own(alias.local)
             return Ok(read_place(alias, snapshot_owns(target), span))
         _ =>
             output = builder.temporary(target, span)
             builder.track_rvalue_moves(operation)
             builder.emit(plan_assign(output, operation, span))
-            builder.owned.append(output.local)
+            builder.own(output.local)
             return Ok(read_place(output, true, span))
 
 
@@ -292,10 +292,10 @@ def converted_carrier_operand(
     builder.forget_owned(source.local)
     owners = builder.owned
     for slot in range(2):
-        builder.current = selected
+        builder.continue_at(selected)
         if slot == 1:
-            builder.current = other
-        builder.owned = owners
+            builder.continue_at(other)
+        builder.restore_owners(owners)
         if len(before.variants[slot].fields) != len(after.variants[slot].fields):
             return Err("unsupported Body IR carrier conversion variant layout")
         mut fields: list[Operand] = []
@@ -307,9 +307,9 @@ def converted_carrier_operand(
             )
         assign_carrier(builder, output, target_owner, slot, fields, span)
         builder.finish(TerminatorKind.Goto(joined), span)
-    builder.current = joined
-    builder.owned = owners
-    builder.owned.append(output.local)
+    builder.continue_at(joined)
+    builder.restore_owners(owners)
+    builder.own(output.local)
     return Ok(Some(read_place(output, true, span)))
 
 
