@@ -96,3 +96,27 @@ fn a_program_imports_an_enum_variant_from_the_root_of_a_loaf() -> Result<(), Box
     )?;
     Ok(())
 }
+
+/// A program that calls a function returning nothing is checked from the function's own records: `None` is no type a
+/// provider's remapping can change, so checking reads `money::note`'s signature by name and never the Loaf's contract
+/// metadata.
+#[test]
+fn a_program_checks_an_imported_function_returning_nothing_from_its_declaration_records()
+-> Result<(), Box<dyn std::error::Error>> {
+    let read = manifest_import_reads(
+        &catalog_with("\npub def note(cents: int) -> None:\n    pass\n")?,
+        "from pub::prices import money\n\ndef main() -> None:\n    money.note(5)\n",
+    )?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"money::note"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `note`'s signature by name; it read {read:?}"
+    );
+    let whole = contract_metadata(&read);
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
