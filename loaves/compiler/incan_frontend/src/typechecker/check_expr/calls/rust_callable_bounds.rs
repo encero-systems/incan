@@ -6,7 +6,7 @@ use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Spanned};
 use crate::diagnostics::errors;
 use crate::resolved_type_subst::map_resolved_type_leaves;
-use crate::symbols::{CallableParam, ResolvedType};
+use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use incan_lang::interop::{RustFunctionSig, RustItemKind, rust_auto_trait, rust_callable_trait};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::body_ir::NativeClosureStorage;
@@ -314,6 +314,20 @@ impl TypeChecker {
                 .iter()
                 .all(|argument| self.capture_has_native_auto_trait(argument, marker, depth + 1));
         }
+        let source_model = match ty {
+            ResolvedType::Named(name) => self.lookup_semantic_type_info(name),
+            ResolvedType::RustPath(path) => path
+                .rsplit("::")
+                .next()
+                .and_then(|name| self.lookup_semantic_type_info(name)),
+            _ => None,
+        };
+        if let Some(TypeInfo::Model(model)) = source_model {
+            return model
+                .fields
+                .values()
+                .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
+        }
         let native = match ty {
             ResolvedType::Int => ResolvedType::RustPath("i64".into()),
             ResolvedType::Float => ResolvedType::RustPath("f64".into()),
@@ -333,6 +347,12 @@ impl TypeChecker {
                 if matches!(owner, "std::sync::Arc" | "alloc::sync::Arc") {
                     return self.capture_has_native_auto_trait(&arguments[0], "Send", depth + 1)
                         && self.capture_has_native_auto_trait(&arguments[0], "Sync", depth + 1);
+                }
+                if matches!(
+                    owner,
+                    "std::sync::Mutex" | "std::sync::poison::mutex::Mutex" | "std::sync::mutex::Mutex"
+                ) {
+                    return self.capture_has_native_auto_trait(&arguments[0], "Send", depth + 1);
                 }
                 if matches!(
                     owner,
