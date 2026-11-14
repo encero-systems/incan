@@ -40,18 +40,69 @@ pub def test_an_overlay_is_answered_by_a_check_alone() -> Result[None, str]:
     return Ok(None)
 
 
+pub def test_a_saved_buffer_runs_on_its_build_overlays_work() -> Result[None, str]:
+    """A build overlay of the saved buffer leaves the project's next run nothing to check, lower or bake."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("hello")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    source = program.joinpath("main.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    store = scratch.path().joinpath("store")
+    saved = "def main() -> None:\n    println(\"hello saved\")\n"
+    write(source, saved)?
+    built = overlay_with(binary, source, source, store, ["--build"])
+    ran = records_run(binary, source, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    answer = built?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    report, output = ran?
+    proof = report.to_json().map_err((error) => error.message())?
+    assert output == "hello saved\n", output
+    assert count(report, "body_evaluations")? == 0, proof
+    assert count(report, "native_bakes")? == 0, proof
+    return Ok(None)
+
+
 def overlay(binary: str, source: Path, buffer: Path, store: Path) -> Result[JsonValue, str]:
     """Ask the installed Oven for one overlay answer, with its engine work, against a private store."""
+    return overlay_with(binary, source, buffer, store, ["--engine-report"])
+
+
+def overlay_with(binary: str, source: Path, buffer: Path, store: Path, options: list[str]) -> Result[JsonValue, str]:
+    """Ask the installed Oven for one overlay answer with extra request options, against a private store."""
     outcome = Command
         .new(binary)
         .arg("check")
         .arg(source.0)
-        .args(["--overlay", buffer.0, "--document-version", "1", "--format", "json", "--engine-report"])
+        .args(["--overlay", buffer.0, "--document-version", "1", "--format", "json"])
+        .args(options)
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
     text = decoded(outcome.stdout)
     return parse(text).map_err((error) => f"{error.message()}: stdout={text} stderr={decoded(outcome.stderr)}")
+
+
+def records_run(binary: str, source: Path, store: Path) -> Result[tuple[JsonValue, str], str]:
+    """Run the program through the records engine against the store, returning its proof report and its output."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    text = decoded(outcome.stdout)
+    lines = text.split("\n")
+    if not outcome.status.success() or len(lines) < 2:
+        return Err(f"records run: stdout={text} stderr={decoded(outcome.stderr)}")
+    report = parse(lines[0]).map_err((error) => error.message())?
+    return Ok((report, text[len(lines[0]) + 1:]))
 
 
 def count(value: JsonValue, name: str) -> Result[int, str]:
