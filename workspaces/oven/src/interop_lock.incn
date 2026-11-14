@@ -1,0 +1,126 @@
+"""
+The C interop facts of a root project's `oven.lock`: each `[[interop.c.targets]]` entry's requirements and the digest of
+each package-owned file it declares, as 0.5's lock recorded its interop target contract. A changed requirement or file
+changes the lock, so `--locked` refuses it, and `oven interop stage --locked` copies only the bundled files it records.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from c_interop import CArtifactKind, CInteropTarget
+
+# The digest a lock records for a declared file that is not there.
+pub const MISSING: str = "missing"
+
+
+@derive(Clone, Eq)
+pub model LockInteropArtifact:
+    """One declared artifact: its kind, file and digest, or its capability, and a bundled file's staging facts."""
+
+    pub name: str
+    pub kind: str
+    pub path: str = ""
+    pub digest: str = ""
+    pub runtime_name: str = ""
+    pub placement: str = ""
+    pub capability: str = ""
+
+
+@derive(Clone, Eq)
+pub model LockInterop:
+    """One target's contract: its requirements, its headers with their digests and its artifacts."""
+
+    pub target: str
+    pub requirements: str
+    # `path sha256:...` for each declared header.
+    pub headers: list[str] = []
+    pub artifacts: list[LockInteropArtifact] = []
+
+
+pub def locked_interop(root: str, targets: list[CInteropTarget]) -> Result[list[LockInterop], str]:
+    """Each declared target's contract, with every declared file identified by its bytes."""
+    mut entries: list[LockInterop] = []
+    for target in targets:
+        mut entry = LockInterop(target=target.target, requirements=requirement_text(target))
+        for header in sorted(target.headers):
+            entry.headers.append(f"{header} {file_digest(root, header)?}")
+        for artifact in target.artifacts:
+            mut locked = LockInteropArtifact(
+                name=artifact.name,
+                kind=artifact.kind.value(),
+                capability=artifact.capability,
+                runtime_name=artifact.runtime_name,
+                placement=artifact.placement,
+            )
+            if artifact.kind != CArtifactKind.System:
+                locked.path = artifact.path
+                locked.digest = file_digest(root, artifact.path)?
+            entry.artifacts.append(locked)
+        entries.append(entry)
+    return Ok(entries)
+
+
+def requirement_text(target: CInteropTarget) -> str:
+    """The target's requirements in one canonical line: toolchain, SDK, platform, definitions and artifact edges."""
+    mut parts: list[str] = []
+    if let Some(toolchain) = target.toolchain:
+        parts.append(f"toolchain={toolchain.capability} {toolchain.version}")
+    if let Some(sdk) = target.sdk:
+        parts.append(f"sdk={sdk.capability} {sdk.version}")
+    if let Some(platform) = target.platform:
+        parts.append(f"platform={platform.kind.value()} {platform.api_level} {platform.deployment_target}")
+    parts.extend([f"definition={definition}" for definition in target.definitions])
+    for artifact in target.artifacts:
+        parts.append(f"needs={artifact.name}:{",".join(artifact.dependencies)}:{artifact.minimum_platform}")
+    for binding in target.bindings:
+        parts.append(f"binding={".".join(binding.module)}.{binding.name}:{",".join(binding.artifacts)}")
+    return "; ".join(parts)
+
+
+def file_digest(root: str, path: str) -> Result[str, str]:
+    """A declared file's `sha256:` digest, or `missing` when it is not a file."""
+    file = Path(root).joinpath(path)
+    if not file.is_file():
+        return Ok(MISSING)
+    raw = file.read_bytes().map_err((error) => f"{file.0}: {error.message()}")?
+    return Ok("sha256:" + hexlify(sha256.digest(raw)))
+
+
+pub def interop_fact(entries: list[LockInterop]) -> str:
+    """Every target's contract as one text, by target, for the lock's graph identity."""
+    mut lines: list[str] = []
+    for entry in entries:
+        lines.append(f"interop={entry.target}|{entry.requirements}|{",".join(entry.headers)}")
+        for artifact in entry.artifacts:
+            fields = [
+                entry.target,
+                artifact.name,
+                artifact.kind,
+                artifact.path,
+                artifact.digest,
+                artifact.runtime_name,
+                artifact.placement,
+                artifact.capability,
+            ]
+            lines.append("artifact=" + "|".join(fields))
+    return "\n".join(sorted(lines))
+
+
+pub def interop_difference(known: list[LockInterop], generated: list[LockInterop]) -> str:
+    """The first C interop fact that differs, as a lock refusal names it; empty when none does."""
+    for entry in generated:
+        mut recorded: Option[LockInterop] = None
+        for candidate in known:
+            if candidate.target == entry.target:
+                recorded = Some(candidate)
+        match recorded:
+            None => return f"the C interop contract of `{entry.target}`"
+            Some(previous) =>
+                for artifact in entry.artifacts:
+                    if artifact not in previous.artifacts:
+                        return f"{artifact.kind} artifact `{artifact.name}` of `{entry.target}`"
+                if previous != entry:
+                    return f"the C interop contract of `{entry.target}`"
+    if len(known) != len(generated):
+        return "the C interop contracts"
+    return ""

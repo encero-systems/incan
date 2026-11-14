@@ -1,10 +1,11 @@
-"""Format 1 of Oven's generated project lock, including its order-free resolved-graph identity."""
+"""Format 1 of Oven's generated project lock, including its order-free resolved-graph identity and C interop facts."""
 
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.toml import TomlValue, parse
 from files import read
+from interop_lock import LockInterop, LockInteropArtifact, interop_fact
 from publication import publish
 from registry_units import RegistryUnit
 
@@ -76,6 +77,8 @@ pub model OvenLock:
     pub graph: str
     pub toolchain: LockToolchain
     pub loaves: list[LockLoaf]
+    # The root project's `[[interop.c.targets]]` contracts with their file digests; part of the graph identity.
+    pub interop: list[LockInterop] = []
 
 
 pub def lock_path(project: Path) -> Path:
@@ -100,7 +103,7 @@ pub def read_lock_text(source: str, provenance: str) -> Result[OvenLock, str]:
     """Decode checked format-1 lock text carried by another integrity-checked artifact."""
     document = parse(source).map_err((error) => f"{provenance}: {error.message()}")?
     root = document.as_table().map_err((error) => f"{provenance}: {error.message()}")?
-    require_keys(root, ["format", "mode", "graph", "toolchain", "loaf"], provenance, "lock")?
+    require_keys(root, ["format", "mode", "graph", "toolchain", "loaf", "interop"], provenance, "lock")?
     format = required_int(root, "format", provenance)?
     if format != LOCK_FORMAT:
         return Err(f"{provenance}: unsupported lock format {format}; expected {LOCK_FORMAT}")
@@ -109,18 +112,51 @@ pub def read_lock_text(source: str, provenance: str) -> Result[OvenLock, str]:
     mut loaves: list[LockLoaf] = []
     for value in required(root, "loaf", provenance)?.as_array().map_err((error) => f"{provenance}: {error.message()}")?:
         loaves.append(read_loaf(value, provenance)?)
+    mut interop: list[LockInterop] = []
+    if let Some(values) = optional_array(root, "interop", provenance)?:
+        for value in values:
+            interop.append(read_interop(value, provenance)?)
     lock = OvenLock(
         format=format,
         mode=mode,
         graph=required_text(root, "graph", provenance)?,
         toolchain=toolchain,
         loaves=loaves,
+        interop=interop,
     )
     expected = graph_identity(lock)?
     if lock.graph != expected:
         name = first_entry_name(lock)
         return Err(f"{provenance}: graph differs at Loaf {name}; run `oven lock`")
     return Ok(lock)
+
+
+def read_interop(value: TomlValue, source: str) -> Result[LockInterop, str]:
+    """Decode one `[[interop]]` contract and its artifact tables."""
+    table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(table, ["target", "requirements", "headers", "artifact"], source, "interop")?
+    mut entry = LockInterop(
+        target=required_text(table, "target", source)?,
+        requirements=required_text(table, "requirements", source)?,
+        headers=optional_texts(table, "headers", source)?,
+    )
+    if let Some(values) = optional_array(table, "artifact", source)?:
+        for item in values:
+            artifact = item.as_table().map_err((error) => f"{source}: {error.message()}")?
+            keys = ["name", "kind", "path", "digest", "runtime-name", "placement", "capability"]
+            require_keys(artifact, keys, source, "interop artifact")?
+            entry.artifacts.append(
+                LockInteropArtifact(
+                    name=required_text(artifact, "name", source)?,
+                    kind=required_text(artifact, "kind", source)?,
+                    path=optional_text(artifact, "path", source)?,
+                    digest=optional_text(artifact, "digest", source)?,
+                    runtime_name=optional_text(artifact, "runtime-name", source)?,
+                    placement=optional_text(artifact, "placement", source)?,
+                    capability=optional_text(artifact, "capability", source)?,
+                ),
+            )
+    return Ok(entry)
 
 
 def read_toolchain(value: TomlValue, source: str) -> Result[LockToolchain, str]:
@@ -338,7 +374,11 @@ pub def graph_identity(lock: OvenLock) -> Result[str, str]:
         return Err(f"oven.lock contains {len(lock.loaves) - len(reached)} Loaf entries outside the root graph")
     mut visiting: set[str] = set()
     digest = entry_digest(roots[0], lock, visiting)?
-    return Ok("sha256:" + digest)
+    if len(lock.interop) == 0:
+        return Ok("sha256:" + digest)
+    # A root that declares C interop targets folds their contracts in; a lock without them keeps its identity.
+    folded = length_prefixed([digest, interop_fact(lock.interop)])
+    return Ok("sha256:" + hexlify(sha256.digest(folded.encode("utf-8"))))
 
 
 def reachable_entries(index: int, lock: OvenLock, seen: set[str]) -> Result[set[str], str]:
@@ -490,6 +530,8 @@ pub def lock_text(lock: OvenLock) -> Result[str, str]:
         ordered[entry_identity(entry)] = entry
     for key in sorted([key for key in ordered.keys()]):
         text += render_loaf(ordered[key])
+    for entry in sorted_interop(lock.interop):
+        text += render_interop(entry)
     return Ok(text)
 
 
@@ -531,6 +573,34 @@ def render_loaf(entry: LockLoaf) -> str:
         text += f"requested = {string_array(sorted(selected.requested))}\n"
         text += f"enabled = {string_array(sorted(selected.enabled))}\n"
         text += f"predicates = {string_array(sorted(selected.predicates))}\n"
+    return text
+
+
+def sorted_interop(entries: list[LockInterop]) -> list[LockInterop]:
+    """Interop contracts by target, so the file's layout is stable."""
+    mut ordered: Dict[str, LockInterop] = {}
+    for entry in entries:
+        ordered[entry.target] = entry
+    return [ordered[key] for key in sorted([key for key in ordered.keys()])]
+
+
+def render_interop(entry: LockInterop) -> str:
+    """Render one target's contract and its artifact tables, omitting empty fields."""
+    mut text = "\n[[interop]]\n"
+    text += f"target = {quoted(entry.target)}\nrequirements = {quoted(entry.requirements)}\n"
+    text += f"headers = {string_array(entry.headers)}\n"
+    for artifact in entry.artifacts:
+        text += "\n[[interop.artifact]]\n"
+        text += f"name = {quoted(artifact.name)}\nkind = {quoted(artifact.kind)}\n"
+        for name, value in [
+            ("path", artifact.path),
+            ("digest", artifact.digest),
+            ("runtime-name", artifact.runtime_name),
+            ("placement", artifact.placement),
+            ("capability", artifact.capability),
+        ]:
+            if value != "":
+                text += f"{name} = {quoted(value)}\n"
     return text
 
 
