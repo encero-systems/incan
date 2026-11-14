@@ -214,6 +214,14 @@ pub model Builder:
 
     pub def forget_owned(mut self, index: int) -> None:
         """Remove an initialized owner after its value moves or drops."""
+        if self.name == "e1_probe" and borrowed_at(self.locals, index).ty == PlanType.String:
+            # E1: a moved string stays an owner, so scope end drops it unconditionally and no join reconciles it;
+            # rustc's drop elaboration must decide.
+            return
+        self.release_owner(index)
+
+    def release_owner(mut self, index: int) -> None:
+        """Remove an owner the frame has just dropped."""
         mut retained: list[int] = []
         for live in self.owned:
             if live != index:
@@ -226,7 +234,7 @@ pub model Builder:
         if index not in self.owned:
             return
         places = remaining_owned_places(self.locals, self.moved_tuple_fields, index, span)
-        self.forget_owned(index)
+        self.release_owner(index)
         for place in places:
             successor = self.new_block(span)
             self.finish(TerminatorKind.Drop(place, successor, Unwind.Continue), span)
