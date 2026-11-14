@@ -343,7 +343,12 @@ def described(
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
             active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
-            return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader, selected_standard)
+            # A project's roots are resolved, so its entry is named through its resolved directory too: `oven build .`
+            # spells it `<project>/./src/lib.incn`, and a checkout may be reached through a link. An entry spelled
+            # outside its own source root would have that root's sources listed a second time, under another name.
+            directory = entry.parent().resolve().map_err((error) => f"{entry.0}: {error.message()}")?
+            placed = directory.joinpath(entry.name())
+            return project_unit(placed, projects[root.0], profile, root.0, active, projects, reader, selected_standard)
 
 
 pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDescription, str]:
