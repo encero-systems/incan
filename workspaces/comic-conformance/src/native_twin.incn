@@ -4,8 +4,8 @@ from std.json import JsonValue
 from std.primitives.crumb import Budget
 from std.primitives.crumb.admission import check_written
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
-from std.primitives.crumb.framing import frame
-from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.framing import Reader, frame
+from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
 from std.primitives.crumb.identity import closed_selector, check_arity
 from std.primitives.crumb.spelling import selector_spelling
@@ -13,9 +13,9 @@ from std.primitives.crumb.types import NominalKind, TypeNode
 from std.primitives.crumb.values import Projection
 from std.primitives.hash import sha256
 from std.primitives.text import encode_utf8
-from case_data import CaseOperation, field, fields as fixture_fields, hex_bytes, nodes, text
+from case_data import CaseOperation, HashKind, array, field, fields as fixture_fields, hex_bytes, node, nodes, text
 from corpus import CorpusCase
-from fixture_adapter import logical
+from fixture_adapter import logical, logical_items, metadata
 
 
 pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
@@ -29,12 +29,14 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.TypeSelector => return Ok(Some(selector_twin(item.document)?))
         CaseOperation.ShapeAdmission => return Ok(Some(admission_twin(item.document)?))
         CaseOperation.ValueRelation => return Ok(Some(relation_twin(item.document)?))
+        CaseOperation.HashPreimage => return Ok(Some(hash_twin(item.document)?))
         _ => return Ok(None)
 
 
 pub def twin_decode(operation: CaseOperation, encoded: bytes) -> Result[bytes, str]:
     """Decode one twin result back to its comparison bytes; semantic results without a wire form are copied."""
     match operation:
+        CaseOperation.HashPreimage => return hash_decode(encoded)
         _ => return Ok(encoded)
 
 
@@ -114,3 +116,53 @@ def relation_twin(document: JsonValue) -> Result[bytes, str]:
     if left.digest == right.digest:
         return Ok(b"\x00")
     return Ok(b"\x01")
+
+
+def hash_twin(document: JsonValue) -> Result[bytes, str]:
+    """Derive one captured preimage from the logical input and frame it before its complete digest."""
+    mut budget = twin_budget()?
+    kind = match HashKind.from_value(text(document, "projection")?):
+        Some(selected) => selected
+        None => return Err("unknown hash projection")
+
+    result = projected_hash(kind, field(document, "input")?, budget)?
+    match result.preimage:
+        Some(preimage) =>
+            mut output = EncodingBuffer.create()
+            output
+                .append(frame(preimage, budget).map_err((error) => error.message())?, budget)
+                .map_err((error) => error.message())?
+            output.append(result.digest, budget).map_err((error) => error.message())?
+            return output.finish(budget).map_err((error) => error.message())
+        None => return Err("hash request did not capture its derived preimage")
+
+
+def projected_hash(kind: HashKind, input: JsonValue, mut budget: Budget) -> Result[HashResult, str]:
+    """Dispatch one hash domain over its logical input, never over expected bytes."""
+    match kind:
+        HashKind.Object =>
+            return value_hash(logical(input)?, Projection.Object, budget, true).map_err((e) => e.message())
+        HashKind.Canonical =>
+            return value_hash(logical(input)?, Projection.Canonical, budget, true).map_err((e) => e.message())
+        HashKind.Model => return model_hash(node(field(input, "type")?)?, budget, true).map_err((e) => e.message())
+        HashKind.Description =>
+            return description_hash(metadata(field(input, "description")?)?, budget, true).map_err((e) => e.message())
+        HashKind.Seal =>
+            return seal_hash(logical_items(array(input, "values")?)?, budget, true).map_err((e) => e.message())
+
+
+def hash_decode(encoded: bytes) -> Result[bytes, str]:
+    """Read the preimage frame back, require the trailing digest to match it, and rebuild the comparison bytes."""
+    mut budget = twin_budget()?
+    mut reader = Reader.from_bytes(encoded)
+    preimage = reader.read_frame(budget).map_err((error) => error.message())?
+    mut trailing: list[u8] = []
+    for index in range(reader.position(), len(encoded)):
+        trailing.append(encoded[index])
+    digest: bytes = trailing.clone()
+    if sha256.digest(preimage) != digest:
+        return Err("hash twin digest does not match its preimage")
+    mut output = EncodingBuffer.create()
+    output.append(frame(preimage, budget).map_err((error) => error.message())?, budget).map_err((e) => e.message())?
+    output.append(digest, budget).map_err((error) => error.message())?
+    return output.finish(budget).map_err((error) => error.message())
