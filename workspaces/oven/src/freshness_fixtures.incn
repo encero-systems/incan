@@ -34,6 +34,8 @@ pub model Pass:
     pub key: str
     pub hashed: int
     pub listed: int
+    # The raw identity a replayed check or refusal is retained under.
+    pub replay: str = ""
 
 
 pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
@@ -123,6 +125,6 @@ pub def fixture(scratch: Path) -> Result[Fixture, str]:
 pub def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
     """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
     mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
-    key = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?.digest
+    keyed = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?
     project.save()?
-    return Ok(Pass(key=key, hashed=project.hashed, listed=project.listed))
+    return Ok(Pass(key=keyed.digest, hashed=project.hashed, listed=project.listed, replay=keyed.replayed()))

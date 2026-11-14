@@ -20,6 +20,7 @@ from unit_freshness import (
     toolchain_cache_identities,
     record,
     staleness,
+    replay_key,
     unit_key,
     vocabulary_facts,
 )
@@ -174,12 +175,14 @@ pub def publish_prepared_graph(
         return Ok(false)
     graph = directory.joinpath(f"{artifact_stem(ready.package)}.incngraph")
     stamp = directory.joinpath(".oven-codegraph.sha256")
-    if staleness([graph], stamp, key)? == "":
+    # The graph names source positions and text, so it is current only for the exact authored bytes.
+    exported = replay_key(key)
+    if staleness([graph], stamp, exported)? == "":
         return Ok(true)
-    if unit_key(ready, toolchain)?.digest != key.digest:
+    if unit_key(ready, toolchain)?.replayed() != key.replayed():
         return Err(f"{ready.package}: inputs changed while exporting its graph; retry the build")
     publish_binary(graph, cached.read_bytes().map_err((error) => error.message())?)?
-    record(stamp, key, [graph])?
+    record(stamp, exported, [graph])?
     return Ok(true)
 
 
@@ -233,7 +236,9 @@ def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -
     """
     head = [EXPORT_DOMAIN, compiler_fingerprint(toolchain)?, description_digest(ready)?]
     entry = relative_name(ready.source, project)
-    mut inputs = head + ["entry", entry] + native_identities(linked_natives(ready))? + toolchain_cache_identities(toolchain)?
+    mut inputs = head + ["entry", entry] + native_identities(linked_natives(ready))? + toolchain_cache_identities(
+        toolchain,
+    )?
     sources, portable = content_facts(project)?
     inputs.extend(sources)
     bindings = ready.program_entries + ready.contract_models + ready.c_headers

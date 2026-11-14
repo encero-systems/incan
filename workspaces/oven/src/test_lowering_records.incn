@@ -57,6 +57,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
+    # The comment line moves `main`, so its line tables change and the unit is baked again (BE-34).
+    assert proof_count(commented, "native_bakes")? == 1, comment_diagnostic
     # Documentation never reaches checking: a docstring added to `greeting` checks no body and builds no Body IR.
     write(
         source,
@@ -75,6 +77,18 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     reworded_diagnostic = reworded.to_json().map_err((error) => error.message())?
     assert proof_count(reworded, "body_evaluations")? == 0, reworded_diagnostic
     assert proof_count(reworded, "plan_function_evaluations")? == 0, reworded_diagnostic
+    # A comment edit that moves no code changes no input of the native unit: nothing is evaluated or baked.
+    reworded_source = "def greeting() -> str:\n    \"\"\"Greet the reader.\"\"\"\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n"
+    for still_source in [
+        reworded_source.replace("# inserted above main", "# a longer comment edited above main"),
+        reworded_source.replace("println(greeting())", "println(greeting())  # the greeting"),
+        reworded_source + "\n# the end of the file\n",
+    ]:
+        write(source, still_source)?
+        still = lowering_example_run(binary, source, store, "hullo")?
+        still_diagnostic = still.to_json().map_err((error) => error.message())?
+        assert proof_count(still, "unit_evaluations")? == 0, still_diagnostic
+        assert proof_count(still, "native_bakes")? == 0, still_diagnostic
     stop_example_engine(binary, store)?
     signature = root.joinpath("signature-source")
     signature.mkdir(true, true).map_err((error) => error.message())?
@@ -155,7 +169,8 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     stop_example_engine(binary, cold_store)?
     assert plan == cold_plan, "warm and cold generic plans differ"
     assert executable == cold_executable, "warm and cold generic executables differ"
-    return verify_deleted_module_matches_cold(binary, root.joinpath("deleted-module"))
+    verify_deleted_module_matches_cold(binary, root.joinpath("deleted-module"))?
+    return verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))
 
 
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:
@@ -176,6 +191,24 @@ def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, 
     stop_example_engine(binary, cold_store)?
     assert warm == cold, f"warm refusal differs from cold: {warm} | {cold}"
     assert "INCAN-I0001" in warm and "helpers" in warm, warm
+    return Ok(None)
+
+
+def verify_comment_text_builds_identically(binary: str, root: Path) -> Result[None, str]:
+    """Two cold release builds of sources that differ only in a comment's text produce byte-identical executables."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    mut executables: list[bytes] = []
+    for comment in ["# first comment", "# a second, longer comment"]:
+        write(source, comment + "\ndef main() -> None:\n    println(\"comment\")  " + comment + "\n")?
+        store = root.joinpath(f"store-{len(executables)}")
+        _ = lowering_example_run(binary, source, store, "comment")?
+        executables.append(
+            root.joinpath("target/incan/release/bin/main").read_bytes().map_err((error) => error.message())?,
+        )
+        stop_example_engine(binary, store)?
+        root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    assert executables[0] == executables[1], "release executables differ in comment text alone"
     return Ok(None)
 
 
