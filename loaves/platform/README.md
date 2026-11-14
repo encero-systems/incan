@@ -12,7 +12,7 @@
 | `capacity` | Filesystem capacity through `available_bytes(path: str) -> Result[int, str]`: the bytes an unprivileged writer can still allocate on the filesystem holding a path, in its fundamental block size. |
 | `durability` | Ordinary filesystem synchronization through `sync_ordered(path: str) -> Result[None, str]`, for a regular file or directory. Publishers flush the ordered graph before selecting it and the selection before acknowledging it; ordinary synchronization alone is not a drive-cache flush. |
 | `probes` | Current and lifetime process footprint readings plus the current user's process table and parent identities. On macOS, footprint is the kernel's memory-pressure charge; Linux retains the worker's resident-memory approximation until its separate parity work. |
-| `heap` | `release_free_heap() -> None` asks the system allocator to return its free heap pages and leaves live allocations untouched. On macOS it asks every malloc zone for pressure relief, which a zone may answer by returning nothing; on Linux with glibc it trims the heap. When to release is the caller's policy. |
+| `heap` | `release_free_heap() -> None` asks the system allocator to return its free heap pages and leaves live allocations untouched. On macOS it asks every malloc zone for pressure relief, which a zone may answer by returning nothing, and then has the kernel reclaim at once the freed pages the allocator queued for it; on Linux with glibc it trims the heap. When to release is the caller's policy. |
 
 ## Contract
 

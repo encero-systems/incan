@@ -42,11 +42,52 @@ unsafe extern "C" {
 ///
 /// The system allocator keeps the pages of freed allocations, and the kernel charges them to the process footprint
 /// until the allocator gives them back. macOS asks every malloc zone for pressure relief, which a zone may answer by
-/// returning nothing; Linux with glibc trims the heap. When to release is the caller's policy.
+/// returning nothing, and then has the kernel reclaim the pages the allocator queued for it; Linux with glibc trims
+/// the heap. When to release is the caller's policy.
 #[cfg(target_os = "macos")]
 pub fn release_free_heap() {
     // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no live memory is touched.
     unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    reclaim_queued_pages();
+}
+
+/// The kernel routine that reclaims a task's deferred-reclamation buffer: the task, the most entries to reclaim, and
+/// outputs for the bytes reclaimed and the kernel's next reclaim deadline.
+#[cfg(target_os = "macos")]
+type ReclaimQueuedPages = unsafe extern "C" fn(libc::mach_port_t, u32, *mut u64, *mut u64) -> libc::kern_return_t;
+
+/// Have the kernel reclaim, now, every page the allocator has freed and queued for it.
+///
+/// macOS's default allocator does not unmap or discard the pages of a freed block itself. It queues them in a buffer
+/// it shares with the kernel, and the kernel reclaims them later, on its own schedule; until then they stay charged to
+/// the process footprint, and pressure relief does not touch them. The kernel's flush routine for that buffer reclaims
+/// the queued pages at once. System headers do not declare it, so it is looked up by name, and a system without it
+/// keeps the allocator's own schedule.
+#[cfg(target_os = "macos")]
+fn reclaim_queued_pages() {
+    static FLUSH: OnceLock<Option<ReclaimQueuedPages>> = OnceLock::new();
+    let flush = FLUSH.get_or_init(|| {
+        // SAFETY: the name is a NUL-terminated literal, and the default handle searches the loaded system libraries.
+        let symbol = unsafe {
+            libc::dlsym(
+                libc::RTLD_DEFAULT,
+                c"mach_vm_deferred_reclamation_buffer_flush".as_ptr(),
+            )
+        };
+        if symbol.is_null() {
+            return None;
+        }
+        // SAFETY: the symbol is the Mach VM routine of this name, whose C signature is `ReclaimQueuedPages`.
+        Some(unsafe { std::mem::transmute::<*mut libc::c_void, ReclaimQueuedPages>(symbol) })
+    });
+    if let Some(flush) = flush {
+        let mut reclaimed = 0_u64;
+        let mut deadline = 0_u64;
+        // SAFETY: the task is this process and both outputs are exclusive. The kernel reclaims only entries the
+        // allocator queued as free, under the buffer's own protocol, as it does on its schedule; a process without a
+        // buffer gets an error status and nothing changes.
+        unsafe { flush(libc::mach_task_self(), u32::MAX, &raw mut reclaimed, &raw mut deadline) };
+    }
 }
 
 /// Ask the system allocator to return its free heap pages, leaving live allocations untouched.
