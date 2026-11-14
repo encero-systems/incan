@@ -1,0 +1,85 @@
+"""The release stamps its signer into the shipped `incan` and carries the signer file into the pack (DD-0016)."""
+
+from std.encoding.base64 import b64encode
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root
+from release_signer import CARRIED_TRUST, RELEASE_SIGNER, STAMP_MODULE, release_signer, stamp_release_signer
+
+const WORKFLOW: str = "https://github.com/encero-systems/incan/.github/workflows/release.yml"
+const ISSUER: str = "https://token.actions.githubusercontent.com"
+
+
+def checkout(root: Path, signer: str) -> Result[tuple[Path, Path], str]:
+    """A source checkout with the committed stamp module and one signer file, and an empty candidate toolchain."""
+    source = root.joinpath("source")
+    toolchain = root.joinpath("toolchain")
+    for directory in [source.joinpath("scripts"), source.joinpath(STAMP_MODULE).parent(), toolchain]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    committed = repository_root()?.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )?
+    put(source.joinpath(STAMP_MODULE), committed)?
+    put(source.joinpath(RELEASE_SIGNER), signer)?
+    return Ok((source, toolchain))
+
+
+def put(path: Path, content: str) -> Result[None, str]:
+    """Write one text file."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def signer_text(root: str) -> str:
+    """A signer file for the release workflow with one trusted-root slot value."""
+    signer = "{\"workflow\":\"" + WORKFLOW + "\",\"issuer\":\"" + ISSUER + "\"}"
+    return "{\"signer\":" + signer + ",\"trusted_root\":" + root + "}"
+
+
+def test_the_committed_signer_names_the_release_workflow_and_stamps_nothing_yet() -> Result[None, str]:
+    """
+    The repository's signer file names the workflow and keeps the trusted-root slot, which is empty until filled.
+
+    1. The committed file reads, and while its slot is empty the release has no signer.
+    2. Such a release leaves the stamp module and the candidate toolchain as they were.
+    """
+    # 1. The slot is a maintainer's to fill.
+    assert release_signer(repository_root()?)?.is_none()
+    # 2. Nothing is stamped and nothing is shipped.
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    source, toolchain = checkout(scratch.path(), signer_text("null"))?
+    before = source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert not stamp_release_signer(source, toolchain)?
+    assert source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())? == before
+    assert not toolchain.joinpath(CARRIED_TRUST).is_file()
+    return Ok(None)
+
+
+def test_a_release_with_a_signer_stamps_the_program_and_carries_the_file_into_the_pack() -> Result[None, str]:
+    """
+    1. The stamp module the shipped `incan` is built from carries the signer file, whole, in base64.
+    2. The candidate toolchain carries the same file, which `toolchain pack` ships.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    signer = signer_text("{\"mediaType\":\"fixture\"}")
+    source, toolchain = checkout(scratch.path(), signer)?
+    assert stamp_release_signer(source, toolchain)?
+    # 1. The program's signer is the file, byte for byte.
+    module = source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())?
+    stamp = "pub const RELEASE_SIGNER: str = \"" + b64encode(signer.encode("utf-8")) + "\"\n"
+    assert module.endswith(stamp), module
+    assert module.startswith("\"\"\""), module
+    # 2. The archive ships what the program verifies with.
+    shipped = toolchain.joinpath(CARRIED_TRUST).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert shipped == signer
+    return Ok(None)
+
+
+def test_a_signer_file_without_its_workflow_or_slot_stops_the_release() -> Result[None, str]:
+    """A file that names no workflow, no issuer or no trusted-root slot is refused, never read as no signer."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    damaged = "{\"signer\":{\"workflow\":\"\",\"issuer\":\"x\"},\"trusted_root\":null}"
+    source, toolchain = checkout(scratch.path(), damaged)?
+    assert stamp_release_signer(source, toolchain).is_err()
+    put(source.joinpath(RELEASE_SIGNER), "{\"signer\":{\"workflow\":\"w\",\"issuer\":\"x\"}}")?
+    assert stamp_release_signer(source, toolchain).is_err()
+    return Ok(None)
