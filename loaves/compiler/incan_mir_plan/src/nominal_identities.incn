@@ -61,7 +61,11 @@ pub model NominalRemap:
         if self.capture:
             for ordinal in range(len(self.references)):
                 if self.references[ordinal].kind == kind and self.references[ordinal].index == index:
-                    if self.references[ordinal].name != name:
+                    known = self.references[ordinal].name
+                    if name != "" and known == "":
+                        # A construction or clone names no native type; a later type supplies the name.
+                        self.references[ordinal] = NominalReference(kind=kind, index=index, name=name)
+                    elif name != "" and known != name:
                         return Err("plan product names one declaration by two native names")
                     return Ok(NominalReference(kind=kind, index=ordinal, name=""))
             self.references.append(NominalReference(kind=kind, index=index, name=name))
@@ -334,13 +338,13 @@ pub def describe_nominals(references: &list[NominalReference], unit: &UnitNomina
         if reference.kind == NominalKind.Model:
             if reference.index < 0 or reference.index >= len(unit.models):
                 return Err("plan product names a model the unit does not describe")
-            if unit.model_names[reference.index] != reference.name:
+            if reference.name != "" and unit.model_names[reference.index] != reference.name:
                 return Err("plan product names a model by another native name")
             nominals.append(unit.models[reference.index])
         else:
             if reference.index < 0 or reference.index >= len(unit.enums):
                 return Err("plan product names an enum the unit does not describe")
-            if unit.enum_names[reference.index] != reference.name:
+            if reference.name != "" and unit.enum_names[reference.index] != reference.name:
                 return Err("plan product names an enum by another native name")
             nominals.append(unit.enums[reference.index])
     for nominal in nominals:

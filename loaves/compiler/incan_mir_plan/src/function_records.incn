@@ -3,122 +3,58 @@ Round-trip complete native functions through the plan owner's explicitly bounded
 
 A product stores every plan type through the layout type codec, with each model and enum position replaced by a
 product-local ordinal. The product names each ordinal's declaration by stable identity, so it never retains a
-position in the unit's tables.
+position in the unit's tables. Places, operands, operations and statements cross `body_records`.
 """
 
 from rust::serde import Serialize, Deserialize
 from rust::serde_json import to_string, from_str, Error as JsonError
 from _plan import ExternalFunction, Function
-from _types import PlanType, SourceSpan, source_span
-from layout_type_records import StoredLayoutPlanType, retain_plan_type, restore_plan_type
+from _types import PlanType, SourceSpan
 from nominal_identities import (
+    NominalKind,
     NominalReference,
     NominalRemap,
     ProductNominal,
     binding_remap,
     capture_remap,
     preserving_remap,
-    remap_type,
+)
+from body_records import (
+    StoredOperand,
+    StoredPlace,
+    StoredSpan,
+    StoredStatement,
+    StoredType,
+    restore_binary,
+    restore_operand,
+    restore_operands,
+    restore_place,
+    restore_span,
+    restore_statement,
+    restore_type,
+    restore_types,
+    store_binary,
+    store_operand,
+    store_operands,
+    store_place,
+    store_span,
+    store_statement,
+    store_type,
+    store_types,
 )
 from _body import (
     BasicBlock,
-    BinaryOp,
     Callee,
     CalleeKind,
-    Constant,
     Local,
     Operand,
-    OperandKind,
     Parameter,
     Place,
-    Projection,
-    Rvalue,
-    RvalueKind,
     Statement,
-    StatementKind,
     Terminator,
     TerminatorKind,
-    UnaryOp,
     Unwind,
 )
-
-
-@derive(Serialize, Deserialize)
-model StoredSpan:
-    """Portable source provenance without serializing the shared file handle's allocation."""
-
-    file: str
-    line: int
-    column: int
-
-
-@derive(Serialize, Deserialize)
-model StoredPlace:
-    """One scalar local and its exact whole-value or checked-arithmetic projection."""
-
-    local: int
-    projection: int
-    span: StoredSpan
-
-
-@derive(Serialize, Deserialize)
-enum StoredConstant:
-    """The exact primitive and borrowed static text literals admitted by this codec."""
-
-    Int(int)
-    Float(float)
-    Bool(bool)
-    Unit
-    Text(str)
-
-
-@derive(Serialize, Deserialize)
-enum StoredRead:
-    """Retain explicit ownership intent rather than infer it when restoring an operand."""
-
-    Copy(StoredPlace)
-    Move(StoredPlace)
-    Literal(StoredConstant)
-
-
-@derive(Serialize, Deserialize)
-model StoredOperand:
-    """One native operand and its original diagnostic location."""
-
-    kind: StoredRead
-    span: StoredSpan
-
-
-@derive(Serialize, Deserialize)
-enum StoredRvalue:
-    """Self-contained scalar and formatting-frame operations; any operation with external context refuses capture."""
-
-    Use(StoredOperand)
-    Binary(int, StoredOperand, StoredOperand)
-    Unary(int, StoredOperand)
-    IntToFloat(StoredOperand)
-    FloatToInt(StoredOperand)
-    BoolToInt(StoredOperand)
-    Array(list[StoredOperand])
-    Borrow(StoredPlace)
-    UnsizeSlice(StoredOperand)
-
-
-@derive(Serialize, Deserialize)
-enum StoredStatementKind:
-    """Exact scalar assignment and storage-lifetime operations."""
-
-    Assign(StoredPlace, StoredRvalue, StoredSpan)
-    Live(int)
-    Dead(int)
-
-
-@derive(Serialize, Deserialize)
-model StoredStatement:
-    """Keep the statement's location independently of its value and destination."""
-
-    kind: StoredStatementKind
-    span: StoredSpan
 
 
 @derive(Serialize, Deserialize)
@@ -151,32 +87,8 @@ enum StoredTarget:
     Planned(str)
     External(str)
     Instantiated(str, list[StoredType])
-
-
-@derive(Serialize, Deserialize)
-enum StoredType:
-    """
-    Incan-facing scalar and text shapes; native carrier spelling stays behind this adapter.
-
-    Any other carrier is retained through the layout type codec, with product-local model and enum ordinals.
-    """
-
-    Int
-    Float
-    Bool
-    Unit
-    CheckedInt
-    Never
-    Text
-    LiteralTextView
-    TextView
-    TextValues(int)
-    LiteralTextValues(int)
-    TextValuesView(int)
-    LiteralTextValuesView(int)
-    TextSequence
-    LiteralTextSequence
-    Layout(StoredLayoutPlanType)
+    CloneModel(int)
+    CloneEnum(int)
 
 
 @derive(Serialize, Deserialize)
@@ -288,7 +200,7 @@ pub def encode_product(
 pub def product_identities(text: str) -> Result[list[ProductNominal], str]:
     """Read the declarations a product names, so its consumer can resolve each one in the current unit."""
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 4:
+    if stored.schema != 5:
         return Err("unknown native product schema")
     return Ok(stored.nominals)
 
@@ -306,7 +218,7 @@ pub def decode_product(
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 4:
+    if stored.schema != 5:
         return Err("unknown native product schema")
     # 2. The consumer resolves declarations; this codec only checks that every ordinal has a position.
     if len(references) != len(stored.nominals):
@@ -374,7 +286,7 @@ def stored_product(
     for value in runtime:
         externals.append(store_external(value, remap)?)
     nominals: list[ProductNominal] = []
-    return Ok(StoredProduct(schema=4, function=encoded, runtime=externals, nominals=nominals))
+    return Ok(StoredProduct(schema=5, function=encoded, runtime=externals, nominals=nominals))
 
 
 def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str, str]:
@@ -400,7 +312,7 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
     for value in function.blocks:
         blocks.append(store_block(value, remap)?)
     stored = StoredFunction(
-        schema=4,
+        schema=5,
         name=function.name,
         parameters=parameters,
         result=store_type(function.return_type, remap)?,
@@ -422,7 +334,7 @@ def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]
     """
     # 1. Malformed or unfamiliar records are cache misses at the caller.
     stored = decode_record(text).map_err((error) => str(error))?
-    if stored.schema != 4:
+    if stored.schema != 5:
         return Err("unknown scalar function product schema")
     # 2. Native attributes, coroutine fields and generic loans were refused by the producer.
     mut parameters: list[Parameter] = []
@@ -557,259 +469,11 @@ def restore_binding(identity: str) -> Result[str, str]:
     return Err("unknown Incan scalar binding identity")
 
 
-def store_span(span: SourceSpan) -> StoredSpan:
-    """Retain file text and both one-based coordinates without exposing an allocation identity."""
-    return StoredSpan(file=str(span.file), line=span.line, column=span.column)
-
-
-def restore_span(span: StoredSpan) -> SourceSpan:
-    """Use the plan owner's shared-file constructor for restored diagnostic locations."""
-    return source_span(file=span.file, line=span.line, column=span.column)
-
-
 def store_slot(ty: PlanType, span: SourceSpan, mut remap: NominalRemap) -> Result[StoredSlot, str]:
     """Retain one local or parameter layout type with its independent diagnostic location."""
     return Ok(StoredSlot(ty=store_type(ty, remap)?, span=store_span(span)))
 
 
-def store_type(ty: PlanType, mut remap: NominalRemap) -> Result[StoredType, str]:
-    """
-    Retain a complete layout type.
-
-    Scalar and text carriers keep their Incan-facing spelling; every other carrier crosses the layout type codec with
-    each model and enum position translated to its product-local ordinal.
-    """
-    match ty:
-        PlanType.Int => return Ok(StoredType.Int)
-        PlanType.Float => return Ok(StoredType.Float)
-        PlanType.Bool => return Ok(StoredType.Bool)
-        PlanType.Unit => return Ok(StoredType.Unit)
-        PlanType.CheckedInt => return Ok(StoredType.CheckedInt)
-        PlanType.Never => return Ok(StoredType.Never)
-        PlanType.String => return Ok(StoredType.Text)
-        PlanType.StrRef => return Ok(StoredType.LiteralTextView)
-        PlanType.StringRef => return Ok(StoredType.TextView)
-        PlanType.StringArray(length) => return Ok(StoredType.TextValues(length))
-        PlanType.StrArray(length) => return Ok(StoredType.LiteralTextValues(length))
-        PlanType.StringArrayRef(length) => return Ok(StoredType.TextValuesView(length))
-        PlanType.StrArrayRef(length) => return Ok(StoredType.LiteralTextValuesView(length))
-        PlanType.StringSlice => return Ok(StoredType.TextSequence)
-        PlanType.StrSlice => return Ok(StoredType.LiteralTextSequence)
-        _ => return Ok(StoredType.Layout(retain_plan_type(remap_type(ty, remap)?)?))
-
-
-def restore_type(stored: StoredType, mut remap: NominalRemap) -> Result[PlanType, str]:
-    """Restore the exact carrier, binding each product-local ordinal to its resolved unit position."""
-    match stored:
-        StoredType.Int => return Ok(PlanType.Int)
-        StoredType.Float => return Ok(PlanType.Float)
-        StoredType.Bool => return Ok(PlanType.Bool)
-        StoredType.Unit => return Ok(PlanType.Unit)
-        StoredType.CheckedInt => return Ok(PlanType.CheckedInt)
-        StoredType.Never => return Ok(PlanType.Never)
-        StoredType.Text => return Ok(PlanType.String)
-        StoredType.LiteralTextView => return Ok(PlanType.StrRef)
-        StoredType.TextView => return Ok(PlanType.StringRef)
-        StoredType.TextValues(length) => return Ok(PlanType.StringArray(length))
-        StoredType.LiteralTextValues(length) => return Ok(PlanType.StrArray(length))
-        StoredType.TextValuesView(length) => return Ok(PlanType.StringArrayRef(length))
-        StoredType.LiteralTextValuesView(length) => return Ok(PlanType.StrArrayRef(length))
-        StoredType.TextSequence => return Ok(PlanType.StringSlice)
-        StoredType.LiteralTextSequence => return Ok(PlanType.StrSlice)
-        StoredType.Layout(layout) => return remap_type(restore_plan_type(layout)?, remap)
-
-
-def store_types(types: list[PlanType], mut remap: NominalRemap) -> Result[list[StoredType], str]:
-    """Retain an ordered type list through one translation."""
-    mut stored: list[StoredType] = []
-    for ty in types:
-        stored.append(store_type(ty, remap)?)
-    return Ok(stored)
-
-
-def restore_types(stored: list[StoredType], mut remap: NominalRemap) -> Result[list[PlanType], str]:
-    """Restore an ordered type list through one translation."""
-    mut types: list[PlanType] = []
-    for value in stored:
-        types.append(restore_type(value, remap)?)
-    return Ok(types)
-
-
-def store_place(place: Place) -> Result[StoredPlace, str]:
-    """Preserve whole-local and checked-arithmetic projections; owner-dependent projections refuse."""
-    mut projection = -1
-    match place.projection:
-        Projection.Whole => projection = 0
-        Projection.Value => projection = 1
-        Projection.Overflow => projection = 2
-        _ => return Err("scalar function products refuse this native projection")
-    return Ok(StoredPlace(local=place.local, projection=projection, span=store_span(place.span)))
-
-
-def restore_place(place: StoredPlace) -> Result[Place, str]:
-    """Restore the exact native scalar projection rather than infer it from a carrier."""
-    mut projection = Projection.Whole
-    match place.projection:
-        0 => pass
-        1 => projection = Projection.Value
-        2 => projection = Projection.Overflow
-        _ => return Err("unknown scalar projection tag")
-    return Ok(Place(local=place.local, projection=projection, span=restore_span(place.span)))
-
-
-def store_constant(value: Constant) -> Result[StoredConstant, str]:
-    """Preserve ordinary scalar constants without narrowing integer digits or floating-point values."""
-    match value:
-        Constant.Int(value) => return Ok(StoredConstant.Int(value))
-        Constant.Float(value) => return Ok(StoredConstant.Float(value))
-        Constant.Bool(value) => return Ok(StoredConstant.Bool(value))
-        Constant.Unit => return Ok(StoredConstant.Unit)
-        Constant.Text(value) => return Ok(StoredConstant.Text(value))
-        _ => return Err("scalar function products refuse this native constant")
-
-
-def restore_constant(value: StoredConstant) -> Constant:
-    """Recover the producer's exact scalar constant variant."""
-    match value:
-        StoredConstant.Int(value) => return Constant.Int(value)
-        StoredConstant.Float(value) => return Constant.Float(value)
-        StoredConstant.Bool(value) => return Constant.Bool(value)
-        StoredConstant.Unit => return Constant.Unit
-        StoredConstant.Text(value) => return Constant.Text(value)
-
-
-def store_operand(operand: Operand) -> Result[StoredOperand, str]:
-    """Retain the operand's ownership operation independently of its source position."""
-    match operand.kind:
-        OperandKind.Copy(place) =>
-            return Ok(StoredOperand(kind=StoredRead.Copy(store_place(place)?), span=store_span(operand.span)))
-        OperandKind.Move(place) =>
-            return Ok(StoredOperand(kind=StoredRead.Move(store_place(place)?), span=store_span(operand.span)))
-        OperandKind.Literal(value) =>
-            return Ok(StoredOperand(kind=StoredRead.Literal(store_constant(value)?), span=store_span(operand.span)))
-
-
-def restore_operand(operand: StoredOperand) -> Result[Operand, str]:
-    """Restore explicit copy, move and literal reads without recomputing ownership."""
-    span = restore_span(operand.span)
-    match operand.kind:
-        StoredRead.Copy(place) => return Ok(Operand(kind=OperandKind.Copy(restore_place(place)?), span=span))
-        StoredRead.Move(place) => return Ok(Operand(kind=OperandKind.Move(restore_place(place)?), span=span))
-        StoredRead.Literal(value) => return Ok(Operand(kind=OperandKind.Literal(restore_constant(value)), span=span))
-
-
-def store_binary(operation: BinaryOp) -> int:
-    """Encode the native operation by an explicit schema tag, independently of its display spelling."""
-    match operation:
-        BinaryOp.Add => return 0
-        BinaryOp.Subtract => return 1
-        BinaryOp.Multiply => return 2
-        BinaryOp.Divide => return 3
-        BinaryOp.Equal => return 4
-        BinaryOp.NotEqual => return 5
-        BinaryOp.Less => return 6
-        BinaryOp.LessEqual => return 7
-        BinaryOp.Greater => return 8
-        BinaryOp.GreaterEqual => return 9
-        BinaryOp.BitAnd => return 10
-        BinaryOp.BitOr => return 11
-        BinaryOp.BitXor => return 12
-        BinaryOp.ShiftLeft => return 13
-        BinaryOp.ShiftRight => return 14
-
-
-def restore_binary(tag: int) -> Result[BinaryOp, str]:
-    """Refuse unknown operation tags rather than map them to an approximate arithmetic operation."""
-    match tag:
-        0 => return Ok(BinaryOp.Add)
-        1 => return Ok(BinaryOp.Subtract)
-        2 => return Ok(BinaryOp.Multiply)
-        3 => return Ok(BinaryOp.Divide)
-        4 => return Ok(BinaryOp.Equal)
-        5 => return Ok(BinaryOp.NotEqual)
-        6 => return Ok(BinaryOp.Less)
-        7 => return Ok(BinaryOp.LessEqual)
-        8 => return Ok(BinaryOp.Greater)
-        9 => return Ok(BinaryOp.GreaterEqual)
-        10 => return Ok(BinaryOp.BitAnd)
-        11 => return Ok(BinaryOp.BitOr)
-        12 => return Ok(BinaryOp.BitXor)
-        13 => return Ok(BinaryOp.ShiftLeft)
-        14 => return Ok(BinaryOp.ShiftRight)
-        _ => return Err("unknown scalar binary operation tag")
-
-
-def store_unary(operation: UnaryOp) -> int:
-    """Encode each ordinary native unary operation explicitly."""
-    match operation:
-        UnaryOp.Not => return 0
-        UnaryOp.Negate => return 1
-        UnaryOp.Invert => return 2
-
-
-def restore_unary(tag: int) -> Result[UnaryOp, str]:
-    """Decode only the unary operations defined by the private schema."""
-    match tag:
-        0 => return Ok(UnaryOp.Not)
-        1 => return Ok(UnaryOp.Negate)
-        2 => return Ok(UnaryOp.Invert)
-        _ => return Err("unknown scalar unary operation tag")
-
-
-def store_rvalue(value: RvalueKind) -> Result[StoredRvalue, str]:
-    """Capture only self-contained operations whose operands and formatting storage are complete in this record."""
-    match value:
-        RvalueKind.Use(operand) => return Ok(StoredRvalue.Use(store_operand(operand)?))
-        RvalueKind.Binary(op, left, right) =>
-            return Ok(StoredRvalue.Binary(store_binary(op), store_operand(left)?, store_operand(right)?))
-        RvalueKind.Unary(op, operand) => return Ok(StoredRvalue.Unary(store_unary(op), store_operand(operand)?))
-        RvalueKind.IntToFloat(operand) => return Ok(StoredRvalue.IntToFloat(store_operand(operand)?))
-        RvalueKind.FloatToInt(operand) => return Ok(StoredRvalue.FloatToInt(store_operand(operand)?))
-        RvalueKind.BoolToInt(operand) => return Ok(StoredRvalue.BoolToInt(store_operand(operand)?))
-        RvalueKind.Array(operands) => return Ok(StoredRvalue.Array([store_operand(value)? for value in operands]))
-        RvalueKind.Borrow(place) => return Ok(StoredRvalue.Borrow(store_place(place)?))
-        RvalueKind.UnsizeSlice(operand) => return Ok(StoredRvalue.UnsizeSlice(store_operand(operand)?))
-        _ => return Err("scalar function products refuse this native operation")
-
-
-def restore_rvalue(value: StoredRvalue) -> Result[RvalueKind, str]:
-    """Recover the exact native operation; the checker and lowering's decisions are never repeated."""
-    match value:
-        StoredRvalue.Use(operand) => return Ok(RvalueKind.Use(restore_operand(operand)?))
-        StoredRvalue.Binary(op, left, right) =>
-            return Ok(RvalueKind.Binary(restore_binary(op)?, restore_operand(left)?, restore_operand(right)?))
-        StoredRvalue.Unary(op, operand) => return Ok(RvalueKind.Unary(restore_unary(op)?, restore_operand(operand)?))
-        StoredRvalue.IntToFloat(operand) => return Ok(RvalueKind.IntToFloat(restore_operand(operand)?))
-        StoredRvalue.FloatToInt(operand) => return Ok(RvalueKind.FloatToInt(restore_operand(operand)?))
-        StoredRvalue.BoolToInt(operand) => return Ok(RvalueKind.BoolToInt(restore_operand(operand)?))
-        StoredRvalue.Array(operands) => return Ok(RvalueKind.Array([restore_operand(value)? for value in operands]))
-        StoredRvalue.Borrow(place) => return Ok(RvalueKind.Borrow(restore_place(place)?))
-        StoredRvalue.UnsizeSlice(operand) => return Ok(RvalueKind.UnsizeSlice(restore_operand(operand)?))
-
-
-def store_statement(statement: Statement) -> Result[StoredStatement, str]:
-    """Retain scalar assignments and explicit storage boundaries without dropping nested source spans."""
-    span = store_span(statement.span)
-    match statement.kind:
-        StatementKind.Assign(place, value) =>
-            kind = StoredStatementKind.Assign(store_place(place)?, store_rvalue(value.kind)?, store_span(value.span))
-            return Ok(StoredStatement(kind=kind, span=span))
-        StatementKind.StorageLive(local) => return Ok(StoredStatement(kind=StoredStatementKind.Live(local), span=span))
-        StatementKind.StorageDead(local) => return Ok(StoredStatement(kind=StoredStatementKind.Dead(local), span=span))
-
-
-def restore_statement(statement: StoredStatement) -> Result[Statement, str]:
-    """Restore every scalar statement field, including the value's independent source location."""
-    span = restore_span(statement.span)
-    match statement.kind:
-        StoredStatementKind.Assign(place, value, value_span) =>
-            kind = StatementKind.Assign(
-                restore_place(place)?,
-                Rvalue(kind=restore_rvalue(value)?, span=restore_span(value_span)),
-            )
-            return Ok(Statement(kind=kind, span=span))
-        StoredStatementKind.Live(local) => return Ok(Statement(kind=StatementKind.StorageLive(local), span=span))
-        StoredStatementKind.Dead(local) => return Ok(Statement(kind=StatementKind.StorageDead(local), span=span))
 
 
 def store_unwind(unwind: Unwind) -> StoredUnwind:
@@ -829,21 +493,22 @@ def restore_unwind(unwind: StoredUnwind) -> Unwind:
 
 
 def store_exit(exit: TerminatorKind, mut remap: NominalRemap) -> Result[StoredExit, str]:
-    """Retain scalar/text branches, direct calls, explicit drops and overflow checks."""
+    """Retain branches, direct calls, explicit drops and overflow checks."""
     match exit:
         TerminatorKind.Goto(block) => return Ok(StoredExit.Goto(block))
-        TerminatorKind.SwitchBool(operand, no, yes) => return Ok(StoredExit.Switch(store_operand(operand)?, no, yes))
+        TerminatorKind.SwitchBool(operand, no, yes) =>
+            return Ok(StoredExit.Switch(store_operand(operand, remap)?, no, yes))
         TerminatorKind.Call(callee, args, destination, target, unwind) =>
             return store_call(callee, args, destination, target, unwind, remap)
         TerminatorKind.Drop(place, target, unwind) =>
-            return Ok(StoredExit.Drop(store_place(place)?, target, store_unwind(unwind)))
+            return Ok(StoredExit.Drop(store_place(place, remap)?, target, store_unwind(unwind)))
         TerminatorKind.AssertOverflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 StoredExit.Overflow(
-                    store_operand(flag)?,
+                    store_operand(flag, remap)?,
                     store_binary(op),
-                    store_operand(left)?,
-                    store_operand(right)?,
+                    store_operand(left, remap)?,
+                    store_operand(right, remap)?,
                     target,
                     store_unwind(unwind),
                 ),
@@ -855,21 +520,22 @@ def store_exit(exit: TerminatorKind, mut remap: NominalRemap) -> Result[StoredEx
 
 
 def restore_exit(exit: StoredExit, mut remap: NominalRemap) -> Result[TerminatorKind, str]:
-    """Restore the producer's exact scalar branch and overflow control flow."""
+    """Restore the producer's exact branch, call, drop and overflow control flow."""
     match exit:
         StoredExit.Goto(block) => return Ok(TerminatorKind.Goto(block))
-        StoredExit.Switch(operand, no, yes) => return Ok(TerminatorKind.SwitchBool(restore_operand(operand)?, no, yes))
+        StoredExit.Switch(operand, no, yes) =>
+            return Ok(TerminatorKind.SwitchBool(restore_operand(operand, remap)?, no, yes))
         StoredExit.Call(callee, span, args, destination, target, unwind) =>
             return restore_call(callee, span, args, destination, target, unwind, remap)
         StoredExit.Drop(place, target, unwind) =>
-            return Ok(TerminatorKind.Drop(restore_place(place)?, target, restore_unwind(unwind)))
+            return Ok(TerminatorKind.Drop(restore_place(place, remap)?, target, restore_unwind(unwind)))
         StoredExit.Overflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 TerminatorKind.AssertOverflow(
-                    restore_operand(flag)?,
+                    restore_operand(flag, remap)?,
                     restore_binary(op)?,
-                    restore_operand(left)?,
-                    restore_operand(right)?,
+                    restore_operand(left, remap)?,
+                    restore_operand(right, remap)?,
                     target,
                     restore_unwind(unwind),
                 ),
@@ -892,8 +558,8 @@ def store_call(
         StoredExit.Call(
             store_target(callee.kind, remap)?,
             store_span(callee.span),
-            [store_operand(value)? for value in arguments],
-            store_place(destination)?,
+            store_operands(arguments, remap)?,
+            store_place(destination, remap)?,
             target,
             store_unwind(unwind),
         ),
@@ -913,8 +579,8 @@ def restore_call(
     return Ok(
         TerminatorKind.Call(
             Callee(kind=restore_target(callee, remap)?, span=restore_span(span)),
-            [restore_operand(value)? for value in arguments],
-            restore_place(destination)?,
+            restore_operands(arguments, remap)?,
+            restore_place(destination, remap)?,
             target,
             restore_unwind(unwind),
         ),
@@ -922,12 +588,14 @@ def restore_call(
 
 
 def store_target(target: CalleeKind, mut remap: NominalRemap) -> Result[StoredTarget, str]:
-    """Retain direct dependency references and their already checked explicit type instantiations."""
+    """Retain direct references, checked instantiations and nominal clones by their owner's product-local ordinal."""
     match target:
         CalleeKind.Planned(name) => return Ok(StoredTarget.Planned(name))
         CalleeKind.External(path) => return Ok(StoredTarget.External(store_binding(path)?))
         CalleeKind.Instantiated(path, arguments) =>
             return Ok(StoredTarget.Instantiated(store_binding(path)?, store_types(arguments, remap)?))
+        CalleeKind.CloneModel(owner, name) => return Ok(StoredTarget.CloneModel(remap.slot(NominalKind.Model, owner, name)?.index))
+        CalleeKind.CloneEnum(owner, name) => return Ok(StoredTarget.CloneEnum(remap.slot(NominalKind.Enum, owner, name)?.index))
         _ => return Err("native products refuse dynamic or owner-dependent callees")
 
 
@@ -938,13 +606,22 @@ def restore_target(target: StoredTarget, mut remap: NominalRemap) -> Result[Call
         StoredTarget.External(identity) => return Ok(CalleeKind.External(restore_binding(identity)?))
         StoredTarget.Instantiated(identity, arguments) =>
             return Ok(CalleeKind.Instantiated(restore_binding(identity)?, restore_types(arguments, remap)?))
+        StoredTarget.CloneModel(ordinal) =>
+            slot = remap.slot(NominalKind.Model, ordinal, "")?
+            return Ok(CalleeKind.CloneModel(slot.index, slot.name))
+        StoredTarget.CloneEnum(ordinal) =>
+            slot = remap.slot(NominalKind.Enum, ordinal, "")?
+            return Ok(CalleeKind.CloneEnum(slot.index, slot.name))
 
 
 def store_block(block: BasicBlock, mut remap: NominalRemap) -> Result[StoredBlock, str]:
     """Retain the complete block, including its terminator and both block and exit locations."""
+    mut statements: list[StoredStatement] = []
+    for value in block.statements:
+        statements.append(store_statement(value, remap)?)
     return Ok(
         StoredBlock(
-            statements=[store_statement(value)? for value in block.statements],
+            statements=statements,
             exit=store_exit(block.terminator.kind, remap)?,
             exit_span=store_span(block.terminator.span),
             cleanup=block.cleanup,
@@ -955,9 +632,12 @@ def store_block(block: BasicBlock, mut remap: NominalRemap) -> Result[StoredBloc
 
 def restore_block(block: StoredBlock, mut remap: NominalRemap) -> Result[BasicBlock, str]:
     """Restore every block field without synthesizing control flow or source provenance."""
+    mut statements: list[Statement] = []
+    for value in block.statements:
+        statements.append(restore_statement(value, remap)?)
     return Ok(
         BasicBlock(
-            statements=[restore_statement(value)? for value in block.statements],
+            statements=statements,
             terminator=Terminator(kind=restore_exit(block.exit, remap)?, span=restore_span(block.exit_span)),
             cleanup=block.cleanup,
             span=restore_span(block.span),
