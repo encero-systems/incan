@@ -111,3 +111,19 @@ fn equal_manifests_give_equal_records_and_digests() -> Result<(), String> {
     );
     Ok(())
 }
+
+const PRICES: &str = "pub def price() -> int:\n    \"\"\"The list price.\"\"\"\n    return 1999\n\npub def discount() -> int:\n    return 10\n";
+// A longer docstring moves every later declaration's source span.
+const PRICES_LONGER_DOCUMENTATION: &str = "pub def price() -> int:\n    \"\"\"The list price before any discount.\"\"\"\n    return 1999\n\npub def discount() -> int:\n    return 10\n";
+
+#[test]
+fn a_longer_docstring_keeps_the_semantic_facts_digest() -> Result<(), String> {
+    let before = digests(PRICES, "0.1.0", FIRST_FILE)?;
+    let after = digests(PRICES_LONGER_DOCUMENTATION, "0.1.0", SECOND_FILE)?;
+    assert_eq!(
+        before.semantic_facts, after.semantic_facts,
+        "source positions are not compile facts"
+    );
+    assert_ne!(before.record_content, after.record_content);
+    Ok(())
+}
