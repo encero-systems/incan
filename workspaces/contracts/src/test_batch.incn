@@ -209,3 +209,53 @@ def test_a_group_refused_without_naming_a_case_splits_into_a_job_s_worth_of_part
     assert stdout_of(batch.outcomes, "e") == "own command\n"
     assert stdout_of(batch.outcomes, "f") == "own command\n"
     assert stdout_of(batch.outcomes, "h") == "case 1\n"
+
+
+def root_import_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records the size of each group it builds. Like Oven, a build refuses a module case whose nested
+    file imports a module only the case's own source root defines, naming that file; any other build succeeds quietly.
+    A case's own command prints `own command`.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    log = scratch.joinpath("commands").0
+    mut script = "#!/bin/sh\nif [ \"$1\" != build ]; then\n  echo 'own command'\n  exit 0\nfi\n"
+    script += f"dir=$(dirname \"$2\")\necho \"build $(ls \"$dir\" | grep -c '^case_')\" >> '{log}'\n"
+    script += "for case in \"$dir\"/case_*; do\n  if [ -d \"$case/nested\" ]; then\n"
+    script += "    echo 'error[INCAN-I0001]: Module `helpers` does not exist' >&2\n"
+    script += "    echo \" --> $case/nested/user.incn:1:1\" >&2\n    exit 1\n  fi\ndone\n"
+    script += f"mkdir -p target/incan/debug/bin\ncp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def nested_import_case(root: Path, name: str) -> Fixture:
+    """A behavior module program `name` whose nested module imports a module of the program's source root."""
+    directory = root.joinpath(name)
+    make_directory(directory.joinpath("nested")).unwrap()
+    header = f"# behavior: a nested module imports a root module\n# expect-stdout:\n#   {name}\n\n"
+    main = header + "from nested.user import shout\n\n\ndef main() -> None:\n    shout()\n"
+    write(directory.joinpath("main.incn"), main).unwrap()
+    write(directory.joinpath("helpers.incn"), f"pub def label() -> str:\n    return \"{name}\"\n").unwrap()
+    user = "from helpers import label\n\n\npub def shout() -> None:\n    println(label())\n"
+    write(directory.joinpath("nested/user.incn"), user).unwrap()
+    program = directory.joinpath("main.incn")
+    return Fixture(family="behavior", area="area", name=name, shape="module", entry=directory, program=program)
+
+
+def test_a_module_case_whose_nested_import_only_its_root_resolves_keeps_its_own_command() -> None:
+    """
+    In a group, a module case's sources sit under their own directory, so a nested file's import that only the case's
+    source root defines names no module there. The case keeps its own command from admission on instead of costing its
+    group a refused build.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    mut fixtures = [behavior_case(root, name) for name in ["a", "b", "c"]]
+    fixtures.append(nested_import_case(root, "m"))
+    incan = root_import_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 1)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["build 3"], ", ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "m") == "own command\n"
