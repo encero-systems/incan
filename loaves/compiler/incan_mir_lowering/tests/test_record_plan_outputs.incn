@@ -86,7 +86,7 @@ pub def test_keyed_plan_naming_a_model_publishes_its_interface() -> Result[None,
     mut function = unit_function("main", span, 1)
     function.locals.append(Local(ty=PlanType.Model(0, "Point_0_37"), span=span))
     plan = Plan(enums=[], models=[point], functions=[function], externals=[], programs=[], span=span)
-    inputs = record_scalar_inputs("checked-meaning", function.name, function.span, false, "reads", "positions")
+    inputs = record_scalar_inputs("checked-meaning", function.name, function.span, false, "reads", 0)
     empty_runtime: list[ExternalFunction] = []
     references = product_nominals(function, empty_runtime)?
     identity = ProductNominal(kind=NominalKind.Model, identity="model:keyed_plan::Point", digest="point-v1")
@@ -112,7 +112,7 @@ def record_directories(root: Path) -> Result[tuple[Path, Path], str]:
 
 def retain_product(products: Path, report: Path, function: Function, reused: bool) -> Result[str, str]:
     """Retain and report one product exactly as ordinary-frame lowering does, returning its key."""
-    inputs = record_scalar_inputs("checked-meaning", function.name, function.span, false, "reads", "positions")
+    inputs = record_scalar_inputs("checked-meaning", function.name, function.span, false, "reads", 0)
     empty_runtime: list[ExternalFunction] = []
     retain_scalar(products.0, inputs, function, empty_runtime)?
     report_scalar(Some(report.0), products.0, inputs, function.name, function.name, reused, 0)?

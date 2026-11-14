@@ -18,7 +18,19 @@ from pub::incan_mir_plan import (
     resolve_nominals,
 )
 from scalar_products import encode_product, decode_product
-from record_positions import relocate_product
+from record_positions import index_positions, place_positions, relocate_product
+
+
+# A record whose key is its checked meaning; its spans name Body IR nodes by ordinal through a request-local position map.
+const RECORD_FUNCTION: str = "incan.record-function/2"
+
+
+@derive(Serialize, Deserialize)
+model EventPosition:
+    """One Body IR node's owner-relative line and column in this request; request-local, never part of the product."""
+
+    line: int
+    column: int
 
 
 @derive(Serialize, Deserialize)
@@ -52,6 +64,7 @@ model ScalarRecordEvent:
     reused: bool
     runtime_requirements: int
     references: list[EventReference]
+    positions: list[EventPosition]
 
 
 @derive(Serialize, Deserialize)
@@ -78,9 +91,14 @@ pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: b
     ]
 
 
-pub def record_scalar_inputs(body: str, name: str, span: SourceSpan, overflow: bool, reads: str, positions: str) -> list[str]:
-    """Separate a record's checked meaning and relative positions from its current owner-line translation."""
-    return ["incan.record-function/1", body, name, str(span.file), str(overflow), reads, positions]
+pub def record_scalar_inputs(body: str, name: str, span: SourceSpan, overflow: bool, reads: str, nodes: int) -> list[str]:
+    """
+    Key a record by its checked meaning and its Body IR node count; node positions are a separate map.
+
+    The count keeps a position map aligned with the nodes it was captured from, as when a docstring adds a node the
+    meaning digest leaves out.
+    """
+    return [RECORD_FUNCTION, body, name, str(span.file), str(overflow), reads, str(nodes)]
 
 
 pub def retained_scalar(
@@ -88,13 +106,14 @@ pub def retained_scalar(
     inputs: list[str],
     unit: &UnitNominals,
     span: Option[SourceSpan] = None,
+    positions: list[tuple[int, int]] = [],
 ) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference]]]:
     """
     Read a complete native function whose full producer inputs and named declarations still match.
 
     1. Read the content-addressed private record.
     2. Validate its input witness and payload digest, and resolve each declaration it names in the current unit.
-    3. Restore the complete native function at the current positions, or return a cache miss.
+    3. Restore the complete native function at the current declaration and node positions, or return a cache miss.
     """
     # 1. Missing, corrupt and concurrently replaced entries all remain ordinary misses.
     match scalar_path(directory, inputs):
@@ -104,7 +123,7 @@ pub def retained_scalar(
                 Err(_) => return None
                 Ok(text) =>
                     # 2. A changed or missing named declaration is a miss, never a stale position.
-                    payload = match record_payload(text, inputs, span):
+                    payload = match record_payload(text, inputs, span, positions):
                         Some(value) => value
                         None => return None
                     references = match product_identities(payload):
@@ -127,6 +146,7 @@ pub def retain_scalar(
     function: &Function,
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal] = [],
+    positions: list[tuple[int, int]] = [],
 ) -> Result[None, str]:
     """
     Publish a loss-checked native function without changing compilation's verdict.
@@ -135,7 +155,7 @@ pub def retain_scalar(
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
-    text = encoded_record(inputs, function, runtime, nominals)?
+    text = encoded_record(inputs, function, runtime, nominals, positions)?
     # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
     return publish_record(directory, inputs, text)
 
@@ -146,6 +166,7 @@ pub def finalize_scalar(
     function: &Function,
     reused: bool,
     references: list[NominalReference],
+    positions: list[tuple[int, int]],
 ) -> Result[tuple[str, list[NominalReference]], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
@@ -161,7 +182,8 @@ pub def finalize_scalar(
     path = Path(directory).joinpath(key + ".incnfunction")
     text = path.read_text("utf-8", "strict").map_err((error) => f"cannot read plan-function product {error.message()}")?
     record = decode_record(text).map_err((error) => str(error))?
-    current = relocate_product(record.function, str(function.span.file), function.span.line)?
+    placed = place_positions(record.function, positions)?
+    current = relocate_product(placed, str(function.span.file), function.span.line)?
     identities = product_identities(current)?
     _captured, demand = decode_product(current, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
@@ -175,7 +197,7 @@ pub def finalize_scalar(
         match named:
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
-    final = encoded_record(record.inputs, function, demand, nominals)?
+    final = encoded_record(record.inputs, function, demand, nominals, positions)?
     if final == text:
         return Ok((text, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
@@ -194,6 +216,7 @@ pub def report_scalar(
     reused: bool,
     runtime: int,
     references: list[NominalReference] = [],
+    positions: list[tuple[int, int]] = [],
 ) -> Result[None, str]:
     """Publish one bounded product event for Bakery admission; records mode refuses incomplete transport."""
     if let Some(root) = directory:
@@ -216,6 +239,7 @@ pub def report_scalar(
             reused=reused,
             runtime_requirements=runtime,
             references=stored,
+            positions=event_nodes(positions),
         )
         text = to_string(event).map_err((error) => str(error))?
         path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
@@ -231,6 +255,12 @@ pub def event_references(event: str) -> Result[list[NominalReference], str]:
     for reference in decoded.references:
         references.append(NominalReference(kind=reference.kind, index=reference.index, name=reference.name))
     return Ok(references)
+
+pub def event_positions(event: str) -> Result[list[tuple[int, int]], str]:
+    """Read the Body IR node positions a reported product's spans were placed at in this request."""
+    decoded = decode_event(event).map_err((error) => str(error))?
+    return Ok([(position.line, position.column) for position in decoded.positions])
+
 
 
 pub def report_scalar_refusal(
@@ -260,22 +290,35 @@ def encoded_record(
     function: &Function,
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal],
+    positions: list[tuple[int, int]] = [],
 ) -> Result[str, str]:
-    """Authenticate the entire native payload after the codec proves an exact structural round trip."""
+    """
+    Authenticate the entire native payload after the codec proves an exact structural round trip.
+
+    A keyed record's spans are owner-relative, and each span that locates a Body IR node names that node's ordinal, so
+    the record holds no line a moved comment or docstring can change.
+    """
     mut payload = encode_product(function, runtime, nominals)?
-    if inputs[0] == "incan.record-function/1":
+    if inputs[0] == RECORD_FUNCTION:
         relative = relocate_product(payload, "<owner>", 1)?
         restored = relocate_product(relative, str(function.span.file), function.span.line)?
         restored_function, restored_runtime = decode_product(restored, product_nominals(function, runtime)?)?
         if encode_product(restored_function, restored_runtime, nominals)? != payload:
             return Err("plan-function position round trip changed native facts")
-        payload = relative
+        payload = index_positions(relative, positions)?
+        if place_positions(payload, positions)? != relative:
+            return Err("plan-function position map changed native facts")
     digest = fingerprint([payload])?
     record = ScalarRecord(schema=3, inputs=inputs, function=payload, digest=digest)
     return to_string(record).map_err((error) => str(error))
 
 
-def record_payload(text: str, inputs: list[str], span: Option[SourceSpan] = None) -> Option[str]:
+def record_payload(
+    text: str,
+    inputs: list[str],
+    span: Option[SourceSpan] = None,
+    positions: list[tuple[int, int]] = [],
+) -> Option[str]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
     match decode_record(text):
         Err(_) => return None
@@ -288,11 +331,15 @@ def record_payload(text: str, inputs: list[str], span: Option[SourceSpan] = None
                     if record.digest != digest:
                         return None
             mut payload = record.function
-            if inputs[0] == "incan.record-function/1":
+            if inputs[0] == RECORD_FUNCTION:
                 if let Some(current) = span:
-                    match relocate_product(payload, str(current.file), current.line):
-                        Ok(moved) => payload = moved
+                    # Node ordinals take this body's positions; a body without those nodes is a miss.
+                    match place_positions(payload, positions):
                         Err(_) => return None
+                        Ok(placed) =>
+                            match relocate_product(placed, str(current.file), current.line):
+                                Ok(moved) => payload = moved
+                                Err(_) => return None
             return Some(payload)
 
 
@@ -343,3 +390,12 @@ def publish_record(directory: str, inputs: list[str], text: str) -> Result[None,
         .map_err((error) => f"cannot write scalar cache {error.message()}")?
     _ = temporary.replace(path).map_err((error) => f"cannot replace scalar cache {error.message()}")?
     return Ok(None)
+
+
+def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
+    """Carry a body's node positions in a request-local event."""
+    mut nodes: list[EventPosition] = []
+    for position in positions:
+        line, column = position
+        nodes.append(EventPosition(line=line, column=column))
+    return nodes
