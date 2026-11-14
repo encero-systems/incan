@@ -15,6 +15,7 @@ from oven_tests import (
     Invocation,
     host_memory,
     run_all_failures,
+    selected_builder_bakery,
     shared_memory,
 )
 from release_support import (
@@ -493,7 +494,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
     mut environment = command_environment(installation)
-    bakery = selected_rust_facet_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
     if bakery != "":
         environment["INCAN_BAKERY"] = bakery
     manifests = sorted(
@@ -534,16 +535,6 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
     return Ok(len(projects))
-
-
-pub def selected_rust_facet_bakery(builder_home: str) -> str:
-    """Select the release builder's existing Bakery for exact-identity facet reuse, or no override outside release."""
-    if builder_home == "":
-        return ""
-    bakery = Path(builder_home).joinpath("bakery")
-    if not bakery.is_dir():
-        return ""
-    return bakery.0
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:

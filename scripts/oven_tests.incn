@@ -187,7 +187,8 @@ def run(options: Options) -> Result[str, str]:
     root = repository_root()?
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
-    planned = invocations(root, options.evidence, logs, options.jobs)?
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
     succeeded = run_planned(options.oven, planned, options.jobs, options.memory)?
     remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
@@ -197,8 +198,20 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result[list[Invocation], str]:
-    """Plan fixed-order invocations; each Oven source may run in any of one private worker project per job."""
+pub def invocations(
+    root: Path,
+    evidence: Path,
+    logs: Path,
+    jobs: int,
+    builder_bakery: str = "",
+) -> Result[list[Invocation], str]:
+    """
+    Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
+
+    A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
+    the release units the release already built under the same identities, as the Rust facet tests do. The Oven
+    sources keep the installation's bakery, because their nested commands inherit the environment.
+    """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
     sources = listed_tests(oven.joinpath("src"))?
@@ -214,12 +227,27 @@ pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
         planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
     compiler = root.joinpath("loaves/compiler").0 + "/"
+    mut shared: Dict[str, str] = {}
+    if builder_bakery != "":
+        shared["INCAN_BAKERY"] = builder_bakery
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
-        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+        mut planned_loaf = invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source)
+        planned_loaf.environment = shared
+        planned.append(planned_loaf)
     return Ok(planned)
+
+
+pub def selected_builder_bakery(builder_home: str) -> str:
+    """Select the release builder's existing bakery for exact-identity reuse, or no override outside a release."""
+    if builder_home == "":
+        return ""
+    bakery = Path(builder_home).joinpath("bakery")
+    if not bakery.is_dir():
+        return ""
+    return bakery.0
 
 
 pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:

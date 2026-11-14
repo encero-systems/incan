@@ -21,6 +21,7 @@ from oven_tests import (
     run_all,
     run_all_failures,
     run_planned,
+    selected_builder_bakery,
     shared_memory,
     summarize,
     summary_document,
@@ -28,7 +29,6 @@ from oven_tests import (
 )
 from verify_installation import (
     VerificationPhase,
-    selected_rust_facet_bakery,
     verification_phase_arguments,
     verification_phase_plans,
     verification_trace_environment,
@@ -140,10 +140,30 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
         "900",
     ]
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    assert selected_rust_facet_bakery("") == ""
-    assert selected_rust_facet_bakery(temporary.path().0) == ""
+    assert selected_builder_bakery("") == ""
+    assert selected_builder_bakery(temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
-    assert selected_rust_facet_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
+    assert selected_builder_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
+    return Ok(None)
+
+
+def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
+    """
+    Release-profile Loaf tests ask the builder's bakery, which already holds the release units the release built; Oven
+    sources keep the installation's own bakery, which their nested commands select through the inherited environment.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    fixture(root)?
+    evidence = root.joinpath("evidence")
+    logs = evidence.joinpath("oven-tests")
+    shared = invocations(root, evidence, logs, 2, "/builder/bakery")?
+    assert [len(item.environment) for item in shared] == [0, 0, 0, 1, 1, 1, 1, 1]
+    assert [item.environment["INCAN_BAKERY"] for item in shared[3:]] == ["/builder/bakery" for _ in range(5)]
+    remove_worker_projects(shared)?
+    own = invocations(root, evidence, logs, 2)?
+    assert [len(item.environment) for item in own] == [0, 0, 0, 0, 0, 0, 0, 0]
+    remove_worker_projects(own)?
     return Ok(None)
 
 
