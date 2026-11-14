@@ -1,7 +1,7 @@
 """
 The release signer and trust root a home carries, and the admission of a release asset against them (DD-0016).
 
-A signed toolchain archive ships `release-trust.json`: the identity that signs releases and the Sigstore trust root.
+A signed toolchain archive ships `release-signer.json`: the identity that signs releases and the Sigstore trust root.
 Installing it makes the home carry those facts, and from then on the home admits only assets whose signature bundle,
 `ASSET.sigstore.json` beside the asset, verifies against them. A home that carries none is a development home: it
 has nothing to verify against, and says so by returning no verification.
@@ -12,7 +12,7 @@ from std.hash import file_digest
 from std.json import JsonValue
 from release_signature import Signer, TrustRoot, Verified, trust_root, verify_bundle
 
-pub const CARRIED_TRUST: str = "release-trust.json"
+pub const CARRIED_TRUST: str = "release-signer.json"
 pub const BUNDLE_SUFFIX: str = ".sigstore.json"
 
 
@@ -24,7 +24,7 @@ pub model Carried:
 
 
 pub def read_trust(path: Path) -> Result[Carried, str]:
-    """Read a `release-trust.json`: a signer's identity and issuer, and a Sigstore trusted root whose chains verify."""
+    """Read a `release-signer.json`: a signer's identity and issuer, and a Sigstore trusted root whose chains verify."""
     text = path.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
     document = JsonValue.parse(text).map_err((error) => f"malformed {path.0}: {error.message()}")?
     signer = document.require("signer").map_err((error) => f"malformed {path.0}: {error.message()}")?

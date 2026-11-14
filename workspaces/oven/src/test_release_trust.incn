@@ -18,7 +18,7 @@ def text(encoded: str) -> Result[str, str]:
 
 
 def trust_text(root: str) -> Result[str, str]:
-    """A `release-trust.json` for the release workflow's identity and one trusted root."""
+    """A `release-signer.json` for the release workflow's identity and one trusted root."""
     signer = "{\"identity\":\"" + IDENTITY + "\",\"issuer\":\"" + ISSUER + "\"}"
     return Ok("{\"signer\":" + signer + ",\"trusted_root\":" + text(root)? + "}")
 
