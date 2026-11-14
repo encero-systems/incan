@@ -41,6 +41,7 @@ from unit_publication import publication, published_identity, record_path, recor
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
+from compiler_facts import retire_facts_below
 from surfaces import expose_entry_points
 from compiler_record_admission import convert, installed_records, shipped_pin
 
@@ -763,7 +764,7 @@ pub def open_stage(target: Path) -> Result[Path, str]:
     """
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
-    _ = retire_admissions(stage)?
+    retire_staged(stage)?
     return Ok(stage)
 
 
@@ -774,7 +775,13 @@ pub def close_stage(stage: Path) -> Result[None, str]:
     """
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
+    return retire_staged(stage)
+
+
+def retire_staged(stage: Path) -> Result[None, str]:
+    """Withdraw the home's admission records of every payload and compiler file at a path inside `stage`."""
     _ = retire_admissions(stage)?
+    _ = retire_facts_below(stage)?
     return Ok(None)
 
 
