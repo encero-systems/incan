@@ -324,8 +324,9 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    # Both activations restore the same resident worker and release its free heap before the next request.
-    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
+    # after each activation. No activation may be detached from the observer that owns its completion.
+    assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
     assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
