@@ -203,8 +203,9 @@ pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Resu
         return Err(f"missing installed manifest: {selected.0}/toolchain.json")
     destination.mkdir(true, true).map_err((error) => error.message())?
     # Loaf facts name native artifacts under `native/` and the registry closure names units under `registry/`, both
-    # relative to the toolchain directory, so the compiler home selects the installed trees rather than a copy.
-    for tree in ["loaves", "native", "registry"]:
+    # relative to the toolchain directory, so the compiler home selects the installed trees rather than a copy. A
+    # standard relink installs its runtime under `runtime/`, and the Loaves it builds name it from the toolchain too.
+    for tree in ["loaves", "native", "registry", "runtime"]:
         share_tree(selected, destination, tree)?
     text = compiler_manifest(read_manifest(selected)?, selected.0)?
     target = destination.joinpath("toolchain.json")
