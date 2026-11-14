@@ -392,3 +392,32 @@ fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std
     assert!(stripped.input_call_profile_gap(&callee).is_none());
     Ok(())
 }
+
+/// Bodies built from the same module-wide bindings end up sharing one identity map, while a body whose map differs
+/// keeps its own, and every map keeps its contents.
+#[test]
+fn equal_identity_maps_share_one_map() {
+    let point = crate::CanonicalSymbolId::module_declaration(
+        vec!["m".to_string()],
+        "Point",
+        SemanticSourceTargetKind::Model,
+        HirSourceSpan::new(0, 5),
+    );
+    let module_wide = std::collections::BTreeMap::from([("Point".to_string(), point)]);
+    let mut bodies = vec![sample_body(), sample_body(), sample_body()];
+    bodies[0].named_type_identities = std::sync::Arc::new(module_wide.clone());
+    bodies[1].named_type_identities = std::sync::Arc::new(module_wide.clone());
+
+    share_equal_identity_maps(&mut bodies);
+
+    assert!(
+        std::sync::Arc::ptr_eq(&bodies[0].named_type_identities, &bodies[1].named_type_identities),
+        "bodies with equal maps kept one map each"
+    );
+    assert!(!std::sync::Arc::ptr_eq(
+        &bodies[0].named_type_identities,
+        &bodies[2].named_type_identities
+    ));
+    assert_eq!(*bodies[1].named_type_identities, module_wide);
+    assert!(bodies[2].named_type_identities.is_empty());
+}

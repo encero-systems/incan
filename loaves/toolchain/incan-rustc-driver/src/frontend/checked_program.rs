@@ -138,14 +138,26 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
         .flat_map(|module| &module.nominal_declarations)
         .filter(|declaration| matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_)))
         .map(|declaration| (declaration.name.clone(), declaration.canonical.clone()))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    for module in modules {
-        for body in &mut module.bodies {
-            for (name, identity) in &identities {
-                std::sync::Arc::make_mut(&mut body.named_type_identities)
-                    .entry(name.clone())
-                    .or_insert_with(|| identity.clone());
-            }
+        .collect::<BTreeMap<_, _>>();
+    extend_shared_identities(
+        modules
+            .iter_mut()
+            .flat_map(|module| module.bodies.iter_mut())
+            .map(|body| &mut body.named_type_identities),
+        &identities,
+    );
+}
+
+/// Add each missing identity to the bodies' shared identity maps.
+fn extend_shared_identities<'a>(
+    maps: impl Iterator<Item = &'a mut incan_semantics_core::body_ir::SharedIdentities>,
+    identities: &BTreeMap<String, CanonicalSymbolId>,
+) {
+    for map in maps {
+        for (name, identity) in identities {
+            std::sync::Arc::make_mut(map)
+                .entry(name.clone())
+                .or_insert_with(|| identity.clone());
         }
     }
 }
@@ -1040,4 +1052,52 @@ pub(super) fn take_rust_enums(
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+#[cfg(test)]
+mod shared_identity_tests {
+    use super::*;
+    use incan_semantics_core::HirSourceSpan;
+    use incan_semantics_core::body_ir::SharedIdentities;
+    use std::sync::Arc;
+
+    /// One canonical model identity for a fixture map entry.
+    fn identity(name: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId::module_declaration(
+            vec!["fixture".to_owned()],
+            name,
+            SemanticSourceTargetKind::Model,
+            HirSourceSpan::new(0, 1),
+        )
+    }
+
+    /// Bodies that share one identity map keep sharing one extended map, and a map that already names every identity
+    /// is kept as it is, so a repeated runtime resolution adds no private copy per body.
+    #[test]
+    fn shared_identity_maps_stay_shared_when_extended() -> Result<(), Box<dyn std::error::Error>> {
+        let module_wide: SharedIdentities = Arc::new(BTreeMap::from([("Owned".to_owned(), identity("Owned"))]));
+        let complete: SharedIdentities = Arc::new(BTreeMap::from([("Native".to_owned(), identity("Native"))]));
+        let mut maps = vec![
+            Arc::clone(&module_wide),
+            Arc::clone(&module_wide),
+            Arc::clone(&complete),
+        ];
+        let native = BTreeMap::from([("Native".to_owned(), identity("Native"))]);
+
+        extend_shared_identities(maps.iter_mut(), &native);
+
+        let [first, second, kept] = &maps[..] else {
+            return Err("the fixture holds three maps".into());
+        };
+        assert!(
+            Arc::ptr_eq(first, second),
+            "bodies that shared one map received private copies"
+        );
+        assert!(first.contains_key("Owned") && first.contains_key("Native"));
+        assert!(
+            Arc::ptr_eq(kept, &complete),
+            "a map that already named every identity was copied"
+        );
+        Ok(())
+    }
 }
