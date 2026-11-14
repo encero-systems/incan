@@ -35,7 +35,7 @@ pub def check_adaptation(value: JsonValue, mut budget: Budget) -> Result[bool, s
             return Ok(values_match and check_projections(value, output, budget)?)
 
 
-def absent_value(plan: FieldPlan) -> Result[JsonValue, str]:
+pub def absent_value(plan: FieldPlan) -> Result[JsonValue, str]:
     """Materialize only the absence the production plan admitted, never a nonempty default."""
     match plan.requested.absent:
         AbsentPolicy.NoneValue =>
@@ -48,7 +48,7 @@ def absent_value(plan: FieldPlan) -> Result[JsonValue, str]:
         AbsentPolicy.Required => return Err("production plan attempted to fill a required field")
 
 
-def convert(value: JsonValue, plan: ValuePlan) -> Result[JsonValue, str]:
+pub def convert(value: JsonValue, plan: ValuePlan) -> Result[JsonValue, str]:
     """Interpret the plan, preserving exact integer strings and explicit optional layers."""
     match plan:
         ValuePlan.Identity => return Ok(value.clone())
