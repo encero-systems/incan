@@ -1,6 +1,6 @@
 //! Imports from an installed Loaf settled from its own records (RFC 179): a public namespace by its path and a
-//! function by its module-qualified name, so checking a program reads what it uses rather than the Loaf's whole checked
-//! API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
+//! function or constant by its module-qualified name, so checking a program reads what it uses rather than the Loaf's
+//! whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
 
 use incan_lang::lang::types::builtin_type_name;
 use serde_json::Value;
@@ -98,10 +98,10 @@ impl TypeChecker {
         Some(namespace_members(&namespace, member).into_iter().cloned().collect())
     }
 
-    /// Resolve a function published by a public namespace from the namespace's record and the function's own
-    /// declaration records. `None` when they cannot settle it exactly: no records, another kind of member, an alias,
-    /// overloads, a signature naming anything but built-in types, or no single declaration identity; the manifest then
-    /// resolves the member.
+    /// Resolve a function or a constant published by a public namespace from the namespace's record and the member's
+    /// own declaration records. `None` when they cannot settle it exactly: no records, another kind of member, an
+    /// alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
+    /// manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -132,12 +132,15 @@ impl TypeChecker {
         }
         let declaration: ApiDeclaration =
             serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
-        let ApiDeclaration::Function(function) = &declaration else {
-            return None;
+        let built_in = match &declaration {
+            ApiDeclaration::Function(function) => {
+                function.type_params.is_empty()
+                    && function.params.iter().all(|param| built_in_type(&param.ty))
+                    && built_in_type(&function.return_type)
+            }
+            ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
+            _ => false,
         };
-        let built_in = function.type_params.is_empty()
-            && function.params.iter().all(|param| built_in_type(&param.ty))
-            && built_in_type(&function.return_type);
         if !built_in {
             return None;
         }
