@@ -7,6 +7,7 @@ from std.fs import Path
 from std.json import JsonValue
 from clove_units import CloveUnit, clove_unit
 from c_interop import LinkedArchive, linked_archives
+from c_interop_target import CAbiTargetSelection, select_interop_target
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -72,6 +73,9 @@ pub model UnitDescription:
     # The package-owned static archives the host target's `[interop.c]` entry declares, in link order. Oven
     # passes them to rustc; they are not part of the compiler's description.
     pub c_archives: list[LinkedArchive] = []
+    # The declared `[[interop.c.targets]]` entry `--interop-target` selects; checked C bindings verify against it
+    # instead of the host. Absent, they verify against the host.
+    pub c_abi_target: Option[CAbiTargetSelection] = None
     # Registry declared by this unit's own package; absent does not invent a default root key.
     pub registry_id: Option[str] = None
     pub externs: list[NativeCrate] = []
@@ -136,6 +140,8 @@ pub model UnitDescription:
             fields["registry_id"] = JsonValue.string(registry)
         if len(self.cloves) > 0:
             fields["cloves"] = JsonValue.array([clove.to_json() for clove in self.cloves])
+        if let Some(target) = self.c_abi_target:
+            fields["c_abi_target"] = target.to_json()
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:
@@ -301,6 +307,27 @@ def described(
             active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
             return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader, selected_standard)
+
+
+pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDescription, str]:
+    """
+    The unit with its checked C bindings verifying against its package's declared target `triple` instead of the
+    host (`--interop-target`); an empty triple selects the host.
+    """
+    mut selected = unit
+    if triple == "":
+        return Ok(selected)
+    match discovered_project(Path(unit.source))?:
+        None => return Err(f"`--interop-target {triple}` selects a target a project declares; {unit.source} has none")
+        Some(found) =>
+            graph = intake(found, unit.manifests).map_err((error) => error.message())?
+            for project in graph.projects:
+                if project.root == unit.project_root:
+                    selected.c_abi_target = Some(
+                        select_interop_target(project.intent.name, project.intent.c_targets, triple)?,
+                    )
+                    return Ok(selected)
+            return Err(f"`--interop-target {triple}`: {unit.project_root} is not a project of its own graph")
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:

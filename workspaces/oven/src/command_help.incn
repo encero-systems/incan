@@ -27,6 +27,7 @@ pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--substitute",
     "--program-entry",
     "--argv0",
+    "--interop-target",
 ]
 
 
@@ -150,6 +151,7 @@ def unit_help(surface: str, command: str) -> str:
         "  --features A,B         Add public root-package features.",
         "  --no-default-features  Disable the root package's default feature.",
         "  --all-features         Select every declared root-package feature.",
+        "  --interop-target TRIPLE  Verify checked C bindings against this declared [[interop.c.targets]] entry.",
     ]
     if command == "run":
         return render(
