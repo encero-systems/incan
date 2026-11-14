@@ -134,6 +134,50 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     return verify_rust_source_edit_rebuild(binary, scratch.path())
 
 
+pub def test_a_path_dependency_body_edit_that_moves_its_declarations_builds() -> Result[None, str]:
+    """
+    A body edit of a path dependency's function builds, and its consumer prints the new value, also when the edit
+    changes the function's length and so moves the function's end and every declaration after it.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    edited = verify_moved_dependency_body_builds(binary, root)
+    stopped = stop_example_engine(binary, root.joinpath("store"))
+    edited?
+    return stopped
+
+
+def verify_moved_dependency_body_builds(binary: str, root: Path) -> Result[None, str]:
+    """Build a consumer of a path dependency, then edit the dependency's body at the same length and one longer."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(provider.joinpath("loaf.toml"), "[project]\nname = \"moved_body_provider\"\nversion = \"0.1.0\"\n")?
+    library = provider.joinpath("src/lib.incn")
+    label = "\n\npub def label(amount: int) -> int:\n    return amount\n"
+    write(library, "pub def price(amount: int) -> int:\n    return amount + 3\n" + label)?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"moved_body_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nmoved_body_provider = { path = \"../provider\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::moved_body_provider import price\n\n\ndef main() -> None:\n    println(price(4))\n",
+    )?
+    store = root.joinpath("store")
+    executable = app.joinpath("target/incan/debug/bin/moved_body_app")
+    _ = rust_source_probe_build(binary, app, store)?
+    require_probe_output(executable, "7")?
+    write(library, "pub def price(amount: int) -> int:\n    return amount + 5\n" + label)?
+    _ = rust_source_probe_build(binary, app, store)?
+    require_probe_output(executable, "9")?
+    write(library, "pub def price(amount: int) -> int:\n    return amount + 30\n" + label)?
+    _ = rust_source_probe_build(binary, app, store)?
+    return require_probe_output(executable, "34")
+
+
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
     """
     Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
