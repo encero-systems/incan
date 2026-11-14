@@ -65,10 +65,20 @@ impl TypeChecker {
         if module.is_empty() {
             return matches!(self.loaves.may_export_at_root(library, item), Ok(Some(false)));
         }
-        match self.loaves.public_namespace(library, module) {
-            Ok(Some(parent)) => namespace_members(&parent, item).is_empty(),
-            _ => false,
-        }
+        self.record_proves_no_member(library, module, item)
+    }
+
+    /// Whether the records prove that the public namespace `module_path` of `library` publishes no member named
+    /// `member`, so resolving that member finds nothing, exactly as the manifest's checked API would.
+    pub(in crate::typechecker) fn record_proves_no_member(
+        &self,
+        library: &str,
+        module_path: &[String],
+        member: &str,
+    ) -> bool {
+        !module_path.is_empty()
+            && matches!(self.loaves.public_namespace(library, module_path), Ok(Some(namespace))
+                if namespace_members(&namespace, member).is_empty())
     }
 
     /// Resolve a function published by a public namespace from the namespace's record and the function's own
