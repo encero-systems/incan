@@ -559,22 +559,64 @@ def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: l
 
 
 def refuse_moved_tables(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
-    """Refuse a 0.5.1 table whose content has another table now, naming that table."""
+    """
+    Refuse a 0.5.1 table whose content has another table now, naming that table.
+
+    1. Rust test dependencies, in `[rust-dev-dependencies]` or `[rust.dev-dependencies]`, belong to the test
+       environment, and `[rust.dependencies]` entries to `[dependencies]`, each in its Loaf form.
+    2. `[oven.interop]` is `[interop.c]`.
+    3. `[tool.incan.envs.NAME]` is `[envs.NAME]`.
+    """
+    # 1. Rust dependency tables.
     if "rust-dev-dependencies" in root:
-        field = ["rust-dev-dependencies"]
-        entries = table(root["rust-dev-dependencies"], manifest, field)?
-        alias = first_key(entries)
-        mut detail = "use [envs.test.dependencies]"
-        if alias in entries:
-            replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
-            detail = f"use [envs.test.dependencies] {replacement}"
-        return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
+        return moved_dependencies(
+            root["rust-dev-dependencies"],
+            ["rust-dev-dependencies"],
+            "[envs.test.dependencies]",
+            manifest,
+        )
+    if "rust" in root:
+        facet = table(root["rust"], manifest, ["rust"])?
+        if "dependencies" in facet:
+            return moved_dependencies(facet["dependencies"], ["rust", "dependencies"], "[dependencies]", manifest)
+        if "dev-dependencies" in facet:
+            return moved_dependencies(
+                facet["dev-dependencies"],
+                ["rust", "dev-dependencies"],
+                "[envs.test.dependencies]",
+                manifest,
+            )
+    # 2. C interop.
     if "oven" in root:
         oven = table(root["oven"], manifest, ["oven"])?
         if "interop" in oven:
             detail = "[oven.interop] is refused; declare C interop under [interop.c]"
             return Err(refusal(manifest, ["oven", "interop"], IntakeErrorKind.Unsupported, detail))
+    # 3. Environments.
+    if "tool" in root:
+        tool = table(root["tool"], manifest, ["tool"])?
+        if "incan" in tool:
+            incan = table(tool["incan"], manifest, ["tool", "incan"])?
+            if "envs" in incan:
+                detail = "[tool.incan.envs] is refused; declare each environment as [envs.NAME]"
+                return Err(refusal(manifest, ["tool", "incan", "envs"], IntakeErrorKind.Unsupported, detail))
     return Ok(None)
+
+
+def moved_dependencies(
+    value: TomlValue,
+    field: list[str],
+    replacement_table: str,
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Refuse a 0.5.1 Rust dependency table, showing its first entry's Loaf form under the table that replaces it."""
+    entries = table(value, manifest, field)?
+    alias = first_key(entries)
+    mut detail = f"use {replacement_table}"
+    if alias in entries:
+        replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
+        detail = f"use {replacement_table} {replacement}"
+    return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
@@ -730,6 +772,10 @@ def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result
 def expanded_feature(value: TomlValue, manifest: str, field: list[str]) -> Result[FeatureDeclaration, IntakeError]:
     """An expanded feature table naming each edge kind."""
     entries = table(value, manifest, field)?
+    # 0.5.1's SDK component requirement has no successor: there are no SDK components.
+    if "requires-sdk-components" in entries:
+        detail = "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"
+        return Err(refusal(manifest, field + ["requires-sdk-components"], IntakeErrorKind.Unsupported, detail))
     allowed(entries, ["includes", "optional-dependencies", "dependency-features"], manifest, field)?
     mut declaration = FeatureDeclaration()
     if "includes" in entries:
