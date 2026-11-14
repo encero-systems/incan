@@ -16,11 +16,12 @@ use crate::loaf_index::LoafIndex;
 const OTHER_FUNCTIONS: usize = 60;
 
 /// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, `unit`, without parameters, the
-/// constant `RATE` and many other public functions.
+/// constant `RATE`, the static `LIMIT` and many other public functions.
 pub(super) fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut source = "pub def price(cents: int, rounded: bool = true) -> int:\n    return cents\n".to_owned();
     source.push_str("\npub def unit() -> int:\n    return 100\n");
     source.push_str("\npub const RATE: int = 7\n");
+    source.push_str("\npub static LIMIT: int = 500\n");
     for index in 0..OTHER_FUNCTIONS {
         source.push_str(&format!(
             "\npub def discount_{index}(cents: int, percent: int = 10) -> int:\n    return cents - percent\n"
@@ -278,6 +279,26 @@ fn a_program_checks_an_imported_constant_from_its_declaration_records() -> Resul
     assert!(
         read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
         "checking reads `RATE`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
+
+/// A program that reads a static of an installed Loaf's module is checked from the static's own records: it reads
+/// `money::LIMIT`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_an_imported_static_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>> {
+    let read = prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.LIMIT\n")?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"money::LIMIT"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `LIMIT`'s signature by name; it read {read:?}"
     );
     let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
     let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
