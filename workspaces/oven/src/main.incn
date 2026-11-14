@@ -76,6 +76,8 @@ pub model Options:
     pub direct: bool = false
     pub unattended: bool = false
     pub codegraph: bool = false
+    # A build's OUTPUT_DIR, which also receives the program it builds; empty for none.
+    pub output: str = ""
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -307,7 +309,7 @@ def fail(message: str, code: i32) -> None:
     exit(code)
 
 
-def parse_options(arguments: list[str], default_path: str = "") -> Result[Options, str]:
+def parse_options(arguments: list[str], default_path: str = "", outputs: bool = false) -> Result[Options, str]:
     """The unit options: one PATH, or `default_path` when the command has one, and the profile and feature flags."""
     mut options = Options()
     mut index = 0
@@ -341,6 +343,8 @@ def parse_options(arguments: list[str], default_path: str = "") -> Result[Option
             options.request.all_features = true
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
+        elif options.path != "" and outputs and options.output == "":
+            options.output = argument
         elif options.path != "":
             return Err(f"one PATH is described at a time; `{argument}` is a second")
         else:
@@ -830,7 +834,7 @@ def build(arguments: list[str]) -> None:
     Compile an Incan source unit or a Rust project against the installed toolchain's registry units. Without PATH, or
     with a directory, the unit is the enclosing Loaf's.
     """
-    match parse_options(arguments, "."):
+    match parse_options(arguments, ".", true):
         Err(reason) => syntax_error("build", reason)
         Ok(options) =>
             selected = validated("build", located("build", options))
@@ -846,6 +850,8 @@ def build_selected(options: Options) -> None:
             finish("build", built(options, source))
             return
         Ok(None) => pass
+    if options.output != "":
+        fail(f"{invoked()} build: OUTPUT_DIR requires an Incan program build", 1)
     match build_project(options):
         Err(reason) => fail(f"{invoked()} build: {reason}", 1)
         Ok(binaries) =>
@@ -911,13 +917,15 @@ def built(options: Options, source: Path) -> Result[i32, str]:
     # 2. A program the project's owner serves is built there, and this process only reports the owner's status.
     if not library:
         match via_owner("build", options, source):
-            Some(reply) => return Ok(status_code(reply.exit))
+            Some(reply) => return delivered(options, status_code(reply.exit), Path(reply.binary))
             None => pass
     # 3. Anything else is described and built here: a library into its artifact directory, a program into `bin`.
     mut unit = describe(source, options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
     mut output = program_binary(unit)
     if library:
+        if options.output != "":
+            return Err("OUTPUT_DIR requires an Incan program build")
         unit.kind = "library"
         directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
         output = directory.joinpath(f"lib{crate_name(unit)}.rlib")
@@ -930,7 +938,21 @@ def built(options: Options, source: Path) -> Result[i32, str]:
         if not publish_prepared_graph(ready, toolchain, directory, graph)?:
             return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
         return Ok(0)
-    return compile_unit(unit, toolchain_for(unit)?, output)
+    return delivered(options, compile_unit(unit, toolchain_for(unit)?, output)?, output)
+
+
+def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
+    """After a successful program build, place a fresh copy of the executable in OUTPUT_DIR, as 0.5.1's build did."""
+    if code != 0 or options.output == "":
+        return Ok(code)
+    directory = Path(options.output)
+    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    destination = directory.joinpath(binary.name())
+    # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
+    if destination.exists():
+        destination.unlink().map_err((error) => f"cannot replace {destination.0}: {error.message()}")?
+    _ = binary.copy(destination, true, true).map_err((error) => f"cannot copy {binary.0}: {error.message()}")?
+    return Ok(0)
 
 
 def owner(arguments: list[str]) -> None:

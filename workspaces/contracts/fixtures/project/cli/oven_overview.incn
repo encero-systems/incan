@@ -12,7 +12,7 @@
 #   oven check [PATH] [--format text|json] [UNIT OPTIONS]
 #   oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 #   oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-#   oven build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+#   oven build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   oven owner stop
 #   oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 #   oven inspect dependencies PATH [UNIT OPTIONS]

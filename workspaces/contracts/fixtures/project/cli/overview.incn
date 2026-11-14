@@ -10,7 +10,7 @@
 #   incan check [PATH] [--format text|json] [UNIT OPTIONS]
 #   incan explain CODE
 #   incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
-#   incan build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+#   incan build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   incan fmt [--check] [--diff] [PATH...]
 #   incan inspect codegraph PATH [GRAPH OPTIONS]
 #   incan mcp PATH [--profile NAME]
