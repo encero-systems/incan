@@ -43,7 +43,7 @@ from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
-from release_trust import CARRIED_TRUST, admit_release, adopt
+from release_trust import CARRIED_TRUST, admit_release, adopt, ship
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -158,6 +158,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     if toolchain.closure_anchors:
         description = replaced(description, "closure_anchors", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
+    # The release signer the installation carries travels inside the archive (DD-0016).
+    _ = ship(directory, stage)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
 
