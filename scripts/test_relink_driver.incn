@@ -1,9 +1,12 @@
 """A relink re-admits every home whose installation it rewrites, so relinking into one home works any number of times."""
 
 from rust::std::process import Command
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from relink_driver import prepare_compiler_home, readmit
+from relink_driver import install_driver, prepare_compiler_home, readmit
 from release_support import TOOLCHAIN_DIRECTORY
 
 
@@ -61,6 +64,39 @@ def test_readmission_asks_the_builder_for_the_rewritten_home() -> Result[None, s
             assert false, "a refused re-admission must fail the relink"
         Err(reason) =>
             assert home.0 in reason and "unknown command" in reason, reason
+    return Ok(None)
+
+
+def test_a_relinked_manifest_names_its_driver_from_the_toolchain() -> Result[None, str]:
+    """
+    A relinked installation names its driver and Rust ABI cache relative to the toolchain, as an installed one does, so
+    a copied or moved home uses and packs its own driver, never the one in the home it was relinked in.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    name = f"incan-rustc-driver-{digest[:12]}"
+    # The standard ABI cache already exists, so the stub driver is never run.
+    toolchain.joinpath(f"rust-abi/std-{name}.rustabi").write_bytes(b"abi").map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    driver = manifest.require("driver").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert driver == f"bin/{name}", driver
+    caches: list[JsonValue] = manifest
+        .require("rust_abi")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    assert len(caches) == 1
+    cache = caches[0].expect_str().map_err((error) => error.message())?
+    assert cache == f"rust-abi/std-{name}.rustabi", cache
     return Ok(None)
 
 
