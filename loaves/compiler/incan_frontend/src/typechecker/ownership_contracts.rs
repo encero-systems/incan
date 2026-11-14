@@ -371,6 +371,7 @@ impl TypeChecker {
             format!("Local '{}' copies a place that a place binding borrows {borrow}", assignment.name),
             assignment.value.span,
         ).with_stable_code("INCAN-T0125")
+            .with_primary_label(format!("this place is copied into '{}'", assignment.name))
             .with_note("This declaration receives an independent value; a type annotation does not request a copy")
             .with_hint("Use an explicit clone for an independent snapshot, or preserve the source through the borrow's last use"));
     }
