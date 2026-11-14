@@ -65,6 +65,9 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
     command also names the `oven` command that runs it now. A language command on `oven` names the `incan` command
     that runs it.
     """
+    if surface == INCAN and command == "cache":
+        if let Some(current) = bakery_command(arguments):
+            return Some(f"{INCAN}: `incan cache {arguments[0]}` is `{current}` now: run `{current}`")
     owner = owner_of(command, arguments)
     if owner == "" or owner == surface:
         return None
@@ -93,10 +96,24 @@ def incan_oven(arguments: list[str]) -> str:
         words.append(argument)
     if len(words) >= 2 and words[0] == "interop" and words[1] == "bake":
         return f"{INCAN}: `incan oven {INTEROP_BAKE_MOVED}"
+    if len(words) >= 2 and words[0] == "store":
+        if let Some(current) = bakery_command(words[1:]):
+            return f"{INCAN}: `incan oven store {words[1]}` is `{current}` now: run `{current}`"
     spelled = " ".join(words)
     if spelled == "":
         return f"{INCAN}: `incan oven` is the `oven` command now: run `oven`"
     return f"{INCAN}: `incan oven {spelled}` is an Oven command: run `oven {spelled}`"
+
+
+def bakery_command(arguments: list[str]) -> Option[str]:
+    """The bakery command that does what 0.5.1's `cache` or `oven store` subcommand did, when it has one."""
+    if len(arguments) == 0:
+        return None
+    if arguments[0] == "inspect":
+        return Some("oven bakery status")
+    if arguments[0] == "prune":
+        return Some("oven bakery gc")
+    return None
 
 
 def spelled(command: str, arguments: list[str]) -> str:
