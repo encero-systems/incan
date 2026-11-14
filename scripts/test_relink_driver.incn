@@ -343,3 +343,42 @@ def test_a_candidate_home_adds_a_generation_beside_the_seeds_without_writing_int
     share_seed_generations(seed, candidate, "absent")?
     assert not candidate.joinpath("absent").exists()
     return Ok(None)
+
+
+def test_a_copied_or_moved_home_selects_its_own_trees_through_its_compiler_home() -> Result[None, str]:
+    """
+    A home is copied or moved as one directory, its compiler home included. The copy's compiler home selects the
+    copy's own `loaves`, `native` and `registry` trees, so a relink of the copy reads and writes nothing in the home it
+    was copied from.
+
+    1. A copy beside the original prepares, and each of its links selects the copy's tree.
+    2. A moved home, whose original directory is gone, prepares too.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    original = temporary.path().joinpath("home")
+    toolchain = original.joinpath(TOOLCHAIN_DIRECTORY)
+    for tree in ["loaves", "native", "registry"]:
+        toolchain.joinpath(tree).mkdir(true, true).map_err((error) => error.message())?
+    write_manifest(toolchain, MANIFEST_HEAD + "\"registry_units\":\"registry/closure.json\"}")?
+    _ = prepare_compiler_home(original, original.joinpath("compiler-build"))?
+    # 1. `cp -R` keeps each link as it is written, as an APFS clone of the directory does.
+    copied = temporary.path().joinpath("copied")
+    status = Command.new("cp").arg("-R").arg(original.0).arg(copied.0).status().map_err((error) => error.to_string())?
+    assert status.success(), "cannot copy the home"
+    _ = prepare_compiler_home(copied, copied.joinpath("compiler-build"))?
+    require_own_trees(copied)?
+    # 2. Nothing of the original remains for a moved home's links to select.
+    moved = temporary.path().joinpath("moved")
+    _ = original.rename(moved).map_err((error) => error.message())?
+    _ = prepare_compiler_home(moved, moved.joinpath("compiler-build"))?
+    return require_own_trees(moved)
+
+
+def require_own_trees(home: Path) -> Result[None, str]:
+    """Require each tree link of the compiler home in `home` to select that home's own installed tree."""
+    installed = home.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    for tree in ["loaves", "native", "registry"]:
+        link = home.joinpath("compiler-build").joinpath(TOOLCHAIN_DIRECTORY).joinpath(tree)
+        selected = link.resolve().map_err((error) => error.message())?
+        assert selected.0 == installed.joinpath(tree).0, f"{link.0} selects {selected.0}"
+    return Ok(None)
