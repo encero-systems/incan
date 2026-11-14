@@ -13,7 +13,7 @@ from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 from environments import ENV_USAGE, env_help
 from doctor import DOCTOR_USAGE, doctor_help
-from checked_metadata import API_USAGE, MetadataView, metadata_help
+from checked_metadata import API_USAGE, REGISTRY_USAGE, MetadataView, metadata_help
 from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
@@ -74,6 +74,7 @@ pub def usage(surface: str) -> str:
             INSTALL_USAGE,
             DOCTOR_USAGE,
             API_USAGE,
+            REGISTRY_USAGE,
         ],
     )
 
@@ -158,6 +159,8 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
     """Help for the inspection the surface runs: semantic codegraph facts on `incan`, operational facts on `oven`."""
     if surface != OVEN and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    if surface != OVEN and nested_help(arguments, "registry", ["--project", "--format"]):
+        return Some(metadata_help(MetadataView.Registry))
     if surface == OVEN and nested_help(arguments, "features", ["--format", "--features"]):
         return Some(features_help())
     if surface == OVEN and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
