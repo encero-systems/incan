@@ -180,9 +180,13 @@ impl TypeChecker {
         let mut direct_type_aliases = HashMap::new();
         let mut direct_identities = HashMap::new();
         let mut direct_projections = HashMap::new();
+        let variant_only = Self::dependency_variant_only_member_names(module_ast, public_only);
         for name in Self::dependency_direct_member_names(module_ast, public_only) {
+            // A variant's bare spelling defers to a lexical binding of the same name (#1429). That binding, such as the
+            // module's own import of a model, is then what the name finds; a variant export must not publish it.
             if let Some(symbol_id) = self.symbols.lookup(name.as_str())
                 && let Some(symbol) = self.symbols.get(symbol_id)
+                && (!variant_only.contains(&name) || matches!(symbol.kind, SymbolKind::Variant(_)))
             {
                 direct_symbols.insert(name.clone(), symbol.kind.clone());
                 if let Some(identity) = self.symbols.identity_of(symbol_id) {
@@ -387,6 +391,42 @@ impl TypeChecker {
                 self.retained_nominal_carriers.insert(identity.clone(), key);
             }
         }
+    }
+
+    /// Return the public member names a module exports only as enum variants or variant aliases, not as declarations.
+    ///
+    /// Every import counts as a re-export, not a declaration, so a module that imports `Settings` and declares a
+    /// public variant `Settings` exports that name only as the variant.
+    pub(super) fn dependency_variant_only_member_names(module_ast: &Program, public_only: bool) -> HashSet<String> {
+        if !public_only {
+            return HashSet::new();
+        }
+        let exports = exported_symbols(module_ast);
+        let mut declared: HashSet<&String> = exports
+            .iter()
+            .filter_map(|symbol| match symbol {
+                ExportedSymbol::Const(name)
+                | ExportedSymbol::Static(name)
+                | ExportedSymbol::Type(name)
+                | ExportedSymbol::Trait(name)
+                | ExportedSymbol::Function(name)
+                | ExportedSymbol::Capability(name) => Some(name),
+                ExportedSymbol::Variant { .. } | ExportedSymbol::Reexported(_) => None,
+            })
+            .collect();
+        declared.extend(module_ast.declarations.iter().filter_map(|decl| match &decl.node {
+            Declaration::Alias(alias) if matches!(alias.visibility, Visibility::Public) => Some(&alias.name),
+            _ => None,
+        }));
+        exports
+            .iter()
+            .filter_map(|symbol| match symbol {
+                ExportedSymbol::Variant { variant_name, .. } if !declared.contains(variant_name) => {
+                    Some(variant_name.clone())
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Return direct declaration names owned by a dependency module, excluding import re-exports.
