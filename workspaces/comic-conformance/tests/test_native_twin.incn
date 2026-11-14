@@ -4,7 +4,7 @@ from rust::incan_std_primitives::crumb import evaluate_semantic_case
 from std.fs import Path
 from case_data import CaseOperation
 from corpus import load
-from native_twin import twin_decode, twin_encode
+from native_twin import twin_decode, twin_encode, with_input
 
 
 def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str]:
@@ -14,7 +14,8 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
     mut binary = 0
     mut encoded_nanoseconds: u64 = 0
     mut decoded_nanoseconds: u64 = 0
-    for item in corpus.cases:
+    for original in corpus.cases:
+        item = with_input(original, corpus.texts)?
         if item.operation == CaseOperation.BinaryDecode or item.operation == CaseOperation.ColumnCodec:
             binary += 1
         document = item.document.to_json().map_err((error) => error.message())?
