@@ -5,7 +5,7 @@ from pub::incan_mir_plan import (
     CalleeKind, ExternalFunction, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, read_place, temporary, terminate_call
+from frame import Builder, place_type, read_place
 
 
 pub def borrow_array_slice(
@@ -52,11 +52,11 @@ pub def borrow_array_slice(
         operation = RvalueKind.MutBorrow(owner)
     mut reference = read_place(source, false, span)
     if not already_shared:
-        borrowed = temporary(builder, parameter, span)
+        borrowed = builder.temporary(parameter, span)
         builder.emit(plan_assign(borrowed, operation, span))
         reference = read_place(borrowed, mutable, span)
-    output = temporary(builder, result, span)
+    output = builder.temporary(result, span)
     arguments = [PlanType.NativeArray(items, count), PlanType.NativeSlice(elements)]
     builder.externals.append(ExternalFunction(path=method, type_arguments=arguments, parameters=[parameter], return_type=result, span=span))
-    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(method, arguments), [reference], output, span)
     return Ok(Some(read_place(output, mutable, span)))

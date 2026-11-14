@@ -27,7 +27,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
-from frame import Builder, temporary, read_place, terminate_call, external_call, literal
+from frame import Builder, read_place, literal
 from text_plan import owned_literal
 from classes import body_module_identity
 from program_context import ProgramContext
@@ -108,9 +108,9 @@ pub def callable_name_profile(module: &BodyIrModule, owner: str) -> Result[bool,
 
 pub def reified_pointer(mut builder: Builder, name: str, signature: list[PlanType], span: SourceSpan) -> Operand:
     """Materialize an already authenticated planned item through the existing function-pointer coercion."""
-    item = temporary(builder, PlanType.FunctionItem(name, signature), span)
+    item = builder.temporary(PlanType.FunctionItem(name, signature), span)
     builder.emit(plan_assign(item, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span))
-    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    pointer = builder.temporary(PlanType.FunctionPointer(signature), span)
     builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(item, false, span)), span))
     return read_place(pointer, false, span)
 
@@ -167,10 +167,10 @@ pub def cached_binding_frames(
         intrinsics,
         span,
     )
-    decorated = temporary(publish, pointer, span)
-    terminate_call(publish, CalleeKind.Planned(initializer), [], decorated, span)
-    stored = temporary(publish, PlanType.Unit, span)
-    terminate_call(publish, CalleeKind.StaticStore(slot), [read_place(decorated, false, span)], stored, span)
+    decorated = publish.temporary(pointer, span)
+    publish.terminate_call(CalleeKind.Planned(initializer), [], decorated, span)
+    stored = publish.temporary(PlanType.Unit, span)
+    publish.terminate_call(CalleeKind.StaticStore(slot), [read_place(decorated, false, span)], stored, span)
     publish.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
     publish.finish(TerminatorKind.Return, span)
     # 3. The publisher's address identifies this unit's cell to the runtime claim.
@@ -181,9 +181,8 @@ pub def cached_binding_frames(
     publisher = reified_pointer(access, binding_publish_name(base), [PlanType.Unit], span)
     publisher_address = function_address(access, publisher, span)
     original_address = function_address(access, reified_pointer(access, original, signature, span), span)
-    claimed = temporary(access, PlanType.Unit, span)
-    external_call(
-        access,
+    claimed = access.temporary(PlanType.Unit, span)
+    access.external_call(
         "incan_native_runtime::initialize_binding",
         [
             PlanType.String,
@@ -205,7 +204,7 @@ pub def cached_binding_frames(
         claimed,
         span,
     )
-    terminate_call(access, CalleeKind.StaticLoad(slot), [], plan_place(0, span), span)
+    access.terminate_call(CalleeKind.StaticLoad(slot), [], plan_place(0, span), span)
     access.finish(TerminatorKind.Return, span)
     mut externals: list[ExternalFunction] = []
     for external in access.externals:
@@ -221,7 +220,7 @@ pub def cached_binding_frames(
 
 def function_address(mut builder: Builder, pointer: Operand, span: SourceSpan) -> Operand:
     """Expose a reified pointer's address, which keys the runtime's per-unit claim and callable-name registry."""
-    address = temporary(builder, PlanType.USize, span)
+    address = builder.temporary(PlanType.USize, span)
     builder.emit(plan_assign(address, RvalueKind.FunctionAddress(pointer), span))
     return read_place(address, false, span)
 

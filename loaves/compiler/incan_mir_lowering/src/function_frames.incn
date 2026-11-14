@@ -49,7 +49,7 @@ from decorator_caches import DecoratorFrame, frame_name, validate_binding_policy
 from traits import append_default_type_bindings
 from unions import retain_body_unions
 from text_plan import owned_literal
-from frame import Builder, temporary, drop_all_owned, external_call, read_place, literal
+from frame import Builder, read_place, literal
 from lists import list_iterator_locals, taking_iterator_locals, list_parameter_type
 from async_ import future_type, integer_entry, evaluator_name, is_future
 from defaults import default_type
@@ -159,7 +159,7 @@ pub def lower_function(
         if return_type != PlanType.Unit:
             return Err("Body IR non-unit body has no retained Return")
         builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
-        drop_all_owned(builder, span)
+        builder.drop_all_owned(span)
         builder.finish(TerminatorKind.Return, span)
     # 3. Retain the completed frame and any producer or program entry wrappers.
     mut function = Function(
@@ -322,7 +322,7 @@ def initialize_body_frame(
     if body.is_generator():
         match generator_shape(declared_type):
             Some((leaf, depth)) =>
-                handle = temporary(builder, PlanType.GeneratorYield(leaf, depth), span)
+                handle = builder.temporary(PlanType.GeneratorYield(leaf, depth), span)
                 builder.generator_handle = handle.local
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
@@ -341,8 +341,8 @@ def initialize_body_frame(
     # Only the checked program entry requests panic initialization; other functions named main remain ordinary calls.
     entry = is_program_entry(module, body)
     if entry:
-        initialized = temporary(builder, PlanType.Unit, span)
-        external_call(builder, "incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
+        initialized = builder.temporary(PlanType.Unit, span)
+        builder.external_call("incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
     for index in range(len(parameters)):
         validate_exact_float(builder, plan_place(index + 1, span), span)
     if entry:
@@ -365,9 +365,8 @@ def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder)
         RustEntrypointEffect.PrintText(text=text, span=source_span) =>
             span = builder_location(builder, source_span)
             value = owned_literal(builder, str(text), span)
-            output = temporary(builder, PlanType.Unit, span)
-            external_call(
-                builder,
+            output = builder.temporary(PlanType.Unit, span)
+            builder.external_call(
                 "incan_native_runtime::println_text",
                 [PlanType.String],
                 PlanType.Unit,

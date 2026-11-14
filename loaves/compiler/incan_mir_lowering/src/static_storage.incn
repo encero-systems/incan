@@ -47,7 +47,7 @@ from decorator_caches import DecoratorFrame
 from decls import static_slot, static_accessors
 from models import field_path, field_step_type, model_type
 from numerics import numeric_carrier
-from frame import place_type, Builder, temporary, forget_owned, terminate_call, external_call, read_place, literal
+from frame import place_type, Builder, read_place, literal
 from collections import (
     is_collection,
     collection_arguments,
@@ -309,8 +309,8 @@ pub def read_static(
     # Keep the immutable initializer owner alive independently while materialization mutates the frame.
     statics = builder.program.statics.clone()
     initial = static_initial_operand(builder, statics.as_ref()[slot].initial, ty, span)?
-    target = temporary(builder, ty, span)
-    external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
+    target = builder.temporary(ty, span)
+    builder.external_call(read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
     if not is_owned_collection(ty):
         return Ok(read_place(target, ty == PlanType.String, span))
     builder.owned.append(target.local)
@@ -432,8 +432,8 @@ def read_guarded_static_field(
     name = f"{builder.name}__incan_static_field_{slot}_{len(builder.synthesized)}"
     builder.synthesized.append(static_field_reader(name, receiver, fields, result, reference, callee, span))
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
-    output = temporary(builder, result, span)
-    terminate_call(builder, CalleeKind.StaticMethod(slot, name), [], output, span)
+    output = builder.temporary(result, span)
+    builder.terminate_call(CalleeKind.StaticMethod(slot, name), [], output, span)
     builder.owned.append(output.local)
     return Ok(Some(read_place(output, true, span)))
 
@@ -471,8 +471,8 @@ def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: So
     """Load a guarded snapshot; only computed storage enters module initialization before the load."""
     if is_computed_static(builder.program.statics.as_ref()[slot]):
         initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
-    snapshot = temporary(builder, ty, span)
-    terminate_call(builder, CalleeKind.StaticLoad(slot), [], snapshot, span)
+    snapshot = builder.temporary(ty, span)
+    builder.terminate_call(CalleeKind.StaticLoad(slot), [], snapshot, span)
     if snapshot_owns(ty):
         builder.owned.append(snapshot.local)
     return snapshot
@@ -596,7 +596,7 @@ def static_initial_operand(
             mut elements: list[RustArgumentElement] = []
             for value in values:
                 elements.append(static_literal_element(value))
-            target = temporary(builder, ty, span)
+            target = builder.temporary(ty, span)
             list_assignment(builder, target, RustRvalue.Aggregate(RustAggregateKind.List, elements), span)?
             return Ok(read_place(target, true, span))
         RustStaticInitializer.Dict(entries) =>
@@ -623,7 +623,7 @@ def static_hashed_initial(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Build a dictionary from checked literal keys and their values, or a set from its members, in source order."""
-    target = temporary(builder, ty, span)
+    target = builder.temporary(ty, span)
     output = begin_collection(builder, target, span)?
     types = collection_arguments(ty)
     if len(types) == 2 and len(values) != len(keys):
@@ -679,7 +679,7 @@ pub def write_static(
         if not is_collection(ty):
             return Err("unsupported Body IR static projection")
         return write_static_entry(builder, destination, global, value, span)
-    target = temporary(builder, ty, span)
+    target = builder.temporary(ty, span)
     lower_local_assignment(module, builder, target, value, span)?
     return persist_static_value(builder, global, target, span)
 
@@ -707,7 +707,7 @@ def write_guarded_static_field(
     selected = fields[-1].ty
     reference = mutable_receiver_type(selected)?
     root_reference = mutable_receiver_type(owner)?
-    replacement = temporary(builder, selected, span)
+    replacement = builder.temporary(selected, span)
     lower_local_assignment(module, builder, replacement, value, span)?
     slot = static_slot(builder.program.statics.as_ref(), global)?
     name = f"{builder.name}__incan_static_write_{slot}_{len(builder.synthesized)}"
@@ -723,9 +723,9 @@ def write_guarded_static_field(
     )
     synthesize(builder, static_field_writer(name, root_reference, fields, selected, reference, span))
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
-    forget_owned(builder, replacement.local)
-    output = temporary(builder, PlanType.Unit, span)
-    terminate_call(builder, CalleeKind.StaticMethod(slot, name), [read_place(replacement, true, span)], output, span)
+    builder.forget_owned(replacement.local)
+    output = builder.temporary(PlanType.Unit, span)
+    builder.terminate_call(CalleeKind.StaticMethod(slot, name), [read_place(replacement, true, span)], output, span)
     return Ok(None)
 
 
@@ -827,9 +827,8 @@ pub def persist_static_value(
     if place_type(builder.locals, target) != ty:
         return Err("invalid Body IR static replacement carrier")
     _read_cell, write_cell = static_accessors(ty)?
-    output = temporary(builder, PlanType.Unit, span)
-    external_call(
-        builder,
+    output = builder.temporary(PlanType.Unit, span)
+    builder.external_call(
         write_cell,
         [PlanType.Int, ty],
         PlanType.Unit,
@@ -863,6 +862,6 @@ def store_computed_static(
         return Err("unsupported Body IR computed static replacement carrier")
     if is_computed_static(builder.program.statics.as_ref()[slot]):
         initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
-    output = temporary(builder, PlanType.Unit, span)
-    terminate_call(builder, CalleeKind.StaticStore(slot), [read_place(target, snapshot_owns(ty), span)], output, span)
+    output = builder.temporary(PlanType.Unit, span)
+    builder.terminate_call(CalleeKind.StaticStore(slot), [read_place(target, snapshot_owns(ty), span)], output, span)
     return Ok(None)

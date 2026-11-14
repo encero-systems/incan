@@ -40,7 +40,7 @@ from element_places import is_element_place
 from element_borrows import borrow_element_mut, shared_element_place
 from options import none_operand
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal, terminate_call
+from frame import place_type, Builder, read_place, literal
 from collections import is_collection
 from lists import list_shape, require_list_shape, list_element
 from checked_values import scalar_operand, scalar_place
@@ -146,7 +146,7 @@ pub def call_destination(
             if place_type(builder.locals, root) == ty:
                 return Ok(root)
             return scalar_place(builder, place, span)
-        None => return Ok(temporary(builder, ty, span))
+        None => return Ok(builder.temporary(ty, span))
 
 
 pub def borrowed_list_argument(
@@ -179,7 +179,7 @@ pub def lower_list_iter(
     output = call_destination(builder, destination, result, span)?
     if borrowed_at(builder.locals, output.local).ty != result:
         return Err("unsupported Body IR list iter destination")
-    drop_owned(builder, output.local, span)
+    builder.drop_owned(output.local, span)
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) =>
             root = list_root_place(builder, read.place, span)?
@@ -231,7 +231,7 @@ pub def borrowed_list_generator_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=[slice_type], return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [element]), [slice_reference], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [element]), [slice_reference], output, span)
     return Ok(None)
 
 
@@ -254,7 +254,7 @@ pub def lower_iterator_method(
                 return Err("invalid Body IR generator collect arguments")
             receiver = argument_place(builder, arguments, 0, span)?
             output = call_destination(builder, destination, PlanType.List(leaf, depth + 1), span)?
-            drop_owned(builder, output.local, span)
+            builder.drop_owned(output.local, span)
             generator_collect(builder, receiver, output, span)?
             builder.owned.append(output.local)
             return Ok(None)
@@ -388,7 +388,7 @@ def lower_list_reservation(
     count = argument_value(builder, arguments, 1, span)?
     if operand_type(builder, count)? != PlanType.Int:
         return Err("invalid Body IR list reservation count")
-    additional = temporary(builder, PlanType.USize, span)
+    additional = builder.temporary(PlanType.USize, span)
     builder.emit(plan_assign(additional, RvalueKind.NumericCast(count, PlanType.Int, PlanType.USize), span))
     reference, cell = list_method_receiver(builder, arguments, true, span)?
     output = call_destination(builder, destination, PlanType.Unit, span)?
@@ -512,12 +512,11 @@ pub def lower_list_builtin(
             None => return Err("unsupported Body IR spread FrozenBytes length")
             Some(value) =>
                 operand = scalar_operand(builder, value, span)?
-                mut output = temporary(builder, PlanType.Int, span)
+                mut output = builder.temporary(PlanType.Int, span)
                 match destination:
                     Some(place) => output = scalar_place(builder, place, span)?
                     None => pass
-                external_call(
-                    builder,
+                builder.external_call(
                     "incan_native_runtime::length_frozen_bytes",
                     [PlanType.FrozenBytes],
                     PlanType.Int,
@@ -675,7 +674,7 @@ pub def indexed_assignment_at(
         _ => argument = element_plan_operand(builder, argument, element, span)?
     subscript = list_index_operand(builder, destination, len(destination.projection) - 1, span)?
     reference = list_borrow(builder, receiver, true, span)?
-    unit = temporary(builder, PlanType.Unit, span)
+    unit = builder.temporary(PlanType.Unit, span)
     list_call(
         builder,
         "set_list",

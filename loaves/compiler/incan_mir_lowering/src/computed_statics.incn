@@ -28,7 +28,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
-from frame import Builder, temporary, terminate_call, literal
+from frame import Builder, literal
 
 
 pub def is_computed_static(declaration: StaticDeclaration) -> bool:
@@ -77,8 +77,8 @@ pub def initialize_module_statics(mut builder: Builder, owner: str, span: Source
     key = module_static_key(builder.program.statics.as_ref(), owner)
     if key < 0:
         return
-    output = temporary(builder, PlanType.Unit, span)
-    terminate_call(builder, CalleeKind.Planned(module_initializer_name(key)), [], output, span)
+    output = builder.temporary(PlanType.Unit, span)
+    builder.terminate_call(CalleeKind.Planned(module_initializer_name(key)), [], output, span)
 
 
 pub def module_initialization_externals(span: SourceSpan) -> list[ExternalFunction]:

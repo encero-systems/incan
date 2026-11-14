@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import HelperOp
 from rust::incan_lang::lang::surface::string_methods import StringMethodId as RustStringMethodId
 from pub::incan_mir_plan import PlanType, ListLeaf, Operand, Place, SourceSpan
-from frame import Builder, temporary, external_call
+from frame import Builder
 from lists import is_list
 
 
@@ -60,8 +60,8 @@ pub def emit_text_helper(
     span: SourceSpan,
 ) -> Place:
     """Emit one canonical borrowed-text call and retain its owned result for transfer or discard."""
-    text = temporary(builder, result, span)
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, text, span)
+    text = builder.temporary(result, span)
+    builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, text, span)
     if is_list(result):
         builder.owned.append(text.local)
     return text

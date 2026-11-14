@@ -28,7 +28,7 @@ from rust::incan_lang::lang::surface::set_methods import SetMethodId as RustSetM
 from table_views import borrowed_at
 from options import carrier_layout, replace_owned_destination
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, read_place, literal
+from frame import place_type, Builder, read_place, literal
 from collections import (
     dictionary_method_signature,
     require_mutable_receiver,
@@ -108,10 +108,10 @@ pub def cloned_collection(mut builder: Builder, place: Place, span: SourceSpan) 
     else:
         if ty != owned:
             return Err("unsupported Body IR projected collection view")
-        view = temporary(builder, collection_reference(ty, false), span)
+        view = builder.temporary(collection_reference(ty, false), span)
         builder.emit(plan_assign(view, RvalueKind.Borrow(place), span))
         reference = read_place(view, false, span)
-    output = temporary(builder, owned, span)
+    output = builder.temporary(owned, span)
     collection_call(builder, ty, "clone", [collection_reference(ty, false)], owned, [reference], output, span)?
     return Ok(read_place(output, true, span))
 
@@ -124,7 +124,7 @@ pub def collection_assignment(
 ) -> Result[None, str]:
     """Read checked literal operands before the collection module constructs their exact layout."""
     if destination.projection != Projection.Whole:
-        replacement = temporary(builder, place_type(builder.locals, destination), span)
+        replacement = builder.temporary(place_type(builder.locals, destination), span)
         _ = collection_assignment(builder, replacement, value, span)?
         replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
         return Ok(None)
@@ -269,7 +269,7 @@ pub def read_dictionary_element(
         PlaceElem.Index(index) => key = value_operand(builder, index, span)?
         _ => return Err("unsupported Body IR dictionary slice or field projection")
     reference = borrow_collection(builder, receiver, false, span)?
-    output = temporary(builder, types[1], span)
+    output = builder.temporary(types[1], span)
     collection_call(
         builder,
         ty,
@@ -419,7 +419,7 @@ def optional_dictionary_get(
         return Err("unsupported Body IR optional dictionary get carrier")
     key = argument_value(builder, arguments, 1, span)?
     reference = borrow_collection(builder, receiver, false, span)?
-    found = temporary(builder, result, span)
+    found = builder.temporary(result, span)
     collection_call(
         builder,
         ty,
@@ -430,7 +430,7 @@ def optional_dictionary_get(
         found,
         span,
     )?
-    drop_owned(builder, output.local, span)
+    builder.drop_owned(output.local, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
     builder.owned.append(output.local)
     return Ok(None)

@@ -37,16 +37,7 @@ from model_values import compare_models
 from options import replace_owned_destination
 from numerics import sized_numeric, numeric_zero, numeric_carrier, integer_carrier
 from builtins import list_call
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    track_rvalue_moves,
-    cleanup_exit,
-    read_place,
-    literal,
-    dereferenced_place,
-)
+from frame import place_type, Builder, read_place, literal, dereferenced_place
 from collections import is_collection, collection_arguments, is_owned_collection, insert_collection
 from lists import is_exclusive_borrow, require_list_shape, list_element, is_list, is_owned_list
 from async_ import is_future
@@ -156,7 +147,7 @@ def element_assignment(
     ty = element_place_type(builder, destination)?
     if is_exclusive_borrow(ty):
         return exclusive_view_element_assignment(module, builder, destination, value, ty, span)
-    replacement = temporary(builder, ty, span)
+    replacement = builder.temporary(ty, span)
     lower_local_assignment(module, builder, replacement, value, span)?
     argument = element_plan_operand(builder, read_place(replacement, replacement.local in builder.owned, span), ty, span)?
     last = len(destination.projection) - 1
@@ -168,7 +159,7 @@ def element_assignment(
                 container = mutable_element_prefix(builder, destination, last, span)?
                 leaf, depth = require_list_shape(container_type, "invalid Body IR list write container")?
                 reference = list_borrow(builder, container, true, span)?
-                output = temporary(builder, PlanType.Unit, span)
+                output = builder.temporary(PlanType.Unit, span)
                 list_call(
                     builder,
                     "set_list",
@@ -209,7 +200,7 @@ def exclusive_view_element_assignment(
     referent, writable = reference_contract(reference_type)?
     if not writable:
         return Err("unsupported Body IR write through a shared stored view")
-    replacement = temporary(builder, referent, span)
+    replacement = builder.temporary(referent, span)
     lower_local_assignment(module, builder, replacement, value, span)?
     argument = element_plan_operand(
         builder,
@@ -252,7 +243,7 @@ pub def lower_local_assignment(
             if target.projection != Projection.Whole:
                 return Err("unsupported Body IR projected function-item construction")
             if is_owned_callable(place_type(builder.locals, target)):
-                held = temporary(builder, ty, span)
+                held = builder.temporary(ty, span)
                 callee = function_item_callee(builder, name, span)
                 builder.emit(plan_assign(held, RvalueKind.FunctionItem(callee), span))
                 register_callable_item(builder, read_place(held, false, span), declaration_name, span)?
@@ -414,7 +405,7 @@ def assign_stored_value(
                 converted = boundary_plan_operand(builder, operand, ty, span)?
                 operation = RvalueKind.Use(converted)
         _ => pass
-    track_rvalue_moves(builder, operation)
+    builder.track_rvalue_moves(operation)
     if integer_carrier(ty):
         operation = negation_as_subtraction(operation, ty, span)?
         if builder.program.overflow_checks and is_checked_int_operation(operation):
@@ -512,7 +503,7 @@ def lower_checked_int_assignment(
             builder.emit(plan_assign(plan_place(pair, span), operation, span))
             next_block = builder.new_block(span)
             flag = read_place(Place(local=pair, projection=Projection.Overflow, span=span), false, span)
-            cleanup = cleanup_exit(builder, span)
+            cleanup = builder.cleanup_exit(span)
             assertion = TerminatorKind.AssertOverflow(flag, operator, left, right, next_block, Unwind.Cleanup(cleanup))
             builder.finish(assertion, span)
             builder.current = next_block

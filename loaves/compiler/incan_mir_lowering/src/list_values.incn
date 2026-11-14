@@ -38,18 +38,7 @@ from numerics import numeric_carrier
 from frozen_plan import frozen_observation_type
 from builtins import list_call
 from strings import emit_text_helper
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    forget_owned,
-    drop_owned,
-    external_call,
-    read_place,
-    literal,
-    appended_field,
-    dereferenced_place,
-)
+from frame import place_type, Builder, read_place, literal, appended_field, dereferenced_place
 from array_views import borrow_array_slice
 from collections import is_collection, is_owned_collection, borrow_collection
 from lists import list_shape, require_list_shape, list_element, is_owned_list
@@ -99,7 +88,7 @@ pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: Sou
     if mutable:
         reference_type = PlanType.ListMutRef(leaf, depth)
         operation = RvalueKind.MutBorrow(source)
-    reference = temporary(builder, reference_type, span)
+    reference = builder.temporary(reference_type, span)
     builder.emit(plan_assign(reference, operation, span))
     return Ok(read_place(reference, mutable, span))
 
@@ -143,7 +132,7 @@ pub def checked_list_argument(
             if place_type(builder.locals, root) == PlanType.Generator(ListLeaf.Int, 0):
                 if read.fact != OwnershipFact.Move and not read.last_use:
                     return Err("unsupported Body IR list argument without an owned range")
-                snapshot = temporary(builder, PlanType.List(ListLeaf.Int, 1), span)
+                snapshot = builder.temporary(PlanType.List(ListLeaf.Int, 1), span)
                 generator_collect(builder, root, snapshot, span)?
                 builder.owned.append(snapshot.local)
                 return list_borrow(builder, snapshot, mutable, span)
@@ -172,7 +161,7 @@ pub def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Re
     """Copy a list into a new owned temporary, which drops when its scope ends."""
     leaf, depth = require_list_shape(place_type(builder.locals, source), "unsupported Body IR non-list borrow")?
     reference = list_borrow(builder, source, false, span)?
-    output = temporary(builder, PlanType.List(leaf, depth), span)
+    output = builder.temporary(PlanType.List(leaf, depth), span)
     list_call(
         builder,
         "clone_list",
@@ -345,9 +334,8 @@ pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceS
     if ty == PlanType.FrozenStr:
         return display_plan_operand(builder, read_place(source, false, span), span)
     if ty == PlanType.FrozenBytes:
-        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
-        external_call(
-            builder,
+        output = builder.temporary(PlanType.List(ListLeaf.U8, 1), span)
+        builder.external_call(
             "incan_native_runtime::copy_frozen_bytes",
             [ty],
             PlanType.List(ListLeaf.U8, 1),
@@ -403,7 +391,7 @@ def read_native_text_array(
         None => return Err("unsupported Body IR native array element read without an array carrier")
         Some(view) =>
             result_type = PlanType.ScalarRef([PlanType.StrRef])
-            result = temporary(builder, result_type, span)
+            result = builder.temporary(result_type, span)
             instantiated_external_call(
                 builder,
                 "incan_std_primitives::collections::list_get",
@@ -419,9 +407,9 @@ def read_native_text_array(
 
 def read_text_element(mut builder: Builder, place: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
     """Borrow retained String storage for the canonical Unicode-scalar index helper, preserving negative indices and IndexError behavior."""
-    reference = temporary(builder, PlanType.StringRef, span)
+    reference = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
-    output = temporary(builder, PlanType.String, span)
+    output = builder.temporary(PlanType.String, span)
     instantiated_external_call(
         builder,
         "incan_std_primitives::strings::str_index",
@@ -447,7 +435,7 @@ pub def read_list_element(
     leaf, depth = require_list_shape(ty, f"unsupported Body IR indexing non-list at {site}; type {ty:?}; element read")?
     reference = list_borrow(builder, place, false, span)?
     element = list_element(leaf, depth)
-    output = temporary(builder, element, span)
+    output = builder.temporary(element, span)
     list_call(
         builder,
         "get_list",
@@ -490,7 +478,7 @@ def read_sequence_slice(
     if place_type(builder.locals, place) != PlanType.String:
         return read_list_slice(builder, place, projection, span)
     bounds = sequence_slice_bounds(builder, projection, span)?
-    reference = temporary(builder, PlanType.StringRef, span)
+    reference = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
     mut operands = [read_place(reference, false, span)]
     operands.extend(bounds)
@@ -511,7 +499,7 @@ def read_list_slice(mut builder: Builder, place: Place, projection: PlaceElem, s
     leaf, depth = require_list_shape(place_type(builder.locals, place), "unsupported Body IR slicing non-list")?
     bounds = sequence_slice_bounds(builder, projection, span)?
     reference = list_borrow(builder, place, false, span)?
-    output = temporary(builder, PlanType.List(leaf, depth), span)
+    output = builder.temporary(PlanType.List(leaf, depth), span)
     mut operands = [reference]
     operands.extend(bounds)
     list_call(
@@ -569,7 +557,7 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
         Ok((_referent, writable)) =>
             if writable:
                 return Err("unsupported Body IR exclusive reference field inside a list element")
-            output = temporary(builder, ty, span)
+            output = builder.temporary(ty, span)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
             return Ok(output)
         Err(_reason) => pass
@@ -582,7 +570,7 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
     if is_owned_list(ty):
         leaf, depth = require_list_shape(ty, "invalid Body IR list element field")?
         reference = list_borrow(builder, field, false, span)?
-        output = temporary(builder, ty, span)
+        output = builder.temporary(ty, span)
         list_call(
             builder,
             "clone_list",
@@ -606,7 +594,7 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
         and not frozen_observation_type(ty)
     ):
         return Err(f"unsupported Body IR list element field type {ty:?} in {builder.name}")
-    output = temporary(builder, ty, span)
+    output = builder.temporary(ty, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
     return Ok(output)
 
@@ -683,7 +671,7 @@ pub def list_assignment(
                 return list_assignment(builder, referent, value, span)
             _ => pass
     if destination.projection != Projection.Whole:
-        replacement = temporary(builder, place_type(builder.locals, destination), span)
+        replacement = builder.temporary(place_type(builder.locals, destination), span)
         _ = list_assignment(builder, replacement, value, span)?
         replace_owned_destination(builder, destination, RvalueKind.Use(read_place(replacement, true, span)), span)
         return Ok(None)
@@ -695,7 +683,7 @@ pub def list_assignment(
     if borrowed_at(builder.locals, destination.local).ty != ty:
         return Err("unsupported Body IR whole borrowed list assignment")
     element = list_element(leaf, depth)
-    output = temporary(builder, ty, span)
+    output = builder.temporary(ty, span)
     match value:
         RustRvalue.Aggregate(kind, elements) =>
             if kind != RustAggregateKind.List:
@@ -717,13 +705,13 @@ pub def list_assignment(
             if operand_type(builder, argument)? != ty:
                 return Err("unsupported Body IR list assignment from a non-list value")
             match argument.kind:
-                OperandKind.Move(place) => forget_owned(builder, place.local)
+                OperandKind.Move(place) => builder.forget_owned(place.local)
                 _ => pass
             builder.emit(plan_assign(output, RvalueKind.Use(argument), span))
             builder.owned.append(output.local)
         _ => return Err("unsupported Body IR list assignment rvalue")
-    drop_owned(builder, destination.local, span)
-    forget_owned(builder, output.local)
+    builder.drop_owned(destination.local, span)
+    builder.forget_owned(output.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
     builder.owned.append(destination.local)
     return Ok(None)
@@ -740,7 +728,7 @@ pub def append_list_value(
     """Append one checked element to a list literal under construction."""
     element = list_element(leaf, depth)
     reference = list_borrow(builder, output, true, span)?
-    unit = temporary(builder, PlanType.Unit, span)
+    unit = builder.temporary(PlanType.Unit, span)
     list_call(
         builder,
         "append_list",
@@ -767,7 +755,7 @@ pub def frozen_list_assignment(
     """
     ty = place_type(builder.locals, target)
     snapshot = frozen_list_snapshot_type(ty)?
-    values = temporary(builder, snapshot, span)
+    values = builder.temporary(snapshot, span)
     list_assignment(builder, values, value, span)?
     match ty:
         PlanType.FrozenCollection(_name, elements) =>
@@ -782,7 +770,7 @@ pub def frozen_list_assignment(
                 span,
             )?
         _ => return Err("unsupported Body IR frozen list assignment")
-    forget_owned(builder, values.local)
+    builder.forget_owned(values.local)
     return Ok(None)
 
 
@@ -812,7 +800,7 @@ def splice_list_spread(
                         return Err("unsupported Body IR list spread source type")
                     target = list_borrow(builder, output, true, span)?
                     reference = list_borrow(builder, place, false, span)?
-                    unit = temporary(builder, PlanType.Unit, span)
+                    unit = builder.temporary(PlanType.Unit, span)
                     list_call(
                         builder,
                         "extend_list",
@@ -823,7 +811,7 @@ def splice_list_spread(
                         unit,
                         span,
                     )
-                    drop_owned(builder, place.local, span)
+                    builder.drop_owned(place.local, span)
                     return Ok(None)
                 _ => return Err("unsupported Body IR list spread without owned source")
         _ => return Err("unsupported Body IR named list element")

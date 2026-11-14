@@ -2,7 +2,7 @@
 
 from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
 from pub::incan_mir_plan import BinaryOp, PlanType, RvalueKind, SourceSpan, assign as plan_assign
-from frame import Builder, place_type, external_call
+from frame import Builder, place_type
 from options import result_layout
 from sequence_builtins import argument_type
 from checked_values import scalar_place
@@ -30,8 +30,7 @@ pub def lower_newtype_sum_add(
             operands = fixed_arguments(builder, arguments, span)?
             match numeric:
                 PlanType.Int =>
-                    external_call(
-                        builder,
+                    builder.external_call(
                         "incan_native_runtime::add_newtype_sum",
                         [PlanType.Int, PlanType.Int],
                         PlanType.Int,

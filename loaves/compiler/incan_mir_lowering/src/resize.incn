@@ -3,7 +3,7 @@
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, Operand, Place, SourceSpan, RvalueKind, CalleeKind, ExternalFunction
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, terminate_call, place_type
+from frame import Builder, place_type
 from numerics import numeric_carrier
 from options import carrier_layout
 from rust::incan_lang::lang::types::numerics import NumericResizeMethodId as RustNumericResizeMethodId
@@ -42,5 +42,5 @@ pub def emit_resize(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[source, target], parameters=[source], return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [source, target]), [operand], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [source, target]), [operand], output, span)
     return Ok(None)

@@ -39,18 +39,7 @@ from generator_clauses import clause_iterator, whole_local
 from table_views import borrowed_at
 from tuples import tuple_has_owners
 from numerics import numeric_carrier
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    forget_owned,
-    drop_owned,
-    drop_all_owned,
-    track_rvalue_moves,
-    read_place,
-    literal,
-    finish_fallthrough,
-)
+from frame import place_type, Builder, read_place, literal
 from assertions import lower_assertion
 from async_ import construct_boxed_future, await_future
 from closures import callable_copy_type
@@ -125,7 +114,7 @@ def drop_loop_local_owners(mut builder: Builder, span: SourceSpan) -> None:
     for index in range(len(retained)):
         owner = retained[len(retained) - index - 1]
         if owner not in incoming and loop_local_owner(builder, owner):
-            drop_owned(builder, owner, span)
+            builder.drop_owned(owner, span)
 
 
 def loop_local_owner(mut builder: Builder, local: int) -> bool:
@@ -200,7 +189,7 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         RustStatementKind.Continue => return lower_loop_exit(builder, true, span)
         RustStatementKind.Drop(local=local) =>
             index = int(local.index()) + 1 + builder.local_offset
-            drop_owned(builder, index, span)
+            builder.drop_owned(index, span)
             # Parameters stay in caller-provided storage for the whole invocation, even after their value drops.
             if index > builder.parameter_count:
                 builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
@@ -282,7 +271,7 @@ def lower_native_race(
         types[4],
         PlanType.FunctionPointer([inputs[1], ty]),
     ]
-    future = temporary(builder, PlanType.Future([ty]), span)
+    future = builder.temporary(PlanType.Future([ty]), span)
     construct_boxed_future(
         builder,
         CalleeKind.Instantiated("incan_native_runtime::race_pair", types),
@@ -413,10 +402,10 @@ pub def return_operand(mut builder: Builder, operand: &RustOperand, span: Source
         return view_return_operand(builder, operand, return_type, span)
     if return_type == PlanType.String:
         text = display_operand(builder, operand, span)?
-        forget_owned(builder, text.local)
+        builder.forget_owned(text.local)
         return Ok(read_place(text, true, span))
     result = boundary_operand(builder, operand, return_type, span)?
-    track_rvalue_moves(builder, RvalueKind.Use(result))
+    builder.track_rvalue_moves(RvalueKind.Use(result))
     return Ok(result)
 
 
@@ -503,7 +492,7 @@ pub def finish_return(mut builder: Builder, value: Operand, span: SourceSpan) ->
     else:
         builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
     validate_exact_float(builder, plan_place(0, span), span)
-    drop_all_owned(builder, span)
+    builder.drop_all_owned(span)
     builder.finish(TerminatorKind.Return, span)
     return Ok(None)
 
@@ -648,7 +637,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     _scope = builder.loop_scopes.pop()
     ends = builder.loop_exit_blocks.pop()
     owners = builder.loop_exit_owners.pop()
-    finish_fallthrough(builder, header, span)
+    builder.finish_fallthrough(header, span)
     builder.owned = incoming
     if len(ends) != 0:
         builder.owned = join_branch_owners(builder, after, ends, owners, span)?
@@ -660,7 +649,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
             RustStatementKind.IterNext(destination=_item, iterator=RustOperand.Place(read), protocol=_protocol) =>
                 receiver = scalar_place(builder, read.place, span)?
                 if is_owned_list_iterator(place_type(builder.locals, receiver)):
-                    drop_owned(builder, receiver.local, span)
+                    builder.drop_owned(receiver.local, span)
             _ => pass
     # A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
     builder.closed[after] = not exits_to(builder.blocks, header, after)

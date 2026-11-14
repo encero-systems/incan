@@ -41,18 +41,7 @@ from patterns import (
     carrier_pattern_slot,
     has_refutable_payload,
 )
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    drop_owned,
-    bind_read_value,
-    track_rvalue_moves,
-    terminate_call,
-    read_place,
-    finish_fallthrough,
-    dereferenced_place,
-)
+from frame import place_type, Builder, read_place, dereferenced_place
 from collections import is_collection, is_owned_collection
 from lists import require_list_shape, list_element, is_list
 from closures import callable_copy_type
@@ -104,13 +93,13 @@ pub def lower_enum_match(
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
-            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
             # Pattern-bound owners are branch locals; release them before the arm's owners meet the others at the join.
             mut branch_owners = builder.owned
             for local in branch_owners:
                 if local not in owners:
-                    drop_owned(builder, local, span)
+                    builder.drop_owned(local, span)
             arm_ends.append(builder.current)
             arm_owners.append(builder.owned)
         owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
@@ -395,7 +384,7 @@ def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan
         _ => return Err("unsupported Body IR in-place match on a non-carrier element")
     index = list_index_operand(builder, source, last, span)?
     exclusive_list = list_borrow(builder, container, true, span)?
-    reference = temporary(builder, reference_type, span)
+    reference = builder.temporary(reference_type, span)
     list_call(
         builder,
         "borrow_list_mut",
@@ -474,7 +463,7 @@ def lower_structural_match(
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
             value = boundary_operand(builder, arm.result, result_type, span)?
-            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
             release_match_scratch(builder, owners, span)
             arm_ends.append(builder.current)
@@ -568,7 +557,7 @@ def skip_consumed_guard(
     builder.current = missed
     builder.owned = owners
     for local in consumed:
-        drop_owned(builder, local, span)
+        builder.drop_owned(local, span)
     builder.finish(TerminatorKind.Goto(next_arm), span)
     mut remaining: list[int] = []
     for local in owners:
@@ -584,7 +573,7 @@ def release_match_scratch(mut builder: Builder, incoming: list[int], span: Sourc
     owners = builder.owned
     for local in owners:
         if local not in incoming:
-            drop_owned(builder, local, span)
+            builder.drop_owned(local, span)
 
 
 pub def bind_structural_pattern(
@@ -616,7 +605,7 @@ pub def bind_structural_pattern(
             mut value = read_place(source, false, span)
             if ty == PlanType.String or tuple_has_owners(ty) or owned_carrier(ty) or is_owned_collection(ty):
                 value = enum_payload_read(builder, source, binding.fact, span)?
-            bind_read_value(builder, local, value, span)
+            builder.bind_read_value(local, value, span)
         RustPattern.Tuple(items) =>
             ty = place_type(builder.locals, source)
             fields = tuple_fields(source, ty, span)?
@@ -695,8 +684,8 @@ pub def join_branch_owners(
                 continue
             if not releases_only_memory(borrowed_at(builder.locals, local).ty):
                 return Err("unsupported Body IR owned-value branch merge")
-            drop_owned(builder, local, span)
-        finish_fallthrough(builder, join, span)
+            builder.drop_owned(local, span)
+        builder.finish_fallthrough(join, span)
     return Ok(live)
 
 
@@ -806,7 +795,7 @@ def reborrowed_payload(
     be neither copied nor cloned; reborrowing leaves the carrier whole for any later reader.
     """
     referent = dereferenced_place(place, exclusive_referent(reference)?, span)?
-    reborrow = temporary(builder, reference, span)
+    reborrow = builder.temporary(reference, span)
     builder.emit(plan_assign(reborrow, RvalueKind.MutBorrow(referent), span))
     return Ok(read_place(reborrow, true, span))
 
@@ -851,6 +840,6 @@ pub def read_generic_decorator(
         return Err("unsupported Body IR generic decorator read outside its whole checked wrapper binding")
     validate_instance_binding(binding)?
     # The wrapper shares the original's closed signature, which the accessor returns as a reified pointer.
-    output = temporary(builder, PlanType.FunctionPointer(builder_signature(builder)), span)
-    terminate_call(builder, CalleeKind.Planned(binding_accessor_name(builder.name)), [], output, span)
+    output = builder.temporary(PlanType.FunctionPointer(builder_signature(builder)), span)
+    builder.terminate_call(CalleeKind.Planned(binding_accessor_name(builder.name)), [], output, span)
     return Ok(Some(read_place(output, false, span)))

@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
 from pub::incan_mir_plan import PlanType, SourceSpan, Place, Operand, RvalueKind, CalleeKind, ExternalFunction
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, temporary, read_place, external_call
+from frame import Builder, place_type, read_place
 from sequence_builtins import argument_type
 from call_arguments import fixed_arguments
 from checked_values import scalar_place
@@ -54,7 +54,7 @@ pub def validation_error_reference(mut builder: Builder, source: Place, span: So
     """Borrow an owned native validation error or preserve its existing shared reference without cloning its payload."""
     mut reference = source
     if place_type(builder.locals, source) == PlanType.ValidationError:
-        reference = temporary(builder, PlanType.ValidationErrorRef, span)
+        reference = builder.temporary(PlanType.ValidationErrorRef, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
     elif place_type(builder.locals, source) != PlanType.ValidationErrorRef:
         return Err("unsupported Body IR validation error display source")
@@ -64,9 +64,8 @@ pub def validation_error_reference(mut builder: Builder, source: Place, span: So
 pub def display_validation_error(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
     """Borrow dependency-owned Display without consuming either a local error or an active Result payload."""
     reference = validation_error_reference(builder, source, span)?
-    output = temporary(builder, PlanType.String, span)
-    external_call(
-        builder,
+    output = builder.temporary(PlanType.String, span)
+    builder.external_call(
         "incan_native_runtime::format_validation_error",
         [PlanType.ValidationErrorRef],
         PlanType.String,

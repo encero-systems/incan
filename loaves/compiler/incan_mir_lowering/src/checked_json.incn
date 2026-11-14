@@ -21,7 +21,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import place as plan_place
 from pub::incan_mir_plan import source_span as plan_span
-from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned
+from frame import Builder, read_place
 from string_input import owned_string_frame
 from classes import function_name
 from type_parameters import Instance, request_instance, merge_instance_requests
@@ -136,9 +136,8 @@ def checked_json_function(
     error = checked_layout.variants[1].fields[0]
     if error != PlanType.ValidationError:
         return Err("unsupported Body IR checked Deserialize error carrier")
-    checked = temporary(builder, hook_result, span)
-    terminate_call(
-        builder,
+    checked = builder.temporary(hook_result, span)
+    builder.terminate_call(
         CalleeKind.Planned(function_name(module, selected)),
         [read_place(plan_place(1, span), true, span)],
         checked,
@@ -155,8 +154,8 @@ def checked_json_function(
         plan_place(0, span),
         span,
     )?
-    forget_owned(builder, 0)
-    drop_all_owned(builder, span)
+    builder.forget_owned(0)
+    builder.drop_all_owned(span)
     builder.finish(TerminatorKind.Return, span)
     function = Function(
         name=name,

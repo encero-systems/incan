@@ -46,7 +46,7 @@ from text_primitives import copy_frozen_bytes, decode_utf8 as primitive_decode_u
 from numerics import numeric_carrier, integer_carrier
 from strings import emit_text_helper, text_method
 from resize import emit_resize
-from frame import place_type, Builder, temporary, drop_owned, external_call, forget_owned, read_place
+from frame import place_type, Builder, read_place
 from lists import require_list_shape
 from checked_values import scalar_operand, scalar_place
 from operators import operand_type
@@ -256,8 +256,7 @@ def lower_integer_helper(
         numeric_receiver(builder, arguments, span)?,
         coerce_numeric_operand(builder, value, operand_type, span)?,
     ]
-    external_call(
-        builder,
+    builder.external_call(
         f"u8::{integer_helper_name(family, operation)}",
         [PlanType.U8, operand_type],
         result,
@@ -291,7 +290,7 @@ def lower_wrapping_integer(
     value = argument_value(builder, arguments, 1, span)?
     right = coerce_numeric_operand(builder, value, receiver, span)?
     if receiver == PlanType.Int:
-        pair = temporary(builder, PlanType.CheckedInt, span)
+        pair = builder.temporary(PlanType.CheckedInt, span)
         builder.emit(plan_assign(pair, RvalueKind.Binary(binary, left, right), span))
         wrapped = Place(local=pair.local, projection=Projection.Value, span=span)
         builder.emit(plan_assign(output, RvalueKind.Use(read_place(wrapped, false, span)), span))
@@ -422,9 +421,8 @@ def lower_primitive_encode(
     span: SourceSpan,
 ) -> None:
     """Preserve the codec's label error in its owner, then transfer primitive-owned bytes to the checked result."""
-    validated = temporary(builder, PlanType.Unit, span)
-    external_call(
-        builder,
+    validated = builder.temporary(PlanType.Unit, span)
+    builder.external_call(
         "incan_native_runtime::validate_encoder_label",
         [PlanType.StringRef],
         PlanType.Unit,
@@ -451,9 +449,8 @@ def lower_primitive_decode(
     explicit `(accepted, payload)` result, so the primitive never owns codec labels or ValidationError construction.
     """
     policy_type = PlanType.Tuple([TupleElement.Bool, TupleElement.Bool])
-    policy = temporary(builder, policy_type, span)
-    external_call(
-        builder,
+    policy = builder.temporary(policy_type, span)
+    builder.external_call(
         "incan_native_runtime::decode_replacement_policy",
         [PlanType.StringRef, PlanType.StringRef],
         policy_type,
@@ -470,9 +467,8 @@ def lower_primitive_decode(
     # Rejected options construct the legacy error without reading the receiver.
     policy_owners = builder.owned
     builder.current = rejected
-    error = temporary(builder, PlanType.ValidationError, span)
-    external_call(
-        builder,
+    error = builder.temporary(PlanType.ValidationError, span)
+    builder.external_call(
         "incan_native_runtime::invalid_decoder_options",
         [PlanType.StringRef, PlanType.StringRef],
         PlanType.ValidationError,
@@ -499,7 +495,7 @@ def lower_primitive_decode(
             read_place(policy_fields[1], false, span),
             span,
         )
-        drop_owned(builder, copied.local, span)
+        builder.drop_owned(copied.local, span)
     else:
         decoded = primitive_decode_utf8(
             builder,
@@ -514,13 +510,12 @@ def lower_primitive_decode(
     valid = builder.new_block(span)
     decoded_after = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid, valid), span)
-    forget_owned(builder, decoded.local)
+    builder.forget_owned(decoded.local)
     decoded_owners = builder.owned
 
     builder.current = invalid
-    adapted = temporary(builder, PlanType.ValidationError, span)
-    external_call(
-        builder,
+    adapted = builder.temporary(PlanType.ValidationError, span)
+    builder.external_call(
         "incan_native_runtime::invalid_utf8_error",
         [PlanType.String],
         PlanType.ValidationError,
@@ -587,7 +582,7 @@ def lower_float_square_root(
     output = call_destination(builder, destination, PlanType.Float, span)?
     operand = numeric_receiver(builder, arguments, span)?
     widened = coerce_numeric_operand(builder, operand, PlanType.Float, span)?
-    external_call(builder, "std::primitive::f64::sqrt", [PlanType.Float], PlanType.Float, [widened], output, span)
+    builder.external_call("std::primitive::f64::sqrt", [PlanType.Float], PlanType.Float, [widened], output, span)
     return Ok(None)
 
 
@@ -628,7 +623,7 @@ def lower_float_method(
         argument = argument_value(builder, arguments, index, span)?
         operands.append(coerce_numeric_operand(builder, argument, parameters[index], span)?)
     output = call_destination(builder, destination, result, span)?
-    external_call(builder, name, parameters, result, operands, output, span)
+    builder.external_call(name, parameters, result, operands, output, span)
     return Ok(None)
 
 
@@ -672,10 +667,10 @@ pub def lower_generator_member(
     source = read_place(receiver, true, span)
     if is_generator_consumer(method):
         output = call_destination(builder, destination, consumer_result(method, receiver_ty), span)?
-        drop_owned(builder, output.local, span)
+        builder.drop_owned(output.local, span)
         return generator_consumer(builder, method, source, operands, output, span)
     output = call_destination(builder, destination, receiver_ty, span)?
-    drop_owned(builder, output.local, span)
+    builder.drop_owned(output.local, span)
     generator_adapter(builder, method, source, operands, output, span)?
     builder.owned.append(output.local)
     return Ok(None)

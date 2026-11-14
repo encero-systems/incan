@@ -1,7 +1,7 @@
 """Borrowed collection equality uses the same PartialEq operations as legacy emission."""
 
 from pub::incan_mir_plan import Operand, PlanType, SourceSpan
-from frame import Builder, temporary, read_place
+from frame import Builder, read_place
 from lists import list_shape, list_element
 from collections import collection_call, collection_reference, collection_owned, is_collection
 from builtins import list_call
@@ -25,7 +25,7 @@ pub def emit_collection_equality(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Instantiate an exact checked collection shape without cloning either operand or its elements."""
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     mut operation = "equal"
     if unequal:
         operation = "unequal"

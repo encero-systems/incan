@@ -194,22 +194,194 @@ pub model Builder:
         """Append one operation to the selected native block."""
         self.blocks[self.current].statements.append(statement)
 
+    pub def temporary(mut self, ty: PlanType, span: SourceSpan) -> Place:
+        """Reserve one typed temporary without assuming it is already initialized."""
+        index = len(self.locals)
+        self.locals.append(Local(ty=ty, span=span))
+        return plan_place(index, span)
 
-pub def temporary(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Place:
-    """Reserve one typed temporary without assuming it is already initialized."""
-    index = len(builder.locals)
-    builder.locals.append(Local(ty=ty, span=span))
-    return plan_place(index, span)
+    pub def forget_owned(mut self, index: int) -> None:
+        """Remove an initialized owner after its value moves or drops."""
+        mut retained: list[int] = []
+        for live in self.owned:
+            if live != index:
+                retained.append(live)
+        self.owned = retained
+        self.moved_tuple_fields = [(local, slot) for local, slot in self.moved_tuple_fields if local != index]
 
+    pub def drop_owned(mut self, index: int, span: SourceSpan) -> None:
+        """Drop a known initialized owner and continue in a fresh normal block."""
+        if index not in self.owned:
+            return
+        places = remaining_owned_places(self.locals, self.moved_tuple_fields, index, span)
+        self.forget_owned(index)
+        for place in places:
+            successor = self.new_block(span)
+            self.finish(TerminatorKind.Drop(place, successor, Unwind.Continue), span)
+            self.current = successor
 
-pub def forget_owned(mut builder: Builder, index: int) -> None:
-    """Remove an initialized owner after its value moves or drops."""
-    mut retained: list[int] = []
-    for live in builder.owned:
-        if live != index:
-            retained.append(live)
-    builder.owned = retained
-    builder.moved_tuple_fields = [(local, slot) for local, slot in builder.moved_tuple_fields if local != index]
+    pub def drop_all_owned(mut self, span: SourceSpan) -> None:
+        """Release every remaining owner, newest first, before a function returns."""
+        while len(self.owned) != 0:
+            self.drop_owned(self.owned[-1], span)
+
+    pub def exhaust_loop(mut self, span: SourceSpan) -> None:
+        """
+        Leave the innermost loop once its iteration is exhausted, as a `break` leaves it.
+
+        The loop's exit joins what this path still owns with what each `break` owns: an owner a later iteration would have
+        moved is still held here and drops at the join, not with the iteration that never ran.
+        """
+        self.loop_exit_blocks[-1].append(self.current)
+        self.loop_exit_owners[-1].append(self.owned)
+        self.finish(TerminatorKind.Goto(self.loops[-1][1]), span)
+
+    pub def bind_read_value(mut self, local: int, value: Operand, span: SourceSpan) -> None:
+        """
+        Initialize a pattern binding with the value its read produced, and give the binding exactly what that read owns.
+
+        A moved operand, a payload taken from its carrier or a fresh clone, hands its owner to the binding, which drops it
+        once when its scope ends; a copied operand, a scalar or a reference, owns nothing. This is the one ownership rule
+        for every value a match arm or `if let` binds, whatever its type.
+        """
+        self.track_rvalue_moves(RvalueKind.Use(value))
+        self.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
+        match value.kind:
+            OperandKind.Move(_moved) => self.owned.append(local)
+            _ => pass
+
+    pub def track_rvalue_moves(mut self, value: RvalueKind) -> None:
+        """Remove transferred whole owners before building cleanup edges."""
+        match value:
+            RvalueKind.Use(operand) => self.forget_moved_arguments([operand])
+            RvalueKind.Tuple(operands) => self.forget_moved_arguments(operands)
+            RvalueKind.Model(_index, operands) => self.forget_moved_arguments(operands)
+            RvalueKind.Enum(_owner, _variant, operands) => self.forget_moved_arguments(operands)
+            _ => pass
+
+    pub def forget_moved_arguments(mut self, arguments: list[Operand]) -> None:
+        """Forget transferred whole owners and retain the initialized remainder of a consumed tuple."""
+        for argument in arguments:
+            match argument.kind:
+                OperandKind.Move(value) =>
+                    if value.projection == Projection.Whole:
+                        self.forget_owned(value.local)
+                    else:
+                        match value.projection:
+                            Projection.Field(slot, _ty) =>
+                                match borrowed_at(self.locals, value.local).ty:
+                                    PlanType.Tuple(_elements) => self.moved_tuple_fields.append((value.local, slot))
+                                    _ => pass
+                            _ => pass
+                _ => pass
+
+    pub def cleanup_exit(mut self, span: SourceSpan) -> int:
+        """
+        Reuse or build the unwind path for the current owners and return its first block.
+
+        The chain drops owners newest first and ends in `UnwindResume`. It is built back to front: each new block drops
+        one more owner and continues to the block built before it. Calls with the same initialized locals and transferred
+        tuple fields can target that same MIR path; the first call's span names its compiler-owned drop blocks. A
+        destructor that panics while unwinding terminates rather than unwinding twice.
+        """
+        return self.cleanup_chain(self.owned.clone(), self.moved_tuple_fields.clone(), span)
+
+    def cleanup_chain(mut self, owners: list[int], moved_tuple_fields: list[tuple[int, int]], span: SourceSpan) -> int:
+        """
+        Reuse one exact cleanup state, or prepend its newest owner to the shared predecessor tail.
+
+        Removing the newest initialized owner also removes its partial-transfer facts. The predecessor therefore names the
+        exact state reached after that owner has finished dropping. Remaining tuple fields are prepended in their existing
+        order, preserving the reverse field order produced by the former whole-chain construction.
+        """
+        for chain in self.cleanup_chains:
+            if chain.owners == owners and chain.moved_tuple_fields == moved_tuple_fields:
+                return chain.target
+        if len(owners) == 0:
+            target = self.new_block(span)
+            self.blocks[target].cleanup = true
+            self.blocks[target].terminator = Terminator(kind=TerminatorKind.UnwindResume, span=span)
+            self.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
+            return target
+
+        newest = owners[-1]
+        predecessor_owners = [owners[position] for position in range(len(owners) - 1)]
+        predecessor_transfers = [
+            (local, slot) for local, slot in moved_tuple_fields if local != newest
+        ]
+        places = remaining_owned_places(self.locals, moved_tuple_fields, newest, span)
+        mut target = self.cleanup_chain(predecessor_owners, predecessor_transfers, span)
+        for place in places:
+            current = self.new_block(span)
+            self.blocks[current].cleanup = true
+            self.blocks[current].terminator = Terminator(
+                kind=TerminatorKind.Drop(place, target, Unwind.Terminate),
+                span=span,
+            )
+            target = current
+        self.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
+        return target
+
+    pub def terminate_call(
+        mut self,
+        callee: CalleeKind,
+        arguments: list[Operand],
+        destination: Place,
+        span: SourceSpan,
+    ) -> None:
+        """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation without reading its storage."""
+        # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
+        self.forget_moved_arguments(arguments)
+        continuation = self.new_block(span)
+        cleanup = self.cleanup_exit(span)
+        call = TerminatorKind.Call(
+            Callee(kind=callee, span=span),
+            arguments,
+            destination,
+            continuation,
+            Unwind.Cleanup(cleanup),
+        )
+        self.finish(call, span)
+        self.current = continuation
+        if place_type(self.locals, destination) == PlanType.Never:
+            self.finish(TerminatorKind.Unreachable, span)
+
+    pub def value_type(mut self, operand: Operand) -> Result[PlanType, str]:
+        """Read a materialized value's plan type without consulting source syntax or frontend policy."""
+        match operand.kind:
+            OperandKind.Copy(place) => return Ok(place_type(self.locals, place))
+            OperandKind.Move(place) => return Ok(place_type(self.locals, place))
+            OperandKind.Literal(constant) =>
+                match constant:
+                    Constant.Numeric(_text, ty) => return Ok(ty)
+                    Constant.RustItem(_path, ty) => return Ok(ty)
+                    Constant.Int(_value) => return Ok(PlanType.Int)
+                    Constant.Float(_value) => return Ok(PlanType.Float)
+                    Constant.Bool(_value) => return Ok(PlanType.Bool)
+                    Constant.Unit => return Ok(PlanType.Unit)
+                    Constant.TypeToken(represented) => return Ok(PlanType.TypeToken(represented))
+                    Constant.Text(_value) => return Ok(PlanType.StrRef)
+
+    pub def external_call(
+        mut self,
+        name: str,
+        parameters: list[PlanType],
+        result: PlanType,
+        arguments: list[Operand],
+        destination: Place,
+        span: SourceSpan,
+    ) -> None:
+        """Declare a monomorphic runtime signature and emit its unwinding call."""
+        self.externals.append(ExternalFunction(path=name, parameters=parameters, return_type=result, span=span))
+        self.terminate_call(CalleeKind.External(name), arguments, destination, span)
+        # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
+        if result == PlanType.String:
+            self.owned.append(destination.local)
+
+    pub def finish_fallthrough(mut self, target: int, span: SourceSpan) -> None:
+        """Connect an open block while retaining explicit return and loop exits."""
+        if not self.closed[self.current]:
+            self.finish(TerminatorKind.Goto(target), span)
 
 
 def remaining_owned_places(
@@ -245,179 +417,11 @@ def remaining_owned_places(
     return places
 
 
-pub def drop_owned(mut builder: Builder, index: int, span: SourceSpan) -> None:
-    """Drop a known initialized owner and continue in a fresh normal block."""
-    if index not in builder.owned:
-        return
-    places = remaining_owned_places(builder.locals, builder.moved_tuple_fields, index, span)
-    forget_owned(builder, index)
-    for place in places:
-        successor = builder.new_block(span)
-        builder.finish(TerminatorKind.Drop(place, successor, Unwind.Continue), span)
-        builder.current = successor
-
-
-pub def drop_all_owned(mut builder: Builder, span: SourceSpan) -> None:
-    """Release every remaining owner, newest first, before a function returns."""
-    while len(builder.owned) != 0:
-        drop_owned(builder, builder.owned[-1], span)
-
-
-pub def exhaust_loop(mut builder: Builder, span: SourceSpan) -> None:
-    """
-    Leave the innermost loop once its iteration is exhausted, as a `break` leaves it.
-
-    The loop's exit joins what this path still owns with what each `break` owns: an owner a later iteration would have
-    moved is still held here and drops at the join, not with the iteration that never ran.
-    """
-    builder.loop_exit_blocks[-1].append(builder.current)
-    builder.loop_exit_owners[-1].append(builder.owned)
-    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
-
-
-pub def bind_read_value(mut builder: Builder, local: int, value: Operand, span: SourceSpan) -> None:
-    """
-    Initialize a pattern binding with the value its read produced, and give the binding exactly what that read owns.
-
-    A moved operand, a payload taken from its carrier or a fresh clone, hands its owner to the binding, which drops it
-    once when its scope ends; a copied operand, a scalar or a reference, owns nothing. This is the one ownership rule
-    for every value a match arm or `if let` binds, whatever its type.
-    """
-    track_rvalue_moves(builder, RvalueKind.Use(value))
-    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-    match value.kind:
-        OperandKind.Move(_moved) => builder.owned.append(local)
-        _ => pass
-
-
-pub def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
-    """Remove transferred whole owners before building cleanup edges."""
-    match value:
-        RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
-        RvalueKind.Tuple(operands) => forget_moved_arguments(builder, operands)
-        RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
-        RvalueKind.Enum(_owner, _variant, operands) => forget_moved_arguments(builder, operands)
-        _ => pass
-
-
-pub def forget_moved_arguments(mut builder: Builder, arguments: list[Operand]) -> None:
-    """Forget transferred whole owners and retain the initialized remainder of a consumed tuple."""
-    for argument in arguments:
-        match argument.kind:
-            OperandKind.Move(value) =>
-                if value.projection == Projection.Whole:
-                    forget_owned(builder, value.local)
-                else:
-                    match value.projection:
-                        Projection.Field(slot, _ty) =>
-                            match borrowed_at(builder.locals, value.local).ty:
-                                PlanType.Tuple(_elements) => builder.moved_tuple_fields.append((value.local, slot))
-                                _ => pass
-                        _ => pass
-            _ => pass
-
-
-pub def cleanup_exit(mut builder: Builder, span: SourceSpan) -> int:
-    """
-    Reuse or build the unwind path for the current owners and return its first block.
-
-    The chain drops owners newest first and ends in `UnwindResume`. It is built back to front: each new block drops
-    one more owner and continues to the block built before it. Calls with the same initialized locals and transferred
-    tuple fields can target that same MIR path; the first call's span names its compiler-owned drop blocks. A
-    destructor that panics while unwinding terminates rather than unwinding twice.
-    """
-    return cleanup_chain(builder, builder.owned.clone(), builder.moved_tuple_fields.clone(), span)
-
-
-def cleanup_chain(
-    mut builder: Builder,
-    owners: list[int],
-    moved_tuple_fields: list[tuple[int, int]],
-    span: SourceSpan,
-) -> int:
-    """
-    Reuse one exact cleanup state, or prepend its newest owner to the shared predecessor tail.
-
-    Removing the newest initialized owner also removes its partial-transfer facts. The predecessor therefore names the
-    exact state reached after that owner has finished dropping. Remaining tuple fields are prepended in their existing
-    order, preserving the reverse field order produced by the former whole-chain construction.
-    """
-    for chain in builder.cleanup_chains:
-        if chain.owners == owners and chain.moved_tuple_fields == moved_tuple_fields:
-            return chain.target
-    if len(owners) == 0:
-        target = builder.new_block(span)
-        builder.blocks[target].cleanup = true
-        builder.blocks[target].terminator = Terminator(kind=TerminatorKind.UnwindResume, span=span)
-        builder.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
-        return target
-
-    newest = owners[-1]
-    predecessor_owners = [owners[position] for position in range(len(owners) - 1)]
-    predecessor_transfers = [
-        (local, slot) for local, slot in moved_tuple_fields if local != newest
-    ]
-    places = remaining_owned_places(builder.locals, moved_tuple_fields, newest, span)
-    mut target = cleanup_chain(builder, predecessor_owners, predecessor_transfers, span)
-    for place in places:
-        current = builder.new_block(span)
-        builder.blocks[current].cleanup = true
-        builder.blocks[current].terminator = Terminator(
-            kind=TerminatorKind.Drop(place, target, Unwind.Terminate),
-            span=span,
-        )
-        target = current
-    builder.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
-    return target
-
-
-pub def terminate_call(
-    mut builder: Builder,
-    callee: CalleeKind,
-    arguments: list[Operand],
-    destination: Place,
-    span: SourceSpan,
-) -> None:
-    """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation without reading its storage."""
-    # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
-    forget_moved_arguments(builder, arguments)
-    continuation = builder.new_block(span)
-    cleanup = cleanup_exit(builder, span)
-    call = TerminatorKind.Call(
-        Callee(kind=callee, span=span),
-        arguments,
-        destination,
-        continuation,
-        Unwind.Cleanup(cleanup),
-    )
-    builder.finish(call, span)
-    builder.current = continuation
-    if place_type(builder.locals, destination) == PlanType.Never:
-        builder.finish(TerminatorKind.Unreachable, span)
-
-
 pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
     """Choose an explicit native move or copy from a known typed local."""
     if moved:
         return Operand(kind=OperandKind.Move(place), span=span)
     return Operand(kind=OperandKind.Copy(place), span=span)
-
-
-pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
-    """Read a materialized value's plan type without consulting source syntax or frontend policy."""
-    match operand.kind:
-        OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))
-        OperandKind.Move(place) => return Ok(place_type(builder.locals, place))
-        OperandKind.Literal(constant) =>
-            match constant:
-                Constant.Numeric(_text, ty) => return Ok(ty)
-                Constant.RustItem(_path, ty) => return Ok(ty)
-                Constant.Int(_value) => return Ok(PlanType.Int)
-                Constant.Float(_value) => return Ok(PlanType.Float)
-                Constant.Bool(_value) => return Ok(PlanType.Bool)
-                Constant.Unit => return Ok(PlanType.Unit)
-                Constant.TypeToken(represented) => return Ok(PlanType.TypeToken(represented))
-                Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 
 pub def place_type(locals: &list[Local], value: Place) -> PlanType:
@@ -465,23 +469,6 @@ pub def dereferenced_place(source: Place, referent: PlanType, span: SourceSpan) 
     return appended_field(source, FieldProjection(slot=-1, ty=referent, dereferences=1), span)
 
 
-pub def external_call(
-    mut builder: Builder,
-    name: str,
-    parameters: list[PlanType],
-    result: PlanType,
-    arguments: list[Operand],
-    destination: Place,
-    span: SourceSpan,
-) -> None:
-    """Declare a monomorphic runtime signature and emit its unwinding call."""
-    builder.externals.append(ExternalFunction(path=name, parameters=parameters, return_type=result, span=span))
-    terminate_call(builder, CalleeKind.External(name), arguments, destination, span)
-    # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
-    if result == PlanType.String:
-        builder.owned.append(destination.local)
-
-
 pub def literal(constant: Constant, span: SourceSpan) -> Operand:
     """Wrap a plan constant as an operand."""
     return Operand(kind=OperandKind.Literal(constant), span=span)
@@ -491,8 +478,3 @@ pub def text_literal(text: str, span: SourceSpan) -> Operand:
     """Retain static text without an implicit allocation."""
     return literal(Constant.Text(text), span)
 
-
-pub def finish_fallthrough(mut builder: Builder, target: int, span: SourceSpan) -> None:
-    """Connect an open block while retaining explicit return and loop exits."""
-    if not builder.closed[builder.current]:
-        builder.finish(TerminatorKind.Goto(target), span)

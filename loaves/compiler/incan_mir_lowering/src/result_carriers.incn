@@ -38,7 +38,7 @@ from options import (
     none_operand,
     lower_carrier_method_plan,
 )
-from frame import place_type, Builder, temporary, track_rvalue_moves, read_place, dereferenced_place
+from frame import place_type, Builder, read_place, dereferenced_place
 from lists import is_exclusive_borrow
 from checked_values import scalar_place, target_read
 from operators import operand_type
@@ -71,8 +71,8 @@ pub def lower_try_propagation(
         _ => return Err("unsupported Body IR unresolved TryPropagate error routing")
     value = value_operand(builder, operand, span)?
     ty = operand_type(builder, value)?
-    source = temporary(builder, ty, span)
-    track_rvalue_moves(builder, RvalueKind.Use(value))
+    source = builder.temporary(ty, span)
+    builder.track_rvalue_moves(RvalueKind.Use(value))
     builder.emit(plan_assign(source, RvalueKind.Use(value), span))
     builder.owned.append(source.local)
     target = assignment_place(builder, destination, span)?
@@ -135,7 +135,7 @@ pub def lower_none_assignment(
     if is_nominal_type(ty):
         replace_owned_destination(builder, target, RvalueKind.Use(value), span)
     else:
-        track_rvalue_moves(builder, RvalueKind.Use(value))
+        builder.track_rvalue_moves(RvalueKind.Use(value))
         builder.emit(plan_assign(target, RvalueKind.Use(value), span))
     return Ok(None)
 
@@ -265,7 +265,7 @@ pub def retained_reference_value(
                             borrowed = dereferenced_place(place, referent, span)?
                         elif actual != referent:
                             return Ok(None)
-                        reference = temporary(builder, expected, span)
+                        reference = builder.temporary(expected, span)
                         builder.emit(plan_assign(reference, RvalueKind.MutBorrow(borrowed), span))
                         return Ok(Some(read_place(reference, true, span)))
                     if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
@@ -278,7 +278,7 @@ pub def retained_reference_value(
                                 if reference_type != expected:
                                     return Ok(None)
                             Err(_reason) => return Ok(None)
-                        reference = temporary(builder, expected, span)
+                        reference = builder.temporary(expected, span)
                         builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
                         return Ok(Some(read_place(reference, false, span)))
                     return Ok(Some(read_place(place, read.fact == OwnershipFact.Move, span)))

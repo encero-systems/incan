@@ -2,7 +2,7 @@
 
 from pub::incan_mir_plan import Place, PlanType, SourceSpan, Operand, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, text_literal, forget_owned, drop_owned, external_call, value_type
+from frame import Builder, read_place, text_literal
 
 
 pub def format_parts(
@@ -18,52 +18,51 @@ pub def format_parts(
     The literal texts and the displayed values become two fixed-size arrays, borrowed as slices for the call. The
     value array takes ownership of the displayed strings and is dropped after the call.
     """
-    literals = temporary(builder, PlanType.StrArray(len(parts)), span)
+    literals = builder.temporary(PlanType.StrArray(len(parts)), span)
     mut texts: list[Operand] = []
     for part in parts:
         texts.append(text_literal(part, span))
     builder.emit(plan_assign(literals, RvalueKind.Array(texts), span))
 
-    strings = temporary(builder, PlanType.StringArray(len(values)), span)
+    strings = builder.temporary(PlanType.StringArray(len(values)), span)
     mut operands: list[Operand] = []
     for value in values:
         operands.append(read_place(value, true, span))
         # Each displayed string moves into the array, so the array now owns it.
-        forget_owned(builder, value.local)
+        builder.forget_owned(value.local)
     builder.emit(plan_assign(strings, RvalueKind.Array(operands), span))
     builder.owned.append(strings.local)
 
     # `&[T; N]` coerces to `&[T]`: borrow each array, then unsize the borrow into a slice.
-    literal_reference = temporary(builder, PlanType.StrArrayRef(len(parts)), span)
-    string_reference = temporary(builder, PlanType.StringArrayRef(len(values)), span)
+    literal_reference = builder.temporary(PlanType.StrArrayRef(len(parts)), span)
+    string_reference = builder.temporary(PlanType.StringArrayRef(len(values)), span)
     builder.emit(plan_assign(literal_reference, RvalueKind.Borrow(literals), span))
     builder.emit(plan_assign(string_reference, RvalueKind.Borrow(strings), span))
-    literal_slice = temporary(builder, PlanType.StrSlice, span)
-    string_slice = temporary(builder, PlanType.StringSlice, span)
+    literal_slice = builder.temporary(PlanType.StrSlice, span)
+    string_slice = builder.temporary(PlanType.StringSlice, span)
     builder.emit(plan_assign(literal_slice, RvalueKind.UnsizeSlice(read_place(literal_reference, false, span)), span))
     builder.emit(plan_assign(string_slice, RvalueKind.UnsizeSlice(read_place(string_reference, false, span)), span))
 
     slices = [read_place(literal_slice, false, span), read_place(string_slice, false, span)]
     path = "incan_std_primitives::strings::fstring"
-    external_call(builder, path, [PlanType.StrSlice, PlanType.StringSlice], PlanType.String, slices, destination, span)
-    drop_owned(builder, strings.local, span)
+    builder.external_call(path, [PlanType.StrSlice, PlanType.StringSlice], PlanType.String, slices, destination, span)
+    builder.drop_owned(strings.local, span)
 
 
 pub def clone_text(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
     """Clone a string local into a new owned string through the runtime, borrowing the original."""
-    reference = temporary(builder, PlanType.StringRef, span)
+    reference = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
     return clone_text_reference(builder, read_place(reference, false, span), span)
 
 
 pub def clone_text_reference(mut builder: Builder, reference: Operand, span: SourceSpan) -> Result[Place, str]:
     """Materialize owned display text from an existing shared string reference, retaining the original owner."""
-    if value_type(builder, reference)? != PlanType.StringRef:
+    if builder.value_type(reference)? != PlanType.StringRef:
         return Err("unsupported Body IR text clone without a shared string reference")
-    result = temporary(builder, PlanType.String, span)
+    result = builder.temporary(PlanType.String, span)
     path = "incan_native_runtime::clone_text"
-    external_call(
-        builder,
+    builder.external_call(
         path,
         [PlanType.StringRef],
         PlanType.String,
@@ -76,18 +75,17 @@ pub def clone_text_reference(mut builder: Builder, reference: Operand, span: Sou
 
 pub def owned_literal(mut builder: Builder, text: str, span: SourceSpan) -> Place:
     """Allocate an owned string from literal text, through the same runtime concatenation the legacy route uses."""
-    result = temporary(builder, PlanType.String, span)
+    result = builder.temporary(PlanType.String, span)
     arguments = [text_literal(text, span), text_literal("", span)]
     path = "incan_std_primitives::strings::str_concat"
-    external_call(builder, path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
+    builder.external_call(path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
     return result
 
 
 pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
     """Materialize a retained native str view as the owned text the checked source result contract requires."""
-    result = temporary(builder, PlanType.String, span)
-    external_call(
-        builder,
+    result = builder.temporary(PlanType.String, span)
+    builder.external_call(
         "incan_std_primitives::strings::str_concat",
         [PlanType.StrRef, PlanType.StrRef],
         PlanType.String,
@@ -100,9 +98,8 @@ pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan)
 
 pub def owned_borrowed_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
     """Copy a shared String through its native slice without calling the runtime's own clone wrapper."""
-    view = temporary(builder, PlanType.StrRef, span)
-    external_call(
-        builder,
+    view = builder.temporary(PlanType.StrRef, span)
+    builder.external_call(
         "alloc::string::String::as_str",
         [PlanType.StringRef],
         PlanType.StrRef,

@@ -44,17 +44,7 @@ from options import carrier_layout
 from numerics import integer_conversion, float_conversion, has_sized_numeric, numeric_name, numeric_carrier
 from builtins import scalar_builtin, list_call, emit_boolean_operator
 from strings import text_helper
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    forget_owned,
-    drop_owned,
-    terminate_call,
-    external_call,
-    read_place,
-    literal,
-)
+from frame import place_type, Builder, read_place, literal
 from lists import list_shape, require_list_shape, list_element, is_list
 from closures import callable_signature
 from checked_values import scalar_operand, scalar_place
@@ -113,8 +103,7 @@ pub def lower_numeric_helper(
         arguments = [scalar_operand(builder, left, span)?, scalar_operand(builder, right, span)?]
         if operand_type(builder, arguments[0])? != ty or operand_type(builder, arguments[1])? != ty:
             return Err("unsupported Body IR mixed numeric division or modulo")
-        external_call(
-            builder,
+        builder.external_call(
             f"incan_native_runtime::{operation}_{numeric_name(ty)}",
             [ty, ty],
             ty,
@@ -131,7 +120,7 @@ pub def lower_numeric_helper(
         _ => return Err("unsupported Body IR division or modulo type")
     path = f"incan_std_primitives::num::{operation}_{suffix}"
     arguments = [value_operand(builder, left, span)?, value_operand(builder, right, span)?]
-    external_call(builder, path, [ty, ty], ty, arguments, destination, span)
+    builder.external_call(path, [ty, ty], ty, arguments, destination, span)
     return Ok(None)
 
 
@@ -155,7 +144,7 @@ pub def lower_runtime_helper(
             signature = callable_signature(operand_type(builder, callback)?)?
             pointer = function_argument(builder, PlanType.FunctionPointer(signature), callback, span)?
             output = call_destination(builder, destination, PlanType.Unit, span)?
-            terminate_call(builder, CalleeKind.InstallPanicHook(signature), [pointer], output, span)
+            builder.terminate_call(CalleeKind.InstallPanicHook(signature), [pointer], output, span)
             return Ok(None)
         RustHelper.RaiseValueError =>
             if len(arguments) != 1:
@@ -167,9 +156,8 @@ pub def lower_runtime_helper(
             match arguments[0].as_one():
                 Some(message) => operands.append(borrow_str_operand(builder, message, span)?)
                 None => return Err("invalid Body IR RaiseValueError message spread")
-            output = temporary(builder, PlanType.Never, span)
-            external_call(
-                builder,
+            output = builder.temporary(PlanType.Never, span)
+            builder.external_call(
                 "incan_std_primitives::errors::raise_value_error",
                 [PlanType.StrRef],
                 PlanType.Never,
@@ -200,10 +188,10 @@ pub def lower_runtime_helper(
             if len(arguments) != 3:
                 return Err("invalid Body IR RangeValidate arity")
             int_triple = [PlanType.Int, PlanType.Int, PlanType.Int]
-            output = temporary(builder, PlanType.Unit, span)
+            output = builder.temporary(PlanType.Unit, span)
             path = "incan_native_runtime::validate_range"
             operands = fixed_arguments(builder, arguments, span)?
-            external_call(builder, path, int_triple, PlanType.Unit, operands, output, span)
+            builder.external_call(path, int_triple, PlanType.Unit, operands, output, span)
             return Ok(None)
         RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, false, span)
         RustHelper.NewtypeFieldHookExtract =>
@@ -218,8 +206,7 @@ pub def lower_runtime_helper(
             output = call_destination(builder, destination, PlanType.Unit, span)?
             operands = fixed_arguments(builder, arguments, span)?
             path = "incan_native_runtime::validate_newtype_constraint"
-            external_call(
-                builder,
+            builder.external_call(
                 path,
                 [PlanType.Bool, PlanType.String, PlanType.String],
                 PlanType.Unit,
@@ -247,7 +234,7 @@ pub def lower_builtin(
         match scalar_builtin(builtin, ty):
             Some((name, result)) =>
                 output = call_destination(builder, destination, result, span)?
-                external_call(builder, f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
+                builder.external_call(f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
                 return Ok(None)
             None => pass
     match builtin:
@@ -305,7 +292,7 @@ def lower_file_builtin(
             Some(value) =>
                 operands.append(borrow_text_operand(builder, value, span)?)
                 parameters.append(PlanType.StringRef)
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, output, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)
     builder.owned.append(output.local)
     return Ok(None)
@@ -344,8 +331,7 @@ def lower_extrema_builtin(
         name = "maximum"
     output = call_destination(builder, destination, result, span)?
     reference = borrowed_list_argument(builder, arguments, 0, false, span)?
-    external_call(
-        builder,
+    builder.external_call(
         f"incan_native_runtime::{name}_{suffix}",
         [PlanType.ListRef(leaf, depth)],
         result,
@@ -382,8 +368,7 @@ def lower_range_builtin(
         return Err("unsupported Body IR builtin range destination type")
     result = PlanType.Generator(ListLeaf.Int, 0)
     builder.locals[output.local].ty = result
-    external_call(
-        builder,
+    builder.external_call(
         "incan_native_runtime::range_generator",
         [PlanType.Int, PlanType.Int, PlanType.Int],
         result,
@@ -410,7 +395,7 @@ def lower_zip_builtin(
         Some(_shape) =>
             first = argument_value(builder, arguments, 0, span)?
             second = argument_value(builder, arguments, 1, span)?
-            drop_owned(builder, output.local, span)
+            builder.drop_owned(output.local, span)
             zip_generators(builder, first, second, output, span)?
             builder.owned.append(output.local)
             return Ok(None)
@@ -431,7 +416,7 @@ def lower_zip_builtin(
                 or list_element(second_leaf, second_depth) != tuple_element_type(right)
             ):
                 return Err("unsupported Body IR zip checked operand type")
-            drop_owned(builder, output.local, span)
+            builder.drop_owned(output.local, span)
             zip_call(
                 builder,
                 "zip_lists",
@@ -475,11 +460,10 @@ def lower_enumerate_builtin(
     output = call_destination(builder, destination, result, span)?
     if place_type(builder.locals, output) != result:
         return Err("unsupported Body IR enumerate checked destination")
-    drop_owned(builder, output.local, span)
+    builder.drop_owned(output.local, span)
     if source_type in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         reference = text_argument(builder, arguments, 0, span)?
-        external_call(
-            builder,
+        builder.external_call(
             "incan_native_runtime::enumerate_text",
             [PlanType.StringRef],
             result,
@@ -491,8 +475,7 @@ def lower_enumerate_builtin(
     else:
         if byte_source:
             reference = enumerated_byte_argument(builder, arguments, source_type, span)?
-            external_call(
-                builder,
+            builder.external_call(
                 "incan_native_runtime::enumerate_bytes",
                 [PlanType.ListRef(ListLeaf.U8, 1)],
                 result,
@@ -566,8 +549,8 @@ def serialize_scalar_json(
                 RustConstant.None =>
                     # Legacy gives untyped None a unit payload; every empty Option serializes as null.
                     text = owned_literal(builder, "null", span)
-                    forget_owned(builder, text.local)
-                    drop_owned(builder, result.local, span)
+                    builder.forget_owned(text.local)
+                    builder.drop_owned(result.local, span)
                     builder.emit(plan_assign(result, RvalueKind.Use(read_place(text, true, span)), span))
                     builder.owned.append(result.local)
                     return Ok(None)
@@ -588,7 +571,7 @@ def serialize_scalar_json(
         PlanType.Float => name = "serialize_float"
         PlanType.Bool => name = "serialize_bool"
         _ => return Err(f"unsupported Body IR JSON serialization type {ty:?}")
-    external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    builder.external_call(f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
     return Ok(None)
 
 
@@ -613,7 +596,7 @@ def serialize_json_list(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [owned]), [reference], result, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [owned]), [reference], result, span)
     builder.owned.append(result.local)
     return Ok(None)
 
@@ -636,7 +619,7 @@ def serialize_json_text(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [PlanType.String]), [operand], result, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [PlanType.String]), [operand], result, span)
     builder.owned.append(result.local)
     return Ok(None)
 
@@ -657,15 +640,15 @@ def lower_print(
             None => return Err("unsupported Body IR spread print argument")
         parts.append(" ")
     parts[-1] = ""
-    text = temporary(builder, PlanType.String, span)
+    text = builder.temporary(PlanType.String, span)
     format_parts(builder, text, parts, values, span)
-    mut output = temporary(builder, PlanType.Unit, span)
+    mut output = builder.temporary(PlanType.Unit, span)
     # Expression arms read this call's retained result; an unrelated Unit temporary leaves that read uninitialized.
     match destination:
         Some(place) => output = scalar_place(builder, place, span)?
         None => pass
     path = "incan_native_runtime::println_text"
-    external_call(builder, path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
+    builder.external_call(path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
     return Ok(None)
 
 
@@ -711,8 +694,7 @@ pub def validate_exact_float(mut builder: Builder, target: Place, span: SourceSp
     """Keep exact f32 values finite at assignment and parameter boundaries, as legacy does."""
     if place_type(builder.locals, target) == PlanType.F32:
         operand = read_place(target, false, span)
-        external_call(
-            builder,
+        builder.external_call(
             "incan_std_primitives::num::require_finite_f32",
             [PlanType.F32],
             PlanType.F32,
@@ -753,15 +735,14 @@ def lower_text_scalar_conversion(
             if not text_input:
                 return Ok(false)
             text = display_operand(builder, value, span)?
-            reference = temporary(builder, PlanType.StringRef, span)
+            reference = builder.temporary(PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(text), span))
             mut name = "parse_float"
             mut result = PlanType.Float
             if integer:
                 name = "parse_int"
                 result = PlanType.Int
-            external_call(
-                builder,
+            builder.external_call(
                 f"incan_native_runtime::{name}",
                 [PlanType.StringRef],
                 result,
@@ -769,7 +750,7 @@ def lower_text_scalar_conversion(
                 output,
                 span,
             )
-            drop_owned(builder, text.local, span)
+            builder.drop_owned(text.local, span)
             return Ok(true)
 
 
@@ -787,7 +768,7 @@ pub def coerce_numeric_operand(
         return Ok(operand)
     if not numeric_carrier(source):
         return Err("unsupported Body IR nonnumeric implicit conversion")
-    converted = temporary(builder, target, span)
+    converted = builder.temporary(target, span)
     builder.emit(plan_assign(converted, RvalueKind.NumericCast(operand, source, target), span))
     validate_exact_float(builder, converted, span)
     return Ok(read_place(converted, false, span))
@@ -801,8 +782,8 @@ pub def clone_model_reference(
     span: SourceSpan,
 ) -> Operand:
     """Call a source model's derived Clone on a shared reference to it, yielding the owned copy."""
-    result = temporary(builder, PlanType.Model(index, name), span)
-    terminate_call(builder, CalleeKind.CloneModel(index, name), [reference], result, span)
+    result = builder.temporary(PlanType.Model(index, name), span)
+    builder.terminate_call(CalleeKind.CloneModel(index, name), [reference], result, span)
     builder.owned.append(result.local)
     return read_place(result, true, span)
 
@@ -815,7 +796,7 @@ pub def clone_enum_reference(
     span: SourceSpan,
 ) -> Operand:
     """Materialize an owned enum through its retained Clone implementation while keeping the referenced owner intact."""
-    result = temporary(builder, PlanType.Enum(index, name), span)
+    result = builder.temporary(PlanType.Enum(index, name), span)
     mut callee = CalleeKind.CloneEnum(index, name)
     if index >= 0 and index < len(builder.enums) and library_enum_item(builder.enums[index]) != "":
         owned = PlanType.Enum(index, name)
@@ -825,6 +806,6 @@ pub def clone_enum_reference(
             ExternalFunction(path=path, type_arguments=[owned], parameters=[borrowed], return_type=owned, span=span),
         )
         callee = CalleeKind.Instantiated(path, [owned])
-    terminate_call(builder, callee, [reference], result, span)
+    builder.terminate_call(callee, [reference], result, span)
     builder.owned.append(result.local)
     return read_place(result, true, span)

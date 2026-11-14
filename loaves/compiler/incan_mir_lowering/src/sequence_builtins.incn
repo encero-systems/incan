@@ -25,7 +25,7 @@ from element_places import is_element_place, element_place_type
 from models import model_type
 from numerics import numeric_name, numeric_carrier, integer_carrier
 from builtins import scalar_builtin, list_call, emit_power_operator
-from frame import place_type, Builder, temporary, external_call, read_place, literal
+from frame import place_type, Builder, read_place, literal
 from collections import is_collection, collection_reference, collection_call, borrow_collection
 from lists import require_list_shape, list_element, is_list
 from computed_statics import has_native_static_cell
@@ -65,8 +65,7 @@ pub def lower_sequence_builtin(
         elif leaf != ListLeaf.Int:
             return Err("unsupported Body IR builtin Sum element")
         output = call_destination(builder, destination, PlanType.Int, span)?
-        external_call(
-            builder,
+        builder.external_call(
             f"incan_native_runtime::{name}",
             [PlanType.ListRef(leaf, depth)],
             PlanType.Int,
@@ -78,8 +77,7 @@ pub def lower_sequence_builtin(
     result = PlanType.List(leaf, depth)
     output = call_destination(builder, destination, result, span)?
     if leaf == ListLeaf.Float and depth == 1:
-        external_call(
-            builder,
+        builder.external_call(
             "incan_native_runtime::sorted_float",
             [PlanType.ListRef(leaf, depth)],
             result,
@@ -221,7 +219,7 @@ pub def lower_truth_builtin(
     match scalar_builtin(RustBuiltin.Bool, ty):
         Some((name, result)) =>
             operand = argument_value(builder, arguments, 0, span)?
-            external_call(builder, f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
+            builder.external_call(f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
             return Ok(None)
         None => pass
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
@@ -235,8 +233,7 @@ pub def lower_truth_builtin(
                     _ => pass
                 incoming = builder.owned
                 reference = borrow_text_operand(builder, value, span)?
-                external_call(
-                    builder,
+                builder.external_call(
                     "incan_native_runtime::truth_text",
                     [PlanType.StringRef],
                     PlanType.Bool,
@@ -250,7 +247,7 @@ pub def lower_truth_builtin(
     if is_collection(ty):
         receiver = shared_receiver_place(builder, arguments, 0, span)?
         reference = borrow_collection(builder, receiver, false, span)?
-        length = temporary(builder, PlanType.Int, span)
+        length = builder.temporary(PlanType.Int, span)
         collection_call(
             builder,
             ty,
@@ -324,8 +321,7 @@ def lower_exact_integer_power(
     if operand_type(builder, operands[0])? != target:
         return Err("unsupported Body IR mixed Pow operands")
     exponent = coerce_numeric_operand(builder, operands[1], PlanType.Int, span)?
-    external_call(
-        builder,
+    builder.external_call(
         f"incan_native_runtime::power_{numeric_name(target)}",
         [target, PlanType.Int],
         target,
@@ -373,7 +369,7 @@ pub def lower_split_helper(
         operands.append(text_argument(builder, arguments, 1, span)?)
     result = PlanType.List(ListLeaf.Str, 1)
     output = call_destination(builder, destination, result, span)?
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, output, span)
     builder.owned.append(output.local)
     return Ok(None)
 
@@ -393,8 +389,7 @@ pub def lower_join_helper(
         return Err("unsupported Body IR str_join element")
     operands = [text_argument(builder, arguments, 0, span)?, list_borrow(builder, values, false, span)?]
     output = call_destination(builder, destination, PlanType.String, span)?
-    external_call(
-        builder,
+    builder.external_call(
         "incan_native_runtime::join_text",
         [PlanType.StringRef, PlanType.ListRef(ListLeaf.Str, 1)],
         PlanType.String,

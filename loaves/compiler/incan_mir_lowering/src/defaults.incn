@@ -17,7 +17,7 @@ from lowering import BodyIrModule
 from call_arguments import call_argument_operand
 from statements import lower_statement
 from list_iteration import list_root_place
-from frame import Builder, drop_owned
+from frame import Builder
 from lists import is_list
 from collections import is_collection
 from numerics import numeric_carrier
@@ -318,7 +318,7 @@ pub def evaluate_default(
             retained = builder.owned
             for owner in retained[::-1]:
                 if owner not in incoming and owner != result_owner:
-                    drop_owned(builder, owner, span)
+                    builder.drop_owned(owner, span)
             return Ok(result)
 
         CallableParamDefault.Unsupported(span=_span, description=description) =>

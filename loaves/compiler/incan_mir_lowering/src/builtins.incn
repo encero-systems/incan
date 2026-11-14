@@ -2,7 +2,7 @@
 
 from rust::incan_semantics_core::body_ir import BuiltinFnId
 from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind
-from frame import Builder, terminate_call, external_call, value_type
+from frame import Builder
 from collections import is_owned_collection
 from tuples import tuple_has_owners
 
@@ -38,7 +38,7 @@ pub def list_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [element]), arguments, destination, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [element]), arguments, destination, span)
     match result:
         PlanType.Model(_index, _name) => builder.owned.append(destination.local)
         PlanType.Enum(_index, _name) => builder.owned.append(destination.local)
@@ -55,10 +55,9 @@ pub def emit_boolean_operator(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Combine pure Body IR operands; source short-circuiting is retained by frontend branches."""
-    if value_type(builder, operands[0])? != PlanType.Bool or value_type(builder, operands[1])? != PlanType.Bool:
+    if builder.value_type(operands[0])? != PlanType.Bool or builder.value_type(operands[1])? != PlanType.Bool:
         return Err("unsupported Body IR non-boolean logical operands")
-    external_call(
-        builder,
+    builder.external_call(
         f"incan_native_runtime::{name}",
         [PlanType.Bool, PlanType.Bool],
         PlanType.Bool,
@@ -76,8 +75,8 @@ pub def emit_power_operator(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind exponentiation only when both operands retain the legacy scalar carrier."""
-    ty = value_type(builder, operands[0])?
-    if value_type(builder, operands[1])? != ty:
+    ty = builder.value_type(operands[0])?
+    if builder.value_type(operands[1])? != ty:
         return Err("unsupported Body IR mixed Pow operands")
     mut path = "incan_native_runtime::power_i64"
     if ty == PlanType.Float or ty == PlanType.F64:
@@ -86,5 +85,5 @@ pub def emit_power_operator(
         path = "f32::powf"
     elif ty != PlanType.Int:
         return Err("unsupported Body IR Pow carrier")
-    external_call(builder, path, [ty, ty], ty, operands, destination, span)
+    builder.external_call(path, [ty, ty], ty, operands, destination, span)
     return Ok(None)

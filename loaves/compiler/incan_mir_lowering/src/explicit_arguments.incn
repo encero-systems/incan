@@ -4,7 +4,7 @@ from rust::incan_semantics_core import IncanInputAccess
 from rust::incan_semantics_core::body_ir import BodyIrModule, CallableParam, OwnershipFact, Body as RustBody
 from pub::incan_mir_plan import Local, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, FieldProjection
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, place_type, dereferenced_place
+from frame import Builder, read_place, place_type, dereferenced_place
 from numerics import numeric_carrier
 from program_context import body_at
 from table_views import borrowed_at
@@ -75,7 +75,7 @@ pub def explicit_place_argument(
     match operation:
         RvalueKind.Use(operand) => return Ok(operand)
         _ => pass
-    reference = temporary(builder, expected, span)
+    reference = builder.temporary(expected, span)
     builder.emit(plan_assign(reference, operation, span))
     return Ok(read_place(reference, access == IncanInputAccess.Exclusive, span))
 

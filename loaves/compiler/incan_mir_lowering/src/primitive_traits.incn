@@ -20,7 +20,7 @@ from rust::incan_semantics_core::body_ir import (
     LocalId,
 )
 from pub::incan_mir_plan import SourceSpan, PlanType
-from frame import Builder, temporary, place_type
+from frame import Builder, place_type
 from layout_types import native_source_type
 from list_methods import argument_place
 from assignments import lower_assignment
@@ -117,7 +117,7 @@ def normalized_primitive_receiver(
         RustType.Named(str(declaration.name)),
         builder.intrinsics,
     )?
-    storage = temporary(builder, owner_type, span)
+    storage = builder.temporary(owner_type, span)
     destination = temporary_source_place(builder, storage.local)?
     constructor = ConstructorTarget(
         name=str(declaration.name),
@@ -175,7 +175,7 @@ def primitive_receiver_arguments(
         None => return Ok(copied_arguments(arguments))
         Some(owner) =>
             raw_type = value_enum_raw_type(builder, owner)
-            raw = temporary(builder, raw_type, span)
+            raw = builder.temporary(raw_type, span)
             select_value_enum_raw(builder, owner, source, raw, span)?
             retained = temporary_source_place(builder, raw.local)?
             mut ownership = OwnershipFact.Copy

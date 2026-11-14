@@ -1,6 +1,6 @@
 """Release literal owners materialized only to borrow text during one runtime call."""
 
-from frame import Builder, drop_owned
+from frame import Builder
 from pub::incan_mir_plan import SourceSpan
 
 
@@ -13,4 +13,4 @@ pub def drop_borrowed_text_temporaries(
     """Drop newly materialized argument owners after the borrow ends, retaining the call result and incoming owners."""
     created = [owner for owner in builder.owned if owner not in incoming and owner != result]
     for index in range(len(created)):
-        drop_owned(builder, created[len(created) - 1 - index], span)
+        builder.drop_owned(created[len(created) - 1 - index], span)

@@ -4,7 +4,7 @@ from rust::incan_semantics_core import SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import TypeMetadataTarget, TypeMetadataOperation, Place as RustPlace
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Constant, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, literal, place_type, drop_owned, track_rvalue_moves
+from frame import Builder, literal, place_type
 from models import model_type
 from type_parameters import substitute
 from text_plan import owned_literal
@@ -69,8 +69,8 @@ pub def lower_type_metadata(
             if place_type(builder.locals, output) != result:
                 return Err("invalid Body IR type metadata result carrier")
             if result == PlanType.String:
-                drop_owned(builder, output.local, span)
-            track_rvalue_moves(builder, RvalueKind.Use(value))
+                builder.drop_owned(output.local, span)
+            builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
             if result == PlanType.String:
                 builder.owned.append(output.local)

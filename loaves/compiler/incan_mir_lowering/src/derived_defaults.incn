@@ -16,7 +16,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import Constant, Operand, OperandKind, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, literal, track_rvalue_moves, drop_owned, forget_owned, place_type
+from frame import Builder, read_place, literal, place_type
 from type_parameters import substitute
 from layout_types import native_source_type
 from defaults import evaluate_default
@@ -65,9 +65,9 @@ pub def lower_derived_default(
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
-            drop_owned(builder, output.local, span)
+            builder.drop_owned(output.local, span)
             match value.kind:
-                OperandKind.Move(result) => forget_owned(builder, result.local)
+                OperandKind.Move(result) => builder.forget_owned(result.local)
                 _ => pass
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
             builder.owned.append(output.local)
@@ -121,9 +121,9 @@ def default_value(module: &BodyIrModule, mut builder: Builder, ty: PlanType, spa
             if "Default" not in builder.nominals[owner].derives:
                 return Err("unsupported Body IR Default of a model that does not derive it")
             operands = default_fields(module, builder, owner, span)?
-            result = temporary(builder, ty, span)
+            result = builder.temporary(ty, span)
             operation = RvalueKind.Model(owner, operands)
-            track_rvalue_moves(builder, operation)
+            builder.track_rvalue_moves(operation)
             builder.emit(plan_assign(result, operation, span))
             builder.owned.append(result.local)
             return Ok(read_place(result, true, span))
@@ -168,14 +168,14 @@ def type_default(module: &BodyIrModule, mut builder: Builder, ty: PlanType, span
         PlanType.Bool => return Ok(literal(Constant.Bool(false), span))
         PlanType.String => return Ok(read_place(owned_literal(builder, "", span), true, span))
         PlanType.List(leaf, depth) =>
-            output = temporary(builder, ty, span)
+            output = builder.temporary(ty, span)
             list_call(builder, "empty_list", list_element(leaf, depth), [], ty, [], output, span)
             return Ok(read_place(output, true, span))
         PlanType.Model(_owner, _name) => return default_value(module, builder, ty, span)
         PlanType.Enum(_owner, _name) => return none_operand(builder, ty, span)
         _ => pass
     if is_collection(ty):
-        output = temporary(builder, ty, span)
+        output = builder.temporary(ty, span)
         collection_call(builder, ty, "empty", [], ty, [], output, span)?
         return Ok(read_place(output, true, span))
     return Err("unsupported Body IR derived Default field type")

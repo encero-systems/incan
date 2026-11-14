@@ -39,7 +39,7 @@ from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from text_plan import clone_text, owned_literal
 from options import carrier_payload_value, clone_tuple_operand
 from numerics import numeric_constant, numeric_carrier
-from frame import place_type, Builder, temporary, track_rvalue_moves, terminate_call, read_place, literal
+from frame import place_type, Builder, read_place, literal
 from lists import is_list, is_exclusive_borrow
 from closures import callable_copy_type
 from partial_callables import partial_flags
@@ -202,9 +202,9 @@ def retained_tuple_constant(
                     span,
                 )?
                 values.append(value)
-            output = temporary(builder, layout, span)
+            output = builder.temporary(layout, span)
             operation = RvalueKind.Tuple(values)
-            track_rvalue_moves(builder, operation)
+            builder.track_rvalue_moves(operation)
             builder.emit(plan_assign(output, operation, span))
             owned = tuple_has_owners(layout)
             if owned:
@@ -358,8 +358,8 @@ pub def target_read(mut builder: Builder, target: Place, fact: OwnershipFact, sp
                     return Ok(read_place(target, true, span))
                 OwnershipFact.Clone =>
                     receiver = callable_object(builder, target, signature, span)?
-                    result = temporary(builder, PlanType.Closure(signature), span)
-                    terminate_call(builder, CalleeKind.CloneClosure(signature), [receiver], result, span)
+                    result = builder.temporary(PlanType.Closure(signature), span)
+                    builder.terminate_call(CalleeKind.CloneClosure(signature), [receiver], result, span)
                     builder.owned.append(result.local)
                     return Ok(read_place(result, true, span))
                 _ =>
@@ -481,7 +481,7 @@ def shared_nominal_read(mut builder: Builder, target: Place, span: SourceSpan) -
     root = plan_place(target.local, span)
     if target.projection == Projection.Deref(selected) and place_type(builder.locals, root) == reference_type:
         return Ok(read_place(root, false, span))
-    reference = temporary(builder, reference_type, span)
+    reference = builder.temporary(reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(target), span))
     return Ok(read_place(reference, false, span))
 

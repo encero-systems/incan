@@ -34,7 +34,7 @@ from enums import variant_index
 from tuples import tuple_aggregate, carrier_element
 from text_plan import owned_literal
 from options import carrier_payload_value
-from frame import place_type, Builder, temporary, forget_owned, cleanup_exit, terminate_call, read_place
+from frame import place_type, Builder, read_place
 from defaults import model_default_arguments
 from lowering import BodyIrModule
 from checked_values import scalar_operand, scalar_place
@@ -71,14 +71,14 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
         PlanType.EnumRef(index, name) =>
             return Ok(clone_enum_reference(builder, read_place(value, false, span), index, name, span))
         PlanType.Model(index, name) =>
-            reference = temporary(builder, PlanType.ModelRef(index, name), span)
+            reference = builder.temporary(PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             return Ok(clone_model_reference(builder, read_place(reference, false, span), index, name, span))
         PlanType.Enum(index, name) =>
             # SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
             if index < len(builder.enums) and library_enum_item(builder.enums[index]) != "":
                 return carrier_payload_value(builder, value, span)
-            reference = temporary(builder, PlanType.EnumRef(index, name), span)
+            reference = builder.temporary(PlanType.EnumRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             return Ok(clone_enum_reference(builder, read_place(reference, false, span), index, name, span))
         _ =>
@@ -298,8 +298,8 @@ def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[referent], parameters=[referent], return_type=boxed, span=span),
     )
-    destination = temporary(builder, boxed, span)
-    terminate_call(builder, CalleeKind.Instantiated(path, [referent]), [value], destination, span)
+    destination = builder.temporary(boxed, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [referent]), [value], destination, span)
     builder.owned.append(destination.local)
     return read_place(destination, true, span)
 
@@ -311,15 +311,15 @@ pub def lower_string_field_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Replace a projected string after evaluating its new value, retaining the containing owner or borrowed slot."""
-    mut replacement = temporary(builder, PlanType.String, span)
+    mut replacement = builder.temporary(PlanType.String, span)
     match value:
         RustRvalue.Use(operand) => replacement = display_operand(builder, operand, span)?
         RustRvalue.Format(parts) => lower_format(builder, replacement, parts, span)?
         _ => return Err("unsupported Body IR string field Rvalue outside formatting")
     continuation = builder.new_block(span)
-    cleanup = cleanup_exit(builder, span)
+    cleanup = builder.cleanup_exit(span)
     builder.finish(TerminatorKind.Drop(destination, continuation, Unwind.Cleanup(cleanup)), span)
     builder.current = continuation
-    forget_owned(builder, replacement.local)
+    builder.forget_owned(replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)

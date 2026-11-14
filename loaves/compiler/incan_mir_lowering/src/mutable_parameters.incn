@@ -3,7 +3,7 @@
 from pub::incan_mir_plan import Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from rust::incan_semantics_core::body_ir import Operand as RustOperand, OwnershipFact
-from frame import Builder, temporary, read_place, place_type
+from frame import Builder, read_place, place_type
 from text_plan import clone_text
 from checked_values import scalar_place
 from formatting import display_operand
@@ -28,7 +28,7 @@ pub def mutable_argument(
     `&mut value.clone()`; the copy drops when its scope ends.
     """
     source = argument_source(builder, value, exclusive_referent(reference)?, span)?
-    exclusive = temporary(builder, reference, span)
+    exclusive = builder.temporary(reference, span)
     builder.emit(plan_assign(exclusive, RvalueKind.MutBorrow(source), span))
     return Ok(read_place(exclusive, true, span))
 

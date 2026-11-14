@@ -27,7 +27,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from collections import primitive_leaf, leaf_type
 from tuples import type_name, tuple_type, generic_tuple_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, exhaust_loop, value_type
+from frame import Builder, read_place
 from table_views import borrowed_at
 
 
@@ -293,13 +293,12 @@ pub def generator_yield(mut builder: Builder, value: Operand, span: SourceSpan) 
     handle = plan_place(builder.generator_handle, span)
     match borrowed_at(builder.locals, handle.local).ty:
         PlanType.GeneratorYield(leaf, depth) =>
-            if value_type(builder, value)? != generator_element(leaf, depth):
+            if builder.value_type(value)? != generator_element(leaf, depth):
                 return Err("unsupported Body IR generator yield coercion")
-            reference = temporary(builder, PlanType.GeneratorYieldRef(leaf, depth), span)
+            reference = builder.temporary(PlanType.GeneratorYieldRef(leaf, depth), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(handle), span))
-            output = temporary(builder, PlanType.Unit, span)
-            terminate_call(
-                builder,
+            output = builder.temporary(PlanType.Unit, span)
+            builder.terminate_call(
                 CalleeKind.YieldGenerator(leaf, depth),
                 [read_place(reference, false, span), value],
                 output,
@@ -315,8 +314,7 @@ pub def generator_collect(mut builder: Builder, receiver: Place, output: Place, 
         Some((leaf, depth)) =>
             if borrowed_at(builder.locals, receiver.local).ty != PlanType.Generator(leaf, depth):
                 return Err("unsupported Body IR collect of borrowed generator")
-            terminate_call(
-                builder,
+            builder.terminate_call(
                 CalleeKind.CollectGenerator(leaf, depth),
                 [read_place(receiver, true, span)],
                 output,
@@ -333,7 +331,7 @@ pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceS
             mut source = receiver
             if borrowed_at(builder.locals, receiver.local).ty == PlanType.GeneratorMutRef(leaf, depth):
                 source.projection = Projection.Deref(PlanType.Generator(leaf, depth))
-            reference = temporary(builder, PlanType.GeneratorMutRef(leaf, depth), span)
+            reference = builder.temporary(PlanType.GeneratorMutRef(leaf, depth), span)
             builder.emit(plan_assign(reference, RvalueKind.MutBorrow(source), span))
             return Ok(read_place(reference, true, span))
         None => return Err("unsupported Body IR generator borrow receiver")
@@ -354,7 +352,7 @@ pub def generator_runtime_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [element]), operands, output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [element]), operands, output, span)
 
 
 pub def generator_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
@@ -366,13 +364,13 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)
             storage_type = PlanType.List(leaf, depth + 1)
-            storage = temporary(builder, storage_type, span)
+            storage = builder.temporary(storage_type, span)
             generator_runtime_call(builder, "empty_list", element, [], storage_type, [], storage, span)
             builder.owned.append(storage.local)
-            item_reference = temporary(builder, PlanType.ListMutRef(leaf, depth + 1), span)
+            item_reference = builder.temporary(PlanType.ListMutRef(leaf, depth + 1), span)
             builder.emit(plan_assign(item_reference, RvalueKind.MutBorrow(storage), span))
             reference = generator_reference(builder, receiver, span)?
-            available = temporary(builder, PlanType.Bool, span)
+            available = builder.temporary(PlanType.Bool, span)
             generator_runtime_call(
                 builder,
                 "poll_generator",
@@ -389,12 +387,12 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
             builder.current = exhausted
-            drop_owned(builder, storage.local, span)
-            exhaust_loop(builder, span)
+            builder.drop_owned(storage.local, span)
+            builder.exhaust_loop(span)
             builder.current = selected
             builder.owned = owners
-            drop_owned(builder, output.local, span)
-            final_reference = temporary(builder, PlanType.ListMutRef(leaf, depth + 1), span)
+            builder.drop_owned(output.local, span)
+            final_reference = builder.temporary(PlanType.ListMutRef(leaf, depth + 1), span)
             builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))
             generator_runtime_call(
                 builder,
@@ -408,5 +406,5 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             )
             if element == PlanType.String or depth > 0:
                 builder.owned.append(output.local)
-            drop_owned(builder, storage.local, span)
+            builder.drop_owned(storage.local, span)
             return Ok(None)

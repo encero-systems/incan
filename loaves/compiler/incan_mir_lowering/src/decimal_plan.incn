@@ -2,7 +2,7 @@
 
 from rust::incan_semantics_core::body_ir import TypedNumericConstant, BinOp
 from pub::incan_mir_plan import Constant, Operand, PlanType, SourceSpan
-from frame import Builder, temporary, literal, read_place, external_call
+from frame import Builder, literal, read_place
 
 
 pub def is_decimal_literal(value: TypedNumericConstant) -> bool:
@@ -16,9 +16,8 @@ pub def decimal_literal(mut builder: Builder, value: TypedNumericConstant, span:
     """Materialize the existing legacy carrier from the checker-owned exact payload."""
     match value:
         TypedNumericConstant.Decimal(precision=_precision, scale=_scale, coefficient=coefficient, literal_scale=scale) =>
-            output = temporary(builder, PlanType.Decimal, span)
-            external_call(
-                builder,
+            output = builder.temporary(PlanType.Decimal, span)
+            builder.external_call(
                 "incan_native_runtime::decimal_from_parts",
                 [PlanType.I128, PlanType.U8],
                 PlanType.Decimal,
@@ -50,9 +49,8 @@ pub def decimal_comparison(
         BinOp.Gt => name = "greater_decimal"
         BinOp.Ge => name = "greater_equal_decimal"
         _ => return Err("decimal values support comparison here; decimal arithmetic is unsupported")
-    output = temporary(builder, PlanType.Bool, span)
-    external_call(
-        builder,
+    output = builder.temporary(PlanType.Bool, span)
+    builder.external_call(
         f"incan_native_runtime::{name}",
         [PlanType.Decimal, PlanType.Decimal],
         PlanType.Bool,

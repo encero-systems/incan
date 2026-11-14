@@ -43,7 +43,7 @@ from numerics import integer_carrier
 from strings import emit_text_helper
 from equality import emit_collection_equality, equality_shape
 from frozen_list_equality import supports_frozen_list_equality, frozen_list_equality
-from frame import place_type, Builder, temporary, terminate_call, read_place, value_type, literal
+from frame import place_type, Builder, read_place, literal
 from collections import is_collection
 from lists import is_list
 from lowering import BodyIrModule
@@ -64,7 +64,7 @@ from result_carriers import retained_reference_value
 
 pub def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
     """The plan type an operand carries: its local's declared type, or its literal's type."""
-    return value_type(builder, operand)
+    return builder.value_type(operand)
 
 
 pub def binary_operator(operator: BinOp) -> Result[BinaryOp, str]:
@@ -208,7 +208,7 @@ def native_enum_comparison(
         None => return Ok(None)
     mut operands: list[Operand] = []
     for source in [left, right]:
-        borrowed = temporary(builder, reference, span)
+        borrowed = builder.temporary(reference, span)
         builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
         operands.append(read_place(borrowed, false, span))
     mut path = "core::cmp::PartialEq::eq"
@@ -231,10 +231,10 @@ def native_enum_comparison(
             span=span,
         ),
     )
-    output = temporary(builder, PlanType.Bool, span)
-    terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
+    output = builder.temporary(PlanType.Bool, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
     if operator == BinOp.Ne and not native:
-        negated = temporary(builder, PlanType.Bool, span)
+        negated = builder.temporary(PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
     return Ok(Some(read_place(output, false, span)))
@@ -332,8 +332,8 @@ def enum_comparison_place(mut builder: Builder, operand: &RustOperand, span: Sou
 
 def enum_comparison_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
     """Materialize one native discriminant as the integer tag type used by checked match dispatch."""
-    raw = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
+    raw = builder.temporary(PlanType.EnumTag, span)
+    tag = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
     return tag
@@ -363,7 +363,7 @@ def owner_borrow(
                     if index != owner_index:
                         return Ok(None)
                 _ => return Ok(None)
-            reference = temporary(builder, expected, span)
+            reference = builder.temporary(expected, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
             return Ok(Some(read_place(reference, false, span)))
         _ => return Ok(None)
@@ -587,7 +587,7 @@ def tuple_comparison(
         shared_nominal_argument(builder, right, reference, span)?,
     ]
     # 3. Aggregate comparison is a trait call, never a primitive MIR binary operation.
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     mut path = "core::cmp::PartialEq::eq"
     if operator == BinOp.Lt:
         path = "core::cmp::PartialOrd::lt"
@@ -608,7 +608,7 @@ def tuple_comparison(
         span,
     )?
     if operator == BinOp.Ne:
-        negated = temporary(builder, PlanType.Bool, span)
+        negated = builder.temporary(PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
     return Ok(Some(read_place(output, false, span)))
@@ -680,10 +680,10 @@ def newtype_equality(
             span=span,
         ),
     )
-    output = temporary(builder, PlanType.Bool, span)
-    terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
+    output = builder.temporary(PlanType.Bool, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
     if operator == BinOp.Ne:
-        negated = temporary(builder, PlanType.Bool, span)
+        negated = builder.temporary(PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
     return Ok(Some(read_place(output, false, span)))
@@ -705,7 +705,7 @@ def newtype_comparison_operand(
         _ => return Err("unsupported Body IR newtype equality without an owned place")
     if place_type(builder.locals, source) != ty:
         return Err("unsupported Body IR newtype equality carrier mismatch")
-    borrowed = temporary(builder, reference, span)
+    borrowed = builder.temporary(reference, span)
     builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
     return Ok(read_place(borrowed, false, span))
 

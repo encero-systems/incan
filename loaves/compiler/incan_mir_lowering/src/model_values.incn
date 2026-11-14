@@ -15,7 +15,7 @@ from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, Sema
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, terminate_call, place_type, external_call
+from frame import Builder, read_place, place_type
 from type_parameters import substitute
 from layout_types import native_source_type
 from options import carrier_layout
@@ -53,7 +53,7 @@ def borrow_model(mut builder: Builder, value: Place, ty: PlanType, span: SourceS
     """Borrow a nominal value for a runtime trait call, retaining its owner's initialized storage."""
     match ty:
         PlanType.Model(owner, name) =>
-            reference = temporary(builder, PlanType.ModelRef(owner, name), span)
+            reference = builder.temporary(PlanType.ModelRef(owner, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             return Ok(read_place(reference, false, span))
         _ => return Err("unsupported Body IR model trait receiver")
@@ -79,7 +79,7 @@ def model_call(
             builder.externals.append(
                 ExternalFunction(path=path, type_arguments=[ty], parameters=parameters, return_type=result, span=span),
             )
-            terminate_call(builder, CalleeKind.Instantiated(path, [ty]), arguments, destination, span)
+            builder.terminate_call(CalleeKind.Instantiated(path, [ty]), arguments, destination, span)
             if result == PlanType.String:
                 builder.owned.append(destination.local)
             return Ok(None)
@@ -194,13 +194,13 @@ def display_checked_model(mut builder: Builder, owner: int, place: Place, span: 
             continue
         ty = place_type(builder.locals, place)
         argument = borrow_model(builder, place, ty, span)?
-        result = temporary(builder, PlanType.String, span)
+        result = builder.temporary(PlanType.String, span)
         # The call consumes its selected callee, while the program mapping remains shared.
         match mapping.callee.clone():
-            CalleeKind.Planned(symbol) => terminate_call(builder, CalleeKind.Planned(symbol), [argument], result, span)
+            CalleeKind.Planned(symbol) => builder.terminate_call(CalleeKind.Planned(symbol), [argument], result, span)
             CalleeKind.External(path) =>
                 reference = PlanType.ModelRef(owner, builder.nominals[owner].name)
-                external_call(builder, path, [reference], PlanType.String, [argument], result, span)
+                builder.external_call(path, [reference], PlanType.String, [argument], result, span)
             _ => return Err("unsupported Body IR checked display callee kind")
         builder.owned.append(result.local)
         return Ok(result)

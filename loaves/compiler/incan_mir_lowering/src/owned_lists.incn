@@ -17,7 +17,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, temporary, read_place, terminate_call, forget_owned, drop_owned, exhaust_loop
+from frame import Builder, place_type, read_place
 from lists import list_element
 
 
@@ -42,7 +42,7 @@ def iterator_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[owner], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [owner]), arguments, output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [owner]), arguments, output, span)
 
 
 pub def initialize_owned_list_iterator(
@@ -90,10 +90,10 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
                 return Err("unsupported Body IR consuming iteration item layout")
             iterator_type = PlanType.ListIntoIter(leaf, depth)
             reference_type = PlanType.ListIntoIterMutRef(leaf, depth)
-            reference = temporary(builder, reference_type, span)
+            reference = builder.temporary(reference_type, span)
             builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
             poll_type = iterator_poll_type(builder, element)?
-            poll = temporary(builder, poll_type, span)
+            poll = builder.temporary(poll_type, span)
             iterator_call(
                 builder,
                 "core::iter::Iterator::next",
@@ -105,11 +105,11 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
                 span,
             )
             builder.owned.append(poll.local)
-            raw = temporary(builder, PlanType.EnumTag, span)
-            tag = temporary(builder, PlanType.Int, span)
+            raw = builder.temporary(PlanType.EnumTag, span)
+            tag = builder.temporary(PlanType.Int, span)
             builder.emit(plan_assign(raw, RvalueKind.Discriminant(poll), span))
             builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
-            available = temporary(builder, PlanType.Bool, span)
+            available = builder.temporary(PlanType.Bool, span)
             one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
             builder.emit(
                 plan_assign(available, RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), one), span),
@@ -119,17 +119,17 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
             owners = builder.owned
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             builder.current = exhausted
-            drop_owned(builder, poll.local, span)
+            builder.drop_owned(poll.local, span)
             if builder.owned != builder.loop_owners[-1]:
                 return Err("unsupported Body IR consuming poll with initialized loop-local owners")
-            exhaust_loop(builder, span)
+            builder.exhaust_loop(span)
             builder.current = selected
             builder.owned = owners
-            drop_owned(builder, target.local, span)
+            builder.drop_owned(target.local, span)
             payload = Place(local=poll.local, projection=Projection.VariantField(1, 0, element), span=span)
             builder.emit(plan_assign(target, RvalueKind.Use(read_place(payload, true, span)), span))
             # Some's payload has moved; its empty shell cannot be dropped. The iterator stays owned until the common loop exit.
-            forget_owned(builder, poll.local)
+            builder.forget_owned(poll.local)
             builder.owned.append(target.local)
             return Ok(None)
         _ => return Err("unsupported Body IR consuming list poll receiver")

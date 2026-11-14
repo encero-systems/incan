@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import Constant as RustConstant
 from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, literal
+from frame import Builder, read_place, literal
 from models import constructor_index
 from numerics import numeric_constant
 
@@ -26,7 +26,7 @@ pub def numeric_newtype_literal(mut builder: Builder, value: &RustConstant, span
             storage = PlanType.Model(found, str(builder.nominals[found].name))
             owner = constructor_index(builder.nominals, constant.constructor, 1, storage)?
             payload = literal(numeric_constant(constant.value)?, span)
-            output = temporary(builder, storage, span)
+            output = builder.temporary(storage, span)
             builder.emit(plan_assign(output, RvalueKind.Model(owner, [payload]), span))
             return Ok(read_place(output, true, span))
         _ => return Err("unsupported Body IR non-newtype constant")

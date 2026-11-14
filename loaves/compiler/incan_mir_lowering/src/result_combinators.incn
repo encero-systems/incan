@@ -27,7 +27,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, drop_owned, forget_owned, place_type, read_place, temporary, track_rvalue_moves, value_type
+from frame import Builder, place_type, read_place
 from options import assign_carrier, carrier_layout, carrier_payload_value, replace_owned_destination, variant_condition
 from classes import frame_type, function_name, parameter_local_index
 from table_views import borrowed_at
@@ -111,8 +111,8 @@ def owned_receiver(mut builder: Builder, argument: RustArgumentElement, span: So
                 OwnershipFact.Clone => value = carrier_payload_value(builder, place, span)?
                 OwnershipFact.Borrow => value = carrier_payload_value(builder, place, span)?
                 _ => return Err("unsupported Body IR Result combinator receiver ownership")
-            source = temporary(builder, ty, span)
-            track_rvalue_moves(builder, RvalueKind.Use(value))
+            source = builder.temporary(ty, span)
+            builder.track_rvalue_moves(RvalueKind.Use(value))
             builder.emit(plan_assign(source, RvalueKind.Use(value), span))
             builder.owned.append(source.local)
             return Ok(source)
@@ -140,7 +140,7 @@ def output_place(
     """The checked destination, or a typed temporary for a discarded result."""
     match destination:
         Some(place) => return scalar_place(builder, place, span)
-        None => return Ok(temporary(builder, ty, span))
+        None => return Ok(builder.temporary(ty, span))
 
 
 def observe(
@@ -168,12 +168,12 @@ def observe(
     builder.current = selected
     payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
     argument = carrier_payload_value(builder, payload, span)?
-    unit = temporary(builder, PlanType.Unit, span)
+    unit = builder.temporary(PlanType.Unit, span)
     call_callback(module, builder, callback, argument, payload_type, unit, PlanType.Unit, span)?
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = join
     builder.owned = owners
-    forget_owned(builder, source.local)
+    builder.forget_owned(source.local)
     replace_owned_destination(builder, output, RvalueKind.Use(read_place(source, true, span)), span)
     return Ok(None)
 
@@ -209,14 +209,14 @@ def transform(
     condition = variant_condition(builder, source, slot, span)
     builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
-    forget_owned(builder, source.local)
+    builder.forget_owned(source.local)
     owners = builder.owned
     builder.current = other
     kept_type = input.variants[1 - slot].fields[0]
     kept = Place(local=source.local, projection=Projection.VariantField(1 - slot, 0, kept_type), span=span)
     kept_target = result.variants[1 - slot].fields[0]
     converted = boundary_plan_operand(builder, read_place(kept, true, span), kept_target, span)?
-    if value_type(builder, converted)? != kept_target:
+    if builder.value_type(converted)? != kept_target:
         return Err("unsupported Body IR Result combinator changing the untouched side")
     assign_carrier(builder, output, owner, 1 - slot, [converted], span)
     retained = builder.owned
@@ -226,7 +226,7 @@ def transform(
     payload = Place(local=source.local, projection=Projection.VariantField(slot, 0, payload_type), span=span)
     argument = read_place(payload, true, span)
     if combinator.effect == "wrap":
-        value = temporary(builder, callback_result, span)
+        value = builder.temporary(callback_result, span)
         call_callback(module, builder, callback, argument, payload_type, value, callback_result, span)?
         assign_carrier(builder, output, owner, slot, [read_place(value, true, span)], span)
     else:
@@ -292,7 +292,7 @@ def callback_argument(
     match argument.kind:
         OperandKind.Copy(source) => return Ok((list_borrow(builder, source, false, span)?, None))
         OperandKind.Move(_source) =>
-            held = temporary(builder, payload, span)
+            held = builder.temporary(payload, span)
             replace_owned_destination(builder, held, RvalueKind.Use(argument), span)
             return Ok((list_borrow(builder, held, false, span)?, Some(held.local)))
         _ => return Err("unsupported Body IR borrowed Result callback payload without storage")
@@ -313,7 +313,7 @@ def shared_callback_parameter(payload: PlanType, parameter: PlanType) -> bool:
 def drop_callback_argument(mut builder: Builder, held: Option[int], span: SourceSpan) -> None:
     """Release the consumed payload after the callback returns; its call's unwind cleanup retains the same owner."""
     match held:
-        Some(local) => drop_owned(builder, local, span)
+        Some(local) => builder.drop_owned(local, span)
         None => pass
 
 
@@ -367,7 +367,7 @@ def call_callable_model(
     if returned != result:
         return Err("unsupported Body IR Result combinator callback signature")
     prepared, held = callback_argument(builder, argument, payload, parameter, span)?
-    reference = temporary(builder, receiver_type, span)
+    reference = builder.temporary(receiver_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(callback), span))
     operands = [read_place(reference, true, span), prepared]
     lower_callable_result(builder, CalleeKind.Planned(function_name(module, body)), operands, output, result, span)?

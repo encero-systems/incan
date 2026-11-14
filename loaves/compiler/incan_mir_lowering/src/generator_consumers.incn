@@ -2,7 +2,7 @@
 
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import CalleeKind, ExternalFunction, ListLeaf, Operand, Place, PlanType, SourceSpan
-from frame import Builder, value_type, external_call, terminate_call
+from frame import Builder
 from generators import generator_shape, generator_element, generator_runtime_call
 from generator_adapters import adapter_callable
 from options import carrier_layout
@@ -45,7 +45,7 @@ pub def generator_consumer(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Drain the owned source through the runtime consumer, which legacy's own iterator protocol implements."""
-    source_type = value_type(builder, source)?
+    source_type = builder.value_type(source)?
     match generator_shape(source_type):
         Some((leaf, depth)) =>
             if source_type != PlanType.Generator(leaf, depth):
@@ -125,7 +125,7 @@ def text_any(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [pointer]), [source, callable], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [pointer]), [source, callable], output, span)
     return Ok(None)
 
 
@@ -179,7 +179,7 @@ def accumulate(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Combine the integer items from an initial value, as `fold` and `reduce` both do."""
-    if len(arguments) != 2 or value_type(builder, arguments[0])? != PlanType.Int:
+    if len(arguments) != 2 or builder.value_type(arguments[0])? != PlanType.Int:
         return Err("unsupported Body IR generator accumulator arguments")
     signature = [PlanType.Int, PlanType.Int, PlanType.Int]
     combine = adapter_callable(builder, arguments[1], signature, span)?
@@ -223,7 +223,7 @@ def consume(
 ) -> Result[None, str]:
     """Call one monomorphic runtime consumer into its checked destination."""
     require_result(builder, output, result)?
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    builder.external_call(f"incan_native_runtime::{name}", parameters, result, operands, output, span)
     return Ok(None)
 
 

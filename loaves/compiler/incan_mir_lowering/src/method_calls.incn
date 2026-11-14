@@ -44,7 +44,7 @@ from iterator_methods import standard_protocol as standard_iterator_protocol
 from element_borrows import element_method_owner, element_method_receiver
 from reflection import lower_reflection
 from value_enums import value_method_owner, enum_message_layout
-from frame import place_type, Builder, temporary, drop_all_owned, terminate_call, read_place
+from frame import place_type, Builder, read_place
 from async_ import construct_future
 from defaults import method_default_arguments
 from type_parameters import instantiate, request_instance
@@ -319,7 +319,7 @@ def lower_retained_method_call(
         builder.unions,
         builder.intrinsics,
     )?
-    reference = temporary(builder, receiver_type, span)
+    reference = builder.temporary(receiver_type, span)
     builder.emit(plan_assign(reference, borrow, span))
     return call_method_body(module, builder, target, index, reference, arguments, destination, span)
 
@@ -475,16 +475,15 @@ pub def source_method_symbol(
             wrapper.scoped_locals = []
             wrapper.scope_parents = []
             wrapper.owned = [2]
-            other = temporary(wrapper, reference, span)
+            other = wrapper.temporary(reference, span)
             wrapper.emit(plan_assign(other, RvalueKind.Borrow(plan_place(2, span)), span))
-            terminate_call(
-                wrapper,
+            wrapper.terminate_call(
                 CalleeKind.Planned(symbol),
                 [read_place(plan_place(1, span), false, span), read_place(other, false, span)],
                 plan_place(0, span),
                 span,
             )
-            drop_all_owned(wrapper, span)
+            wrapper.drop_all_owned(span)
             wrapper.finish(TerminatorKind.Return, span)
             synthesize(
                 builder,

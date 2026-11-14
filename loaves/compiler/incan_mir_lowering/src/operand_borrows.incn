@@ -31,18 +31,7 @@ from element_borrows import shared_element_place
 from text_plan import owned_literal, owned_slice_text
 from numerics import numeric_carrier
 from strings import emit_text_helper, text_helper_arity
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    forget_owned,
-    drop_owned,
-    terminate_call,
-    external_call,
-    read_place,
-    literal,
-    text_literal,
-)
+from frame import place_type, Builder, read_place, literal, text_literal
 from array_views import borrow_array_slice
 from lists import require_list_shape, list_element, is_list
 from checked_values import reference_value_read, scalar_operand, scalar_place
@@ -67,7 +56,7 @@ pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span:
             is_text = place_type(builder.locals, place) == PlanType.String
     if is_text:
         text = display_operand(builder, value, span)?
-        drop_owned(builder, text.local, span)
+        builder.drop_owned(text.local, span)
     else:
         _ = value_operand(builder, value, span)?
     return Ok(None)
@@ -107,7 +96,7 @@ pub def borrow_slice_operand(
                     projection=Projection.Deref(PlanType.NativeSlice(elements)),
                     span=span,
                 )
-                output = temporary(builder, reference_type, span)
+                output = builder.temporary(reference_type, span)
                 mut operation = RvalueKind.Borrow(referent)
                 if mutable:
                     operation = RvalueKind.MutBorrow(referent)
@@ -144,7 +133,7 @@ pub def list_slice_view(
     element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
     if depth < 1 or list_element(element, depth) != elements[0]:
         return Err("unsupported Body IR native slice element mismatch")
-    output = temporary(builder, reference_type, span)
+    output = builder.temporary(reference_type, span)
     arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
     builder.externals.append(
         ExternalFunction(
@@ -155,7 +144,7 @@ pub def list_slice_view(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(method, arguments), [reference], output, span)
     return Ok(read_place(output, mutable, span))
 
 
@@ -189,7 +178,7 @@ pub def borrow_scalar_operand(
             # A shared reference read through its referent, as a receiver is, is lent as a fresh loan of that
             # referent: `Read for &UnixStream` takes `&mut &UnixStream`, and the loan's own identity is unobservable.
             if mutable and lends_shared_referent(place_type(builder.locals, owner), referent):
-                loan = temporary(builder, referent, span)
+                loan = builder.temporary(referent, span)
                 builder.emit(plan_assign(loan, RvalueKind.Borrow(owner), span))
                 owner = loan
             actual = place_type(builder.locals, owner)
@@ -219,14 +208,14 @@ pub def borrow_scalar_operand(
             operand = scalar_operand(builder, value, span)?
             if operand_type(builder, operand)? != referent:
                 return Err("unsupported Body IR scalar literal borrow of another type")
-            owner = temporary(builder, referent, span)
+            owner = builder.temporary(referent, span)
             builder.emit(plan_assign(owner, RvalueKind.Use(operand), span))
     mut reference = PlanType.ScalarRef(elements)
     mut operation = RvalueKind.Borrow(owner)
     if mutable:
         reference = PlanType.ScalarMutRef(elements)
         operation = RvalueKind.MutBorrow(owner)
-    output = temporary(builder, reference, span)
+    output = builder.temporary(reference, span)
     builder.emit(plan_assign(output, operation, span))
     return Ok(read_place(output, mutable, span))
 
@@ -252,9 +241,9 @@ def borrow_as_trait_object(
         source = mutable_receiver_type(actual)?
         target = PlanType.ScalarMutRef([referent])
         operation = RvalueKind.MutBorrow(owner)
-    loan = temporary(builder, source, span)
+    loan = builder.temporary(source, span)
     builder.emit(plan_assign(loan, operation, span))
-    output = temporary(builder, target, span)
+    output = builder.temporary(target, span)
     builder.emit(
         plan_assign(output, RvalueKind.UnsizeTraitObject(read_place(loan, mutable, span), source, target), span),
     )
@@ -291,9 +280,8 @@ pub def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: Sour
                 return Ok(read_place(place, false, span))
         _ => pass
     reference = borrow_text_operand(builder, value, span)?
-    output = temporary(builder, PlanType.StrRef, span)
-    external_call(
-        builder,
+    output = builder.temporary(PlanType.StrRef, span)
+    builder.external_call(
         "alloc::string::String::as_str",
         [PlanType.StringRef],
         PlanType.StrRef,
@@ -313,7 +301,7 @@ pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: Sou
                     owner = read_static(builder, read.place, global, read.fact, span)?
                     match owner.kind:
                         OperandKind.Move(place) =>
-                            reference = temporary(builder, PlanType.StringRef, span)
+                            reference = builder.temporary(PlanType.StringRef, span)
                             builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
                             return Ok(read_place(reference, false, span))
                         _ => return Err("unsupported Body IR non-string static text operand")
@@ -330,24 +318,24 @@ pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: Sou
             if place_type(builder.locals, place) == PlanType.StrRef:
                 owner = owned_slice_text(builder, read_place(place, false, span), span)
                 builder.owned.append(owner.local)
-                reference = temporary(builder, PlanType.StringRef, span)
+                reference = builder.temporary(PlanType.StringRef, span)
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) == PlanType.FrozenStr:
                 owner = display_plan_operand(builder, read_place(place, false, span), span)?
-                reference = temporary(builder, PlanType.StringRef, span)
+                reference = builder.temporary(PlanType.StringRef, span)
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) != PlanType.String:
                 return Err(unsupported_text_operand(builder, place_type(builder.locals, place), span))
-            reference = temporary(builder, PlanType.StringRef, span)
+            reference = builder.temporary(PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
             return Ok(read_place(reference, false, span))
         RustOperand.Constant(constant) =>
             match literal_text(constant):
                 Some(text) =>
                     owner = owned_literal(builder, text, span)
-                    reference = temporary(builder, PlanType.StringRef, span)
+                    reference = builder.temporary(PlanType.StringRef, span)
                     builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                     return Ok(read_place(reference, false, span))
                 None => return Err("unsupported Body IR non-string text constant")
@@ -376,7 +364,7 @@ def borrow_element_text(
                 match shared_element_place(builder, read.place, span)?:
                     Some(owner) =>
                         if place_type(builder.locals, owner) == PlanType.String:
-                            reference = temporary(builder, PlanType.StringRef, span)
+                            reference = builder.temporary(PlanType.StringRef, span)
                             builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                             return Ok(read_place(reference, false, span))
                     None => pass
@@ -385,14 +373,14 @@ def borrow_element_text(
     if operand_type(builder, operand)? == PlanType.FrozenStr:
         # Match direct frozen text: copy its static wrapper, then provide the owned text view this helper expects.
         owner = display_plan_operand(builder, operand, span)?
-        reference = temporary(builder, PlanType.StringRef, span)
+        reference = builder.temporary(PlanType.StringRef, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
         return Ok(read_place(reference, false, span))
     match operand.kind:
         OperandKind.Move(owner) =>
             if place_type(builder.locals, owner) != PlanType.String:
                 return Err(unsupported_text_operand(builder, place_type(builder.locals, owner), span))
-            reference = temporary(builder, PlanType.StringRef, span)
+            reference = builder.temporary(PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
             return Ok(read_place(reference, false, span))
         _ =>
@@ -426,13 +414,13 @@ pub def lower_text_helper(
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
-            forget_owned(builder, text.local)
-            drop_owned(builder, output.local, span)
+            builder.forget_owned(text.local)
+            builder.drop_owned(output.local, span)
             owns_result = result == PlanType.String or is_list(result)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, owns_result, span)), span))
             if owns_result:
                 builder.owned.append(output.local)
-        None => drop_owned(builder, text.local, span)
+        None => builder.drop_owned(text.local, span)
     return Ok(None)
 
 
@@ -465,11 +453,11 @@ pub def assign_text_result(
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
-            forget_owned(builder, text.local)
-            drop_owned(builder, output.local, span)
+            builder.forget_owned(text.local)
+            builder.drop_owned(output.local, span)
             builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, true, span)), span))
             builder.owned.append(output.local)
-        None => drop_owned(builder, text.local, span)
+        None => builder.drop_owned(text.local, span)
     return Ok(None)
 
 

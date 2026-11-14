@@ -13,7 +13,7 @@ from pub::incan_mir_plan import (
     UnaryOp,
     assign as plan_assign,
 )
-from frame import Builder, literal, place_type, read_place, temporary
+from frame import Builder, literal, place_type, read_place
 from lists import list_shape, list_element, require_list_shape
 from list_values import list_borrow
 from builtins import list_call
@@ -52,20 +52,20 @@ pub def frozen_list_equality(
     output = compare_lists(builder, left, right, span)?
     if not negate:
         return Ok(output)
-    negated = temporary(builder, PlanType.Bool, span)
+    negated = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, output), span))
     return Ok(read_place(negated, false, span))
 
 
 def compare_lists(mut builder: Builder, left: Place, right: Place, span: SourceSpan) -> Result[Operand, str]:
     """Emit a length-checked loop; recursive list shapes repeat this borrowed comparison at each depth."""
-    output = temporary(builder, PlanType.Bool, span)
-    index = temporary(builder, PlanType.Int, span)
+    output = builder.temporary(PlanType.Bool, span)
+    index = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
     builder.emit(plan_assign(index, RvalueKind.Use(literal(Constant.Int(0), span)), span))
     left_length = list_length(builder, left, span)?
     right_length = list_length(builder, right, span)?
-    condition = temporary(builder, PlanType.Bool, span)
+    condition = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, left_length, right_length), span))
     head = builder.new_block(span)
     body = builder.new_block(span)
@@ -103,7 +103,7 @@ def list_length(mut builder: Builder, value: Place, span: SourceSpan) -> Result[
     """Read an admitted list's length through its shared runtime loan."""
     leaf, depth = require_list_shape(place_type(builder.locals, value), "invalid frozen list equality owner")?
     reference = list_borrow(builder, value, false, span)?
-    output = temporary(builder, PlanType.Int, span)
+    output = builder.temporary(PlanType.Int, span)
     list_call(
         builder,
         "length_list",
@@ -123,7 +123,7 @@ def compare_elements(mut builder: Builder, left: Place, right: Place, span: Sour
     right_type = place_type(builder.locals, right)
     if supports_frozen_list_equality(left_type, right_type):
         return compare_lists(builder, left, right, span)
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     if left_type in [PlanType.String, PlanType.FrozenStr] and right_type in [PlanType.String, PlanType.FrozenStr]:
         first, first_type = text_argument(builder, left, left_type, span)
         second, second_type = text_argument(builder, right, right_type, span)
@@ -159,9 +159,9 @@ def bytes_view(mut builder: Builder, value: Place, ty: PlanType, span: SourceSpa
     """Lend either a static frozen byte payload or owned byte vector as the same unsigned byte slice."""
     if ty == PlanType.FrozenBytes:
         reference_type = PlanType.ScalarRef([ty])
-        reference = temporary(builder, reference_type, span)
+        reference = builder.temporary(reference_type, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
-        output = temporary(builder, PlanType.SliceRef([PlanType.U8]), span)
+        output = builder.temporary(PlanType.SliceRef([PlanType.U8]), span)
         instantiated_external_call(
             builder,
             "incan_std_primitives::frozen::FrozenBytes::as_slice",

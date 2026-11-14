@@ -16,7 +16,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import Constant, ListLeaf, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
-from frame import Builder, read_place, literal, drop_owned, forget_owned, temporary, track_rvalue_moves
+from frame import Builder, read_place, literal
 from text_plan import clone_text, owned_literal
 from lists import list_parameter_type, list_element
 from builtins import list_call
@@ -151,7 +151,7 @@ def placeholder(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[
             return Ok(read_place(text, true, span))
         PlanType.ListRef(leaf, depth) =>
             # A list parameter is a view, so the placeholder views an empty list the caller owns until its scope ends.
-            empty = temporary(builder, PlanType.List(leaf, depth), span)
+            empty = builder.temporary(PlanType.List(leaf, depth), span)
             empty_list(builder, empty, leaf, depth, span)
             return list_borrow(builder, empty, false, span)
         _ => return Err("unsupported Body IR omitted partial parameter of this type")
@@ -187,7 +187,7 @@ pub def bind_defaulted_parameter(
         PlanType.ListRef(leaf, depth) =>
             match parameter.default:
                 CallableParamDefault.Source(_computation) =>
-                    holder = temporary(lifted, PlanType.List(leaf, depth), span).local
+                    holder = lifted.temporary(PlanType.List(leaf, depth), span).local
                 _ => pass
         _ => pass
     supplied = lifted.new_block(span)
@@ -210,10 +210,10 @@ pub def bind_defaulted_parameter(
     lifted.owned = incoming
     if owned:
         lifted.owned.append(flag_slot + 1)
-        drop_owned(lifted, flag_slot + 1, span)
+        lifted.drop_owned(flag_slot + 1, span)
     value = default_value(module, lifted, parameter, ty, span)?
     # The preset's copy or the computed default moves into the parameter, so it needs no drop of its own.
-    track_rvalue_moves(lifted, RvalueKind.Use(value))
+    lifted.track_rvalue_moves(RvalueKind.Use(value))
     if holder >= 0:
         hold_default_list(lifted, incoming, holder, destination, span)?
     else:
@@ -250,7 +250,7 @@ def hold_default_list(
         return Err("unsupported Body IR partial default leaving owned values")
     computed = plan_place(created[0], span)
     lifted.emit(plan_assign(plan_place(holder, span), RvalueKind.Use(read_place(computed, true, span)), span))
-    forget_owned(lifted, created[0])
+    lifted.forget_owned(created[0])
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Borrow(plan_place(holder, span)), span))
     return Ok(None)
 

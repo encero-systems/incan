@@ -14,7 +14,7 @@ from pub::incan_mir_plan import (
     Unwind,
     Statement,
 )
-from frame import Builder, temporary, terminate_call
+from frame import Builder
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 
 
@@ -54,8 +54,8 @@ pub def shared_sdk_operands(
             PlanType.SharedCallable(signature) =>
                 name = f"__incan_shared_callable_{builder.name}_{len(builder.synthesized)}"
                 builder.synthesized.append(shared_constructor(name, signature, span))
-                target = temporary(builder, types[index], span)
-                terminate_call(builder, CalleeKind.Planned(name), [values[index]], target, span)
+                target = builder.temporary(types[index], span)
+                builder.terminate_call(CalleeKind.Planned(name), [values[index]], target, span)
                 builder.owned.append(target.local)
                 result.append(Operand(kind=OperandKind.Move(target), span=span))
             _ => result.append(values[index])

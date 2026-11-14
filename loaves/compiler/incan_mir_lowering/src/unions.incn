@@ -30,7 +30,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, literal
+from frame import Builder, read_place, literal
 from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Place as RustPlace, PlaceElem as RustPlaceElem
 from enums import validate_payload_patterns, enum_owner
 from layout_types import native_source_type
@@ -567,12 +567,12 @@ pub def union_test_slots(
 
 pub def test_union_tag(mut builder: Builder, tag: Place, slots: list[int], span: SourceSpan) -> RvalueKind:
     """Join tag comparisons through native boolean branches without consuming any union payload."""
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
     matched = builder.new_block(span)
     joined = builder.new_block(span)
     for slot in slots:
-        condition = temporary(builder, PlanType.Bool, span)
+        condition = builder.temporary(PlanType.Bool, span)
         operation = RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span))
         builder.emit(plan_assign(condition, operation, span))
         missed = builder.new_block(span)

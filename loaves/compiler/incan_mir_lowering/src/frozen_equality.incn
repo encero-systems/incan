@@ -10,7 +10,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import PlanType, Place, Operand, OperandKind, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, place_type, read_place
+from frame import Builder, place_type, read_place
 from checked_values import scalar_place
 from list_values import value_operand
 from calls import instantiated_external_call
@@ -87,7 +87,7 @@ pub def borrow_frozen(mut builder: Builder, value: Place, span: SourceSpan) -> R
     """Create a shared view of exact baked storage, including non-Copy model elements."""
     match place_type(builder.locals, value):
         PlanType.FrozenCollection(name, elements) =>
-            reference = temporary(builder, PlanType.FrozenCollectionRef(name, elements), span)
+            reference = builder.temporary(PlanType.FrozenCollectionRef(name, elements), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             return Ok(read_place(reference, false, span))
         _ => return Err("unsupported Body IR frozen equality carrier")
@@ -115,7 +115,7 @@ pub def compare_frozen(
             mut path = "incan_native_runtime::equal_model"
             if operator == BinOp.Ne:
                 path = "incan_native_runtime::unequal_model"
-            output = temporary(builder, PlanType.Bool, span)
+            output = builder.temporary(PlanType.Bool, span)
             parameters = [frozen_reference_type(ty)?, frozen_reference_type(ty)?]
             instantiated_external_call(builder, path, [ty], parameters, PlanType.Bool, references, output, span)?
             return Ok(Some(read_place(output, false, span)))

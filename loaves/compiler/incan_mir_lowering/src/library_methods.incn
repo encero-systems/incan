@@ -28,7 +28,7 @@ from element_borrows import mutable_element_reference
 from models import model_place
 from model_values import is_json_serialize_method
 from unions import require_native_union_signature
-from frame import place_type, Builder, temporary, read_place
+from frame import place_type, Builder, read_place
 from async_ import construct_boxed_future
 from type_parameters import substitute
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
@@ -269,7 +269,7 @@ def library_receiver(
                                 copied = materialized_receiver(builder, read.place, span)?
                                 match place_type(builder.locals, copied):
                                     PlanType.Model(owner, name) =>
-                                        reference = temporary(builder, PlanType.ModelRef(owner, name), span)
+                                        reference = builder.temporary(PlanType.ModelRef(owner, name), span)
                                         builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
                                         return Ok(reference)
                                     _ => return Err("the standard library element receiver requires a nominal layout")
@@ -291,13 +291,13 @@ def library_receiver(
                     source = place_type(builder.locals, receiver)
                     match declared:
                         RustType.Ref(_inner) =>
-                            reference = temporary(builder, shared_receiver_type(source)?, span)
+                            reference = builder.temporary(shared_receiver_type(source)?, span)
                             builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
                             return Ok(reference)
                         RustType.RefMut(_inner) =>
                             match source:
                                 PlanType.Model(owner, name) =>
-                                    reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
+                                    reference = builder.temporary(PlanType.ModelMutRef(owner, name), span)
                                     builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
                                     return Ok(reference)
                                 _ =>

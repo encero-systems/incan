@@ -22,7 +22,7 @@ from pub::incan_mir_plan import (
     TupleElement,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, literal, read_place, external_call, place_type, drop_owned, forget_owned
+from frame import Builder, literal, read_place, place_type
 from layout_types import native_source_type
 from checked_values import scalar_operand, scalar_place
 from sequence_builtins import text_argument
@@ -60,7 +60,7 @@ pub def lower_checked_bridge(
         target.return_type,
         builder.intrinsics,
     )?
-    mut output = temporary(builder, ty, span)
+    mut output = builder.temporary(ty, span)
     match destination:
         Some(place) => output = scalar_place(builder, place, span)?
         None => pass
@@ -103,7 +103,7 @@ def new_slot(
 ) -> Result[None, str]:
     """Allocate private scalar storage; physical zeroing grants no semantic Out initialization permission."""
     value_type = slot_value_type(ty)?
-    storage = temporary(builder, value_type, span)
+    storage = builder.temporary(value_type, span)
     if initialized:
         supplied = argument(builder, arguments, 0, span)?
         initial = coerce_numeric_operand(builder, supplied, value_type, span)?
@@ -160,8 +160,7 @@ def make_string(
 ) -> Result[None, str]:
     """Validate and allocate owned terminated storage before a foreign pointer can be produced."""
     text = text_argument(builder, arguments, 0, span)?
-    external_call(
-        builder,
+    builder.external_call(
         "incan_stdlib_primitives::nul_terminated_utf8",
         [PlanType.StringRef],
         ty,
@@ -185,7 +184,7 @@ def string_pointer(
     source = pointer_place(view)?
     slice_type = PlanType.NativeSlice([PlanType.U8])
     borrowed = Place(local=source.local, projection=Projection.Deref(slice_type), span=span)
-    pointer = temporary(builder, PlanType.RawPointer(false, [slice_type]), span)
+    pointer = builder.temporary(PlanType.RawPointer(false, [slice_type]), span)
     builder.emit(plan_assign(pointer, RvalueKind.RawAddressOf(borrowed, false), span))
     builder.emit(plan_assign(output, RvalueKind.PointerCast(read_place(pointer, false, span), ty), span))
     return Ok(None)
@@ -218,12 +217,12 @@ def copy_utf8(
     pointer = argument(builder, arguments, 0, span)?
     bound = argument(builder, arguments, 1, span)?
     pointer_type = PlanType.RawPointer(false, [PlanType.U8])
-    base = temporary(builder, pointer_type, span)
+    base = builder.temporary(pointer_type, span)
     builder.emit(plan_assign(base, RvalueKind.PointerCast(pointer, pointer_type), span))
     bytes_type = PlanType.List(ListLeaf.U8, 1)
-    copied = temporary(builder, bytes_type, span)
+    copied = builder.temporary(bytes_type, span)
     list_call(builder, "empty_list", PlanType.U8, [], bytes_type, [], copied, span)
-    index = temporary(builder, PlanType.Int, span)
+    index = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(index, RvalueKind.Use(literal(Constant.Int(0), span)), span))
     header = builder.new_block(span)
     inspect = builder.new_block(span)
@@ -236,13 +235,13 @@ def copy_utf8(
     begin_scan(builder, base, bound, header, null_view, invalid_bound, span)
     # 2. The bound is checked before every read; a terminator stops reads immediately.
     builder.current = header
-    within = temporary(builder, PlanType.Bool, span)
+    within = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(within, RvalueKind.Binary(BinaryOp.Less, read_place(index, false, span), bound), span))
     builder.finish(TerminatorKind.SwitchBool(read_place(within, false, span), missing, inspect), span)
     builder.current = inspect
     byte = scan_byte(builder, base, index, span)?
-    terminated = temporary(builder, PlanType.Bool, span)
-    zero = temporary(builder, PlanType.U8, span)
+    terminated = builder.temporary(PlanType.Bool, span)
+    zero = builder.temporary(PlanType.U8, span)
     builder.emit(
         plan_assign(zero, RvalueKind.NumericCast(literal(Constant.Int(0), span), PlanType.Int, PlanType.U8), span),
     )
@@ -274,7 +273,7 @@ def copy_utf8(
     valid_utf8 = builder.new_block(span)
     decoded_after = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid_utf8, valid_utf8), span)
-    forget_owned(builder, decoded.local)
+    builder.forget_owned(decoded.local)
     decoded_owners = builder.owned
     owner = enum_owner(ty)?
     builder.current = invalid_utf8
@@ -295,7 +294,7 @@ def copy_utf8(
     builder.current = invalid_bound
     refuse_result(builder, output, ty, "max_bytes is not a valid bound", after, span)?
     builder.current = after
-    drop_owned(builder, copied.local, span)
+    builder.drop_owned(copied.local, span)
     return Ok(None)
 
 
@@ -324,13 +323,13 @@ def begin_scan(
     span: SourceSpan,
 ) -> None:
     """Refuse a null view, and a bound that is not positive or not a target pointer offset, before any read."""
-    address = temporary(builder, PlanType.USize, span)
+    address = builder.temporary(PlanType.USize, span)
     builder.emit(plan_assign(address, RvalueKind.PointerAddress(read_place(base, false, span)), span))
-    zero = temporary(builder, PlanType.USize, span)
+    zero = builder.temporary(PlanType.USize, span)
     builder.emit(
         plan_assign(zero, RvalueKind.NumericCast(literal(Constant.Int(0), span), PlanType.Int, PlanType.USize), span),
     )
-    nonnull = temporary(builder, PlanType.Bool, span)
+    nonnull = builder.temporary(PlanType.Bool, span)
     builder.emit(
         plan_assign(
             nonnull,
@@ -341,15 +340,15 @@ def begin_scan(
     check_bound = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(nonnull, false, span), null_view, check_bound), span)
     builder.current = check_bound
-    positive = temporary(builder, PlanType.Bool, span)
+    positive = builder.temporary(PlanType.Bool, span)
     no_bytes = literal(Constant.Int(0), span)
     builder.emit(plan_assign(positive, RvalueKind.Binary(BinaryOp.Greater, bound, no_bytes), span))
     check_offset = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(positive, false, span), invalid_bound, check_offset), span)
     builder.current = check_offset
-    offset = temporary(builder, PlanType.ISize, span)
+    offset = builder.temporary(PlanType.ISize, span)
     builder.emit(plan_assign(offset, RvalueKind.NumericCast(bound, PlanType.Int, PlanType.ISize), span))
-    restored = temporary(builder, PlanType.Int, span)
+    restored = builder.temporary(PlanType.Int, span)
     builder.emit(
         plan_assign(
             restored,
@@ -357,18 +356,18 @@ def begin_scan(
             span,
         ),
     )
-    fits = temporary(builder, PlanType.Bool, span)
+    fits = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(fits, RvalueKind.Binary(BinaryOp.Equal, read_place(restored, false, span), bound), span))
     builder.finish(TerminatorKind.SwitchBool(read_place(fits, false, span), invalid_bound, header), span)
 
 
 def scan_byte(mut builder: Builder, base: Place, index: Place, span: SourceSpan) -> Result[Place, str]:
     """Form one in-bound pointer and copy its byte without carrying a foreign reference beyond the read."""
-    offset = temporary(builder, PlanType.ISize, span)
+    offset = builder.temporary(PlanType.ISize, span)
     builder.emit(
         plan_assign(offset, RvalueKind.NumericCast(read_place(index, false, span), PlanType.Int, PlanType.ISize), span),
     )
-    address = temporary(builder, place_type(builder.locals, base), span)
+    address = builder.temporary(place_type(builder.locals, base), span)
     builder.emit(
         plan_assign(
             address,
@@ -377,14 +376,14 @@ def scan_byte(mut builder: Builder, base: Place, index: Place, span: SourceSpan)
         ),
     )
     source = Place(local=address.local, projection=Projection.Deref(PlanType.U8), span=span)
-    byte = temporary(builder, PlanType.U8, span)
+    byte = builder.temporary(PlanType.U8, span)
     builder.emit(plan_assign(byte, RvalueKind.Use(read_place(source, false, span)), span))
     return Ok(byte)
 
 
 def increment_index(mut builder: Builder, index: Place, span: SourceSpan) -> None:
     """Advance after a successful read; the next loop edge rechecks the caller's bound."""
-    checked = temporary(builder, PlanType.CheckedInt, span)
+    checked = builder.temporary(PlanType.CheckedInt, span)
     builder.emit(
         plan_assign(
             checked,
@@ -436,7 +435,7 @@ def span_pointer(
     source = pointer_place(view)?
     slice_type = PlanType.NativeSlice([element])
     borrowed = Place(local=source.local, projection=Projection.Deref(slice_type), span=span)
-    pointer = temporary(builder, PlanType.RawPointer(mutable, [slice_type]), span)
+    pointer = builder.temporary(PlanType.RawPointer(mutable, [slice_type]), span)
     builder.emit(plan_assign(pointer, RvalueKind.RawAddressOf(borrowed, mutable), span))
     builder.emit(plan_assign(output, RvalueKind.PointerCast(read_place(pointer, false, span), ty), span))
     return Ok(None)
@@ -475,7 +474,7 @@ def finish_span(
     buffer = span_buffer(builder, arguments, span)?
     capacity = buffer_length(builder, buffer, span)?
     supplied = coerce_numeric_operand(builder, argument(builder, arguments, 1, span)?, PlanType.Int, span)?
-    written = temporary(builder, PlanType.Int, span)
+    written = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(written, RvalueKind.Use(supplied), span))
     owner = enum_owner(ty)?
     keep = builder.new_block(span)
@@ -522,7 +521,7 @@ def buffer_length(mut builder: Builder, buffer: Place, span: SourceSpan) -> Resu
     """Read the span vector's length through the runtime without consuming the span."""
     leaf, depth = require_list_shape(place_type(builder.locals, buffer), "invalid checked C span storage")?
     reference = list_borrow(builder, buffer, false, span)?
-    count = temporary(builder, PlanType.Int, span)
+    count = builder.temporary(PlanType.Int, span)
     parameters = [PlanType.ListRef(leaf, depth)]
     list_call(builder, "length_list", list_element(leaf, depth), parameters, PlanType.Int, [reference], count, span)
     return Ok(count)
@@ -538,14 +537,14 @@ def within_capacity(
 ) -> None:
     """Branch to `keep` only for `0 <= written <= capacity`, and to `refuse` otherwise."""
     count = read_place(written, false, span)
-    nonnegative = temporary(builder, PlanType.Bool, span)
+    nonnegative = builder.temporary(PlanType.Bool, span)
     builder.emit(
         plan_assign(nonnegative, RvalueKind.Binary(BinaryOp.GreaterEqual, count, literal(Constant.Int(0), span)), span),
     )
     check_capacity = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(nonnegative, false, span), refuse, check_capacity), span)
     builder.current = check_capacity
-    fits = temporary(builder, PlanType.Bool, span)
+    fits = builder.temporary(PlanType.Bool, span)
     builder.emit(
         plan_assign(fits, RvalueKind.Binary(BinaryOp.LessEqual, count, read_place(capacity, false, span)), span),
     )
@@ -556,7 +555,7 @@ def written_prefix(mut builder: Builder, buffer: Place, written: Place, span: So
     """Copy the first `written` elements of the span vector into a new owned vector."""
     leaf, depth = require_list_shape(place_type(builder.locals, buffer), "invalid checked C span storage")?
     reference = list_borrow(builder, buffer, false, span)?
-    kept = temporary(builder, PlanType.List(leaf, depth), span)
+    kept = builder.temporary(PlanType.List(leaf, depth), span)
     mut operands = [reference]
     operands.extend(
         [

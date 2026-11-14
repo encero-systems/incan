@@ -4,7 +4,7 @@ from rust::incan_semantics_core::body_ir import Operand as RustOperand
 from rust::incan_semantics_core import SymbolOrigin
 from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, place_type, read_place
+from frame import Builder, place_type, read_place
 from checked_values import scalar_place
 from formatting import native_format_text
 from element_places import is_element_place
@@ -89,6 +89,6 @@ pub def borrowed_enum_debug(
 
 def enum_reference(mut builder: Builder, value: Place, owner: int, name: str, span: SourceSpan) -> Operand:
     """Borrow the original enum storage for a native formatter without cloning or consuming its payload."""
-    reference = temporary(builder, PlanType.EnumRef(owner, name), span)
+    reference = builder.temporary(PlanType.EnumRef(owner, name), span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
     return read_place(reference, false, span)

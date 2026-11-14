@@ -33,15 +33,7 @@ from classes import function_name, frame_type, is_program_entry
 from layout_types import native_source_type, shared_receiver_type, mutable_receiver_type
 from native_type_identity import ConstructorIndex
 from unions import collect_unions
-from frame import (
-    Builder,
-    read_place,
-    forget_moved_arguments,
-    forget_owned,
-    terminate_call,
-    drop_all_owned,
-    cleanup_exit,
-)
+from frame import Builder, read_place
 from models import place_type
 from table_views import borrowed_table, borrowed_at
 from explicit_arguments import direct_view_access
@@ -175,8 +167,8 @@ pub def construct_boxed_future(
     """Construct a source or SDK future now and pin it, preserving deferred body execution and native obligations."""
     name = f"__incan_future_ctor_{builder.name}_{len(builder.synthesized)}"
     builder.synthesized.append(boxed_future_constructor(name, callee, types, output, span))
-    forget_moved_arguments(builder, arguments)
-    terminate_call(builder, CalleeKind.Planned(name), arguments, destination, span)
+    builder.forget_moved_arguments(arguments)
+    builder.terminate_call(CalleeKind.Planned(name), arguments, destination, span)
     builder.owned.append(destination.local)
     return Ok(None)
 
@@ -260,13 +252,13 @@ pub def await_future(
     current = builder.current
     cancelled = builder.new_block(span)
     builder.current = cancelled
-    drop_all_owned(builder, span)
+    builder.drop_all_owned(span)
     builder.finish(TerminatorKind.CoroutineDrop, span)
     builder.current = current
     builder.owned = incoming
     after = builder.new_block(span)
-    unwind = Unwind.Cleanup(cleanup_exit(builder, span))
-    forget_owned(builder, future.local)
+    unwind = Unwind.Cleanup(builder.cleanup_exit(span))
+    builder.forget_owned(future.local)
     match place_type(builder.locals, destination):
         PlanType.String => builder.owned.append(destination.local)
         PlanType.Future(_output) => builder.owned.append(destination.local)
@@ -276,7 +268,7 @@ pub def await_future(
         PlanType.Set(_leaf) => builder.owned.append(destination.local)
         PlanType.Dict(_key, _value) => builder.owned.append(destination.local)
         _ => pass
-    drop_unwind = Unwind.Cleanup(cleanup_exit(builder, span))
+    drop_unwind = Unwind.Cleanup(builder.cleanup_exit(span))
     builder.finish(TerminatorKind.Await(future, destination, after, cancelled, unwind, drop_unwind), span)
     builder.current = after
     return Ok(None)

@@ -31,19 +31,7 @@ from text_plan import clone_text_reference, owned_slice_text
 from options import assign_carrier, variant_condition
 from numerics import numeric_carrier
 from patterns import pattern_binds, carrier_pattern_slot, carrier_payload_types
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    dereferenced_place,
-    forget_owned,
-    bind_read_value,
-    track_rvalue_moves,
-    forget_moved_arguments,
-    read_place,
-    literal,
-    appended_field,
-)
+from frame import place_type, Builder, dereferenced_place, read_place, literal, appended_field
 from lists import is_list, exclusive_reference, is_exclusive_borrow
 from closures import function_assignment
 from checked_values import reference_read_fact, scalar_place
@@ -120,7 +108,7 @@ pub def boundary_plan_operand(
         Some(copied) => return Ok(copied)
         None => pass
     if source == PlanType.FrozenBytes and target == PlanType.List(ListLeaf.U8, 1):
-        frozen = temporary(builder, source, span)
+        frozen = builder.temporary(source, span)
         builder.emit(plan_assign(frozen, RvalueKind.Use(value), span))
         storage = sequence_read_storage(builder, frozen, span)?
         return Ok(read_place(storage, true, span))
@@ -160,7 +148,7 @@ pub def boundary_plan_operand(
                 true,
                 f"value boundary in {builder.name}",
             )?
-            pointer = temporary(builder, ty, span)
+            pointer = builder.temporary(ty, span)
             builder.emit(plan_assign(pointer, operation, span))
             return Ok(read_place(pointer, false, span))
         _ => pass
@@ -205,16 +193,16 @@ pub def boundary_plan_operand(
         RvalueKind.Use(result) =>
             if actual_source == target or not native_alias_boundary(builder.nominals, actual_source, target):
                 return Ok(result)
-            alias = temporary(builder, target, span)
+            alias = builder.temporary(target, span)
             alias_operation = RvalueKind.NativeAlias(result, actual_source, target)
-            forget_moved_arguments(builder, [result])
+            builder.forget_moved_arguments([result])
             builder.emit(plan_assign(alias, alias_operation, span))
             if snapshot_owns(target):
                 builder.owned.append(alias.local)
             return Ok(read_place(alias, snapshot_owns(target), span))
         _ =>
-            output = temporary(builder, target, span)
-            track_rvalue_moves(builder, operation)
+            output = builder.temporary(target, span)
+            builder.track_rvalue_moves(operation)
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
@@ -295,13 +283,13 @@ def converted_carrier_operand(
     match value.kind:
         OperandKind.Move(place) => source = place
         _ => return Err("unsupported Body IR carrier conversion without an owned value")
-    output = temporary(builder, target, span)
+    output = builder.temporary(target, span)
     selected = builder.new_block(span)
     other = builder.new_block(span)
     joined = builder.new_block(span)
     condition = variant_condition(builder, source, 0, span)
     builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
-    forget_owned(builder, source.local)
+    builder.forget_owned(source.local)
     owners = builder.owned
     for slot in range(2):
         builder.current = selected
@@ -507,7 +495,7 @@ pub def bind_enum_fields(
                     if bind_shared_enum_payload(builder, local, projected, binding.fact, span)?:
                         continue
                     payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
-                    bind_read_value(builder, local, boundary_plan_operand(builder, payload, ty, span)?, span)
+                    builder.bind_read_value(local, boundary_plan_operand(builder, payload, ty, span)?, span)
             _ =>
                 if pattern_binds(fields[slot]):
                     bind_nested_payload(builder, source, variant, slot, fields[slot], span)?
@@ -543,7 +531,7 @@ def moved_native_enum_payload(
         return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier")
     if owner < len(builder.enums) and source.local not in builder.owned:
         return Err("unsupported Body IR native enum payload move without its carrier's drop owner")
-    forget_owned(builder, source.local)
+    builder.forget_owned(source.local)
     return Ok(read_place(payload, true, span))
 
 

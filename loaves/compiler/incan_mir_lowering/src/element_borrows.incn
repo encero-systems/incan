@@ -15,7 +15,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import Operand, PlanType, Place, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
-from frame import Builder, place_type, temporary, appended_field
+from frame import Builder, place_type, appended_field
 from models import field_steps
 from lists import require_list_shape, list_element, is_exclusive_borrow, is_list
 from collections import (
@@ -87,7 +87,7 @@ pub def shared_list_element(mut builder: Builder, container: Place, index: Opera
     leaf, depth = require_list_shape(place_type(builder.locals, container), "invalid shared list loan")?
     element = list_element(leaf, depth)
     reference = shared_receiver_type(element)?
-    output = temporary(builder, reference, span)
+    output = builder.temporary(reference, span)
     loan = list_borrow(builder, container, false, span)?
     borrowed = list_slice_view(builder, loan, [element], false, span)?
     instantiated_external_call(
@@ -158,12 +158,12 @@ def shared_element_receiver(
     """Borrow the selected element in place when list storage can provide a checked shared loan."""
     match shared_element_place(builder, source, span)?:
         Some(selected) =>
-            reference = temporary(builder, receiver_type, span)
+            reference = builder.temporary(receiver_type, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(selected), span))
             return Ok(reference)
         None => pass
     copied = materialized_receiver(builder, source, span)?
-    reference = temporary(builder, receiver_type, span)
+    reference = builder.temporary(receiver_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
     return Ok(reference)
 
@@ -244,7 +244,7 @@ pub def borrow_element_mut(
     element = list_element(leaf, depth)
     result = mutable_reference_type(element)?
     reference = list_borrow(builder, receiver, true, span)?
-    output = temporary(builder, result, span)
+    output = builder.temporary(result, span)
     list_call(
         builder,
         "borrow_list_mut",
@@ -315,7 +315,7 @@ def borrow_dictionary_value(
     result = mutable_reference_type(types[1])?
     key = value_operand(builder, index, span)?
     reference = borrow_collection(builder, container, true, span)?
-    output = temporary(builder, result, span)
+    output = builder.temporary(result, span)
     collection_call(
         builder,
         ty,
@@ -361,7 +361,7 @@ def model_reference(mut builder: Builder, place: Place, span: SourceSpan) -> Res
             if place.projection == Projection.Whole:
                 return Ok(place)
         PlanType.Model(owner, name) =>
-            reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
+            reference = builder.temporary(PlanType.ModelMutRef(owner, name), span)
             builder.emit(plan_assign(reference, RvalueKind.MutBorrow(place), span))
             return Ok(reference)
         _ => pass

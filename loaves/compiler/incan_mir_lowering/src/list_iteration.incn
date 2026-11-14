@@ -37,16 +37,7 @@ from element_borrows import mutable_element_place, shared_element_place
 from models import field_step_type
 from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from builtins import list_call
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    drop_owned,
-    exhaust_loop,
-    external_call,
-    read_place,
-    literal,
-)
+from frame import place_type, Builder, read_place, literal
 from collections import collection_arguments, is_owned_collection
 from lists import (
     list_shape,
@@ -131,8 +122,7 @@ pub def initialize_text_iterator(
             reference = borrow_text_operand(builder, operand, span)?
             items = PlanType.List(ListLeaf.Str, 1)
             builder.locals[target.local].ty = items
-            external_call(
-                builder,
+            builder.external_call(
                 "incan_native_runtime::text_items",
                 [PlanType.StringRef],
                 items,
@@ -141,7 +131,7 @@ pub def initialize_text_iterator(
                 span,
             )
             builder.owned.append(target.local)
-            cursor = temporary(builder, PlanType.Int, span)
+            cursor = builder.temporary(PlanType.Int, span)
             builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
             builder.iterators.append((target.local, cursor.local))
             return Ok(None)
@@ -203,7 +193,7 @@ def frozen_dictionary_value(
     mut path = "incan_native_runtime::frozen_dict_get"
     if text:
         path = "incan_native_runtime::frozen_dict_text_get"
-    raw = temporary(builder, elements[1], span)
+    raw = builder.temporary(elements[1], span)
     instantiated_external_call(
         builder,
         path,
@@ -217,7 +207,7 @@ def frozen_dictionary_value(
     if elements[1] == PlanType.StaticText:
         return native_format_text(builder, read_place(raw, false, span), false, span)
     if elements[1] == PlanType.StaticBytes:
-        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+        output = builder.temporary(PlanType.List(ListLeaf.U8, 1), span)
         instantiated_external_call(
             builder,
             "incan_native_runtime::own_static_bytes",
@@ -356,7 +346,7 @@ pub def frozen_list_snapshot(
                     path = "incan_native_runtime::frozen_dict_text_keys"
             elif elements[0] == PlanType.StaticBytes:
                 path = "incan_native_runtime::frozen_list_byte_items"
-            output = temporary(builder, snapshot, span)
+            output = builder.temporary(snapshot, span)
             instantiated_external_call(builder, path, elements, [ty], snapshot, [value], output, span)?
             builder.owned.append(output.local)
             return Ok(output)
@@ -373,7 +363,7 @@ pub def set_constructor_source(mut builder: Builder, source: &RustOperand, span:
         PlanType.Generator(leaf, depth) =>
             match value.kind:
                 OperandKind.Move(receiver) =>
-                    snapshot = temporary(builder, PlanType.List(leaf, depth + 1), span)
+                    snapshot = builder.temporary(PlanType.List(leaf, depth + 1), span)
                     generator_collect(builder, receiver, snapshot, span)?
                     builder.owned.append(snapshot.local)
                     return Ok(read_place(snapshot, true, span))
@@ -383,7 +373,7 @@ pub def set_constructor_source(mut builder: Builder, source: &RustOperand, span:
 
 def initialize_frozen_iterator(mut builder: Builder, iterator: Place, span: SourceSpan) -> None:
     """Start a fresh cursor for a constant's immutable snapshot without inventing a mutable source place."""
-    cursor = temporary(builder, PlanType.Int, span)
+    cursor = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
     builder.iterators.append((iterator.local, cursor.local))
 
@@ -393,7 +383,7 @@ def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &Rus
     match source:
         RustOperand.Place(read) =>
             if read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow:
-                cursor = temporary(builder, PlanType.Int, span)
+                cursor = builder.temporary(PlanType.Int, span)
                 zero = Operand(kind=OperandKind.Literal(Constant.Int(0)), span=span)
                 builder.emit(plan_assign(cursor, RvalueKind.Use(zero), span))
                 builder.iterators.append((iterator.local, cursor.local))
@@ -450,9 +440,9 @@ pub def list_next(
     if cursor < 0:
         return Err("unsupported Body IR list iterator without retained materialization")
     reference = list_borrow(builder, receiver, false, span)?
-    length = temporary(builder, PlanType.Int, span)
+    length = builder.temporary(PlanType.Int, span)
     iterable_call(builder, ty, "length", [], PlanType.Int, [reference], length, span)?
-    condition = temporary(builder, PlanType.Bool, span)
+    condition = builder.temporary(PlanType.Bool, span)
     position = read_place(plan_place(cursor, span), false, span)
     builder.emit(
         plan_assign(condition, RvalueKind.Binary(BinaryOp.Less, position, read_place(length, false, span)), span),
@@ -463,7 +453,7 @@ pub def list_next(
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
     builder.current = exhausted
     drop_loop_owners(builder, span)?
-    exhaust_loop(builder, span)
+    builder.exhaust_loop(span)
     builder.current = next_block
     builder.owned = owners
     target = list_root_place(builder, destination, span)?
@@ -471,14 +461,14 @@ pub def list_next(
         in_place_item(builder, receiver, target, element, position, span)?
     else:
         item_reference = list_borrow(builder, receiver, false, span)?
-        drop_owned(builder, target.local, span)
+        builder.drop_owned(target.local, span)
         if element == PlanType.String or is_list(element) or is_nominal_type(element):
             borrow_iteration_item(builder, target.local)
         # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
         widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
         mut item = target
         if widened:
-            item = temporary(builder, PlanType.U8, span)
+            item = builder.temporary(PlanType.U8, span)
         iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
         if (
             owned_carrier(element)
@@ -491,7 +481,7 @@ pub def list_next(
             byte = read_place(item, false, span)
             builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))
     # The cursor cannot overflow: a successful poll is bounded by the native collection length.
-    pair = temporary(builder, PlanType.CheckedInt, span)
+    pair = builder.temporary(PlanType.CheckedInt, span)
     one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
     builder.emit(plan_assign(pair, RvalueKind.Binary(BinaryOp.Add, position, one), span))
     result = Place(local=pair.local, projection=Projection.Value, span=span)

@@ -20,18 +20,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
-from frame import (
-    Builder,
-    temporary,
-    read_place,
-    place_type,
-    appended_field,
-    external_call,
-    track_rvalue_moves,
-    value_type,
-    drop_owned,
-    terminate_call,
-)
+from frame import Builder, read_place, place_type, appended_field
 from model_values import nominal_place
 from options import carrier_layout, carrier_payload_value, assign_carrier, variant_condition, replace_owned_destination
 from option_tests import is_union_carrier
@@ -217,14 +206,14 @@ pub def emit_field_metadata(
         if not is_field_metadata_carrier(builder.nominals[info]):
             continue
         ty = PlanType.FrozenCollection("FrozenList", [PlanType.Model(info, str(builder.nominals[info].name))])
-        mut output = temporary(builder, ty, span)
+        mut output = builder.temporary(ty, span)
         match destination:
             Some(place) =>
                 output = scalar_place(builder, place, span)?
                 if place_type(builder.locals, output) != ty:
                     return Err("unsupported Body IR field metadata output carrier")
             None => pass
-        terminate_call(builder, CalleeKind.FieldMetadata(owner, info), [], output, span)
+        builder.terminate_call(CalleeKind.FieldMetadata(owner, info), [], output, span)
         return Ok(true)
     return Err("the standard library field metadata layout is unsupported")
 
@@ -307,7 +296,7 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
             _index, layout = carrier_layout(builder, ty)?
             if layout.carrier != Carrier.Option or len(layout.variants[1].fields) != 1:
                 return Err("unsupported Body IR generic field reflection optional carrier")
-            output = temporary(builder, PlanType.String, span)
+            output = builder.temporary(PlanType.String, span)
             selected = builder.new_block(span)
             missing = builder.new_block(span)
             join = builder.new_block(span)
@@ -344,15 +333,15 @@ def field_value(
             return Err("unsupported Body IR reflection string result contract")
         return string_field(builder, field, span)
     value = carrier_payload_value(builder, field, span)?
-    if value_type(builder, value)? == expected:
+    if builder.value_type(value)? == expected:
         return Ok(value)
     match expected:
         PlanType.Enum(owner, _name) =>
             if not is_union_carrier(builder, owner):
                 return Err("unsupported Body IR reflection typed overlay")
-            member = value_type(builder, value)?
+            member = builder.value_type(value)?
             slot = union_slot(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
-            output = temporary(builder, expected, span)
+            output = builder.temporary(expected, span)
             replace_owned_destination(builder, output, RvalueKind.Enum(owner, slot, [value]), span)
             return Ok(read_place(output, true, span))
         _ => return Err("unsupported Body IR reflection field result contract")
@@ -383,9 +372,9 @@ def reflect_items(
                         field = reflected_field(builder, owner, receiver, slot, span)?
                         value = field_value(builder, field, string, expected, span)?
                         name = owned_literal(builder, str(builder.nominals[owner].fields[slot]), span)
-                        tuple = temporary(builder, element, span)
+                        tuple = builder.temporary(element, span)
                         operation = tuple_aggregate([read_place(name, true, span), value])
-                        track_rvalue_moves(builder, operation)
+                        builder.track_rvalue_moves(operation)
                         builder.emit(plan_assign(tuple, operation, span))
                         builder.owned.append(tuple.local)
                         append_list_value(builder, output, read_place(tuple, true, span), leaf, depth, span)?
@@ -421,13 +410,12 @@ def reflect_value(
         for name in keys:
             yes = builder.new_block(span)
             no = builder.new_block(span)
-            condition = temporary(builder, PlanType.Bool, span)
+            condition = builder.temporary(PlanType.Bool, span)
             text = owned_literal(builder, name, span)
-            reference = temporary(builder, PlanType.StringRef, span)
+            reference = builder.temporary(PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(text), span))
             literal = read_place(reference, false, span)
-            external_call(
-                builder,
+            builder.external_call(
                 "incan_native_runtime::equal_text",
                 [PlanType.StringRef, PlanType.StringRef],
                 PlanType.Bool,
@@ -435,7 +423,7 @@ def reflect_value(
                 condition,
                 span,
             )
-            drop_owned(builder, text.local, span)
+            builder.drop_owned(text.local, span)
             builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), no, yes), span)
             builder.current = yes
             field = reflected_field(builder, owner, receiver, slot, span)?

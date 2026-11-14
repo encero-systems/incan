@@ -9,7 +9,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Callee, CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import ListLeaf, tuple_element_type
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, value_type, terminate_call
+from frame import Builder, read_place
 from generators import generator_shape, generator_element, generator_runtime_call
 from lists import list_shape, list_element, is_builtin_iteration, is_owned_list
 from closures import closure_capture_type
@@ -85,11 +85,11 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
 
     Lists and sets yield their owned snapshots, and builtin `zip` over lists yields its snapshot's pairs.
     """
-    ty = value_type(builder, value)?
+    ty = builder.value_type(value)?
     match ty:
         PlanType.Set(leaf) =>
             result = PlanType.Generator(leaf, 0)
-            output = temporary(builder, result, span)
+            output = builder.temporary(result, span)
             generator_runtime_call(
                 builder,
                 "set_generator",
@@ -104,7 +104,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
             return Ok(read_place(output, true, span))
         PlanType.ZipIterator(left, right) =>
             result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
-            output = temporary(builder, result, span)
+            output = builder.temporary(result, span)
             path = "incan_native_runtime::zip_lists_generator"
             first = tuple_element_type(left)
             second = tuple_element_type(right)
@@ -117,7 +117,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
                     span=span,
                 ),
             )
-            terminate_call(builder, CalleeKind.Instantiated(path, [first, second]), [value], output, span)
+            builder.terminate_call(CalleeKind.Instantiated(path, [first, second]), [value], output, span)
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
         _ => pass
@@ -132,7 +132,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
             if ty != PlanType.List(leaf, depth):
                 return Err("unsupported Body IR borrowed generator expression source")
             result = PlanType.Generator(leaf, depth - 1)
-            output = temporary(builder, result, span)
+            output = builder.temporary(result, span)
             generator_runtime_call(
                 builder,
                 "list_generator",
@@ -150,7 +150,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
 
 pub def source_item(mut builder: Builder, source: Operand) -> Result[PlanType, str]:
     """Read the item type the source generator yields to each step."""
-    match generator_shape(value_type(builder, source)?):
+    match generator_shape(builder.value_type(source)?):
         Some((leaf, depth)) => return Ok(generator_element(leaf, depth))
         None => return Err("invalid native generator expression source")
 
@@ -205,9 +205,9 @@ pub def step_capture_type(ty: PlanType) -> bool:
 
 pub def step_pointer(mut builder: Builder, step: str, signature: list[PlanType], span: SourceSpan) -> Operand:
     """Reify the lifted step as the function pointer a capture-free chain calls."""
-    function = temporary(builder, PlanType.FunctionItem(step, signature), span)
+    function = builder.temporary(PlanType.FunctionItem(step, signature), span)
     builder.emit(plan_assign(function, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(step), span=span)), span))
-    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    pointer = builder.temporary(PlanType.FunctionPointer(signature), span)
     builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(function, false, span)), span))
     return read_place(pointer, false, span)
 
@@ -230,8 +230,8 @@ pub def construct_chain(
     item = source_item(builder, source)?
     family = item_family(item)?
     result = borrowed_at(builder.locals, output.local).ty
-    callable = value_type(builder, step)?
-    source_type = value_type(builder, source)?
+    callable = builder.value_type(step)?
+    source_type = builder.value_type(source)?
     match generator_shape(result):
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)
@@ -249,7 +249,7 @@ pub def construct_chain(
                     ),
                 )
                 callee = CalleeKind.Instantiated(path, [item, element, callable])
-                terminate_call(builder, callee, [source, step], output, span)
+                builder.terminate_call(callee, [source, step], output, span)
                 return Ok(None)
             if callable == PlanType.FunctionPointer([item, result]) and family != "str":
                 name = f"{family}_step_generator"
@@ -274,7 +274,7 @@ pub def construct_chain(
                     span=span,
                 ),
             )
-            terminate_call(builder, CalleeKind.Instantiated(path, [element, callable]), [source, step], output, span)
+            builder.terminate_call(CalleeKind.Instantiated(path, [element, callable]), [source, step], output, span)
             return Ok(None)
         None => return Err("unsupported Body IR generator expression type")
 
@@ -289,10 +289,10 @@ pub def step_result(mut builder: Builder, accepted: Option[Operand], span: Sourc
     match generator_shape(result):
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)
-            output = temporary(builder, result, span)
+            output = builder.temporary(result, span)
             match accepted:
                 Some(value) =>
-                    if value_type(builder, value)? != element:
+                    if builder.value_type(value)? != element:
                         return Err("unsupported Body IR generator expression element coercion")
                     generator_runtime_call(builder, "once_generator", element, [element], result, [value], output, span)
                 None => generator_runtime_call(builder, "empty_generator", element, [], result, [], output, span)

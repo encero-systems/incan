@@ -20,7 +20,7 @@ from pub::incan_mir_plan import (
     Projection,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned, appended_field
+from frame import Builder, place_type, read_place, literal, appended_field
 from tuples import tuple_fields, is_tuple_type
 from text_plan import owned_literal
 from layout_types import native_source_type as retained_type, stored_field_type
@@ -43,7 +43,7 @@ pub def enum_pattern_place(mut builder: Builder, source: Place, span: SourceSpan
         _ => return source
     mut reference = source
     if source.projection != Projection.Whole:
-        reference = temporary(builder, place_type(builder.locals, source), span)
+        reference = builder.temporary(place_type(builder.locals, source), span)
         builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
     return Place(local=reference.local, projection=Projection.Deref(ty), span=span)
 
@@ -325,7 +325,7 @@ def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span
         _ => return Err("unsupported Body IR nonprimitive literal pattern")
     if ty != expected:
         return Err("invalid Body IR literal pattern carrier")
-    result = temporary(builder, PlanType.Bool, span)
+    result = builder.temporary(PlanType.Bool, span)
     if ty == PlanType.Unit:
         builder.emit(plan_assign(result, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
     else:
@@ -343,13 +343,12 @@ def text_literal_test(mut builder: Builder, source: Place, text: str, span: Sour
     """Borrow both strings for equality and keep the materialized literal in the frame's owner ledger."""
     value = owned_literal(builder, text, span)
     builder.owned.append(value.local)
-    source_ref = temporary(builder, PlanType.StringRef, span)
-    value_ref = temporary(builder, PlanType.StringRef, span)
+    source_ref = builder.temporary(PlanType.StringRef, span)
+    value_ref = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(source_ref, RvalueKind.Borrow(source), span))
     builder.emit(plan_assign(value_ref, RvalueKind.Borrow(value), span))
-    result = temporary(builder, PlanType.Bool, span)
-    external_call(
-        builder,
+    result = builder.temporary(PlanType.Bool, span)
+    builder.external_call(
         "incan_native_runtime::equal_text",
         [PlanType.StringRef, PlanType.StringRef],
         PlanType.Bool,
@@ -358,5 +357,5 @@ def text_literal_test(mut builder: Builder, source: Place, text: str, span: Sour
         span,
     )
     # Release the literal before branching: a rejected earlier tuple field never initializes later literals.
-    drop_owned(builder, value.local, span)
+    builder.drop_owned(value.local, span)
     return Ok(result)

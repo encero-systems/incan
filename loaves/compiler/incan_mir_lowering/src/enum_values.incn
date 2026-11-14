@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import Operand as RustOperand
 from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, place_type, temporary, read_place, terminate_call
+from frame import Builder, place_type, read_place
 from checked_values import scalar_place
 
 
@@ -29,7 +29,7 @@ pub def serialize_enum_operand(
                     if "serde::Serialize" not in builder.enums[owner].derives:
                         return Err("unsupported Body IR enum JSON serialization without serde::Serialize")
                     reference_type = PlanType.EnumRef(owner, name)
-                    reference = temporary(builder, reference_type, span)
+                    reference = builder.temporary(reference_type, span)
                     builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
                     path = "incan_native_runtime::serialize_model"
                     ty = PlanType.Enum(owner, name)
@@ -42,8 +42,7 @@ pub def serialize_enum_operand(
                             span=span,
                         ),
                     )
-                    terminate_call(
-                        builder,
+                    builder.terminate_call(
                         CalleeKind.Instantiated(path, [ty]),
                         [read_place(reference, false, span)],
                         destination,

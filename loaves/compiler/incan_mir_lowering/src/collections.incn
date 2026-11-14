@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     SourceSpan,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type, place_type
+from frame import Builder, read_place, place_type
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
     Operand as RustOperand,
@@ -171,7 +171,7 @@ pub def collection_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, arguments), admitted, destination, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, arguments), admitted, destination, span)
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
     return Ok(None)
@@ -188,7 +188,7 @@ def owned_runtime_operand(
     parameter lends reaches an owned runtime slot, such as a dictionary default or a stored entry, as its shared
     reference; that runtime call is the owned use, so it receives an independent copy.
     """
-    actual = value_type(builder, operand)?
+    actual = builder.value_type(operand)?
     if actual == parameter:
         return Ok(Some(operand))
     if actual == PlanType.StringRef and parameter == PlanType.String:
@@ -224,7 +224,7 @@ pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, spa
         if mutable and ty != collection_reference(ty, true):
             return Err("unsupported Body IR mutable access through shared collection parameter")
         source.projection = Projection.Deref(collection_owned(ty))
-    reference = temporary(builder, collection_reference(ty, mutable), span)
+    reference = builder.temporary(collection_reference(ty, mutable), span)
     mut operation = RvalueKind.Borrow(source)
     if mutable:
         operation = RvalueKind.MutBorrow(source)
@@ -253,7 +253,7 @@ pub def insert_collection(
     parameters.extend(collection_arguments(ty))
     mut operands = [reference]
     operands.extend(admitted)
-    unit = temporary(builder, PlanType.Unit, span)
+    unit = builder.temporary(PlanType.Unit, span)
     return collection_call(builder, ty, "insert", parameters, PlanType.Unit, operands, unit, span)
 
 
@@ -263,15 +263,15 @@ pub def begin_collection(mut builder: Builder, destination: Place, span: SourceS
     owned = collection_owned(ty)
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
-    output = temporary(builder, ty, span)
+    output = builder.temporary(ty, span)
     collection_call(builder, ty, "empty", [], ty, [], output, span)?
     return Ok(output)
 
 
 pub def finish_collection(mut builder: Builder, destination: Place, output: Place, span: SourceSpan) -> None:
     """Replace a collection binding only after its complete value is initialized."""
-    drop_owned(builder, destination.local, span)
-    forget_owned(builder, output.local)
+    builder.drop_owned(destination.local, span)
+    builder.forget_owned(output.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
     builder.owned.append(destination.local)
 
@@ -288,9 +288,9 @@ pub def transfer_collection(
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
     match argument.kind:
-        OperandKind.Move(place) => forget_owned(builder, place.local)
+        OperandKind.Move(place) => builder.forget_owned(place.local)
         _ => return Err("unsupported Body IR collection transfer without owned value")
-    drop_owned(builder, destination.local, span)
+    builder.drop_owned(destination.local, span)
     builder.emit(plan_assign(destination, RvalueKind.Use(argument), span))
     builder.owned.append(destination.local)
     return Ok(None)
@@ -356,10 +356,10 @@ pub def extend_collection(
                 operation = "extend_list"
                 source_reference_type = PlanType.ListRef(leaf, 1)
             _ => return Err("unsupported Body IR dictionary spread source")
-    reference = temporary(builder, source_reference_type, span)
+    reference = builder.temporary(source_reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(source_place), span))
     receiver = borrow_collection(builder, destination, true, span)?
-    output = temporary(builder, PlanType.Unit, span)
+    output = builder.temporary(PlanType.Unit, span)
     collection_call(
         builder,
         ty,
@@ -370,5 +370,5 @@ pub def extend_collection(
         output,
         span,
     )?
-    drop_owned(builder, source_place.local, span)
+    builder.drop_owned(source_place.local, span)
     return Ok(None)

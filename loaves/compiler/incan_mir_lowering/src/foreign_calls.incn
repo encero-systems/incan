@@ -3,7 +3,7 @@
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::body_ir import CheckedForeignCall, ArgumentElement, Place as BodyPlace
 from pub::incan_mir_plan import ForeignFunction, CalleeKind, PlanType, Operand, SourceSpan
-from frame import Builder, temporary
+from frame import Builder
 from layout_types import native_source_type
 from checked_values import scalar_operand, scalar_place
 from callable_calls import lower_callable_result
@@ -57,7 +57,7 @@ pub def lower_foreign_call(
     )
     # 2. Source evaluation order was retained in Body IR; no foreign argument is reclassified here.
     operands = foreign_arguments(builder, arguments, parameters, span)?
-    mut result = temporary(builder, output, span)
+    mut result = builder.temporary(output, span)
     match destination:
         Some(place) => result = scalar_place(builder, place, span)?
         None => pass

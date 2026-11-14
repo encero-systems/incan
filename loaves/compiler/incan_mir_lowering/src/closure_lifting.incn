@@ -48,7 +48,7 @@ from element_places import is_element_place
 from tuples import tuple_has_owners
 from text_plan import clone_text
 from builtins import list_call
-from frame import place_type, Builder, temporary, drop_owned, track_rvalue_moves, terminate_call, read_place
+from frame import place_type, Builder, read_place
 from collections import is_owned_collection
 from lists import list_shape, list_element, is_owned_list, parameter_storage_type, is_exclusive_borrow
 from type_parameters import merge_instance_requests
@@ -149,8 +149,8 @@ pub def move_closure(
             scalar_environment = source.projection == Projection.Whole and source.local in builder.scalar_closures and source.local not in builder.unproven_closures
         _ => pass
     record_scalar_closure(builder, target.local, scalar_environment)
-    track_rvalue_moves(builder, RvalueKind.Use(value))
-    drop_owned(builder, target.local, span)
+    builder.track_rvalue_moves(RvalueKind.Use(value))
+    builder.drop_owned(target.local, span)
     hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
     builder.emit(plan_assign(target, RvalueKind.Use(value), span))
     builder.owned.append(target.local)
@@ -284,7 +284,7 @@ pub def lower_closure(
     item = RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span))
     if len(capture_types) == 0 and not is_owned_callable(place_type(builder.locals, target)):
         if target.local in builder.function_pointer_locals:
-            held = temporary(builder, PlanType.FunctionItem(name, signature), span)
+            held = builder.temporary(PlanType.FunctionItem(name, signature), span)
             builder.emit(plan_assign(held, item, span))
             return assign_callable(builder, target, read_place(held, false, span), true, span)
         builder.locals[target.local].ty = PlanType.FunctionItem(name, signature)
@@ -326,11 +326,11 @@ pub def lower_closure(
         borrowing,
     )
     synthesize(builder, constructor)
-    drop_owned(builder, target.local, span)
+    builder.drop_owned(target.local, span)
     hold_closure(builder, target.local, signature, flags, consumes_environment, borrowing)?
     if native_send or native_sync:
         builder.locals[target.local].ty = PlanType.NativeClosure(signature, native_send, native_sync)
-    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
+    builder.terminate_call(CalleeKind.Planned(f"{name}_new"), operands, target, span)
     mut scalar_environment = true
     for capture in capture_types:
         if not scalar_capture(capture):
@@ -603,7 +603,7 @@ pub def lower_generator_expression(
             )?
             synthesize(builder, step)
         _ => return Err("unsupported Body IR generator expression body shape")
-    drop_owned(builder, target.local, span)
+    builder.drop_owned(target.local, span)
     callable = step_callable(builder, name, item, place_type(builder.locals, target), capture_types, operands, span)
     construct_chain(builder, first, callable, target, span)?
     builder.owned.append(target.local)
@@ -621,7 +621,7 @@ def generator_source_value(mut builder: Builder, source: &RustOperand, span: Sou
                         return Ok(read_place(root, true, span))
                     reference = list_borrow(builder, root, false, span)?
                     result = PlanType.Generator(leaf, depth - 1)
-                    output = temporary(builder, result, span)
+                    output = builder.temporary(result, span)
                     borrowed_list_generator_call(builder, reference, leaf, depth, output, span)?
                     builder.owned.append(output.local)
                     return Ok(read_place(output, true, span))
@@ -644,8 +644,8 @@ pub def step_callable(
     if len(captures) == 0:
         return step_pointer(builder, name, signature, span)
     synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, false, span))
-    environment = temporary(builder, PlanType.Closure(signature), span)
-    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, environment, span)
+    environment = builder.temporary(PlanType.Closure(signature), span)
+    builder.terminate_call(CalleeKind.Planned(f"{name}_new"), operands, environment, span)
     builder.owned.append(environment.local)
     return read_place(environment, true, span)
 
@@ -754,7 +754,7 @@ pub def lower_later_clause(
     synthesize(builder, step)
     callable = step_callable(builder, name, item, result, types, operands, span)
     # The chain moves straight into the return slot, so it never joins the step's owners.
-    output = temporary(builder, result, span)
+    output = builder.temporary(result, span)
     construct_chain(builder, first, callable, output, span)?
     return finish_return(builder, read_place(output, true, span), span)
 
@@ -800,7 +800,7 @@ def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Re
     match list_shape(ty):
         Some((leaf, depth)) =>
             reference = list_borrow(builder, place, false, span)?
-            copy = temporary(builder, ty, span)
+            copy = builder.temporary(ty, span)
             list_call(
                 builder,
                 "clone_list",

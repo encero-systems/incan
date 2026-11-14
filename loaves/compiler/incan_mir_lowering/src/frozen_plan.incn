@@ -4,7 +4,7 @@ from rust::incan_semantics_core::body_ir import Constant as RustConstant
 from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan, FrozenValue, Constant
 from models import model_type
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, text_literal
+from frame import Builder, read_place, text_literal
 
 
 pub def frozen_observation_type(ty: PlanType) -> bool:
@@ -24,7 +24,7 @@ pub def frozen_collection_literal(mut builder: Builder, value: RustConstant, spa
         RustConstant.FrozenAggregate(ty, elements) =>
             storage = model_type(builder.constructors, builder.nominals, ty)?
             values = frozen_elements(builder, elements)?
-            output = temporary(builder, storage, span)
+            output = builder.temporary(storage, span)
             builder.emit(plan_assign(output, RvalueKind.FrozenCollection(storage, values), span))
             return Ok(read_place(output, true, span))
         _ => return Err("unsupported Body IR nonstatic frozen collection")
@@ -55,7 +55,7 @@ pub def frozen_literal(mut builder: Builder, value: RustConstant, span: SourceSp
     """Wrap checked static text only; dynamically allocated text cannot enter a FrozenStr carrier."""
     match literal_text(value):
         Some(text) =>
-            output = temporary(builder, PlanType.FrozenStr, span)
+            output = builder.temporary(PlanType.FrozenStr, span)
             builder.emit(plan_assign(output, RvalueKind.FrozenText(text_literal(text, span)), span))
             return Ok(read_place(output, false, span))
         None => return Err("unsupported Body IR nonstatic FrozenStr literal")
@@ -72,7 +72,7 @@ pub def literal_text(value: &RustConstant) -> Option[str]:
 pub def frozen_bytes_literal(mut builder: Builder, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Retain exact static byte data for the SDK's copyable frozen wrapper, without allocating an owned byte vector."""
     values = frozen_byte_data(value)?
-    output = temporary(builder, PlanType.FrozenBytes, span)
+    output = builder.temporary(PlanType.FrozenBytes, span)
     builder.emit(plan_assign(output, RvalueKind.FrozenBytes(values), span))
     return Ok(read_place(output, false, span))
 

@@ -18,7 +18,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, literal, appended_field
+from frame import Builder, read_place, literal, appended_field
 from unions import union_test_slots, test_union_tag
 
 
@@ -51,8 +51,8 @@ pub def option_isinstance(
 
 pub def enum_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
     """Read an enum's variant index as an int without moving or copying its payload."""
-    raw_tag = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
+    raw_tag = builder.temporary(PlanType.EnumTag, span)
+    tag = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     return tag
@@ -70,10 +70,10 @@ def union_payload_test(
     slots = union_test_slots(builder.nominals, builder.enums, builder.unions, inner, member, builder.intrinsics)?
     if len(slots) == 0:
         return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
     tag = enum_tag(builder, source, span)
-    present = temporary(builder, PlanType.Bool, span)
+    present = builder.temporary(PlanType.Bool, span)
     builder.emit(
         plan_assign(
             present,

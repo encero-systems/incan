@@ -52,18 +52,7 @@ from reflection import lower_static_field_metadata
 from model_values import is_json_deserialize_method, lower_model_from_json
 from value_enums import value_enum_from_value_owner
 from text_plan import owned_literal
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    forget_owned,
-    drop_owned,
-    track_rvalue_moves,
-    forget_moved_arguments,
-    terminate_call,
-    external_call,
-    read_place,
-)
+from frame import place_type, Builder, read_place
 from collections import is_owned_collection
 from async_ import construct_future, is_future
 from type_parameters import instantiate, substitute, request_instance
@@ -150,7 +139,7 @@ pub def lower_named_target(
     match string_conversion_callee(module, builder, target, span)?:
         Some((callee, result)) =>
             operands = ordered_slot_operands(builder, target.binding, arguments, [PlanType.String], span, 0, true, false)?
-            mut output = temporary(builder, result, span)
+            mut output = builder.temporary(result, span)
             match destination:
                 Some(place) => output = scalar_place(builder, place, span)?
                 None => pass
@@ -218,9 +207,9 @@ def lower_validated_constructor(
                 Some(contract) =>
                     required = validated_required_operands(builder, owner, contract, target.binding, arguments, span)?
                     fields = validated_model_fields(module, builder, owner, contract, required, span)?
-                    value = temporary(builder, model_type, span)
+                    value = builder.temporary(model_type, span)
                     construction = RvalueKind.Model(owner, fields)
-                    track_rvalue_moves(builder, construction)
+                    builder.track_rvalue_moves(construction)
                     builder.emit(plan_assign(value, construction, span))
                     builder.owned.append(value.local)
                     match validated_method_body(module, builder, owner, contract.validator)?:
@@ -233,7 +222,7 @@ def lower_validated_constructor(
                                 builder.intrinsics,
                             )?
                             require_validated_receiver(owner, receiver_type)?
-                            receiver = temporary(builder, receiver_type, span)
+                            receiver = builder.temporary(receiver_type, span)
                             builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
                             callee = CalleeKind.Planned(function_name(module, body))
                             emit_selected_body_call(
@@ -467,7 +456,7 @@ def lower_compiled_validator(
         builder.intrinsics,
     )?
     require_validated_receiver(owner, receiver_type)?
-    receiver = temporary(builder, receiver_type, span)
+    receiver = builder.temporary(receiver_type, span)
     builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
     mut result = native_source_type(
         builder.constructors,
@@ -650,19 +639,19 @@ pub def lower_callable_result(
         or is_future(result_type)
     ):
         # 1. Materialize the result in its declared return carrier.
-        result = temporary(builder, result_type, span)
-        terminate_call(builder, callee, operands, result, span)
+        result = builder.temporary(result_type, span)
+        builder.terminate_call(callee, operands, result, span)
         builder.owned.append(result.local)
         # 2. Convert the checked boundary before replacing the old destination.
         target_type = place_type(builder.locals, output)
         value = boundary_plan_operand(builder, read_place(result, true, span), target_type, span)?
-        drop_owned(builder, output.local, span)
+        builder.drop_owned(output.local, span)
         # 3. Transfer exactly the selected owner to its destination.
-        forget_moved_arguments(builder, [value])
+        builder.forget_moved_arguments([value])
         builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.owned.append(output.local)
     else:
-        terminate_call(builder, callee, operands, output, span)
+        builder.terminate_call(callee, operands, output, span)
     return Ok(None)
 
 
@@ -711,7 +700,7 @@ pub def call_callable_place(
     mut output = plan_place(0, span)
     match destination:
         Some(place) => output = scalar_place(builder, place, span)?
-        None => output = temporary(builder, result, span)
+        None => output = builder.temporary(result, span)
     match place_type(builder.locals, callable):
         PlanType.ClosureOnce(_held) =>
             if held.fact != OwnershipFact.Move or not held.last_use:
@@ -722,7 +711,7 @@ pub def call_callable_place(
         PlanType.BorrowingClosure(_held) =>
             call_closure(builder, callable, signature, operands, output, span)?
             if held.last_use and callable.local > builder.parameter_count:
-                drop_owned(builder, callable.local, span)
+                builder.drop_owned(callable.local, span)
             return Ok(None)
         PlanType.BorrowingClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
         _ => pass
@@ -740,10 +729,10 @@ def call_closure_once(
 ) -> Result[None, str]:
     """Transfer an owned callable environment once, preserving packed argument and result ownership."""
     elements = closure_arguments(signature)?
-    packed = temporary(builder, PlanType.CallableArguments(elements), span)
-    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    packed = builder.temporary(PlanType.CallableArguments(elements), span)
+    builder.track_rvalue_moves(RvalueKind.Tuple(operands))
     builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
-    forget_owned(builder, callable.local)
+    builder.forget_owned(callable.local)
     return lower_callable_result(
         builder,
         CalleeKind.CallClosureOnce(signature),
@@ -764,8 +753,8 @@ pub def call_closure(
 ) -> Result[None, str]:
     """Pack the call's inputs into one tuple and invoke the borrowed callable object."""
     elements = closure_arguments(signature)?
-    packed = temporary(builder, PlanType.CallableArguments(elements), span)
-    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    packed = builder.temporary(PlanType.CallableArguments(elements), span)
+    builder.track_rvalue_moves(RvalueKind.Tuple(operands))
     builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
     receiver = callable_object(builder, callable, signature, span)?
     mut callee = CalleeKind.CallClosure(signature)
@@ -794,11 +783,11 @@ pub def callable_object(
         PlanType.ClosureRef(_held) => return Ok(read_place(callable, false, span))
         PlanType.BorrowingClosureRef(_held) => return Ok(read_place(callable, false, span))
         PlanType.Closure(_held) =>
-            view = temporary(builder, PlanType.ClosureRef(signature), span)
+            view = builder.temporary(PlanType.ClosureRef(signature), span)
             builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
             return Ok(read_place(view, false, span))
         PlanType.BorrowingClosure(_held) =>
-            view = temporary(builder, PlanType.BorrowingClosureRef(signature), span)
+            view = builder.temporary(PlanType.BorrowingClosureRef(signature), span)
             builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
             return Ok(read_place(view, false, span))
         _ => return Err("unsupported Body IR callable without an object representation")
@@ -823,7 +812,7 @@ pub def callable_argument(
                 return Err("invalid Body IR callable argument signature")
             match source:
                 PlanType.FunctionItem(_name, _held) =>
-                    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+                    pointer = builder.temporary(PlanType.FunctionPointer(signature), span)
                     builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(place, false, span)), span))
                     owner = pointer_callable_owner(builder, pointer, signature, span)?
                     if borrowing:
@@ -861,8 +850,8 @@ def borrowed_callable_argument(
     synthesize(builder, borrowed_callable_forwarder(name, signature, borrowing_source, span)?)
     constructor = f"{name}_new"
     synthesize(builder, closure_constructor(constructor, name, [capture], signature, false, span, borrowing=true))
-    boxed = temporary(builder, PlanType.BorrowingClosure(signature), span)
-    terminate_call(builder, CalleeKind.Planned(constructor), [source], boxed, span)
+    boxed = builder.temporary(PlanType.BorrowingClosure(signature), span)
+    builder.terminate_call(CalleeKind.Planned(constructor), [source], boxed, span)
     builder.owned.append(boxed.local)
     return Ok(read_place(boxed, true, span))
 
@@ -882,8 +871,8 @@ def pointer_callable_owner(
         builder,
         closure_constructor(constructor, name, [PlanType.FunctionPointer(signature)], signature, false, span),
     )
-    boxed = temporary(builder, PlanType.Closure(signature), span)
-    terminate_call(builder, CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
+    boxed = builder.temporary(PlanType.Closure(signature), span)
+    builder.terminate_call(CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
     builder.owned.append(boxed.local)
     return Ok(boxed)
 
@@ -925,7 +914,7 @@ pub def owned_callable_value(
         return Ok(value)
     if not callable_copy_type(source) or callable_signature(source)? != signature:
         return Err("unsupported Body IR callable ownership conversion")
-    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    pointer = builder.temporary(PlanType.FunctionPointer(signature), span)
     match source:
         PlanType.FunctionItem(_item, _held) => builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(value), span))
         _ => builder.emit(plan_assign(pointer, RvalueKind.Use(value), span))
@@ -938,12 +927,12 @@ def callable_address(mut builder: Builder, value: Operand, span: SourceSpan) -> 
     mut pointer = value
     match operand_type(builder, value)?:
         PlanType.FunctionItem(_name, signature) =>
-            held = temporary(builder, PlanType.FunctionPointer(signature), span)
+            held = builder.temporary(PlanType.FunctionPointer(signature), span)
             builder.emit(plan_assign(held, RvalueKind.ReifyFunction(value), span))
             pointer = read_place(held, false, span)
         PlanType.FunctionPointer(_signature) => pass
         _ => return Err("unsupported Body IR callable-name receiver without a retained function pointer")
-    address = temporary(builder, PlanType.USize, span)
+    address = builder.temporary(PlanType.USize, span)
     builder.emit(plan_assign(address, RvalueKind.FunctionAddress(pointer), span))
     return Ok(read_place(address, false, span))
 
@@ -953,11 +942,10 @@ pub def register_callable_item(mut builder: Builder, value: Operand, name: str, 
     address = callable_address(builder, value, span)?
     module = owned_literal(builder, builder.module_identity, span)
     label = owned_literal(builder, name, span)
-    forget_owned(builder, module.local)
-    forget_owned(builder, label.local)
-    output = temporary(builder, PlanType.Unit, span)
-    external_call(
-        builder,
+    builder.forget_owned(module.local)
+    builder.forget_owned(label.local)
+    output = builder.temporary(PlanType.Unit, span)
+    builder.external_call(
         "incan_native_runtime::register_callable_name",
         [PlanType.String, PlanType.USize, PlanType.String],
         PlanType.Unit,
@@ -984,10 +972,9 @@ pub def lower_callable_name(
             callback = value_operand(builder, value, span)?
             address = callable_address(builder, callback, span)?
             module = owned_literal(builder, builder.module_identity, span)
-            forget_owned(builder, module.local)
+            builder.forget_owned(module.local)
             output = call_destination(builder, destination, PlanType.String, span)?
-            external_call(
-                builder,
+            builder.external_call(
                 "incan_native_runtime::callable_name",
                 [PlanType.String, PlanType.USize],
                 PlanType.String,

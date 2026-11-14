@@ -12,14 +12,14 @@ from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant, Operand
 from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import place as plan_place
-from frame import external_call, literal, place_type
+from frame import literal, place_type
 from text_plan import owned_literal
 from checked_values import scalar_operand, scalar_place
 from formatting import display_operand
 from matches import bind_enum_payload
 from options import carrier_layout, intrinsic_pattern, variant_condition
 from patterns import has_refutable_payload
-from frame import Builder, read_place, temporary, value_type
+from frame import Builder, read_place
 from closures import function_assignment
 
 
@@ -72,7 +72,7 @@ def lower_raises_assertion(
         None => pass
     operand = scalar_operand(builder, call, span)?
     pointer_type = PlanType.FunctionPointer([PlanType.Unit])
-    source_type = value_type(builder, operand)?
+    source_type = builder.value_type(operand)?
     match source_type:
         PlanType.FunctionItem(_name, signature) =>
             if signature != [PlanType.Unit]:
@@ -88,13 +88,12 @@ def lower_raises_assertion(
         true,
         f"raises Assert callable in {builder.name}",
     )?
-    pointer = temporary(builder, ty, span)
+    pointer = builder.temporary(ty, span)
     builder.emit(plan_assign(pointer, operation, span))
     error_name = owned_literal(builder, str(runtime_error_name(expected)), span)
     failure_message = owned_literal(builder, text, span)
-    destination = temporary(builder, PlanType.Unit, span)
-    external_call(
-        builder,
+    destination = builder.temporary(PlanType.Unit, span)
+    builder.external_call(
         "incan_native_runtime::assert_raises_deferred",
         [pointer_type, PlanType.String, PlanType.String],
         PlanType.Unit,
@@ -107,15 +106,14 @@ def lower_raises_assertion(
 
 def lower_failure(mut builder: Builder, message: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
     """Transfer the failure payload to the unwinding runtime and close the unreachable normal continuation."""
-    mut text = temporary(builder, PlanType.String, span)
+    mut text = builder.temporary(PlanType.String, span)
     match message:
         Some(value) =>
             text = display_operand(builder, value, span)?
         None =>
             text = owned_literal(builder, "", span)
-    destination = temporary(builder, PlanType.Unit, span)
-    external_call(
-        builder,
+    destination = builder.temporary(PlanType.Unit, span)
+    builder.external_call(
         "incan_native_runtime::assert_failure",
         [PlanType.String],
         PlanType.Unit,
@@ -168,12 +166,12 @@ def lower_pattern_assertion(
     builder.finish(TerminatorKind.SwitchBool(condition, failed, passed), span)
     builder.current = failed
     failure = f"incan_native_runtime::{pattern_failure(declaration.carrier, slot)}"
-    destination = temporary(builder, PlanType.Unit, span)
+    destination = builder.temporary(PlanType.Unit, span)
     if has_message:
         payload = read_place(owned_literal(builder, text, span), true, span)
-        external_call(builder, f"{failure}_with", [PlanType.String], PlanType.Unit, [payload], destination, span)
+        builder.external_call(f"{failure}_with", [PlanType.String], PlanType.Unit, [payload], destination, span)
     else:
-        external_call(builder, failure, [], PlanType.Unit, [], destination, span)
+        builder.external_call(failure, [], PlanType.Unit, [], destination, span)
     builder.finish(TerminatorKind.Unreachable, span)
     builder.current = passed
     builder.owned = incoming

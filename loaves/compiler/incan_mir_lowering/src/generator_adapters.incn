@@ -19,7 +19,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
-from frame import Builder, temporary, read_place, value_type, external_call, terminate_call
+from frame import Builder, read_place
 from generators import generator_shape, generator_element, generator_runtime_call
 from generator_expressions import construct_chain
 from closure_lifting import step_callable, synthesize
@@ -53,7 +53,7 @@ pub def generator_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Chain one lazy adapter onto the owned source; nothing is drawn until a consumer polls the result."""
-    source_type = value_type(builder, source)?
+    source_type = builder.value_type(source)?
     _ = source_element(source_type)?
     if method == RustIteratorMethodId.Enumerate:
         if len(arguments) != 0:
@@ -85,7 +85,7 @@ def count_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep a prefix, drop a prefix, or group items in lists of `count`, as legacy's runtime adapters do."""
-    if value_type(builder, count)? != PlanType.Int:
+    if builder.value_type(count)? != PlanType.Int:
         return Err("unsupported Body IR generator count-adapter type")
     element = source_element(source_type)?
     mut result = source_type
@@ -151,8 +151,7 @@ def predicate_adapter(
         operation = "take_while"
     elif method == RustIteratorMethodId.SkipWhile:
         operation = "skip_while"
-    external_call(
-        builder,
+    builder.external_call(
         f"incan_native_runtime::{operation}_{family}_generator",
         [source_type, PlanType.FunctionPointer(signature)],
         source_type,
@@ -303,8 +302,7 @@ def flat_map_adapter(
             return Err("unsupported Body IR set expansion outside integer generator")
         signature = [PlanType.Int, PlanType.Set(ListLeaf.Int)]
         pointer = adapter_callable(builder, expand, signature, span)?
-        external_call(
-            builder,
+        builder.external_call(
             "incan_native_runtime::flat_map_int_set_generator",
             [source_type, PlanType.FunctionPointer(signature)],
             result,
@@ -334,7 +332,7 @@ def flat_map_adapter(
 
 def expansion_result(mut builder: Builder, expand: Operand) -> Result[PlanType, str]:
     """Read the retained callback result without assuming every flat_map expansion is a list."""
-    match value_type(builder, expand)?:
+    match builder.value_type(expand)?:
         PlanType.FunctionPointer(signature) =>
             if len(signature) == 2:
                 return Ok(signature[1])
@@ -357,7 +355,7 @@ def text_callable_adapter(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Instantiate the runtime's by-value text callable boundary with the checked result and function-pointer types."""
-    pointer = value_type(builder, callable)?
+    pointer = builder.value_type(callable)?
     path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(
@@ -368,13 +366,13 @@ def text_callable_adapter(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [element, pointer]), [source, callable], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [element, pointer]), [source, callable], output, span)
     return Ok(None)
 
 
 def expands_to_generators(mut builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
     """Report whether a `flat_map` function value returns the result's own generator type rather than a list."""
-    match value_type(builder, expand)?:
+    match builder.value_type(expand)?:
         PlanType.FunctionPointer(signature) => return Ok(len(signature) == 2 and signature[1] == result)
         PlanType.FunctionItem(_name, signature) => return Ok(len(signature) == 2 and signature[1] == result)
         _ => return Ok(false)
@@ -417,7 +415,7 @@ pub def zip_generators(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [left, right]), [first, second], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [left, right]), [first, second], output, span)
     return Ok(None)
 
 
@@ -441,7 +439,7 @@ def pair_component(element: PlanType) -> Result[TupleElement, str]:
 
 def owned_generator(mut builder: Builder, value: Operand) -> Result[PlanType, str]:
     """Require a moved, owned generator argument; a borrowed one would be read twice."""
-    ty = value_type(builder, value)?
+    ty = builder.value_type(value)?
     match value.kind:
         OperandKind.Move(_place) =>
             _ = source_element(ty)?
@@ -481,7 +479,7 @@ pub def adapter_callable(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Pass a function value as the pointer legacy's adapter calls; a capturing closure keeps its named refusal."""
-    match value_type(builder, value)?:
+    match builder.value_type(value)?:
         PlanType.FunctionPointer(found) =>
             if found != signature:
                 return Err("unsupported Body IR generator adapter callable signature")
@@ -489,7 +487,7 @@ pub def adapter_callable(
         PlanType.FunctionItem(_name, found) =>
             if found != signature:
                 return Err("unsupported Body IR generator adapter callable signature")
-            pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+            pointer = builder.temporary(PlanType.FunctionPointer(signature), span)
             builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(value), span))
             return Ok(read_place(pointer, false, span))
         _ => return Err("unsupported Body IR generator adapter callable outside function values")

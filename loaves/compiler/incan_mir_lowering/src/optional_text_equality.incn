@@ -14,7 +14,7 @@ from pub::incan_mir_plan import (
     UnaryOp,
     assign as plan_assign,
 )
-from frame import Builder, appended_field, place_type, read_place, temporary
+from frame import Builder, appended_field, place_type, read_place
 from calls import instantiated_external_call
 from options import variant_condition
 
@@ -39,7 +39,7 @@ pub def optional_text_equality(
     if left_type == right_type or left_payload == None or right_payload == None:
         return Ok(None)
     # Inspect both variants before projecting either payload; None never exposes a field.
-    output = temporary(builder, PlanType.Bool, span)
+    output = builder.temporary(PlanType.Bool, span)
     left_present = variant_condition(builder, left, 1, span)
     right_present = variant_condition(builder, right, 1, span)
     builder.emit(plan_assign(output, RvalueKind.Binary(BinaryOp.Equal, left_present, right_present), span))
@@ -71,7 +71,7 @@ pub def optional_text_equality(
     builder.finish(TerminatorKind.Goto(joined), span)
     builder.current = joined
     if negate:
-        negated = temporary(builder, PlanType.Bool, span)
+        negated = builder.temporary(PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
     return Ok(Some(read_place(output, false, span)))
@@ -97,6 +97,6 @@ pub def text_argument(mut builder: Builder, field: Place, ty: PlanType, span: So
     """Copy a frozen wrapper or lend the original owned String, retaining the complete field projection."""
     if ty == PlanType.FrozenStr:
         return (read_place(field, false, span), ty)
-    reference = temporary(builder, PlanType.StringRef, span)
+    reference = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(field), span))
     return (read_place(reference, false, span), PlanType.StringRef)

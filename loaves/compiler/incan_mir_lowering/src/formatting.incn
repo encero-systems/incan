@@ -41,7 +41,7 @@ from text_plan import (
 )
 from options import format_carrier, clone_tuple_operand
 from numerics import has_sized_numeric, numeric_name, numeric_carrier
-from frame import place_type, Builder, temporary, forget_owned, drop_owned, terminate_call, external_call, read_place
+from frame import place_type, Builder, read_place
 from collections import is_collection, is_owned_collection
 from lists import is_list, is_owned_list
 from checked_values import scalar_place
@@ -224,7 +224,7 @@ def display_value_operand(
                     ):
                         result = format_carrier(builder, place, span)?
                         if read.fact == OwnershipFact.Move:
-                            drop_owned(builder, place.local, span)
+                            builder.drop_owned(place.local, span)
                         return Ok(result)
                     value_enum = value_enum_owner(builder, owner)?
                     if value_enum >= 0:
@@ -260,7 +260,7 @@ def value_enum_owner(mut builder: Builder, index: int) -> Result[int, str]:
 def display_value_enum(mut builder: Builder, owner: int, source: Place, span: SourceSpan) -> Result[Place, str]:
     """Display a value enum as its raw value, as legacy's Display does: the text itself, or the integer's digits."""
     ty = value_enum_raw_type(builder, owner)
-    raw = temporary(builder, ty, span)
+    raw = builder.temporary(ty, span)
     select_value_enum_raw(builder, owner, source, raw, span)?
     if ty == PlanType.String:
         return Ok(raw)
@@ -307,7 +307,7 @@ pub def display_plan_value(
                 and referent not in [PlanType.Bool, PlanType.StaticBytes, PlanType.FrozenBytes]
             ):
                 return Err("unsupported Body IR referenced display type")
-            reference = temporary(builder, ty, span)
+            reference = builder.temporary(ty, span)
             builder.emit(plan_assign(reference, RvalueKind.Use(operand), span))
             value = Place(local=reference.local, projection=Projection.Deref(referent), span=span)
             return display_plan_value(builder, read_place(value, false, span), span, type_parameter)
@@ -329,9 +329,8 @@ pub def display_plan_value(
     if ty == PlanType.StaticText:
         return native_format_text(builder, operand, false, span)
     if has_sized_numeric(ty):
-        result = temporary(builder, PlanType.String, span)
-        external_call(
-            builder,
+        result = builder.temporary(PlanType.String, span)
+        builder.external_call(
             f"incan_native_runtime::format_{numeric_name(ty)}",
             [ty],
             PlanType.String,
@@ -348,8 +347,8 @@ pub def display_plan_value(
         PlanType.Float => name = "format_float"
         PlanType.Bool => name = "format_bool"
         _ => return Err("unsupported Body IR display type")
-    result = temporary(builder, PlanType.String, span)
-    external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    result = builder.temporary(PlanType.String, span)
+    builder.external_call(f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
     return Ok(result)
 
 
@@ -361,7 +360,7 @@ def exclusive_text_display(mut builder: Builder, operand: Operand, span: SourceS
         OperandKind.Copy(place) => reference = place
         _ => return Err("unsupported Body IR exclusive text display without a place")
     referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
-    shared = temporary(builder, PlanType.StringRef, span)
+    shared = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(shared, RvalueKind.Borrow(referent), span))
     return Ok(owned_borrowed_text(builder, read_place(shared, false, span), span))
 
@@ -395,8 +394,8 @@ def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceS
 pub def native_format_text(mut builder: Builder, operand: Operand, debug: bool, span: SourceSpan) -> Result[Place, str]:
     """Format an exact owned or borrowed carrier with native Debug or Display, without a runtime cycle."""
     ty = operand_type(builder, operand)?
-    result = temporary(builder, PlanType.String, span)
-    terminate_call(builder, CalleeKind.FormatValue(ty, debug), [operand], result, span)
+    result = builder.temporary(PlanType.String, span)
+    builder.terminate_call(CalleeKind.FormatValue(ty, debug), [operand], result, span)
     builder.owned.append(result.local)
     return Ok(result)
 
@@ -448,17 +447,17 @@ pub def lower_string_assignment(
         return lower_string_field_assignment(builder, destination, value, span)
     match value:
         RustRvalue.Format(parts) =>
-            text = temporary(builder, PlanType.String, span)
+            text = builder.temporary(PlanType.String, span)
             lower_format(builder, text, parts, span)?
-            forget_owned(builder, text.local)
-            drop_owned(builder, destination.local, span)
+            builder.forget_owned(text.local)
+            builder.drop_owned(destination.local, span)
             builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
             builder.owned.append(destination.local)
             return Ok(None)
         RustRvalue.Use(operand) =>
             text = display_operand(builder, operand, span)?
-            forget_owned(builder, text.local)
-            drop_owned(builder, destination.local, span)
+            builder.forget_owned(text.local)
+            builder.drop_owned(destination.local, span)
             builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
             builder.owned.append(destination.local)
             return Ok(None)

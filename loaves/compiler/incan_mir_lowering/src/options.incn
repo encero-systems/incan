@@ -46,19 +46,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from pub::incan_mir_plan import source_span as plan_span
-from frame import (
-    Builder,
-    temporary,
-    read_place,
-    forget_owned,
-    drop_owned,
-    drop_all_owned,
-    cleanup_exit,
-    track_rvalue_moves,
-    terminate_call,
-    place_type as frame_place_type,
-    appended_field,
-)
+from frame import Builder, read_place, place_type as frame_place_type, appended_field
 from enums import validate_payload_patterns
 from layout_types import native_source_type
 from tuples import tuple_fields, tuple_aggregate, tuple_has_owners, is_tuple_type
@@ -74,7 +62,7 @@ from formatting import display_plan_value
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
     """Test a checked variant through the adapter's native discriminant comparison."""
-    condition = temporary(builder, PlanType.Bool, span)
+    condition = builder.temporary(PlanType.Bool, span)
     builder.emit(plan_assign(condition, RvalueKind.IsVariant(source, slot), span))
     return read_place(condition, false, span)
 
@@ -114,7 +102,7 @@ pub def propagate_result(
     condition = variant_condition(builder, source, 0, span)
     builder.finish(TerminatorKind.SwitchBool(condition, failure, success), span)
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
-    forget_owned(builder, source.local)
+    builder.forget_owned(source.local)
     owners = builder.owned
     builder.current = failure
     error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
@@ -123,7 +111,7 @@ pub def propagate_result(
         text = display_plan_value(builder, read_place(error, false, span), span, false)?
         propagated = read_place(text, true, span)
     builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [propagated]), span))
-    drop_all_owned(builder, span)
+    builder.drop_all_owned(span)
     builder.finish(TerminatorKind.Return, span)
     builder.current = success
     builder.owned = owners
@@ -558,20 +546,20 @@ pub def assign_carrier(
 pub def replace_owned_destination(mut builder: Builder, target: Place, operation: RvalueKind, span: SourceSpan) -> None:
     """Evaluate an owned replacement before dropping its old field, keeping the enclosing owner initialized."""
     if target.projection == Projection.Whole:
-        track_rvalue_moves(builder, operation)
-        drop_owned(builder, target.local, span)
+        builder.track_rvalue_moves(operation)
+        builder.drop_owned(target.local, span)
         builder.emit(plan_assign(target, operation, span))
         builder.owned.append(target.local)
         return
-    replacement = temporary(builder, frame_place_type(builder.locals, target), span)
-    track_rvalue_moves(builder, operation)
+    replacement = builder.temporary(frame_place_type(builder.locals, target), span)
+    builder.track_rvalue_moves(operation)
     builder.emit(plan_assign(replacement, operation, span))
     builder.owned.append(replacement.local)
     continuation = builder.new_block(span)
-    cleanup = cleanup_exit(builder, span)
+    cleanup = builder.cleanup_exit(span)
     builder.finish(TerminatorKind.Drop(target, continuation, Unwind.Cleanup(cleanup)), span)
     builder.current = continuation
-    forget_owned(builder, replacement.local)
+    builder.forget_owned(replacement.local)
     builder.emit(plan_assign(target, RvalueKind.Use(read_place(replacement, true, span)), span))
 
 
@@ -582,7 +570,7 @@ pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Re
     owner, declaration = carrier_layout(builder, ty)?
     if declaration.carrier != Carrier.Option:
         return Err("unsupported Body IR None outside Option")
-    output = temporary(builder, ty, span)
+    output = builder.temporary(ty, span)
     assign_carrier(builder, output, owner, 0, [], span)
     return Ok(read_place(output, true, span))
 
@@ -597,13 +585,13 @@ pub def borrowed_native_value(
     span: SourceSpan,
 ) -> Place:
     """Instantiate one native callee against a checked carrier or payload type and its shared reference."""
-    reference = temporary(builder, reference_type, span)
+    reference = builder.temporary(reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
-    output = temporary(builder, result_type, span)
+    output = builder.temporary(result_type, span)
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
+    builder.terminate_call(CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
     builder.owned.append(output.local)
     return output
 
@@ -670,9 +658,9 @@ pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan
         else:
             # Scalars are copied; an owned list or enum carrier is cloned through its real Clone implementation.
             operands.append(carrier_payload_value(builder, field, span)?)
-    result = temporary(builder, ty, span)
+    result = builder.temporary(ty, span)
     operation = tuple_aggregate(operands)
-    track_rvalue_moves(builder, operation)
+    builder.track_rvalue_moves(operation)
     builder.emit(plan_assign(result, operation, span))
     if tuple_has_owners(ty):
         builder.owned.append(result.local)
@@ -736,7 +724,7 @@ def lower_carrier_unwrap(
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
     builder.current = missing
-    unit = temporary(builder, PlanType.Unit, span)
+    unit = builder.temporary(PlanType.Unit, span)
     if declaration.carrier == Carrier.Option:
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
     else:
@@ -749,7 +737,7 @@ def lower_carrier_unwrap(
     builder.owned = incoming
     projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
-    track_rvalue_moves(builder, RvalueKind.Use(payload))
+    builder.track_rvalue_moves(RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
     if not numeric_carrier(payload_type) and payload_type != PlanType.Bool and payload_type != PlanType.Unit:
         builder.owned.append(target.local)
@@ -779,7 +767,7 @@ def unwrap_failure(
     mut callee = CalleeKind.External(path)
     if len(type_arguments) != 0:
         callee = CalleeKind.Instantiated(path, type_arguments)
-    terminate_call(builder, callee, arguments, destination, span)
+    builder.terminate_call(callee, arguments, destination, span)
 
 
 def lower_carrier_default(
@@ -802,15 +790,15 @@ def lower_carrier_default(
     builder.current = selected
     projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
-    track_rvalue_moves(builder, RvalueKind.Use(payload))
+    builder.track_rvalue_moves(RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
     match fallback.kind:
-        OperandKind.Move(place) => drop_owned(builder, place.local, span)
+        OperandKind.Move(place) => builder.drop_owned(place.local, span)
         _ => pass
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = missing
     builder.owned = owners
-    track_rvalue_moves(builder, RvalueKind.Use(fallback))
+    builder.track_rvalue_moves(RvalueKind.Use(fallback))
     builder.emit(plan_assign(target, RvalueKind.Use(fallback), span))
     retained = builder.owned
     builder.finish(TerminatorKind.Goto(join), span)

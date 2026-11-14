@@ -20,7 +20,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from pub::incan_mir_plan import source_span as plan_span
-from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned, track_rvalue_moves
+from frame import Builder, read_place
 from string_input import owned_string_frame
 from string_conversion_contracts import conversion_name, conversion_trait
 from options import retain_carrier, propagate_result, result_layout
@@ -167,28 +167,28 @@ def conversion_function(
         declaration.field_types[0],
         intrinsics,
     )?
-    payload = temporary(builder, underlying, span)
+    payload = builder.temporary(underlying, span)
     if underlying == PlanType.String:
         builder.emit(plan_assign(payload, RvalueKind.Use(read_place(plan_place(1, span), true, span)), span))
-        forget_owned(builder, 1)
+        builder.forget_owned(1)
         builder.owned.append(payload.local)
     else:
-        parsed = temporary(builder, underlying_result, span)
+        parsed = builder.temporary(underlying_result, span)
         callee = underlying_conversion(module, builder, declaration, underlying_result, span)?
-        terminate_call(builder, callee, [read_place(plan_place(1, span), true, span)], parsed, span)
+        builder.terminate_call(callee, [read_place(plan_place(1, span), true, span)], parsed, span)
         builder.owned.append(parsed.local)
         propagate_result(builder, parsed, payload, span)?
     owner = PlanType.Model(index, str(declaration.name))
-    wrapped = temporary(builder, owner, span)
+    wrapped = builder.temporary(owner, span)
     construction = RvalueKind.Model(index, [read_place(payload, true, span)])
-    track_rvalue_moves(builder, construction)
+    builder.track_rvalue_moves(construction)
     builder.emit(plan_assign(wrapped, construction, span))
     builder.owned.append(wrapped.local)
     result_owner, _layout = result_layout(builder, result)?
     success = RvalueKind.Enum(result_owner, 0, [read_place(wrapped, true, span)])
-    track_rvalue_moves(builder, success)
+    builder.track_rvalue_moves(success)
     builder.emit(plan_assign(plan_place(0, span), success, span))
-    drop_all_owned(builder, span)
+    builder.drop_all_owned(span)
     builder.finish(TerminatorKind.Return, span)
     return Ok(
         (Function(

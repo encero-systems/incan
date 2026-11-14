@@ -1,7 +1,7 @@
 """Calls into primitive-owned UTF-8 conversion selected by compiler-introduced operations."""
 
 from pub::incan_mir_plan import ListLeaf, Operand, Place, PlanType, SourceSpan, TupleElement
-from frame import Builder, external_call, temporary
+from frame import Builder
 
 
 pub def encode_utf8(
@@ -11,10 +11,9 @@ pub def encode_utf8(
     span: SourceSpan,
 ) -> Place:
     """Copy a borrowed or frozen text value through the authenticated primitive provider."""
-    output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+    output = builder.temporary(PlanType.List(ListLeaf.U8, 1), span)
     if frozen:
-        external_call(
-            builder,
+        builder.external_call(
             "incan_stdlib_primitives::encode_frozen_utf8",
             [PlanType.FrozenStr],
             PlanType.List(ListLeaf.U8, 1),
@@ -23,8 +22,7 @@ pub def encode_utf8(
             span,
         )
     else:
-        external_call(
-            builder,
+        builder.external_call(
             "incan_stdlib_primitives::encode_utf8",
             [PlanType.StringRef],
             PlanType.List(ListLeaf.U8, 1),
@@ -39,9 +37,8 @@ pub def encode_utf8(
 pub def copy_frozen_bytes(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
     """Copy frozen byte storage through the authenticated primitive provider."""
     ty = PlanType.List(ListLeaf.U8, 1)
-    output = temporary(builder, ty, span)
-    external_call(
-        builder,
+    output = builder.temporary(ty, span)
+    builder.external_call(
         "incan_stdlib_primitives::copy_frozen_bytes",
         [PlanType.FrozenBytes],
         ty,
@@ -62,9 +59,8 @@ pub def decode_utf8(
 ) -> Place:
     """Return the primitive decoder's explicit success flag and owned text-or-detail payload."""
     result = PlanType.Tuple([TupleElement.Bool, TupleElement.String])
-    output = temporary(builder, result, span)
-    external_call(
-        builder,
+    output = builder.temporary(result, span)
+    builder.external_call(
         "incan_stdlib_primitives::decode_utf8",
         [value_type, PlanType.Bool],
         result,

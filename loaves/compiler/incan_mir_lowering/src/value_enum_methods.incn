@@ -29,17 +29,7 @@ from value_enums import validate_layout
 from text_plan import owned_literal
 from options import carrier_layout, assign_carrier
 from strings import emit_text_helper
-from frame import (
-    place_type,
-    Builder,
-    temporary,
-    drop_owned,
-    track_rvalue_moves,
-    external_call,
-    read_place,
-    literal,
-    text_literal,
-)
+from frame import place_type, Builder, read_place, literal, text_literal
 from primitive_traits import has_adapter_slot
 from lowering import BodyIrModule
 from checked_values import scalar_place
@@ -232,8 +222,8 @@ def tag_branches(mut builder: Builder, source: Place, count: int, span: SourceSp
 
     Each returned block runs only for its variant; the caller fills it and ends it with a jump to its own join.
     """
-    raw_tag = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
+    raw_tag = builder.temporary(PlanType.EnumTag, span)
+    tag = builder.temporary(PlanType.Int, span)
     builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     mut branches: list[int] = []
@@ -243,7 +233,7 @@ def tag_branches(mut builder: Builder, source: Place, count: int, span: SourceSp
             continue
         selected = builder.new_block(span)
         next = builder.new_block(span)
-        condition = temporary(builder, PlanType.Bool, span)
+        condition = builder.temporary(PlanType.Bool, span)
         builder.emit(
             plan_assign(
                 condition,
@@ -275,8 +265,8 @@ pub def lower_value_enum_from_value(
     value = argument_value(builder, arguments, 0, span)?
     if operand_type(builder, value)? != raw_type:
         return Err("unsupported Body IR value enum from_value argument")
-    raw = temporary(builder, raw_type, span)
-    track_rvalue_moves(builder, RvalueKind.Use(value))
+    raw = builder.temporary(raw_type, span)
+    builder.track_rvalue_moves(RvalueKind.Use(value))
     builder.emit(plan_assign(raw, RvalueKind.Use(value), span))
     if raw_type == PlanType.String:
         builder.owned.append(raw.local)
@@ -298,7 +288,7 @@ pub def lower_value_enum_from_value(
         next = builder.new_block(span)
         builder.finish(TerminatorKind.SwitchBool(condition, next, matched), span)
         builder.current = matched
-        variant = temporary(builder, element, span)
+        variant = builder.temporary(element, span)
         builder.emit(plan_assign(variant, RvalueKind.Enum(layout, slot, []), span))
         assign_carrier(builder, output, carrier, 1, [read_place(variant, true, span)], span)
         builder.finish(TerminatorKind.Goto(join), span)
@@ -309,7 +299,7 @@ pub def lower_value_enum_from_value(
     builder.owned = owners
     builder.current = join
     builder.owned.append(output.local)
-    drop_owned(builder, raw.local, span)
+    builder.drop_owned(raw.local, span)
     return Ok(None)
 
 
@@ -324,7 +314,7 @@ def value_enum_layout(mut builder: Builder, owner: int) -> Result[int, str]:
 
 def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Compare a value enum's raw argument with one variant's raw value: integers natively, text through the runtime."""
-    condition = temporary(builder, PlanType.Bool, span)
+    condition = builder.temporary(PlanType.Bool, span)
     if place_type(builder.locals, raw) == PlanType.Int:
         operand = value_operand(builder, RustOperand.Constant(value), span)?
         builder.emit(
@@ -336,9 +326,9 @@ def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, spa
         RustConstant.Str(spelling) => text = str(spelling)
         _ => return Err("unsupported Body IR value enum raw value")
     literal = owned_literal(builder, text, span)
-    left = temporary(builder, PlanType.StringRef, span)
+    left = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(left, RvalueKind.Borrow(raw), span))
-    right = temporary(builder, PlanType.StringRef, span)
+    right = builder.temporary(PlanType.StringRef, span)
     builder.emit(plan_assign(right, RvalueKind.Borrow(literal), span))
     operands = [read_place(left, false, span), read_place(right, false, span)]
     result = emit_text_helper(
@@ -349,7 +339,7 @@ def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, spa
         operands,
         span,
     )
-    drop_owned(builder, literal.local, span)
+    builder.drop_owned(literal.local, span)
     return Ok(read_place(result, false, span))
 
 
@@ -375,8 +365,7 @@ pub def lower_enum_message(
         builder.current = branches[slot]
         name = str(variants[slot].name)
         texts = [text_literal(name, span), text_literal("", span)]
-        external_call(
-            builder,
+        builder.external_call(
             "incan_std_primitives::strings::str_concat",
             [PlanType.StrRef, PlanType.StrRef],
             PlanType.String,
