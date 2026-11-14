@@ -51,6 +51,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("toolchain install", "incan toolchain install ARCHIVE"),
             ("tools doctor", "incan tools doctor [--format text|json]"),
             ("tools metadata api", "incan tools metadata api [PATH] [--format json]"),
+            ("tools metadata model", "incan tools metadata model PATH MODEL [--format incan|json]"),
             ("inspect registry", "incan inspect registry IDENTITY [--project PATH] [--format json]"),
             ("--version", "incan --version"),
         ],
