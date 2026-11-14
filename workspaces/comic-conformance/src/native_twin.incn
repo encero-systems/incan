@@ -5,8 +5,11 @@ from std.primitives.crumb import Budget
 from std.primitives.crumb.admission import RecordShape, check_written, plan_adaptation
 from std.primitives.crumb.column_block_read import read_block
 from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_data_read import column_at, read_column
+from std.primitives.crumb.column_data_write import write_column
 from std.primitives.crumb.column_key_read import ColumnKeys, key_at, read_keys
 from std.primitives.crumb.column_presence import cell_type
+from std.primitives.crumb.column_types import ColumnChoice
 from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, dictionary_type, encode_keys
 from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
@@ -266,6 +269,8 @@ def print_twin(document: JsonValue) -> Result[bytes, str]:
 def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
     """Write a column dictionary's or block's authored input; the remaining column operations have no twin yet."""
     operation = text(document, "operation")?
+    if operation == CaseOperation.ColumnData.value():
+        return data_twin_encode(document)
     if operation == CaseOperation.ColumnBlock.value():
         return block_twin_encode(document)
     if operation != CaseOperation.ColumnDictionary.value():
@@ -284,6 +289,8 @@ def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
 
 def column_twin_decode(document: JsonValue) -> Result[bytes, str]:
     """Read the literal dictionary, or each proper prefix when asked, into keys or one typed refusal category."""
+    if text(document, "operation")? == CaseOperation.ColumnData.value():
+        return data_twin_decode(document)
     if text(document, "operation")? == CaseOperation.ColumnBlock.value():
         return block_twin_decode(document)
     mut setup = column_setup()?
@@ -409,3 +416,53 @@ def block_keys(
     raw = encode_keys(key_type, built, dictionary, setup).map_err((e) => e.message())?
     keys = read_keys(key_type, backing(raw)?, 0, dictionary, setup).map_err((e) => e.message())?
     return Ok((Some(built), Some(keys)))
+
+
+def data_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
+    """Write a complete column's authored values with its authored block encodings."""
+    expected = field(document, "expected")?
+    if expected.get("values").is_none():
+        return Ok(Some(b""))
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = block_type(document, setup)?
+    absent = block_absence(document)?
+    mut choices = ColumnChoice(blocks=[])
+    for item in array(expected, "encodings")?:
+        choices.blocks.append(encoding(item.expect_int().map_err((e) => e.message())?)?)
+    values = logical_items(array(expected, "values")?)?
+    return Ok(Some(write_column(node, absent, values, choices, dictionary, setup).map_err((e) => e.message())?))
+
+
+def data_twin_decode(document: JsonValue) -> Result[bytes, str]:
+    """Read a complete column into its block encodings and logical values, or one typed refusal category."""
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = block_type(document, setup)?
+    absent = block_absence(document)?
+    data = hex_bytes(text(document, "input_hex")?)?
+    mut budget = case_budget(document)?
+    mut output = EncodingBuffer.create()
+    match read_column(node, absent, integer(document, "logical_count")?, backing(data)?, 0, dictionary, budget):
+        Err(error) =>
+            output.octet(1, setup).map_err((e) => e.message())?
+            output
+                .append(frame(encode_utf8(category(error)?), setup).map_err((e) => e.message())?, setup)
+                .map_err((e) => e.message())?
+        Ok(column) =>
+            mut values: list[Value] = []
+            for position in range(column.rows):
+                values.append(column_at(column, position, dictionary, setup).map_err((e) => e.message())?)
+            result = value_hash(Value.List(values), Projection.Object, setup, true).map_err((e) => e.message())?
+            preimage = match result.preimage:
+                Some(captured) => captured
+                None => return Err("column data twin did not capture its values preimage")
+
+            output.octet(0, setup).map_err((e) => e.message())?
+            output.count(len(column.blocks), setup).map_err((e) => e.message())?
+            for block in column.blocks:
+                output.count(block.encoding.value(), setup).map_err((e) => e.message())?
+            output.append(frame(preimage, setup).map_err((e) => e.message())?, setup).map_err((e) => e.message())?
+    return output.finish(setup).map_err((e) => e.message())
