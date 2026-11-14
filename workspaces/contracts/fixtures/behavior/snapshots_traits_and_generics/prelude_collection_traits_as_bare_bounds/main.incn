@@ -1,0 +1,11 @@
+# behavior: Contains and Len bound a generic function without an import, as the standard prelude publishes them and 0.5.1 accepted
+# expect-stdout:
+#   true false 3
+
+from bounds import has, size
+from bag import Bag
+
+
+def main() -> None:
+    bag = Bag(items=[1, 2, 3])
+    println(f"{has(bag, 2)} {has(bag, 9)} {size(bag)}")
