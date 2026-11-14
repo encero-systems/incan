@@ -2,11 +2,14 @@
 
 from std.fs import Path
 from std.primitives.locking import LockGuard
+from rust::incan_std_primitives::locking import LockGuard as NativeLockGuard
+from rust::std::marker import Send, Sync
 from rust::std::rc import Rc
+from rust::std::sync import Arc, Mutex
 from std.encoding.hex import hexlify
-from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import check_program, obtain, prepare_selection
-from engine_epochs import CapturedRequest, after_projection
+from engine_messages import BindingOutcome, Captured, Complete, CompletionStatus, Submit
+from engine_programs import check_program, obtain, prepare_selection, program_handle
+from engine_epochs import CapturedRequest, after_projection, prepare_submit
 from engine_proofs import retain, prepare_report
 from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned
 from observation import trace
@@ -18,18 +21,16 @@ from toolchain import toolchain_directory
 from home import standard_library_dir
 
 
+pub type ThreadSafeLockGuard = rusttype NativeLockGuard with Send, Sync
+
+
 pub model Pending:
     """One transient captured request; its input observations are released when this activation settles."""
 
     pub request: bytes
     pub token: str
-    pub capture: CapturedRequest
-    pub view: str
-    pub proofs: bool
+    pub submit: Submit
     pub producer: str
-    pub handle: str
-    pub command: str
-    pub format: str
 
 
 pub model ExecutionLease:
@@ -38,7 +39,7 @@ pub model ExecutionLease:
     pub token: str
     pub snapshot: str
     pub handle: str
-    pub held: Rc[LockGuard]
+    pub held: Arc[ThreadSafeLockGuard]
 
 
 pub model Ready:
@@ -49,15 +50,48 @@ pub model Ready:
     pub pin: Option[ExecutionLease] = None
 
 
-pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
+pub enum WorkerEvent:
+    """Ordered worker progress returned to the socket event loop without moving captured store state across threads."""
+
+    Captured(bytes, Captured)
+    Settled(bytes, str, Result[Ready, str])
+
+
+pub def finish_request(store: Path, pending: Pending, events: Arc[Mutex[list[WorkerEvent]]]) -> None:
     """Capture installed facts once for this activation and resume reconciliation before the next request."""
     begin_command()
-    ready = settled_request(store, pending)
+    capturing = begin()
+    captured = match prepare_submit(store, pending.submit):
+        Err(reason) =>
+            record(Operation.EngineCapture, pending.submit.requested_roots, capturing)
+            end_command()
+            emit(events, WorkerEvent.Settled(pending.request, pending.token, Err(reason)))
+            return None
+        Ok(value) => value
+    record(Operation.EngineCapture, pending.submit.requested_roots, capturing)
+    selected = f"snapshot:{captured.snapshot.generation}:{captured.snapshot.digest}"
+    notification = Captured(epoch=captured.identity, snapshot=selected)
+    emit(events.clone(), WorkerEvent.Captured(pending.request, notification))
+    handle = match program_handle(captured.identity, pending.producer, pending.submit.view):
+        Err(reason) =>
+            end_command()
+            emit(events, WorkerEvent.Settled(pending.request, pending.token, Err(reason)))
+            return None
+        Ok(value) => value
+    ready = settled_request(store, pending, captured, handle)
     end_command()
-    return ready
+    emit(events, WorkerEvent.Settled(pending.request, pending.token, ready))
 
 
-def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
+def emit(events: Arc[Mutex[list[WorkerEvent]]], event: WorkerEvent) -> None:
+    """Publish one worker event; a poisoned queue means its owning client can no longer receive progress."""
+    mut queue = match events.lock():
+        Err(_) => return None
+        Ok(value) => value
+    queue.push(event)
+
+
+def settled_request(store: Path, pending: Pending, captured_request: CapturedRequest, handle: str) -> Result[Ready, str]:
     """
     Settle one request without executing user code in the engine.
 
@@ -69,33 +103,33 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
-    if pending.command == "check":
-        return settled_check(store, pending, directory.joinpath(run).0)
+    if pending.submit.command == "check":
+        return settled_check(store, pending, captured_request, directory.joinpath(run).0)
     producing = begin()
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
     produced_result = obtain(
         store,
-        pending.capture.revision,
-        pending.handle,
+        captured_request.revision,
+        handle,
         directory.joinpath(run).0,
-        Some(pending.capture.epoch),
+        Some(captured_request.epoch),
         pending.producer,
-        Some(pending.capture.selected),
+        Some(captured_request.selected),
     )
     frozen = finish_frozen_counting()
     produced = produced_result?
-    mut counters = pending.capture.counters
+    mut counters = captured_request.counters
     counters.frozen.stats += frozen.stats
     counters.frozen.reads += frozen.reads
     counters.frozen.hashes += frozen.hashes
-    record(Operation.EngineUnit, pending.capture.revision, producing)
+    record(Operation.EngineUnit, captured_request.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     match produced.unit:
         None =>
-            if pending.proofs:
+            if pending.submit.observation_policy == "proofs":
                 observation = retain(store, run, counters, produced)?
             return Ok(
                 Ready(
@@ -113,8 +147,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(unit) =>
             # 3. A completed native descriptor is selected independently for each caller.
             selecting = begin()
-            captured = after_projection(pending.capture)?
-            selection = prepare_selection(store, pending.view, unit, pending.handle)?
+            captured = after_projection(captured_request)?
+            selection = prepare_selection(store, pending.submit.view, unit, handle)?
             mut group: list[Transaction] = []
             if let Some(transaction) = captured.transaction:
                 group.append(transaction)
@@ -122,23 +156,22 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(transaction)
             if let Some(transaction) = selection.transaction:
                 group.append(transaction)
-            if pending.proofs:
+            if pending.submit.observation_policy == "proofs":
                 group.append(prepare_report(store, run, counters, produced)?)
                 observation = run
             if len(group) == 0:
                 group.append(begin_selection(selection.snapshot))
-            published = commit_pinned(group, pending.view).map_err((error) => error.message())?
+            published = commit_pinned(group, pending.submit.view).map_err((error) => error.message())?
             selected = published.snapshot
             if produced.native_bakes > 0:
                 trace(
                     f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",
                 )
 
-            record(Operation.EngineSelect, pending.view, selecting)
+            record(Operation.EngineSelect, pending.submit.view, selecting)
             pinning = begin()
             held = required_pin(published.pin)?
-            record(Operation.EngineLease, pending.view, pinning)
-            handle = pending.handle
+            record(Operation.EngineLease, pending.submit.view, pinning)
             pin = ExecutionLease(token=pending.token, snapshot=selected.digest, handle=handle, held=held)
             return Ok(
                 Ready(
@@ -156,19 +189,19 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             )
 
 
-def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
+def settled_check(store: Path, pending: Pending, captured_request: CapturedRequest, console: str) -> Result[Ready, str]:
     """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
     checking = begin()
     outcome = check_program(
         store,
-        pending.capture.revision,
+        captured_request.revision,
         console,
-        pending.format,
-        Some(pending.capture.epoch),
-        Some(pending.capture.selected),
+        pending.submit.options,
+        Some(captured_request.epoch),
+        Some(captured_request.selected),
     )?
-    record(Operation.EngineUnit, pending.capture.revision, checking)
-    captured = after_projection(pending.capture)?
+    record(Operation.EngineUnit, captured_request.revision, checking)
+    captured = after_projection(captured_request)?
     mut snapshot = captured.snapshot.digest
     if let Some(transaction) = captured.transaction:
         snapshot = commit(transaction).map_err((error) => error.message())?.digest
@@ -190,8 +223,8 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     )
 
 
-def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:
+def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Arc[ThreadSafeLockGuard], str]:
     """A completed request must already hold its selected generation's execution pin."""
     match pin:
-        Some(held) => return Ok(held)
+        Some(held) => return Ok(Arc.new(held.as_ref().0.clone()))
         None => return Err("publication completed without an execution pin")

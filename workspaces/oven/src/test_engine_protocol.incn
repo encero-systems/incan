@@ -4,6 +4,7 @@ from core_process import Process, executable, spawn_detached
 from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from rust::std::string import String as RustString
+from rust::std::fs import File
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
@@ -16,7 +17,7 @@ from pub::incan_platform.store import Transaction, durable_commits, begin, put, 
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
 from std.json import JsonValue, parse
-from rust::std::process import Child, Command
+from rust::std::process import Child, Command, Stdio
 from pub::incan_platform.ipc import Connection, dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
 from toolchain import load_toolchain, toolchain_directory
@@ -263,11 +264,11 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     assert first_selection.encodings == 1 and first_selection.commits == 1
     assert repeat_selection.encodings == 0 and repeat_selection.commits == 0
     assert repeat_selection.snapshot.digest == first_selection.snapshot.digest
-    check_collection_before_selection()?
-    check_collection_during_execution()?
-    process_lifecycle()?
-    check_project_directory_selection()?
-    check_worker_residency()?
+    check_collection_before_selection().map_err((error) => f"collection before selection: {error}")?
+    check_collection_during_execution().map_err((error) => f"collection during execution: {error}")?
+    process_lifecycle().map_err((error) => f"process lifecycle: {error}")?
+    check_project_directory_selection().map_err((error) => f"project directory selection: {error}")?
+    check_worker_residency().map_err((error) => f"worker residency: {error}")?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -410,9 +411,9 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     assert compilations > 0 and frontend_releases == compilations, f"{frontend_releases} of {compilations} compilations released the frontend heap before rustc"
     # Each compilation also returns its checking heap before lowering builds its contexts.
     assert checked_releases == compilations, f"{checked_releases} of {compilations} compilations released the checking heap before lowering"
-    # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
-    # after each activation. No activation may be detached from the observer that owns its completion.
-    assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Both requests use the same resident worker for four compiler activations apiece, releasing its free heap after
+    # each activation. No activation may be detached from the observer that owns its completion.
+    assert waits == 8 and detached == 0 and releases == 8, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
     assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
@@ -426,7 +427,9 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     while len(runtime.0) <= 100:
         runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
     runtime.mkdir(true, true).map_err((error) => error.message())?
-    fallback_runtime = get_or("XDG_RUNTIME_DIR", "/tmp")
+    # The engine gets a runtime root other than this process's, as another shell's environment would give it: this
+    # process must still find the engine it stops, wherever that engine listens.
+    fallback_runtime = "/tmp"
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
@@ -813,12 +816,16 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
     Run the program on the records engine and wait up to 30 seconds for its `started` signal. A program that exits
     first, or never arrives, is released and reaped before the failure is returned.
     """
+    error_path = Path(barrier.started.0 + ".stderr")
+    error_file = File.create(error_path.0).map_err((error) => str(error))?
     mut child = Command
         .new(binary)
         .arg("run")
         .arg(source.0)
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
+        .stdout(Stdio.null())
+        .stderr(error_file)
         .spawn()
         .map_err((error) => str(error))?
     mut arrived = false
@@ -827,7 +834,8 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
             arrived = true
             break
         if child.try_wait().map_err((error) => str(error))? is not None:
-            return Err("program exited before its execution lease could be tested")
+            error = error_path.read_text("utf-8", "strict").map_err((read_error) => read_error.message())?.strip()
+            return Err(f"program exited before its execution lease could be tested: {error}")
         sleep(Duration.from_millis(2))
     # The child is handed out after the loop, where returning it moves it.
     if arrived:
@@ -957,6 +965,14 @@ def refused_body(decoded: Result[Message, Refusal]) -> bool:
         Err(_) => return true
 
 
+def busy_program() -> str:
+    """A fresh compilation that stays busy beyond the bounded second-client handshake."""
+    mut program = ""
+    for index in range(300):
+        program = program + f"def helper_{index}() -> int:\n    return {index}\n\n"
+    return program + "def main() -> None:\n    println(\"hello\")\n"
+
+
 def process_lifecycle() -> Result[None, str]:
     """Two real starters share one lifetime lock; drain settles requests and a disconnected idle service exits."""
     mut configured = spawn_detached(
@@ -969,7 +985,7 @@ def process_lifecycle() -> Result[None, str]:
     root = scratch.path()
     root.joinpath("project").mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("project/hello.incn")
-    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    write(source, busy_program())?
     identity = Identity(
         store_id="process-store",
         profile="v1",
@@ -1013,6 +1029,27 @@ def process_lifecycle() -> Result[None, str]:
             ),
         )
         .map_err(detail)?
+    mut accepted = false
+    mut captured = false
+    while not captured:
+        frame = channel.receive().map_err((error) => f"busy request before capture: {detail(error)}")?
+        match frame.message:
+            Message.Accepted(_) => accepted = true
+            Message.Captured(_) =>
+                assert accepted
+                captured = true
+            Message.Refused(value) => return Err(f"busy request refused before capture: {value.detail}")
+            _ => pass
+        channel.acknowledge(frame).map_err(detail)?
+    match await_service(root, identity):
+        Err(reason) =>
+            channel.transport.close()?
+            if not first_done:
+                first.terminate()?
+            if not second_done:
+                second.terminate()?
+            return Err(f"busy engine did not greet a second client: {reason}")
+        Ok(concurrent) => concurrent.transport.close()?
     channel.send(zero_id(), Message.Drain(Drain(reason="test"))).map_err(detail)?
     channel
         .send(
@@ -1029,8 +1066,6 @@ def process_lifecycle() -> Result[None, str]:
             ),
         )
         .map_err(detail)?
-    mut accepted = false
-    mut captured = false
     mut completed = false
     mut refused = false
     for _index in range(10):
@@ -1065,14 +1100,14 @@ def process_lifecycle() -> Result[None, str]:
     await_exit(second, not second_done)?
     # A fresh service with a one-second timeout exits after its last client disconnects, without Drain.
     mut idle = launch_service(binary, root, identity)?
-    mut idle_channel = await_service(root, identity)?
-    check_unchanged_request(idle_channel, root, source)?
+    mut idle_channel = await_service(root, identity).map_err((error) => f"idle service handshake: {error}")?
+    check_unchanged_request(idle_channel, root, source).map_err((error) => f"unchanged request: {error}")?
     another = root.joinpath("another-project")
     another.mkdir(true, true).map_err((error) => error.message())?
     copied_source = another.joinpath("hello.incn")
     write(copied_source, source.read_text("utf-8", "strict").map_err((error) => error.message())?)?
     for turn in range(50):
-        check_service_reuse(idle_channel, root, copied_source, turn)?
+        check_service_reuse(idle_channel, root, copied_source, turn).map_err((error) => f"reuse turn {turn}: {error}")?
     assert not another.joinpath("target/incan/observations").exists(), "a native hit repeated unit preparation"
     idle_channel.transport.close()?
     await_exit(idle, true)?

@@ -111,7 +111,7 @@ pub def unit_reservation(facet: LocalFacet) -> int:
     return UNIT_RESERVATION_BYTES
 
 
-def scheduler_jobs() -> int:
+pub def scheduler_jobs() -> int:
     """Select `INCAN_JOBS` when valid, otherwise the host's available CPU count, with one as the floor."""
     configured = get_or("INCAN_JOBS", "")
     if digits_only(configured) and configured != "":
@@ -123,7 +123,7 @@ def scheduler_jobs() -> int:
         Err(_) => return 1
 
 
-def scheduler_memory() -> int:
+pub def scheduler_memory() -> int:
     """Read macOS or Linux physical memory; an unavailable probe fails closed to one 2 GiB unit at a time."""
     match Command.new("/usr/sbin/sysctl").arg("-n").arg("hw.memsize").stderr(Stdio.null()).output():
         Err(_) => pass
