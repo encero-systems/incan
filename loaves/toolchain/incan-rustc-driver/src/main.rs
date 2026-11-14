@@ -72,6 +72,7 @@ mod signature_lifetimes;
 mod spans;
 mod statics;
 mod terminators;
+mod test_cases;
 mod test_unit;
 mod types;
 mod union_debug;
