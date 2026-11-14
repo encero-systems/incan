@@ -588,6 +588,23 @@ pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], Store
     return Ok(live)
 
 
+pub def revisions_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:
+    """
+    The revision of every key starting with `prefix` whose state in the view is a value, in key order, reading only the
+    index pages of that key range and no frame. A revision names a frame's key and value together, so the list changes
+    exactly when a key in the range arrives, leaves or takes another value.
+    """
+    mut live: list[str] = []
+    for entry in index_entries_with_prefix(view.root, view.index, prefix).map_err(index_failure)?:
+        match entry.location:
+            Some(location) =>
+                if not location.tombstone:
+                    live.append(hexlify(location.digest))
+            None => pass
+    counted["listed"] = counted.get("listed", 0) + len(live)
+    return Ok(live)
+
+
 pub def segments(view: Snapshot) -> Result[list[str], StoreError]:
     """
     The segments the generation's views reach, sorted: each segment one of their indexes locates a frame in.
