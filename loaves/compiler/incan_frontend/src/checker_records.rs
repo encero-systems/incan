@@ -307,7 +307,7 @@ pub fn checked_owner_record_outputs(
             };
             let mut dependency_reads = semantic_owner
                 .into_iter()
-                .flat_map(|owner| dependencies.reachable_dependencies_from([owner.clone()]))
+                .flat_map(|owner| dependencies.direct_dependencies_from([owner.clone()]))
                 .filter(|dependency| &dependency.target != canonical)
                 .filter(|dependency| projectable_source_dependency(&dependency.target))
                 .filter_map(|dependency| match &dependency.target.origin {
@@ -853,6 +853,35 @@ mod tests {
         assert_eq!(read.package, None);
         assert_eq!(read.declaration_identity, callee.identity);
         Ok(read.declaration_identity.clone())
+    }
+
+    /// A checker receipt owns only references in its body; a callee's dependencies belong to that callee's receipt.
+    #[test]
+    fn checked_owner_records_publish_only_direct_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def leaf() -> int:\n    return 1\n\ndef middle() -> int:\n    return leaf()\n\ndef main() -> None:\n    println(middle())\n";
+        let parsed = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&parsed, &checker, &["main".into()])?;
+        let mut reads = BTreeMap::new();
+        for output in outputs {
+            let CheckedOwnerRecordOutput::Value(value) = output else {
+                return Err("direct dependency fixture fell back".into());
+            };
+            reads.insert(
+                value.name,
+                value
+                    .dependency_reads
+                    .into_iter()
+                    .map(|read| read.declaration_name)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(reads.get("leaf"), Some(&Vec::new()));
+        assert_eq!(reads.get("middle"), Some(&vec!["leaf".into()]));
+        assert_eq!(reads.get("main"), Some(&vec!["middle".into()]));
+        Ok(())
     }
 
     /// Builtins and nested ordinary calls retain their complete tooling provenance when a shifted owner reuses
