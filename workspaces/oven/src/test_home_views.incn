@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from home_paths import BAKERY_OVERRIDE, BakeryLocation
+from engine_client import project_view_name
 from home_views import bind_home_view
 from scratch import scratch_directory
 
@@ -47,3 +48,18 @@ def field(home: Path, key: str) -> Result[str, str]:
     text = home.joinpath("bakery.view").read_text("utf-8", "strict").map_err((error) => error.message())?
     document = JsonValue.parse(text).map_err((error) => error.message())?
     return document.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())
+
+
+pub def test_project_views_are_named_from_the_home_view() -> Result[None, str]:
+    """
+    The records engine names a program's project view from the home's view key, not the home's path: one key gives
+    one view wherever the home lives, two homes' keys give two views of one program, and a selected body-refusal
+    diagnosis is a view of its own.
+    """
+    first = project_view_name("home-a", "/work/app/src/main.incn", "debug", None)?
+    assert first.startswith("project-"), first
+    assert project_view_name("home-a", "/work/app/src/main.incn", "debug", None)? == first
+    assert project_view_name("home-b", "/work/app/src/main.incn", "debug", None)? != first
+    assert project_view_name("home-a", "/work/app/src/main.incn", "release", None)? != first
+    assert project_view_name("home-a", "/work/app/src/main.incn", "debug", Some("list"))? != first
+    return Ok(None)
