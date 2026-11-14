@@ -6,7 +6,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 
 - Run every search from the repository root with ripgrep 14. A search whose count needs structure that a regular expression cannot see (fenced code, docstrings, scopes) names an awk program from [Structural searches](#structural-searches).
 - Incan scope is every `*.incn` file outside a `fixtures` directory, and Rust scope is every `*.rs` file outside one. Contract and Loaf fixtures keep the shape their cases assert, so they are not counted.
-- **Before** is the count at `dd3ee72d8` (the `queue/square-1` head this inventory was built from). **Now** is the count at the commit that last changed this file. A clearing commit updates its own rule's **Now**.
+- **Before** is the count at `dd3ee72d8` (the `queue/square-1` head this inventory was built from). **Now** is the count at the commit that last changed this file. A clearing commit updates its own rule's **Now**. This branch merged `queue/square-1` at `d2920bffc`, whose 61 commits added hits to some rules (IN1 rose from 2589 to 2628, for example); **Now** counts them.
 - **Real** separates the hits that violate the rule from those the search over-approximates (comments, user-facing advice text, generated pages), as the notes under each rule list them. A dash marks a review set: a search whose hits each need a judgment that has not been made for all of them.
 - Some hits sit in paths other lanes were rewriting when this was built: `workspaces/oven/src/compiler_body_publication.incn`, `loaves/compiler/internal_models/src/compiled_body_frames.incn`, `loaves/platform/src/store/index.incn` and `loaves/toolchain/incan-lsp/`. They are counted, and listed as lane hits, but not cleared here.
 
@@ -17,8 +17,8 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 5 | 1 |
 | RS2 | `.expect()` spelled `unwrap_or_else(\|…\| panic!(…))` | 11 | 11 | 9 |
 | RS3 | `panic!` control flow (tests and production) | 284 | 284 | 281 |
-| RS4 | Wildcard `use …::*;` | 644 | 644 | 644 |
-| RS5 | `&String`, `&Vec<T>`, `&Box<T>` parameters | 6 | 6 | 6 |
+| RS4 | Wildcard `use …::*;` | 644 | 644 | 647 |
+| RS5 | `&String`, `&Vec<T>`, `&Box<T>` parameters | 6 | 2 | 6 |
 | RS6 | Numeric `as` casts | 290 | 290 | 290 |
 | RS7 | `pub fn … -> Result<_, String>` | 32 | 32 | 32 |
 | RS8 | `Rc<RefCell<_>>` | 0 | 0 | 0 |
@@ -26,21 +26,21 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | RS10 | `collect::<Vec<_>>()` only to iterate again | 0 | 0 | 0 |
 | RS11 | Builtin trait and derive names as string literals in compiler layers | 13 | 4 | 9 |
 | RS12 | `Err(_) =>` arms that drop the error (Rust) | 47 | — | 47 |
-| RS13 | `map_err(\|e\| e.to_string())` that drops the operation | 106 | — | 106 |
-| IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2589 |
+| RS13 | `map_err(\|e\| e.to_string())` that drops the operation | 106 | — | 112 |
+| IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2628 |
 | IN2 | String-literal `match` arms where an `Enum(str)` belongs | 172 | — | 172 |
 | IN3 | Repeated `kind == "a" or kind == "b"` chains | 46 | 46 | 46 |
 | IN4 | Imports after the first declaration | 1 | 1 | 0 |
-| IN5 | Incan lines over 120 characters | 1252 | 1252 | 1252 |
-| IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | 32 | 32 |
+| IN5 | Incan lines over 120 characters | 1252 | 1252 | 1263 |
+| IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | — | 33 |
 | IN7 | `str("literal")` wrappers | 8 | 8 | 0 |
 | IN8 | `== true` / `== false` comparisons | 0 | 0 | 0 |
 | IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | — | 26 |
-| IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 407 |
+| IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 416 |
 | IN11 | Stale Python script names in Incan programs | 13 | 13 | 0 |
 | IN12 | Declarations without a docstring | 529 | 529 | 529 |
 | IN13 | Helpers nested inside function bodies | 0 | 0 | 0 |
-| IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 257 |
+| IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 259 |
 | IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 5 |
 | IN16 | Failure messages that name no subject | 341 | — | 335 |
 | MD1 | Hard-wrapped Markdown prose | 34 | 30 | 4 |
@@ -82,7 +82,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `AGENTS.md`, "Rust Anti-Patterns to Avoid".
 - Search: `rg -n -P '\w+: &(String\b|Vec<|Box<)' -g '*.rs' -g '!**/fixtures/**'`
-- `&mut String` and `&mut Vec<T>` are not matched: a callee that pushes needs them.
+- `&mut String` and `&mut Vec<T>` are not matched: a callee that pushes needs them. Real: `decode_scalar` and `decode_text` in `loaves/stdlib/primitives/rust/src/crumb.rs`, which Incan calls across its Rust interop boundary with its byte list, so a slice parameter changes that boundary. Not real: three closure parameters whose type is their iterator's item, and the `type_param` of `open_type_params.rs`, from which `std::slice::from_ref` builds the `&[String]` its callee takes.
 
 ### RS6 Numeric `as` casts
 
@@ -163,6 +163,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `.agents/skills/review-incan-source-quality/SKILL.md` ("verbose `match` blocks that just rewrap a `Result` where `?` would read naturally"); `.agents/learnings.md`, "Async result passthrough should stay direct".
 - Search: `rg -n -P 'Err\((\w+)\)\s*=>\s*(return\s+)?Err\(\1\)\s*$' -g '*.incn' -g '!**/fixtures/**'`
+- Reviewed: most hits are three-way `Ok(Some(…))`, `Ok(None)`, `Err` matches over an iterator's `__next__()`, where `?` means restructuring the match as `match x?:`, and three are the bodies of `Result.map`, `and_then` and `inspect` in `loaves/stdlib/primitives/src/result.incn`, where the match is the implementation. All are standard-library source that no Linux toolchain could parse when this was built.
 
 ### IN7 String literal wrappers
 
