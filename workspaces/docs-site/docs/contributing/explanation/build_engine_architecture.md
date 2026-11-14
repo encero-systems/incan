@@ -185,20 +185,9 @@ Native units take their full RFC 124 identity before claiming. Command names, re
 
 ### Apple SDK identity boundary
 
-An Apple SDK is an input only to work that actually reads it. Incan and Rust library compilation uses the pinned
-compiler identity, deployment selection, source, invocation and linked artifacts, but not the selected SDK. Final Incan
-program and test links, debug shared-library/carrier links, final Rust binary and test links, dynamically linked Rust
-libraries (including proc macros), and units that declare C headers additionally include the content identity of
-`SDKSettings.json`. SDK discovery and hashing therefore do not run for statically linked library-only work. A new Xcode
-installation can reuse static libraries while it must relink executable, dynamic-library and C-ABI outputs.
+An Apple SDK is an input only to work that actually reads it. Incan and Rust library compilation uses the pinned compiler identity, deployment selection, source, invocation and linked artifacts, but not the selected SDK. Final Incan program and test links, debug shared-library/carrier links, final Rust binary and test links, dynamically linked Rust libraries (including proc macros), and units that declare C headers additionally include the content identity of `SDKSettings.json`. SDK discovery and hashing therefore do not run for statically linked library-only work. A new Xcode installation can reuse static libraries while it must relink executable, dynamic-library and C-ABI outputs.
 
-This boundary was checked on macOS by compiling the same paths and arguments first with Command Line Tools SDK 27.0
-and then with Xcode SDK 27.2. `incan_lang` and the `incan_std_testing` Rust facet produced byte-identical rlibs. The
-`incan_stdlib_testing` Incan library produced byte-identical `.incnbody`, `.incnlib`, `.native.json`, `.rustabi` and
-rlib artifacts. A small executable differed only at the expected final-link boundary: its `LC_BUILD_VERSION` SDK field
-changed from 27.0 to 27.2. The comparison deliberately reused one working directory and output path; an earlier
-comparison with different working directories demonstrated that rustc embeds that directory in metadata and is not a
-valid SDK-only experiment.
+This boundary was checked on macOS by compiling the same paths and arguments first with Command Line Tools SDK 27.0 and then with Xcode SDK 27.2. `incan_lang` and the `incan_std_testing` Rust facet produced byte-identical rlibs. The `incan_stdlib_testing` Incan library produced byte-identical `.incnbody`, `.incnlib`, `.native.json`, `.rustabi` and rlib artifacts. A small executable differed only at the expected final-link boundary: its `LC_BUILD_VERSION` SDK field changed from 27.0 to 27.2. The comparison deliberately reused one working directory and output path; an earlier comparison with different working directories demonstrated that rustc embeds that directory in metadata and is not a valid SDK-only experiment.
 
 Interfaces outlive their implementation language. Wire schemas and durable records carry typed identities and scoped handles, never Rust layouts or pointers.
 
@@ -839,8 +828,7 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 
 #### Native override audit at `c3c2cba07`
 
-The adapter installs three local query providers in `adapter/callbacks.rs`. All three currently enter through the
-process-global `PLAN` slot; none reads a tracked per-definition compiler input.
+The adapter installs three local query providers in `adapter/callbacks.rs`. All three currently enter through the process-global `PLAN` slot; none reads a tracked per-definition compiler input.
 
 | Override | Definitions selected | Plan reads in the answer | Other answer inputs | Tracking consequence |
 | --- | --- | --- | --- | --- |
@@ -848,11 +836,7 @@ process-global `PLAN` slot; none reads a tracked per-definition compiler input.
 | `type_of` | Root type aliases that represent standard carriers or admitted native model/enum layouts | The matching enum or model declaration, carrier selection, native item path and native type arguments | Resolved native ADT, trait-object and generic-argument metadata | The alias's declaration record has no tracked input; every lookup scans the whole global model/enum inventory. |
 | `fn_sig` | Every local definition, changing only planned root functions | The selected function's generic-loan sites and retained-result source | rustc's declared signature and native-loan rewriting | Even a default answer first reads the global plan; a planned answer has no tracked signature-record input. |
 
-`mir_built` also reaches `active_plan()` from callee and terminator construction. Those reads select exact external
-signatures and source-local definitions after the provider has started, so tracking only the top-level `Function`
-would still be incomplete. A safe reader must bind the function product and all runtime requirements authenticated by
-that product, while alias queries need their own layout records. Until those inputs are carried into the corresponding
-HIR owner/query dependency, incremental reuse remains disabled for the unit.
+`mir_built` also reaches `active_plan()` from callee and terminator construction. Those reads select exact external signatures and source-local definitions after the provider has started, so tracking only the top-level `Function` would still be incomplete. A safe reader must bind the function product and all runtime requirements authenticated by that product, while alias queries need their own layout records. Until those inputs are carried into the corresponding HIR owner/query dependency, incremental reuse remains disabled for the unit.
 
 #### Tracked native inputs
 
@@ -871,11 +855,7 @@ The lowering-record worked example pins the input boundary: editing `greeting`'s
 
 The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
 
-The earlier shortcuts were not valid reuse: the injected `mir_built`, `type_of` and `fn_sig` answers lacked tracked
-per-definition inputs, and stripping development debug information would have changed the artifact contract. The
-qualified path instead supplies those tracked inputs, stable CGU membership and content-addressed linker inputs while
-retaining the profile-selected debug map. A missing plan-record report or a non-development profile still bypasses
-incremental reuse.
+The earlier shortcuts were not valid reuse: the injected `mir_built`, `type_of` and `fn_sig` answers lacked tracked per-definition inputs, and stripping development debug information would have changed the artifact contract. The qualified path instead supplies those tracked inputs, stable CGU membership and content-addressed linker inputs while retaining the profile-selected debug map. A missing plan-record report or a non-development profile still bypasses incremental reuse.
 
 Before E2 to E5 land, the adapter can retain the stable phase/CGU evidence, keep a complete override inventory, and build the edited-versus-cold comparison harness. It cannot soundly reuse a native answer. E2 must assign stable definition and instance identities, fixed CGU membership and complete fingerprints to the affected record reach. S3 and ranked E2 must make each overridden query read the exact body, signature, layout, attribute, position/debug and native-interface records it consumes, with witnessed dependencies. E3 must supply exact external native identities and payload compatibility. E4 must clone a qualified immutable incremental seed into private scratch and schedule it with bounded lifecycle ownership. E5 supplies the private-body, signature, test, run, graph and LSP workloads that prove the reuse boundary outside a single executable.
 
