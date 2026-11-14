@@ -73,6 +73,7 @@ mod spans;
 mod statics;
 mod terminators;
 mod test_cases;
+mod test_conftest;
 mod test_unit;
 mod types;
 mod union_debug;
