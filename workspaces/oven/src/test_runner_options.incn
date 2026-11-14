@@ -111,6 +111,14 @@ pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
     assert skipped.console_line() == "test_a.incn::test_two SKIPPED (later & <soon>)"
     assert json_record(passed)? == "{\"duration_ms\":12,\"file\":\"tests/test_a.incn\",\"markers\":[],\"name\":\"test_one\",\"schema_version\":\"incan.test.v1\",\"status\":\"passed\",\"test_id\":\"test_a.incn::test_one\"}"
     assert "\"reason\":\"later & <soon>\"" in json_record(skipped)?
+    parametrized = Outcome(
+        file="tests/test_a.incn",
+        label="test_a.incn",
+        name="test_add[1-2-3]",
+        status=Status.Passed,
+        parameters=["1", "2", "3"],
+    )
+    assert json_record(parametrized)? == "{\"duration_ms\":0,\"file\":\"tests/test_a.incn\",\"markers\":[],\"name\":\"test_add[1-2-3]\",\"parameters\":[\"1\",\"2\",\"3\"],\"schema_version\":\"incan.test.v1\",\"status\":\"passed\",\"test_id\":\"test_a.incn::test_add[1-2-3]\"}"
     summary = json_summary([passed, skipped, failed], 1600, Some(9))?
     assert summary == "{\"schema_version\":\"incan.test.v1\",\"summary\":{\"duration_ms\":1600,\"failed\":1,\"passed\":1,\"shuffle_seed\":9,\"skipped\":1,\"total\":3,\"xfailed\":0,\"xpassed\":0}}"
     document = junit([passed, skipped, failed], 1600)
