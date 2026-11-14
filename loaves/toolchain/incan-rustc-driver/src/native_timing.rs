@@ -99,7 +99,8 @@ impl Timing {
     }
 
     /// Record a named boundary in seconds; durations include preceding diagnostic writes and must not be summed
-    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents.
+    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents. Each
+    /// record names the driver process that reached the boundary, so a trace shows which process ran which phase.
     pub(crate) fn mark(&mut self, boundary: &'static str) {
         let Some(clock) = &mut self.0 else {
             return;
@@ -114,6 +115,7 @@ impl Timing {
             "elapsed": now.duration_since(clock.started).as_secs_f64(),
             "interval": now.duration_since(clock.previous).as_secs_f64(),
             "ended_ns": ended_ns,
+            "process": std::process::id(),
         });
         write_trace(format!("native-time: {record}\n").as_bytes());
         clock.previous = now;
