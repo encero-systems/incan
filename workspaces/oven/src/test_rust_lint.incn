@@ -1,0 +1,60 @@
+"""Clippy over Rust facets: a Loaf's `[rust.lints]` levels decide what fails the lint, and clean code passes."""
+
+from std.fs import Path
+from files import make_directory, write
+from rust_build import RustBuild
+from rust_lint import finding_counts, lint_rust
+from rust_registry import read_registry_units
+from scratch import scratch_directory
+from toolchain import load_toolchain, rust_compiler
+
+
+def lint_project(project: Path) -> Result[i32, str]:
+    """Lint one Loaf against the installed toolchain, as `incan lint PATH` does."""
+    toolchain = load_toolchain()?
+    request = RustBuild(
+        project=project.0,
+        rustc=rust_compiler(toolchain),
+        registry=read_registry_units(Path(toolchain.registry_units))?,
+        toolchain=Some(toolchain),
+        toolchain_search=toolchain.search,
+    )
+    return lint_rust(request)
+
+
+def rust_library(project: Path, body: str) -> Result[None, str]:
+    """A Rust library Loaf whose `[rust.lints]` denies clippy's `needless_return`."""
+    make_directory(project.joinpath("src"))?
+    manifest = f"[project]\nname='{project.name()}'\nversion='1.0.0'\n[rust]\ntype='lib'\n"
+    write(project.joinpath("loaf.toml"), manifest + "[rust.lints.clippy]\nneedless_return='deny'\n")?
+    write(project.joinpath("src/lib.rs"), body)?
+    return Ok(None)
+
+
+pub def test_a_denied_clippy_finding_fails_the_lint_and_a_clean_library_passes() -> Result[None, str]:
+    """
+    Lint two Rust libraries that deny `needless_return`.
+
+    1. A library without the finding passes.
+    2. The same library with a needless `return` fails, naming its crate.
+    """
+    scratch = scratch_directory()?
+    # 1. Clean code passes at the denied level.
+    clean = scratch.path().joinpath("clean")
+    rust_library(clean, "/// The fixture's value.\npub fn value() -> u32 {\n    7\n}\n")?
+    assert lint_project(clean)? == 0
+    # 2. The Loaf's level turns clippy's default warning into a failure.
+    violating = scratch.path().joinpath("violating")
+    rust_library(violating, "/// The fixture's value.\npub fn value() -> u32 {\n    return 7;\n}\n")?
+    match lint_project(violating):
+        Ok(_) => return Err("a finding the Loaf denies passed the lint")
+        Err(reason) =>
+            assert "clippy reported errors in violating" in reason, reason
+    return Ok(None)
+
+
+pub def test_clippy_summary_lines_are_not_findings() -> None:
+    """Clippy's closing lines count nothing; each warning and error it reported counts once."""
+    text = "warning: unneeded `return` statement\n  --> src/lib.rs:2:5\nerror: unused variable\n"
+    summary = "error: aborting due to 1 previous error\nwarning: 1 warning emitted\n"
+    assert finding_counts(text + summary) == (1, 1)

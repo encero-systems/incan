@@ -1,0 +1,176 @@
+"""
+Clippy over a Loaf's Rust facets: the check-only pass beside `check`, over the plan `build` compiles (#3126).
+
+`lint` builds the Loaf's Rust graph exactly as `build` does, so every library a unit links exists. It then checks each
+local Rust library again with `clippy-driver` from the pinned Rust toolchain: the same arguments, `--emit metadata` into
+the unit's own lint directory instead of a link, and the Loaf's `[rust.lints]` flags last, so they act as Cargo's
+`[lints]` table does. Nothing launches Cargo, and nothing a lint writes is a build product.
+"""
+
+from rust::std::process import Command
+from std.fs import Path
+from intake import read_project
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import DependencyDomain
+from rust_build import BuiltUnit, RustBuild, ordered, prepared_build, rust_output
+from rust_manifest import RustFacet, package_environment, rust_facet
+from rust_target import decoded, target_configuration
+from rust_units import build_rust, library_compile_arguments, read_receipt
+
+# How to install the clippy the pinned toolchain needs, named when it is missing.
+const CLIPPY_INSTALL: str = "rustup component add --toolchain 1.98.0 clippy"
+
+
+pub model LintReport:
+    """What clippy reported for one Rust library: its findings, and how many of them were errors."""
+
+    pub crate_name: str
+    pub project: str
+    pub warnings: int
+    pub errors: int
+    pub output: str
+
+    pub def summary(self) -> str:
+        """One line per library: its crate, its Loaf and its finding counts."""
+        return f"lint {self.crate_name} ({self.project}): {self.warnings} warnings, {self.errors} errors"
+
+
+pub def lint_rust(request: RustBuild) -> Result[i32, str]:
+    """
+    Lint every local Rust library the Loaf reaches, after building them.
+
+    1. Build the graph as `build` does; a unit that does not compile is a build failure, never a finding.
+    2. Recover the build's facet order and the libraries it recorded, by facet.
+    3. Check each Rust library with clippy and print its findings; any error-level finding fails the command.
+    """
+    # 1. Every library a lint links must exist first.
+    _ = build_rust(request)?
+    prepared = prepared_build(request)?
+    root = Path(prepared.project).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    output = rust_output(root, prepared.profile)
+    clippy = Path(prepared.rustc).parent().joinpath("clippy-driver")
+    if not clippy.is_file():
+        return Err(
+            f"no clippy in the pinned Rust toolchain: {clippy.0} does not exist\n  = hint: run `{CLIPPY_INSTALL}`",
+        )
+    # 2. The same order and the same libraries the build linked, keyed by facet as linking reads them.
+    facets, built, search = built_facets(prepared, root, output)?
+    mut failed: list[str] = []
+    mut total = 0
+    for facet in facets:
+        declared = rust_facet(facet.project, true, prepared.manifests)?
+        if declared.kind not in ["lib", "proc-macro"]:
+            continue
+        # 3. One clippy check per Rust library.
+        report = lint_library(clippy, facet, declared, output, prepared, built, search)?
+        if report.output != "":
+            println(report.output)
+        println(report.summary())
+        total += report.warnings + report.errors
+        if report.errors > 0:
+            failed.append(report.crate_name)
+    println(f"lint: {total} findings")
+    if len(failed) > 0:
+        return Err(f"clippy reported errors in {", ".join(failed)}")
+    return Ok(0)
+
+
+def built_facets(
+    request: RustBuild,
+    root: Path,
+    output: Path,
+) -> Result[Tuple[list[LocalFacet], Dict[str, BuiltUnit], list[str]], str]:
+    """The build's ordered local facets, the libraries its receipt recorded keyed by facet, and their search paths."""
+    configuration = target_configuration(request.rustc)?
+    demand = LocalDemand(
+        project=root.0,
+        domain=DependencyDomain.Target,
+        features=request.features,
+        defaults=request.default_features,
+        all_features=request.all_features,
+    )
+    facets = ordered(local_facets(demand, configuration, request.substitutes, request.manifests)?)?
+    recorded = read_receipt(output.joinpath("units.json"))?
+    mut built: Dict[str, BuiltUnit] = {}
+    mut search: list[str] = []
+    for facet in facets:
+        declared = rust_facet(facet.project, false, request.manifests)?
+        if declared.crate_name in recorded:
+            unit = recorded[declared.crate_name]
+            built[facet.key()] = unit
+            search = search + [unit.directory] + unit.search
+    return Ok((facets, built, search))
+
+
+def lint_library(
+    clippy: Path,
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[LintReport, str]:
+    """
+    Check one library with clippy over its build arguments, emitting metadata only, with its Loaf's lint flags last.
+
+    1. Take the arguments the build compiled the library with, writing into a lint directory of its own.
+    2. Emit metadata instead of linking, and add the Loaf's `[rust.lints]` flags after everything else.
+    3. Run clippy once and count what it reported.
+    """
+    # 1. The build's own framing of this unit, aimed at a directory nothing links from.
+    directory = output.joinpath("lint").joinpath(declared.crate_name)
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    compiled = library_compile_arguments(facet, declared, directory, request, built, search)?
+    # 2. Metadata is all a check needs; the lint levels come last so they override the crate's defaults.
+    mut arguments: list[str] = []
+    mut index = 0
+    while index < len(compiled):
+        if compiled[index] == "--emit" and index + 1 < len(compiled):
+            arguments = arguments + ["--emit", "metadata"]
+            index += 2
+            continue
+        arguments.append(compiled[index])
+        index += 1
+    flags = read_project(Path(facet.project), request.manifests).map_err((error) => error.message())?.intent.rust_lints.flags()
+    sysroot = Path(request.rustc).parent().parent().0
+    arguments = arguments + ["--sysroot", sysroot] + flags
+    # 3. Clippy's diagnostics are the findings; a failed exit means at least one was an error.
+    mut command = Command.new(clippy.0)
+    for argument in arguments:
+        command.arg(argument)
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    for name in sorted([key for key in environment.keys()]):
+        command.env(name, environment[name])
+    command.env_remove("RUSTC_BOOTSTRAP")
+    match command.output():
+        Err(error) => return Err(f"cannot run {clippy.0}: {error}")
+        Ok(result) =>
+            text = decoded(result.stderr)
+            warnings, reported = finding_counts(text)
+            mut errors = reported
+            if not result.status.success() and errors == 0:
+                errors = 1
+            return Ok(
+                LintReport(
+                    crate_name=declared.crate_name,
+                    project=facet.project,
+                    warnings=warnings,
+                    errors=errors,
+                    output=text,
+                ),
+            )
+
+
+pub def finding_counts(diagnostics: str) -> Tuple[int, int]:
+    """The warnings and errors clippy reported, without its closing summary lines."""
+    mut warnings = 0
+    mut errors = 0
+    for line in diagnostics.split("\n"):
+        if line.endswith("emitted") or line.startswith("error: aborting due to"):
+            continue
+        if line.startswith("warning:") or line.startswith("warning["):
+            warnings += 1
+        elif line.startswith("error:") or line.startswith("error["):
+            errors += 1
+    return (warnings, errors)

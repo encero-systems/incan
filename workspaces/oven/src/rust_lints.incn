@@ -11,6 +11,8 @@ from manifest_errors import IntakeError, IntakeErrorKind
 from c_facet import as_table, as_text, refused
 
 const SETTING_KEYS: FrozenList[str] = ["level", "priority"]
+# `expect` exists only as a source attribute; no command-line flag sets it.
+const EXPECT_REFUSAL: str = "`expect` has no command-line form: rustc accepts it only as a source attribute, `#[expect(...)]`"
 
 
 pub enum LintTool(str):
@@ -138,6 +140,8 @@ def lint_setting(
 def level_of(value: TomlValue, manifest: str, field: list[str]) -> Result[LintLevel, IntakeError]:
     """A level spelling: `allow`, `warn`, `deny` or `forbid`."""
     text = as_text(value, manifest, field)?
+    if text == "expect":
+        return Err(refused(manifest, field, IntakeErrorKind.Invalid, EXPECT_REFUSAL))
     match LintLevel.from_value(text):
         Some(level) => return Ok(level)
         None =>

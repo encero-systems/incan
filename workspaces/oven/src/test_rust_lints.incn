@@ -69,3 +69,13 @@ pub def test_rust_lints_refuse_unknown_keys_by_name() -> None:
         pedantic + ["priority"],
         IntakeErrorKind.Invalid,
     )
+
+
+pub def test_expect_is_refused_because_it_is_a_source_attribute() -> None:
+    """`expect` has no command-line flag, so the table refuses it by name and says where it belongs."""
+    match parse_intent(manifest("[rust.lints.clippy]\npedantic='expect'\n"), "loaf.toml"):
+        Ok(_) => fail("`expect` was accepted as a lint level")
+        Err(error) =>
+            assert error.field == ["rust", "lints", "clippy", "pedantic"], error.message()
+            assert "`expect` has no command-line form" in error.detail, error.message()
+            assert "#[expect(...)]" in error.detail, error.message()

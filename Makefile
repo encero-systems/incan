@@ -1,4 +1,4 @@
-# The repository entry points: format, contracts, examples, docs and the local gate.
+# The repository entry points: format, lint, contracts, examples, docs and the local gate.
 
 .DEFAULT_GOAL := help
 
@@ -9,10 +9,12 @@ CONTRACT_JOBS ?= 4
 
 # Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
 RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'
+# Every Loaf with a Rust library facet; `make lint` checks each with clippy through `incan lint`.
+RUST_FACETS = git ls-files 'loaves/**/loaf.toml' ':!:loaves/**/fixtures/**' | sed 's|/loaf.toml$$||' | while read -r loaf; do if [ -f "$$loaf/src/lib.rs" ]; then echo "$$loaf"; fi; done
 
 .PHONY: help
 help:
-	@echo "make fmt | test | examples | docs | pre-commit"
+	@echo "make fmt | lint | test | examples | docs | pre-commit"
 
 .PHONY: examples
 examples:
@@ -21,6 +23,10 @@ examples:
 .PHONY: test
 test:
 	@INCAN_LSP="$(INCAN_LSP)" $(INCAN) run workspaces/contracts/src/main.incn -- $(INCAN) workspaces/contracts/fixtures --scratch "$(CONTRACT_SCRATCH)" --jobs "$(CONTRACT_JOBS)" behavior check library interop testing project format graph
+
+.PHONY: lint
+lint:
+	@status=0; for loaf in $$($(RUST_FACETS)); do $(INCAN) lint "$$loaf" || status=1; done; exit $$status
 
 .PHONY: fmt
 fmt:

@@ -11,6 +11,7 @@ oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check [PATH] [--format text|json] [UNIT OPTIONS]
+oven lint [PATH] [UNIT OPTIONS]
 oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
@@ -24,6 +25,7 @@ incan --help | -h | help
 incan --version
 incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check [PATH] [--format text|json] [UNIT OPTIONS]
+incan lint [PATH] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 incan build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
@@ -34,7 +36,7 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `run`, `check` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 0.5.1's `--sdk-profile NAME` or `--sdk-profile=NAME` exits `2` on every command that took it (`check`, `build`, `run`, `test`, `oven lock`, `inspect bindings`, `inspect codegraph` and `oven inspect features`) and names its removal: ``unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses``.
 
@@ -88,6 +90,10 @@ With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file o
 Checks the source at `PATH` without producing an executable. A directory, or no `PATH`, selects the Loaf at or above it and checks the entry [`oven build`](#oven-build) selects for it; a Loaf without an Incan entry is refused. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
+
+## `oven lint`
+
+Checks the Rust libraries of the Loaf at `PATH`, or of the Loaf at or above the current directory, with `clippy-driver` from the installed toolchain's pinned Rust toolchain; `incan lint` runs the same command. It first builds the Loaf's Rust graph as [`oven build`](#oven-build) does, then checks each local Rust library unit in that graph once, with the arguments the build compiled it with, emitting metadata only and adding the unit's Loaf's [`[rust.lints]`](project_configuration.md#rust) levels last. Nothing it writes is a build product, and it launches no Cargo. It prints each library's findings, then one line per library, `lint CRATE (PATH): N warnings, M errors`, then `lint: N findings`. It exits `0` when no library reported an error, and `1` when one did, naming the crates; a unit that does not compile fails the build step first. Without clippy in the pinned Rust toolchain it exits `1` and names `rustup component add --toolchain 1.98.0 clippy`.
 
 ## `incan explain`
 

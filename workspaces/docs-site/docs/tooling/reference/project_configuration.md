@@ -106,11 +106,23 @@ An environment accepts a `dependencies` table with the same edge fields as the r
 
 ## `[rust]`
 
-Accepted fields are `name`, `type`, `edition`, `source`, `bin`, `lib` and `build-script`. The `name` default is the project identity's final component after replacing each hyphen with an underscore. `type` accepts `lib` (the default) or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`, overrides `build.rust-edition` and defaults to `2024`. `build-script` is a boolean and defaults to `false`. Local intake refuses `true`, naming the Loaf identity and the absence of an exact recorded build fact.
+Accepted fields are `name`, `type`, `edition`, `source`, `bin`, `lib`, `build-script` and `lints`. The `name` default is the project identity's final component after replacing each hyphen with an underscore. `type` accepts `lib` (the default) or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`, overrides `build.rust-edition` and defaults to `2024`. `build-script` is a boolean and defaults to `false`. Local intake refuses `true`, naming the Loaf identity and the absence of an exact recorded build fact.
 
 `[rust.source]` accepts a required string `root`, relative to the project. The library source is `src/lib.rs` under that directory, or under the project when `root` is omitted. `rust.lib` does not override this discovery.
 
 Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is relative to the project. It also accepts `unstable_features`, `toolchain_components` and `sysroot_dependencies`, which take the values of the `[build]` keys spelled with hyphens. Other keys are refused. A nonempty `unstable_features` or `sysroot_dependencies` enables unstable-feature compilation or pinned-sysroot library linking, respectively, for the project's Rust binaries.
+
+`[rust.lints]` sets lint levels for the Loaf's Rust units. It accepts two tables, `rust` for rustc's lints and `clippy` for clippy's; any other key is refused by name. Each entry maps a lint or lint group to `allow`, `warn`, `deny` or `forbid`, or to a table of a required `level` and an optional integer `priority` (default `0`); any other key in that table is refused by name. A lint name carries no tool prefix, since its table names the tool. `expect` is refused: rustc accepts it only as a source attribute, `#[expect(...)]`. `oven lint` passes the levels as `-A`, `-W`, `-D` and `-F` flags after the unit's own arguments, lowest priority first and by lint name within one priority, so a crate's own lint attributes still apply. Each Loaf declares its own table; a dependency's table applies to that dependency's units only.
+
+```toml
+[rust.lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
+
+[rust.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+needless_return = "allow"
+```
 
 ## `[vocab]`
 
