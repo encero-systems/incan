@@ -1,0 +1,144 @@
+"""Field reads, variant reads and nominal constructions name their owner by declaration identity in keyed products."""
+
+from _plan import Function, ExternalFunction
+from _types import PlanType, SourceSpan, source_span
+from _body import (
+    BasicBlock,
+    Callee,
+    CalleeKind,
+    Constant,
+    FieldProjection,
+    Local,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    Projection,
+    Rvalue,
+    RvalueKind,
+    Statement,
+    StatementKind,
+    Terminator,
+    TerminatorKind,
+    Unwind,
+)
+from function_records import encode_product, decode_product, product_identities, product_nominals
+from nominal_identities import (
+    NominalKind,
+    NominalReference,
+    ProductNominal,
+    UnitNominals,
+    describe_nominals,
+    resolve_nominals,
+    unit_nominals,
+)
+
+
+pub def test_reads_and_constructions_bind_to_current_owners() -> Result[None, str]:
+    """
+    A product that constructs `Point` and `Shape`, reads their fields and payload, tests and clones them, binds to
+    their current positions after unrelated declarations move them, and is byte-identical to a fresh capture there.
+    """
+    span = source_span(file="nominal_operations.incn", line=3, column=1)
+    before = unit_nominals([point()], [shape()], ["Point_0_37"], ["Shape_39_75"])
+    captured = operations(0, 0, "Point_0_37", "Shape_39_75", span)
+    empty_runtime: list[ExternalFunction] = []
+    product = encode_product(captured, empty_runtime, describe_nominals(product_nominals(captured, empty_runtime)?, before)?)?
+    after = unit_nominals(
+        [line_model(), point()], [color(), shape()], ["Line_0_20", "Point_22_59"], ["Color_61_90", "Shape_92_128"],
+    )
+    moved = operations(1, 1, "Point_22_59", "Shape_92_128", span)
+    fresh = encode_product(moved, empty_runtime, describe_nominals(product_nominals(moved, empty_runtime)?, after)?)?
+    assert fresh == product, "the product depends on its owners' positions or native names"
+    match resolve_nominals(product_identities(product)?, after):
+        None => assert false, "unrelated declarations made a reused product miss"
+        Some(references) =>
+            restored, _runtime = decode_product(product, references)?
+            assert restored == moved, "the reused product kept its producing unit's owner positions"
+    return Ok(None)
+
+
+def operations(model_position: int, enum_position: int, point_name: str, shape_name: str, span: SourceSpan) -> Function:
+    """Construct a `Point` and a `Shape` payload, read a field, the payload and the tag, test a variant, clone `Point`."""
+    point_type = PlanType.Model(model_position, point_name)
+    shape_type = PlanType.Enum(enum_position, shape_name)
+    statements = [
+        assign(1, Projection.Whole, RvalueKind.Model(model_position, [literal(3, span), literal(4, span)]), span),
+        assign(2, Projection.Whole, RvalueKind.Enum(enum_position, 1, [literal(5, span)]), span),
+        assign(3, Projection.Whole, RvalueKind.Use(copy(1, Projection.Field(0, PlanType.Int), span)), span),
+        assign(3, Projection.Whole, RvalueKind.Use(copy(2, Projection.VariantField(1, 0, PlanType.Int), span)), span),
+        assign(
+            3,
+            Projection.Whole,
+            RvalueKind.Use(copy(1, Projection.Fields([FieldProjection(slot=1, ty=PlanType.Int)]), span)),
+            span,
+        ),
+        assign(4, Projection.Whole, RvalueKind.Discriminant(Place(local=2, projection=Projection.Whole, span=span)), span),
+        assign(5, Projection.Whole, RvalueKind.IsVariant(Place(local=2, projection=Projection.Whole, span=span), 1), span),
+        assign(6, Projection.Whole, RvalueKind.Tuple([copy(3, Projection.Whole, span), copy(3, Projection.Whole, span)]), span),
+    ]
+    clone = TerminatorKind.Call(
+        Callee(kind=CalleeKind.CloneModel(model_position, point_name), span=span),
+        [copy(1, Projection.Whole, span)],
+        Place(local=7, projection=Projection.Whole, span=span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name="operate",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[
+            Local(ty=PlanType.Unit, span=span),
+            Local(ty=point_type, span=span),
+            Local(ty=shape_type, span=span),
+            Local(ty=PlanType.Int, span=span),
+            Local(ty=PlanType.EnumTag, span=span),
+            Local(ty=PlanType.Bool, span=span),
+            Local(ty=PlanType.Tuple([]), span=span),
+            Local(ty=point_type, span=span),
+        ],
+        blocks=[
+            BasicBlock(statements=statements, terminator=Terminator(kind=clone, span=span), cleanup=false, span=span),
+            BasicBlock(statements=[], terminator=Terminator(kind=TerminatorKind.Return, span=span), cleanup=false, span=span),
+        ],
+        span=span,
+    )
+
+
+def assign(local: int, projection: Projection, value: RvalueKind, span: SourceSpan) -> Statement:
+    """Assign one operation to a local place."""
+    return Statement(
+        kind=StatementKind.Assign(Place(local=local, projection=projection, span=span), Rvalue(kind=value, span=span)),
+        span=span,
+    )
+
+
+def copy(local: int, projection: Projection, span: SourceSpan) -> Operand:
+    """Copy one projected place."""
+    return Operand(kind=OperandKind.Copy(Place(local=local, projection=projection, span=span)), span=span)
+
+
+def literal(value: int, span: SourceSpan) -> Operand:
+    """One integer literal operand."""
+    return Operand(kind=OperandKind.Literal(Constant.Int(value)), span=span)
+
+
+def point() -> ProductNominal:
+    """The `Point` model declaration."""
+    return ProductNominal(kind=NominalKind.Model, identity="model:app::Point", digest="point-v1")
+
+
+def shape() -> ProductNominal:
+    """The `Shape` enum declaration."""
+    return ProductNominal(kind=NominalKind.Enum, identity="enum:app::Shape", digest="shape-v1")
+
+
+def line_model() -> ProductNominal:
+    """An unrelated model declaration."""
+    return ProductNominal(kind=NominalKind.Model, identity="model:app::Line", digest="line-v1")
+
+
+def color() -> ProductNominal:
+    """An unrelated enum declaration."""
+    return ProductNominal(kind=NominalKind.Enum, identity="enum:app::Color", digest="color-v1")
