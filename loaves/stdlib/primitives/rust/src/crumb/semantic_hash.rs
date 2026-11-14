@@ -31,13 +31,14 @@ pub(super) enum Value {
 
 /// One stored field with its identity, canonical participation and declared absence.
 pub(super) struct Field {
-    identity: Vec<u8>,
-    canonical: bool,
-    absent: char,
-    value: Value,
+    pub(super) identity: Vec<u8>,
+    pub(super) canonical: bool,
+    pub(super) absent: char,
+    pub(super) value: Value,
 }
 
 /// One type node, mirroring the Incan `TypeNode` forms the corpus notation can spell.
+#[derive(Clone)]
 pub(super) enum Node {
     Scalar(String),
     Decimal(i64, i64),
@@ -49,11 +50,12 @@ pub(super) enum Node {
 }
 
 /// One structural field shape used by S spellings.
+#[derive(Clone)]
 pub(super) struct Shape {
-    identity: Vec<u8>,
-    storage: Node,
-    canonical: bool,
-    absent: char,
+    pub(super) identity: Vec<u8>,
+    pub(super) storage: Node,
+    pub(super) canonical: bool,
+    pub(super) absent: char,
 }
 
 /// Object keeps every stored field; canonical omits fields excluded by their description.
@@ -794,6 +796,11 @@ fn compare_decimals(left: i128, left_scale: i64, right: i128, right_scale: i64) 
 /// Return the selector spelling N; bound definitions never expand into it.
 pub(super) fn selector_spelling(node: &Node) -> Option<String> {
     spell(node, true, &mut Vec::new())
+}
+
+/// Return the structural spelling S; a bare nominal selector supplies no shape.
+pub(super) fn shape_spelling(node: &Node) -> Option<String> {
+    spell(node, false, &mut Vec::new())
 }
 
 /// Spell one node as N (nominal) or S (structural) under the active definition stack.
