@@ -50,6 +50,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("mcp", "incan mcp PATH [--profile NAME]"),
             ("toolchain pack", "incan toolchain pack OUT"),
             ("toolchain install", "incan toolchain install ARCHIVE"),
+            ("toolchain verify", "incan toolchain verify ASSET"),
             ("tools doctor", "incan tools doctor [--format text|json]"),
             ("tools metadata api", "incan tools metadata api [PATH] [--format json|markdown]"),
             ("tools metadata model", "incan tools metadata model PATH MODEL [--format incan|json]"),
