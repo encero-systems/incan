@@ -7,6 +7,7 @@ A workspace root's shared tables as `oven workspace inspect --format json` repor
    `[workspace.sources]` as declared.
 3. Per member, `effective_dependencies` in the same split, each entry with its `origin`, and
    `workspace_environment_extends`, the `workspace:NAME` fragments each environment extends.
+4. `warnings`: an `unused_shared_dependency` for each shared dependency no member inherits.
 """
 
 from std import toml
@@ -174,6 +175,39 @@ pub def member_tables(root: Path, member: Path) -> Result[Dict[str, JsonValue], 
     )
     tables["workspace_environment_extends"] = environment_extends(table_of(declared, "envs"))
     return Ok(tables)
+
+
+pub def unused_shared(root: Path, members: list[Path]) -> Result[list[JsonValue], str]:
+    """
+    0.5.1's `unused_shared_dependency` warnings: each `[workspace.dependencies]` entry no member inherits with
+    `workspace = true`, the local libraries first and then the registry Loaves, each in name order.
+    """
+    shared = table_of(table_of(manifest_table(root.joinpath("loaf.toml"))?, "workspace"), "dependencies")
+    mut inherited: list[str] = []
+    for member in members:
+        entries = table_of(manifest_table(member.joinpath("loaf.toml"))?, "dependencies")
+        for alias in entries.keys():
+            if flag_of(entry_table(entries[alias]), "workspace", false) and alias not in inherited:
+                inherited.append(alias)
+    mut libraries: list[JsonValue] = []
+    mut registry: list[JsonValue] = []
+    for alias in sorted([alias for alias in shared.keys()]):
+        if alias in inherited:
+            continue
+        if "path" in entry_table(shared[alias]):
+            libraries.append(unused_warning("library", alias))
+        else:
+            registry.append(unused_warning("rust", alias))
+    return Ok(libraries + registry)
+
+
+def unused_warning(kind: str, name: str) -> JsonValue:
+    """One `unused_shared_dependency` warning, in 0.5.1's fields."""
+    mut warning: Dict[str, JsonValue] = {}
+    warning["kind"] = JsonValue.string("unused_shared_dependency")
+    warning["dependency_kind"] = JsonValue.string(kind)
+    warning["name"] = JsonValue.string(name)
+    return JsonValue.object(warning)
 
 
 def environment_extends(environments: Dict[str, TomlValue]) -> JsonValue:

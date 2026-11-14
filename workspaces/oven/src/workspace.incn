@@ -15,12 +15,16 @@ from std.toml import TomlValue
 from cli_help import render
 from files import read
 from intake import read_project, source_root_of
-from workspace_shared import member_tables, shared_tables
+from lock_format import LOCK_NAME, read_lock
+from workspace_shared import member_tables, shared_tables, unused_shared
 from rust::std::env import current_exe
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 
 pub const INSPECT_USAGE: str = "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."
+# 0.5.1's workspace capability report: capabilities still apply per member.
+const CAPABILITY_STATUS: str = "member_local_only"
+const CAPABILITY_REASON: str = "workspace capability application remains unavailable until scoped mutation planning and policy evaluation are implemented"
 # The workspace table's keys.
 pub const WORKSPACE_KEYS: FrozenList[str] = ["members", "default-members", "exclude"]
 # `run` and `version` act on one project; a selection of several members is refused, as in 0.5.1.
@@ -290,7 +294,7 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
         return Err(f"`--format` is text or json, got `{format}`")
     workspace = find_workspace(Path("."))?
     origin, members = select_members(workspace, selection)?
-    lock = workspace.root.joinpath("oven.lock")
+    lock = workspace.root.joinpath(LOCK_NAME)
     if format == "json":
         return inspection_document(workspace, origin, members, lock)
     mut lines = [
@@ -299,9 +303,47 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
         f"Selected scope ({origin.value()})",
     ]
     for member in members:
-        lines.append(f"  - {member.name} ({member.relative})")
+        lines.append(f"  - {member.name} ({member.root.0})")
     lines.append(f"Canonical lock: {lock.0}")
+    stale = stale_locks(workspace)
+    if len(stale) > 0:
+        lines.append("Stale member-local locks:")
+        for path in stale:
+            lines.append(f"  - {path}")
     return Ok("\n".join(lines))
+
+
+def stale_locks(workspace: Workspace) -> list[str]:
+    """Each non-root member's own `oven.lock`: the workspace root holds the one lock (RFC 117), so a member's is stale."""
+    mut found: list[str] = []
+    for member in workspace.members:
+        path = member.root.joinpath(LOCK_NAME)
+        if not member.is_root_member and path.is_file():
+            found.append(path.0)
+    return found
+
+
+def lock_report(workspace: Workspace, lock: Path) -> JsonValue:
+    """
+    The canonical lock as 0.5.1 reported it: its path, whether it is a file, the stale member-local locks, and its
+    `state`: `missing`, `invalid` with the reader's `error`, or `present` with the lock's graph identity as its
+    `fingerprint`.
+    """
+    mut state: Dict[str, JsonValue] = {"status": JsonValue.string("missing")}
+    if lock.exists():
+        match read_lock(lock):
+            Ok(found) =>
+                state["status"] = JsonValue.string("present")
+                state["fingerprint"] = JsonValue.string(found.graph)
+            Err(reason) =>
+                state["status"] = JsonValue.string("invalid")
+                state["error"] = JsonValue.string(reason)
+    mut report: Dict[str, JsonValue] = {}
+    report["canonical_path"] = JsonValue.string(lock.0)
+    report["exists"] = JsonValue.bool(lock.is_file())
+    report["state"] = JsonValue.object(state)
+    report["stale_member_local_locks"] = JsonValue.array([JsonValue.string(path) for path in stale_locks(workspace)])
+    return JsonValue.object(report)
 
 
 def inspection_document(
@@ -320,8 +362,9 @@ def inspection_document(
         entry["root"] = JsonValue.string(member.root.0)
         entry["manifest_path"] = JsonValue.string(member.root.joinpath("loaf.toml").0)
         entry["is_root_member"] = JsonValue.bool(member.is_root_member)
+        entry["capabilities"] = JsonValue.array([])
         declared.append(JsonValue.object(entry))
-    scope = [JsonValue.object({"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative)}) for member in members]
+    scope = [JsonValue.object({"name": JsonValue.string(member.name), "root": JsonValue.string(member.root.0)}) for member in members]
     mut fields: Dict[str, JsonValue] = {
         "schema_version": JsonValue.int(1),
         "workspace": JsonValue.object(
@@ -332,10 +375,12 @@ def inspection_document(
         "selected_scope": JsonValue.object(
             {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
         ),
-        "lock": JsonValue.object(
-            {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
-        ),
+        "lock": lock_report(workspace, lock),
     }
+    fields["capabilities"] = JsonValue.object(
+        {"status": JsonValue.string(CAPABILITY_STATUS), "reason": JsonValue.string(CAPABILITY_REASON)},
+    )
+    fields["warnings"] = JsonValue.array(unused_shared(workspace.root, [member.root for member in workspace.members])?)
     fields["exclusions"] = JsonValue.array([JsonValue.string(item) for item in workspace.excluded])
     working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
     fields["invocation"] = JsonValue.object({"current_dir": JsonValue.string(working.0)})
