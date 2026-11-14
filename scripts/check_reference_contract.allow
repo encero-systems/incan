@@ -1,1 +1,2 @@
 # Exceptions to scripts/check_reference_contract.incn: page<TAB>exact phrase<TAB>reason. The page may be `*`.
+tooling/reference/cli_reference.md	0.6 removed SDK profiles and `[sdk]` (#3144)	The literal text of the refusal of --sdk-profile, which names its issue; the reference quotes the message the command prints.

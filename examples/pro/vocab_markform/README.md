@@ -22,22 +22,15 @@ The important parts are:
 - `from pub::markform ...` activates the vocab metadata shipped by the producer library.
 - `markup:` is a library-defined block keyword, not a core Incan keyword.
 - `<section class="card">...</section>` is an ordinary open/close element with a quoted attribute value.
-- `{title}` is an expression hole: it re-enters ordinary Incan parsing and typechecks `title` as the real `str`
-  parameter it is, not as opaque DSL text.
+- `{title}` is an expression hole: it re-enters ordinary Incan parsing and typechecks `title` as the real `str` parameter it is, not as opaque DSL text.
 - `<!-- rendered by markform -->` is a comment, preserved verbatim.
 - `&amp;` is an entity reference.
-- `<img src={image_url} alt="Preview" />` is a self-closing element with both an expression-hole attribute value
-  (`src`) and a literal attribute value (`alt`).
-- Outside a `markup:` block, none of this is ordinary Incan syntax -- `<section>` parses (or fails to parse) as
-  plain Incan expressions, never silently as markup.
+- `<img src={image_url} alt="Preview" />` is a self-closing element with both an expression-hole attribute value (`src`) and a literal attribute value (`alt`).
+- Outside a `markup:` block, none of this is ordinary Incan syntax -- `<section>` parses (or fails to parse) as plain Incan expressions, never silently as markup.
 
 ## What this proves, and what it does not
 
-This example proves the parser-to-typechecker-to-lowering contract: the fragment parses through the `Markup`
-submode's dedicated grammar, its expression holes typecheck as real Incan expressions (`title` and `image_url`
-resolve to `str`, exactly as they would anywhere else in the function), and the resulting typed
-`EmbeddedFragmentExpr` artifact reaches Body IR successfully with its holes already lowered. It does **not**
-register a desugarer or lowering hook. `incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
+This example proves the parser-to-typechecker-to-lowering contract: the fragment parses through the `Markup` submode's dedicated grammar, its expression holes typecheck as real Incan expressions (`title` and `image_url` resolve to `str`, exactly as they would anywhere else in the function), and the resulting typed `EmbeddedFragmentExpr` artifact reaches Body IR successfully with its holes already lowered. It does **not** register a desugarer or lowering hook. `incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
 
 Files worth reading in order:
 

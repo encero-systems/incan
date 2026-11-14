@@ -97,4 +97,3 @@ The Incan contract is deliberately different from a string-only `uint64` map. It
 
 - [Choosing collection types](../how-to/choosing_collections.md)
 - [`std.collections` reference](../reference/stdlib/collections.md)
-- [RFC 101: `std.collections.OrdinalMap`](../../RFCs/closed/implemented/101_std_collections_ordinal_map.md)

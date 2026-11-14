@@ -1,7 +1,6 @@
 # incan_codegraph
 
-Ring: **kernel** — the stable codegraph fact schema for tooling and agent context.
-`incan_codegraph` defines the fact schema and portable Loaf graph artifact used by `incan inspect codegraph`.
+Ring: **kernel** — the stable codegraph fact schema for tooling and agent context. `incan_codegraph` defines the fact schema and portable Loaf graph artifact used by `incan inspect codegraph`.
 
 The crate owns record types, schema versioning, language/provenance vocabulary, source span shapes, degraded-state flags, and JSONL serialization helpers. It does not extract facts from source code. The compiler and tooling layers produce records; downstream tools decide how to index, query, rank, visualize, or serve them.
 

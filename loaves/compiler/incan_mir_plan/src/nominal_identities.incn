@@ -169,7 +169,11 @@ pub model NominalRemap:
                 return Ok(PlanType.NativeArrayMutRef(self.remap_types(types)?, length))
             PlanType.RawPointer(mutable, types) => return Ok(PlanType.RawPointer(mutable, self.remap_types(types)?))
             PlanType.Boxed(types) => return Ok(PlanType.Boxed(self.remap_types(types)?))
-            PlanType.Trait(_identity) => return Err("plan products refuse a canonical source-trait type")
+            PlanType.Trait(identity) =>
+                # The publication fold crosses every type of the unit's own plan, and a trait names no position in it.
+                if self.fold >= 0:
+                    return Ok(PlanType.Trait(identity))
+                return Err("plan products refuse a canonical source-trait type")
             # Every remaining alternative names no nested type and no nominal position.
             _ => return Ok(ty)
 

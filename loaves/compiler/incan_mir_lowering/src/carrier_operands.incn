@@ -222,7 +222,7 @@ def owned_union_member(
     """
     match target:
         PlanType.Enum(owner, _name) =>
-            index = owner - len(builder.enums)
+            index = carrier_position(owner)
             if index < 0 or index >= len(builder.intrinsics) or builder.intrinsics[index].carrier != Carrier.Declared:
                 return Ok(value)
         _ => return Ok(value)

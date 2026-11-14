@@ -86,7 +86,7 @@ Here `T` is fixed to `Order`, while `E` is left as `_` and inferred. This avoids
 
 - It does not replace normal function/method signatures (`def f(x: T) -> U` remains the default form).
 - It does not require callers to always be explicit.
-- It does not provide overload-based "optional static/dynamic entrypoint" behavior by itself. That route belongs to RFC 028-style overloading design.
+- It does not provide overload-based "optional static/dynamic entrypoint" behavior by itself. That route belongs to [trait-based overloading](traits_as_language_hooks.md).
 
 ## Practical guidance
 

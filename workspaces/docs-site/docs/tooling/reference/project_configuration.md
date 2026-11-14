@@ -8,7 +8,7 @@ The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`
 
 ## `[project]`
 
-`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. `requires-incan` is a version requirement that the active toolchain must satisfy before `run`, `check`, `build` or `test` compiles anything. A prerelease toolchain satisfies it by its release version: `0.6.0-dev.8` meets `>=0.5` and misses `>=0.5.0,<0.6.0`, as `0.6.0` does, unless the requirement names a prerelease of that release, such as `>=0.6.0-dev.5`.
+`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. `requires-incan` is a version requirement that the active toolchain must satisfy before `run`, `build`, `test`, `lint`, `oven check`, `oven lock`, `oven add`, `oven dependency` and `oven update` compile, run or lock anything; a toolchain it excludes is refused with `COMMAND refused: REASON`, exit `1`. `incan check` does not enforce it, and neither does `incan run --direct`. A prerelease toolchain satisfies it by its release version: `0.6.0-dev.8` meets `>=0.5` and misses `>=0.5.0,<0.6.0`, as `0.6.0` does, unless the requirement names a prerelease of that release, such as `>=0.6.0-dev.5`.
 
 ```toml
 [project]
@@ -26,7 +26,7 @@ Omitting the key preserves the existing unit key and records no explicit registr
 
 ### `[project.scripts]`
 
-Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library, such as `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it and ignored: the library is built as a library, never as an executable, and `run`, `check`, `build` and `test` print one warning naming the script line. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
+Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library, such as `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it and ignored: the library is built as a library, never as an executable, and `run`, `check`, `build` and `test` print one warning naming the script line. A script does not select what `run`, `check` and `build` compile: without `PATH`, they select the Loaf's `lib.incn` or `main.incn`, as [`oven build`](cli_reference.md#oven-build) states.
 
 ### `[project.features]`
 
@@ -75,7 +75,7 @@ The dependency key is the code-facing alias. `package`, `crate`, bare string val
 
 `loaf` accepts an unscoped identity or one scope and name separated by `/`. Components contain 1 through 64 lowercase ASCII letters, digits or hyphens and begin with a letter or digit. Unscoped local identities and exact upstream names under `crates-io/` may also contain underscores. Capitals are refused and are never folded. The default Rust crate name is the identity's final component with hyphens replaced by underscores.
 
-A provider dependency is a `provider`-kind requirement (RFC 117): a target-specific library, SDK, toolchain, runtime or deployment requirement that an Oven-managed provider satisfies. It requires `provider`, which follows the `loaf` identity rules, and `version`, a version requirement. It also accepts `features` (default empty), `optional` (default `false`) and `target`. `loaf` and `path` are refused beside `provider`. `oven dependency list` prints it as `KEY: provider NAME REQUIREMENT`. This toolchain manages no providers, so locking, running, building or testing a project whose graph declares one is refused, naming the manifest, the key and the provider.
+A provider dependency is a `provider`-kind requirement: a target-specific library, SDK, toolchain, runtime or deployment requirement that an Oven-managed provider satisfies. It requires `provider`, which follows the `loaf` identity rules, and `version`, a version requirement. It also accepts `features` (default empty), `optional` (default `false`) and `target`. `loaf` and `path` are refused beside `provider`. `oven dependency list` prints it as `KEY: provider NAME REQUIREMENT`. This toolchain manages no providers, so locking, running, building or testing a project whose graph declares one is refused, naming the manifest, the key and the provider.
 
 ```toml
 [dependencies]
@@ -109,7 +109,24 @@ sysroot-dependencies = ["rustc_driver"]
 
 ## `[envs.NAME]`
 
-An environment accepts a `dependencies` table with the same edge fields as the root table. `rust-dependencies` is refused. `incan test` selects the root project's `test` environment in addition to its production dependencies, including for a Rust facet's unit-test harness. Ordinary builds do not select that overlay, and a dependency's own test environment does not propagate to consumers.
+Every Loaf has the standard environments `dev`, `test`, `lint` and `docs` without a table. `[envs.NAME]` adds to one of them or declares another. [`oven env`](cli_reference.md#oven-env) lists, shows and runs them.
+
+| Key | Type | Contract |
+| --- | --- | --- |
+| `dependencies` | Table | Entries with the edge fields of [`[dependencies]`](#dependencies). `NAME = { workspace = true }` inherits the workspace root's shared entry. |
+| `extends` | String or array of strings | The environments this one extends. `workspace:NAME` names the workspace root's `[workspace.envs.NAME]` fragment. |
+| `requires-incan` | String | A version requirement on the active toolchain, as `[project].requires-incan`. |
+| `cwd` | String | The directory `oven env run` runs a script in, relative to the project. Default `.`. |
+| `env-vars` | Table of strings | Variables `oven env run` sets. |
+| `scripts` | Table | Each script is a nonempty array of strings, its argument list, or a string, a command without arguments. |
+| `detached` | Boolean | `true` leaves `dev` out of the environment's overlay chain. Default `false`. |
+| `description` | String | Accepted; no command reads it. |
+
+Other keys are refused. `rust-dependencies` is refused with the `[envs.NAME.dependencies]` form of its entry.
+
+An environment resolves through its overlay chain: the project, then `dev` unless the environment is `dev` or `detached`, then the chain of each environment it `extends`, in order, then the environment itself. An environment appears in a chain once. A cycle is refused with ``environment `NAME` extends itself through A -> B -> NAME``, and an environment that is neither standard nor declared with ``environment `NAME` is not configured``. A later layer replaces `cwd` and adds or replaces each variable, script and dependency entry by name. Every `requires-incan` along the chain, the project's included, applies.
+
+`incan test` selects the root project's `test` environment in addition to its production dependencies, including for a Rust facet's unit-test harness. Ordinary builds do not select that overlay, and a dependency's own test environment does not propagate to consumers.
 
 ## `[rust]`
 
@@ -223,7 +240,7 @@ The root project's `oven.lock` records each target's contract under `[[interop]]
 
 ## `[c]`
 
-A Loaf with a `[c]` table carries a C facet and is a Clove (RFC 159). Every path is relative to the Loaf root.
+A Loaf with a `[c]` table carries a C facet and is a Clove. Every path is relative to the Loaf root.
 
 | Field | Form | Meaning |
 | --- | --- | --- |
@@ -240,7 +257,7 @@ A configuration accepts `extends` (one other configuration), `sources` and `defi
 
 An `oven build`, `run`, `test` or `check` of a unit that reaches a Clove (its own project or a path dependency) compiles every configuration into a static archive under the Clove's own `target/incan/cloves/`, once for every unit that reaches it. Archive members, their order and their metadata are fixed, so identical inputs give identical archive bytes. A configuration is reused while its declared inputs and every file its compiles read are unchanged; a rebuilt archive rebuilds the units that link it. Optimization follows the profile: `-O0` for `debug`, `-O3` for `release`.
 
-No C toolchain release is installed with the Incan toolchain yet. `INCAN_C_COMPILER=host` selects the host compiler for local development: Xcode's Clang and `libtool` on macOS, `cc`, `c++` and `ar` elsewhere. The unit records the host compiler's identity and is not publishable.
+A Clove compiles only with the host compiler, which `INCAN_C_COMPILER=host` selects: Xcode's Clang and `libtool` on macOS, `cc`, `c++` and `ar` elsewhere. The unit records the host compiler's identity and is not publishable.
 
 - Refused: a missing `library`, `public-headers` or `[[c.compile]]` entry; a `library` that is not a C identifier; a declared `[c.configurations]` without `default`; an `extends` that names no configuration or forms a cycle; a definition that redefines one inherited through `extends`; a source of another file kind; an absolute path, a path naming an environment variable, or a path that leaves the Loaf root; a glob that matches nothing or spans directories; compiler flags (`flags`, `cflags` and other keys); a build without `INCAN_C_COMPILER=host`; and a compile that reads a file outside the Loaf root.
 

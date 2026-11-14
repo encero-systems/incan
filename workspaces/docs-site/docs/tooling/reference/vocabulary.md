@@ -36,7 +36,7 @@ A registration without `with_desugarer()` publishes descriptors only. Using one 
 
 ## Publication and execution
 
-Oven builds the entry and its imports as native host units. It runs registration at the producer and publishes the descriptors, schema version and vocabulary-unit identity with the library. Consumers read those descriptors. Registration runs again when any input of the vocabulary unit changes.
+Oven builds the entry and its imports as native host units. It runs registration at the producer, with an empty environment, and publishes the descriptors, schema version and vocabulary-unit identity with the library. Consumers read those descriptors. Registration runs again when any input of the vocabulary unit changes.
 
 A custom expansion runs in a separate native worker. Requests contain structured syntax and the requesting module's path. Responses contain structured expressions, statements or compilation-unit declarations matching the registered output position. Source text is not an accepted response. Each output source range must lie inside its requesting vocabulary node; an omitted output range inherits that node's range. Distinct output nodes may share a range. A reused response produces the same output as the computation it replaces.
 

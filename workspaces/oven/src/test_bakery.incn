@@ -9,6 +9,7 @@ from bakery import (
     claim,
     fact_file,
     find,
+    find_selected,
     forget_verified,
     verification_entries,
     view,
@@ -21,7 +22,7 @@ from bakery import (
     verify_all,
     repair_derived,
 )
-from bakery_records import Fact, claim_file, staging_root
+from bakery_records import Fact, claim_file, payload_selection, staging_root
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
@@ -246,6 +247,90 @@ def added_segment(before: Snapshot, after: Snapshot) -> Result[str, str]:
     if len(added) != 1:
         return Err(f"a commit reached {len(added)} new segments")
     return Ok(added[0])
+
+
+pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_reuse_is_refused() -> Result[None, str]:
+    """
+    Two valid bakes of one unit identity with unequal payloads are both kept, and the identity alone selects neither
+    (RFC 124, BE-31).
+
+    1. A second producer's unequal payload joins the first: neither payload leaves the store.
+    2. A lookup by unit identity alone is refused as ambiguous, for a reader, a waiting baker and a project view.
+    3. A receipt that pinned its exact payloads still reads them.
+    4. Collection keeps both payloads, and the conflict stays.
+    """
+    scratch = scratch_directory()?
+    make_directory(scratch.path().joinpath("bakery"))?
+    store = scratch.path().joinpath("bakery").resolve().map_err((error) => error.message())?
+    identity = digest_of("e5")
+    assert bake(store, identity, "first producer")?
+    first = stored_payload(store, identity, "payload")?
+    viewed = scratch.path().joinpath("project").joinpath("dep")
+    original = match find(store, identity)?:
+        None => return Err("the first bake was not found")
+        Some(fact) => fact
+
+    view_directory(store, original, viewed)?
+    receipt = library_directory(store, viewed)?
+    assert read(receipt.joinpath("payload"))? == "first producer"
+    # 1. The second producer holds the claim and publishes a valid bake of the same identity.
+    added = second_producer(store, identity, "second producer")?
+    second = payload_path(store, added.files[0].digest)
+    assert second.0 != first.0
+    assert read(first)? == "first producer", "the second producer's payload replaced the first"
+    assert read(second)? == "second producer"
+    # 2. Neither the newest, the first found nor another caller's choice is a default.
+    forget_verified()
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "a unit identity alone selected one of two unequal payloads"
+        Err(error) =>
+            assert "ambiguous-payload" in error and identity in error, error
+    match bake(store, identity, "third producer"):
+        Ok(_) =>
+            assert false, "a waiting baker reused or replaced a conflicted unit by its identity"
+        Err(error) =>
+            assert "ambiguous-payload" in error, error
+    match library_directory(store, viewed):
+        Ok(_) =>
+            assert false, "a view that names only the unit identity selected a payload"
+        Err(error) =>
+            assert "ambiguous-payload" in error, error
+    # 3. A receipt names its exact payloads, so it is never asked to choose again and never gets the other variant.
+    assert library_directory(store, receipt)?.0 == receipt.0
+    assert read(receipt.joinpath("payload"))? == "first producer"
+    assert selected_text(store, identity, payload_selection(original))? == "first producer"
+    assert selected_text(store, identity, payload_selection(added))? == "second producer"
+    assert find_selected(store, identity, digest_of("77"))? is None, "an unknown selection was given a variant"
+    # 4. Both variants are referenced, so collection reclaims neither.
+    collected = collect(store, -1)?
+    assert collected.payloads_removed == 0, f"collection removed {collected.payloads_removed} variant payloads"
+    assert read(first)? == "first producer" and read(second)? == "second producer"
+    assert len(verify_all(store)?) == 0, "a conflicted unit was reported as damage"
+    match find(store, identity):
+        Ok(_) =>
+            assert false, "collection erased the conflict"
+        Err(error) =>
+            assert "ambiguous-payload" in error, error
+    return Ok(None)
+
+
+def second_producer(store: Path, identity: str, content: str) -> Result[Fact, str]:
+    """Publish another valid bake of `identity` under its claim, as a second producer does."""
+    held = claim(store, identity)?
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), content)?
+    return seal(store, identity, staged, "library", f"dep\t{identity}", [], "second producer")
+
+
+def selected_text(store: Path, identity: str, selection: str) -> Result[str, str]:
+    """The payload text of the bake of `identity` that a receipt pinned as `selection`."""
+    match find_selected(store, identity, selection)?:
+        None => return Err(f"no bake of {identity[:12]} holds the payloads {selection[:12]}")
+        Some(fact) =>
+            match fact_file(store, fact, "payload"):
+                None => return Err("the selected bake has no payload")
+                Some(path) => return read(path)
 
 
 pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:

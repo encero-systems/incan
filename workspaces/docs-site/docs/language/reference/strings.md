@@ -168,7 +168,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 
 ## Display
 
-`print(value)`, `println(value)`, `str(value)` and an f-string `{value}` part render the same text for the same value.
+`print(value)`, `println(value)`, `str(value)` and an f-string `{value}` part render the same text for the same value. `print` and `println` with several arguments render each argument and separate them with one space.
 
 | Value | Displayed text |
 | --- | --- |

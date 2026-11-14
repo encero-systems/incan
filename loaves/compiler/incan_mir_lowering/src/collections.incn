@@ -177,7 +177,7 @@ pub def collection_call(
     return Ok(None)
 
 
-def owned_runtime_operand(
+pub def owned_runtime_operand(
     mut builder: Builder,
     operand: Operand,
     parameter: PlanType,

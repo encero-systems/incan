@@ -62,6 +62,8 @@ oven lock .
 
 The generated `oven.lock` records exact path and compiled-unit edges. Commit it with the manifest. To choose another version-selection mode, run `oven lock --versions newest .` or `oven lock --versions lowest-direct .`; later lock commands keep that mode.
 
+An `untested lower bound` line means a requirement's lower bound names a version the registry does not publish, so the lock selected a later version and the bound itself was never tested. Raise the requirement's lower bound to the locked version when the project needs a tested bound.
+
 Require an unchanged committed graph in a build:
 
 ```bash

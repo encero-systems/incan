@@ -156,7 +156,7 @@ Build with the host compiler:
 INCAN_C_COMPILER=host incan run src/main.incn
 ```
 
-The build compiles the C into `libshim.a` and links it; an unchanged library is reused. A path dependency that carries a `[c]` table is linked the same way, by its own Loaf name. `INCAN_C_COMPILER=host` is a local development override: the archive depends on the host compiler and is never published.
+The build compiles the C into `libshim.a` and links it; an unchanged library is reused. A path dependency that carries a `[c]` table is linked the same way, by its own Loaf name. `INCAN_C_COMPILER=host` is a local development override: the archive depends on the host compiler and is never published. No C toolchain release is installed with the Incan toolchain yet, so the override is currently the only way to compile a Clove.
 
 ## Diagnose a refusal
 

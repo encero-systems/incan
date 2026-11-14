@@ -63,8 +63,7 @@ The canonical report is a thin merged index:
 
 It is not a second full review document. The slice reports remain the detailed evidence.
 
-Do not copy every per-file checklist from worker reports into the canonical report. Keep the detail in the slice
-reports and let the canonical report point at it.
+Do not copy every per-file checklist from worker reports into the canonical report. Keep the detail in the slice reports and let the canonical report point at it.
 
 Worker slice reports:
 
@@ -80,8 +79,7 @@ Canonical merged report:
 
 - `.agents/state/review-report.md`
 
-Workers do **not** write to the canonical report directly.
-Every worker slice report must identify the worker that produced it, and the canonical report must record the worker set used for the run.
+Workers do **not** write to the canonical report directly. Every worker slice report must identify the worker that produced it, and the canonical report must record the worker set used for the run.
 
 ## Workflow
 
