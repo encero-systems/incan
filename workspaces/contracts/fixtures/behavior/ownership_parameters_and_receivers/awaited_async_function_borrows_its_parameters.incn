@@ -1,0 +1,40 @@
+# behavior: an awaited async function reads a list parameter from the caller's list, and changes its caller-visible `mut` list and class parameters in place so the caller sees the changes after the await, as on 0.5.1 (#1608, #1846)
+# expect-stdout:
+#   1
+#   2
+#   ["apple", "plum"]
+#   2
+#   ["apple", "plum"]
+
+"""List and caller-visible `mut` parameters of async functions."""
+
+
+class Cart:
+    pub items: list[str]
+
+    pub def add(mut self, item: str) -> None:
+        self.items.append(item)
+
+
+async def size(items: list[str]) -> int:
+    return len(items)
+
+
+async def grow(mut items: list[str], item: str) -> int:
+    items.append(item)
+    return len(items)
+
+
+async def fill(mut cart: Cart, item: str) -> int:
+    cart.add(item)
+    return len(cart.items)
+
+
+async def main() -> None:
+    mut items = ["apple"]
+    println(await size(items))
+    println(await grow(items, "plum"))
+    println(items)
+    mut cart = Cart(items=["apple"])
+    println(await fill(cart, "plum"))
+    println(cart.items)
