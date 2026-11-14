@@ -26,6 +26,19 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
             )?
         if len(carried) != 0 or has_scalar_refusal(report_path)?:
             return Ok(None)
+        # Unit-level runtime resolution adds forwarders after every product was captured, so none witnesses them.
+        mut unwitnessed = 0
+        for function in plan.functions:
+            if not witnessed(events, function.name):
+                report_scalar_refusal(
+                    Some(report),
+                    function.name,
+                    function.name,
+                    "native-interface refuses a generated function without a graph body witness",
+                )?
+                unwitnessed += 1
+        if unwitnessed != 0:
+            return Ok(None)
         return Err("native-interface refuses generated functions without graph body witnesses")
     if len(keyed) != len(plan.functions):
         return Err("native-interface has an unwitnessed plan-function member")
@@ -109,6 +122,14 @@ def keyed_plan_products(
         keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
         references.append(positions)
     return Ok(keyed)
+
+
+def witnessed(events: &list[JsonValue], function: str) -> bool:
+    """Whether a producer event names this plan function."""
+    for event in events:
+        if text(event, "function").unwrap_or("") == function:
+            return true
+    return false
 
 
 def has_scalar_refusal(report: Path) -> Result[bool, str]:

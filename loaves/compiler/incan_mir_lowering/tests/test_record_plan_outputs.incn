@@ -121,6 +121,26 @@ pub def test_keyed_plan_carrying_a_frame_refuses_the_interface() -> Result[None,
     return Ok(None)
 
 
+pub def test_keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result[None, str]:
+    """A unit whose plan gains a runtime frame no product witnesses publishes no interface, and names the frame."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products, report = record_directories(scratch.path())?
+    span = source_span(file="keyed_plan.incn", line=4, column=1)
+    caller = unit_function("main", span, 1)
+    adapter = unit_function("__incan_module_runtime_assert__runtime_frame", span, 2)
+    plan = Plan(enums=[], models=[], functions=[caller, adapter], externals=[], programs=[], span=span)
+    _ = retain_product(products, report, caller, false)?
+    publish_plan_records(plan, products.0, report.0)?
+    assert not report.joinpath("native-interface.json").is_file(), "an unwitnessed runtime frame published an interface"
+    mut refused = false
+    for path in report.iterdir().map_err((error) => error.message())?:
+        if path.name().endswith(".refusal"):
+            text = read(path)?
+            refused = adapter.name in text and "generated function" in text
+    assert refused, "an omitted interface did not name its unwitnessed generated function"
+    return Ok(None)
+
+
 def record_directories(root: Path) -> Result[tuple[Path, Path], str]:
     """Create one request's product store and report directory with its producer generation."""
     products = root.joinpath("products")
