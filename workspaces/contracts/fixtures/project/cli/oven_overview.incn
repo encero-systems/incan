@@ -22,6 +22,7 @@
 #   oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]...
 #   oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]
 #   oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]
+#   oven interop stage --target TRIPLE --adapter android|ios --output PATH [PATH]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 

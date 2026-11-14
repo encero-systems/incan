@@ -1,0 +1,15 @@
+# behavior: `oven inspect interop-plan` lists a target's bundled artifacts with their runtime name, placement and minimum platform, as 0.5's plan carried its bundle actions (#3134)
+# cli-commands:
+#   oven inspect interop-plan --target aarch64-linux-android
+# expect-stdout:
+#   target aarch64-linux-android
+#   project interop_plan_bundled
+#     sdk android >=34
+#     platform android api-level 24
+#     system artifact log: android.library.log
+#     bundled artifact bridge_runtime: interop/android/libbridge_runtime.so as libbridge_runtime.so, placement jniLibs/arm64-v8a, minimum platform 24
+#     binding main.Bridge: bridge_runtime
+#     header interop/include/bridge.h
+
+def main() -> None:
+    println("not run")
