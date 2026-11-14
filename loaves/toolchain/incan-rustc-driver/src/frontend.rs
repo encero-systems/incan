@@ -865,10 +865,9 @@ fn lower_compilation_plan(
         .files
         .get(program.entry)
         .ok_or("selected Body IR entry source is missing")?;
+    // Install the reached dependencies before the first attempt, with the binding layouts only a decorated unit needs.
     let layout_requirements = layout_runtime_requirements(&program.modules, file.clone());
-    if !layout_requirements.is_empty() {
-        prepare_runtime_layouts(program, layout_requirements)?;
-    }
+    prepare_runtime_layouts(program, layout_requirements)?;
     let mut timing = crate::native_timing::Timing::requested();
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
