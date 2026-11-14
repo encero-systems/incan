@@ -26,6 +26,7 @@ from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
 from unit_freshness import artifact_files, record, unit_key
 from codegen import compiled_arguments
+from native_references import anchor_arguments
 
 
 def main() -> Result[None, str]:
@@ -83,19 +84,18 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
     identity = Path(f"{path.0}.identity")
     if arguments[2] == "identify":
         publish(identity, key.digest)?
-        return publish(
-            Path(f"{path.0}.arguments"),
-            "\n".join(
-                compiled_arguments(
-                    unit.profile,
-                    key.codegen,
-                    unit.project_root,
-                    unit.kind in ["program", "test"],
-                    dependency_source_roots(unit),
-                    toolchain.sysroot,
-                )?,
-            ),
-        )
+        compiled = compiled_arguments(
+            unit.profile,
+            key.codegen,
+            unit.project_root,
+            unit.kind in ["program", "test"],
+            dependency_source_roots(unit),
+            toolchain.sysroot,
+        )?
+        # As Oven's own unit compilations: the closure names this home's toolchain and bakery by anchor, so a runtime
+        # or standard Loaf built in a home reads the same in a copy of it and in its compiler home.
+        anchored = compiled + anchor_arguments(toolchain.closure_anchors)?
+        return publish(Path(f"{path.0}.arguments"), "\n".join(anchored))
     if read(identity)? != key.digest:
         return Err("prepared unit inputs changed while compiling")
     # 3. Graph publication reuses the checked export producer and binds its independent proof to this native view.
