@@ -1,0 +1,65 @@
+"""Overlay requests: an editor view per project view, a mirrored overlay root and diagnostics in document coordinates."""
+
+from std.fs import Path
+from engine_overlay import editor_view_name, mirror_overlay, projected_diagnostics
+from scratch import scratch_directory
+
+
+pub def test_editor_views_are_named_per_project_view() -> Result[None, str]:
+    """One project view has one editor view, distinct from the project view and from every other project's."""
+    first = editor_view_name("project-a")?
+    assert first.startswith("editor-"), first
+    assert editor_view_name("project-a")? == first
+    assert editor_view_name("project-b")? != first
+    return Ok(None)
+
+
+pub def test_the_overlay_root_mirrors_the_program_and_places_the_buffer() -> Result[None, str]:
+    """
+    The overlay root holds the program's files with the buffer in place of its document; mirroring again rewrites only
+    files whose bytes differ, and build output under `target/` is never mirrored.
+    """
+    scratch = scratch_directory()?
+    program = scratch.path().joinpath("program")
+    program.joinpath("target").mkdir(true, true).map_err((error) => error.message())?
+    write(program.joinpath("main.incn"), "from helper import value\n")?
+    write(program.joinpath("helper.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(program.joinpath("target/stale.incn"), "stale\n")?
+    overlay = scratch.path().joinpath("overlay")
+    buffer = "from helper import value\n# unsaved\n"
+    first = mirror_overlay(program, overlay, "main.incn", buffer)?
+    assert first == 2, f"{first} files written on the first mirror"
+    assert read(overlay.joinpath("main.incn"))? == buffer
+    assert read(overlay.joinpath("helper.incn"))? == "pub def value() -> int:\n    return 1\n"
+    assert not overlay.joinpath("target").exists(), "build output was mirrored"
+    assert mirror_overlay(program, overlay, "main.incn", buffer)? == 0, "an unchanged mirror rewrote files"
+    write(program.joinpath("helper.incn"), "pub def value() -> int:\n    return 2\n")?
+    assert mirror_overlay(program, overlay, "main.incn", buffer)? == 1
+    return Ok(None)
+
+
+pub def test_diagnostics_are_projected_into_document_coordinates() -> Result[None, str]:
+    """A refused unit's diagnostics name their message, document and one-based line and column, colors removed."""
+    escape = "\u{1b}"
+    header = f"{escape}[1m{escape}[31mtype error{escape}[0m{escape}[1m: Type 'Point' has no field 'z'{escape}[0m\n"
+    location = f"  {escape}[36m-->{escape}[0m /overlay/main.incn:4:11\n"
+    gutter = f"  {escape}[36m   |{escape}[0m\n"
+    console = header + location + gutter + "error: Unknown symbol 'missing'\n" + "  --> /overlay/helper.incn:2:5\n"
+    found = projected_diagnostics(console)
+    assert len(found) == 2, f"{len(found)} diagnostics"
+    assert found[0].message == "type error: Type 'Point' has no field 'z'", found[0].message
+    assert found[0].path == "/overlay/main.incn"
+    assert found[0].line == 4 and found[0].column == 11
+    assert found[1].message == "error: Unknown symbol 'missing'"
+    assert found[1].path == "/overlay/helper.incn" and found[1].line == 2 and found[1].column == 5
+    return Ok(None)
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write one fixture file."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read one mirrored file."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
