@@ -23,7 +23,7 @@ from unit import UnitDescription
 from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
 from frozen_inputs import observation as frozen_observation
 from source_identity import absent_inputs, entry_scope, source_inputs
-from unit_sources import SourceGraph, source_graph
+from unit_sources import SourceGraph, recorded_imports, source_graph
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
@@ -176,6 +176,16 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
+
+
+pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[list[JsonValue]], str]:
+    """
+    The Rust crate requests recorded with the unit's current source graph under the scope `unit_key` reads, when the
+    compiler reported them: the requests `--rust-imports` prints for the same files, compiler and description.
+    """
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    selected_compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
+    return recorded_imports(unit, f"{selected_compiler} {description_digest(unit)?}", project)
 
 
 pub def reconciled_key(

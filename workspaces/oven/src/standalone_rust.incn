@@ -20,7 +20,7 @@ from native_closure_input import native_bindings
 from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
-from unit_freshness import fingerprint, unit_key
+from unit_freshness import fingerprint, graph_imports, unit_key
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
@@ -113,7 +113,8 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     the unit's key and descriptor identify. They are retained under that identity, so an unchanged unit starts no
     compiler, and any change to those inputs asks it again.
 
-    1. Answer from the records retained for this identity.
+    1. Answer from the records retained for this identity, else from those the unit's current source graph was
+       collected with: computing the identity asked the compiler for that graph, and the same collection found them.
     2. Otherwise ask the compiler for the records of the description it reads.
     3. Retain them only while the unit's inputs are still those the compiler read.
     """
@@ -124,6 +125,10 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     if identity != "":
         if let Some(records) = retained_imports(retained, identity):
             trace(f"unit {unit.package} imports: reused")
+            return Ok(records)
+        if let Some(records) = graph_imports(unit, toolchain)?:
+            trace(f"unit {unit.package} imports: from its source graph")
+            _ = retain_imports(retained, identity, records)
             return Ok(records)
     # 2. The compiler parses the source graph the description names.
     make_directory(directory)?
