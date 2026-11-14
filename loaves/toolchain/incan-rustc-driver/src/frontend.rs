@@ -737,6 +737,10 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         None
     };
     drop(program);
+    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc's
+    // analysis and LLVM allocate, so the back end's peak does not stack on the frontend's freed heap.
+    crate::heap::release_free_memory();
+    timing.mark("frontend_heap_released");
     // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
     let mut rustc_args = dependencies.rustc_args.clone();
     rustc_args.extend(crate::foreign::clove_link_arguments(&plan, &cloves).map_err(|error| {
