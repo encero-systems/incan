@@ -15,7 +15,7 @@ from manifest_fields import (
     unique_strings,
 )
 from manifest_models import RustInputRequest
-from manifest_dependencies import dependency_replacement, rust_request, validate_target
+from manifest_dependencies import dependency_replacement, inherited_edge, rust_request, validate_target
 
 # The keys of `[envs.NAME]` (RFC 073, RFC 117).
 const ENVIRONMENT_KEYS: FrozenList[str] = [
@@ -89,8 +89,14 @@ pub def parse_environment_dependencies(
                         )?
                         found = true
                 if not found:
-                    entry = table(entries[alias], manifest, ["envs", name, "dependencies", alias])?
-                    if "loaf" in entry:
+                    field = ["envs", name, "dependencies", alias]
+                    entry = table(entries[alias], manifest, field)?
+                    # An entry the workspace root shares is inherited, as 0.5.1's members inherited dev dependencies.
+                    if "workspace" in entry:
+                        edge = inherited_edge(alias, entry, manifest, field)?
+                        if let Some(request) = edge.facet:
+                            selected.append(request)
+                    elif "loaf" in entry:
                         selected.append(rust_request(alias, entries[alias], manifest, "dependencies")?)
         result[name] = selected
     return Ok(result)
