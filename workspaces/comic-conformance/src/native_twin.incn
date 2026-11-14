@@ -21,9 +21,11 @@ from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.selectors import parse_type
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.text_printer import print_comic
+from std.primitives.crumb.text_reader import read_comic
 from std.primitives.crumb.types import AbsentPolicy, NominalKind, TypeNode
 from std.primitives.crumb.values import Projection, Value
 from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
 from std.primitives.text import encode_utf8
 from adaptation_cases import absent_value, convert
 from case_data import (
@@ -61,6 +63,7 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.HashPreimage => return Ok(Some(hash_twin(item.document)?))
         CaseOperation.Adaptation => return Ok(Some(adaptation_twin(item.document)?))
         CaseOperation.TextPrint => return Ok(Some(print_twin(item.document)?))
+        CaseOperation.TextRead => return Ok(Some(read_twin(item.document)?))
         CaseOperation.ColumnCodec => return column_twin_encode(item.document)
         _ => return Ok(None)
 
@@ -466,3 +469,35 @@ def data_twin_decode(document: JsonValue) -> Result[bytes, str]:
                 output.count(block.encoding.value(), setup).map_err((e) => e.message())?
             output.append(frame(preimage, setup).map_err((e) => e.message())?, setup).map_err((e) => e.message())?
     return output.finish(setup).map_err((e) => e.message())
+
+
+pub def with_input(item: CorpusCase, texts: dict[str, bytes]) -> Result[CorpusCase, str]:
+    """Carry a text-read case's pinned source bytes inside its document, so both codecs read the same input."""
+    if item.operation != CaseOperation.TextRead:
+        return Ok(item)
+    mut object = item.document.expect_object().map_err((error) => error.message())?
+    object["input_hex"] = JsonValue.string(hexlify(texts[text(item.document, "input_file")?]))
+    return Ok(CorpusCase(id=item.id, operation=item.operation, document=JsonValue.object(object)))
+
+
+def read_twin(document: JsonValue) -> Result[bytes, str]:
+    """Read the pinned source through the Incan COMIC reader; print an accepted document canonically."""
+    mut budget = twin_budget()?
+    context = case_context(document, budget)?
+    source = hex_bytes(text(document, "input_hex")?)?
+    mut output = EncodingBuffer.create()
+    match read_comic(source, context, budget):
+        Ok(document_value) =>
+            printed = print_comic(document_value, context, budget).map_err((error) => error.message())?
+            output.octet(0, budget).map_err((error) => error.message())?
+            output
+                .append(frame(printed, budget).map_err((error) => error.message())?, budget)
+                .map_err((error) => error.message())?
+        Err(error) =>
+            output.octet(1, budget).map_err((failure) => failure.message())?
+            output
+                .append(frame(encode_utf8(error.kind.value()), budget).map_err((failure) => failure.message())?, budget)
+                .map_err((failure) => failure.message())?
+            output.count(error.position.line, budget).map_err((failure) => failure.message())?
+            output.count(error.position.column, budget).map_err((failure) => failure.message())?
+    return output.finish(budget).map_err((error) => error.message())
