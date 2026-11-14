@@ -300,10 +300,12 @@ def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result
     warm = executable.read_bytes().map_err((error) => error.message())?
     stop_example_engine(binary, warm_store)?
     app.joinpath("target").remove_tree().map_err((error) => error.message())?
-    cold_store = root.joinpath("cold-store")
-    _ = debug_probe_build(binary, app, cold_store)?
+    # The cold build starts from an empty bakery at the same path. A development executable names its carriers'
+    # bakery (debug map and run-time search paths), so a bakery at another path is a relocation, not a cold build.
+    warm_store.remove_tree().map_err((error) => error.message())?
+    _ = debug_probe_build(binary, app, warm_store)?
     cold = executable.read_bytes().map_err((error) => error.message())?
-    stop_example_engine(binary, cold_store)?
+    stop_example_engine(binary, warm_store)?
     assert warm == cold, "warm and cold debug executables with a Rust library differ"
     return Ok(None)
 
