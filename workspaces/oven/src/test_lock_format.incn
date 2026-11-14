@@ -1,7 +1,10 @@
 """Format-1 oven.lock contracts for serialization, identity and tamper refusal."""
 
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
-from files import read, write
+from features import FeatureRequest
+from files import make_directory, read, write
 from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
 from lock_format import (
@@ -15,8 +18,9 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import local_interop
+from project_lock import ensure_project_lock, local_interop
 from scratch import scratch_directory
+from trace_adapter import count_work, finish_counting
 
 
 def example_lock() -> Result[OvenLock, str]:
@@ -252,4 +256,36 @@ pub def test_an_artifact_s_origin_and_license_are_locked() -> Result[None, str]:
     relicensed.origin = Some(CArtifactOrigin(source=origin.source, revision=origin.revision, license="Apache-2.0"))
     changed = locked_interop(root.0, [CInteropTarget(target="aarch64-apple-darwin", artifacts=[relicensed])])?
     assert interop_difference(locked, changed) == "static artifact `bridge` of `aarch64-apple-darwin`"
+    return Ok(None)
+
+
+pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> Result[None, str]:
+    """
+    A root lock reconciled to no change is not resolved again by the next command while it and its manifest keep
+    their identities; an edited manifest is resolved again.
+
+    1. The first command writes the lock; a second, once both files have settled, reconciles it to no change.
+    2. The next command parses no manifest.
+    3. A rewritten manifest is parsed and resolved again.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    make_directory(root.joinpath("src"))?
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
+    # 1. A lock just written has not settled, so it is reconciled again once it has.
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    sleep(Duration.from_millis(2100))
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    # 2. Nothing the lock is resolved from changed.
+    count_work(root.0 + "/")
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    settled = finish_counting()
+    assert settled.parses == 0, f"an unchanged lock was resolved again: {settled.parses} manifest parses"
+    # 3. An edit to the manifest is resolved again.
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"edited\"\n")?
+    count_work(root.0 + "/")
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    edited = finish_counting()
+    assert edited.parses > 0, "an edited manifest was not resolved again"
     return Ok(None)
