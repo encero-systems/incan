@@ -319,18 +319,30 @@ fn canonical_value(value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
     LibraryManifest::encode_compiler_record_value(&decoded)
 }
 
-/// Remove every source position from a decoded record value.
+/// Remove every source position from a decoded record value: the `span` and `declaration_span` fields, and any field
+/// whose value is itself a source span, such as a decorator's `anchor`.
 fn without_positions(value: &mut Value) {
     match value {
         Value::Object(fields) => {
-            for field in POSITION_FIELDS {
-                fields.remove(field);
+            let positions = fields
+                .iter()
+                .filter(|(name, field)| POSITION_FIELDS.contains(&name.as_str()) || is_span(field))
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            for name in positions {
+                fields.remove(&name);
             }
             fields.values_mut().for_each(without_positions);
         }
         Value::Array(items) => items.iter_mut().for_each(without_positions),
         _ => {}
     }
+}
+
+/// Whether a decoded value is a source span: an object of exactly `start`, `end` and `expansion`.
+fn is_span(value: &Value) -> bool {
+    matches!(value, Value::Object(fields)
+        if fields.len() == 3 && ["start", "end", "expansion"].iter().all(|key| fields.contains_key(*key)))
 }
 
 /// One record's semantic facts entry: key, kind, model description hash and canonical hash.
