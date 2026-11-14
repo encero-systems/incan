@@ -8,7 +8,7 @@ from std.fs import Path
 from std.json import JsonValue
 from clove_units import CloveUnit, clove_unit
 from c_interop import LinkedArchive, linked_archives
-from c_interop_target import CAbiTargetSelection, select_interop_target
+from c_interop_target import CAbiTargetSelection, select_interop_target, selected_abi_clang
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -333,12 +333,10 @@ pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDesc
 
 def selected_verifier(unit: UnitDescription) -> str:
     """The Clang a C ABI check selects explicitly: `INCAN_C_ABI_CLANG`, else the toolchain's own, else none."""
-    explicit = get_or("INCAN_C_ABI_CLANG", "")
-    if explicit != "":
-        return explicit
+    mut toolchain_clang = ""
     if let Some(toolchain) = unit.selected_toolchain:
-        return toolchain.c_compiler
-    return ""
+        toolchain_clang = toolchain.c_compiler
+    return selected_abi_clang(toolchain_clang, get_or("INCAN_C_ABI_CLANG", ""))
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:

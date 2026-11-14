@@ -2,7 +2,9 @@
 
 from rust::std::process import Command
 from rust::std::env::consts import OS
+from std.environ import get_or
 from apple_sdk import configure_sdk
+from c_interop_target import selected_abi_clang
 from codegen import DARWIN_UUID_SALT
 from toolchain import Toolchain
 
@@ -21,7 +23,9 @@ pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
         None => pass
     if OS == "macos":
         command.env("RC_UUID_SALT", DARWIN_UUID_SALT)
-    # C ABI checks use the toolchain's own Clang when it carries one, never whichever compiler the machine has.
-    if toolchain.c_compiler != "":
-        command.env("INCAN_C_ABI_CLANG", toolchain.c_compiler)
+    # C ABI checks use an explicit `INCAN_C_ABI_CLANG`, else the toolchain's own Clang when it carries one, never
+    # whichever compiler the machine has.
+    clang = selected_abi_clang(toolchain.c_compiler, get_or("INCAN_C_ABI_CLANG", ""))
+    if clang != "":
+        command.env("INCAN_C_ABI_CLANG", clang)
     return Ok(command)

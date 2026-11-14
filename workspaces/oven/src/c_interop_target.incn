@@ -81,3 +81,13 @@ pub def select_interop_target(
     return Err(
         f"`--interop-target {triple}` is not a target `{package}` declares; its `[[interop.c.targets]]` are {declared}",
     )
+
+
+pub def selected_abi_clang(toolchain_clang: str, explicit: str) -> str:
+    """
+    The Clang C ABI checks use: an explicit `INCAN_C_ABI_CLANG`, such as an Android NDK Clang for an Android target,
+    else the toolchain's own, else none, which leaves the platform's.
+    """
+    if explicit != "":
+        return explicit
+    return toolchain_clang
