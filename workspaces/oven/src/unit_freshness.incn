@@ -24,6 +24,7 @@ from unit import UnitDescription
 from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
 from frozen_inputs import observation as frozen_observation
 from source_identity import absent_inputs, entry_scope, source_inputs
+from standard_producers import stale_standard_refusal
 from unit_sources import SourceGraph, source_graph
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
@@ -169,6 +170,7 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     mut base_compiler = compiler
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
+    refuse_stale_standard(unit, toolchain)?
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
     described = description_digest(unit)?
     # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
@@ -177,6 +179,28 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
+
+
+def refuse_stale_standard(unit: UnitDescription, toolchain: Toolchain) -> Result[None, str]:
+    """
+    Refuse a linked standard Loaf of this toolchain that another compiler produced.
+
+    Standard Loaves are built where no compiler record pin exists, so each records the compiler without one. A relink
+    keeps the Loaves but replaces the compiler, and its new compiler may not read their records.
+    """
+    standard = Path(toolchain.driver).parent().parent().joinpath("loaves").0 + "/"
+    mut current = ""
+    for loaf in unit.loaves:
+        if not loaf.dir.startswith(standard):
+            continue
+        if current == "":
+            mut unpinned = toolchain.installed()
+            unpinned.compiler_records = None
+            current = compiler_fingerprint(unpinned.select())?
+        match stale_standard_refusal(loaf.name, Path(loaf.dir), current)?:
+            Some(message) => return Err(message)
+            None => pass
+    return Ok(None)
 
 
 pub def reconciled_key(
