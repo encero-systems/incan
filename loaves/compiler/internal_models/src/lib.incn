@@ -126,7 +126,7 @@ pub from activation_envelopes import (
     envelope_key,
     stage_name,
 )
-pub from checker_records import (
+pub from checker_record_models import (
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
@@ -135,6 +135,8 @@ pub from checker_records import (
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
+)
+pub from checker_records import (
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
