@@ -7,12 +7,14 @@ use incan_driver::unit::{UnitDescription, UnitKind};
 use rustc_ast as ast;
 use rustc_span::Span;
 
-/// One collected test case's report name, native entry, outcome markers and selection markers, resolved once by
-/// the session collector.
+/// One collected test case's report name, native entry, parameters, outcome markers and selection markers, resolved
+/// once by the session collector.
 pub(crate) struct CollectedTest {
     pub(crate) name: String,
     // The zero-argument function the native harness registers: the test itself, or its generated case entry.
     pub(crate) entry: String,
+    // A parametrized case's display values, which machine-readable reports carry.
+    parameters: Vec<String>,
     skip: Option<String>,
     xfail: Option<String>,
     // `@slow`, which the runner leaves out unless asked, and the `@mark` names its marker expressions select.
@@ -62,6 +64,7 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
         let mut entry = CollectedTest {
             name: case.name,
             entry: case.entry,
+            parameters: case.parameters,
             skip: None,
             xfail: None,
             slow: false,
@@ -124,6 +127,7 @@ pub(crate) fn report(tests: &[CollectedTest], native: &[String]) -> Result<serde
                 serde_json::json!({
                     "name": test.name,
                     "native": native,
+                    "parameters": test.parameters,
                     "skip": test.skip,
                     "xfail": test.xfail,
                     "slow": test.slow,

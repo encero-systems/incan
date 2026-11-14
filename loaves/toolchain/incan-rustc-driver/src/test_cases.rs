@@ -15,8 +15,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use incan_driver::session::CompilationSession;
-use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, TestInfo, TestMarker};
-use incan_frontend::ast::{Declaration, Expr, FunctionDecl, Spanned, Statement};
+use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
+use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned, Statement};
+use incan_frontend::testing_markers::{TestingMarkerKind, resolve_testing_marker_kind};
 
 /// The prefix of every generated entry and local. Source names may not start with `__incan_`, which the checker
 /// reserves for names it generates itself, so the source-level entries use this one.
@@ -33,6 +34,8 @@ pub(crate) struct NativeCase {
     pub(crate) name: String,
     /// The zero-argument function the harness registers.
     pub(crate) entry: String,
+    /// Each parametrized argument's display value, in parameter-set order.
+    pub(crate) parameters: Vec<String>,
     /// Markers a `param_case(..., marks=[...])` adds to this case alone.
     pub(crate) markers: Vec<TestMarker>,
 }
@@ -43,12 +46,13 @@ pub(crate) struct NativeCases {
     pub(crate) source: Option<String>,
 }
 
-/// One parameter set of a parametrized test: its case id, each argument's source text by parameter name and its own
-/// markers. A test without `@parametrize` has one row with no id.
+/// One parameter set of a parametrized test: its case id, each argument's source text by parameter name, its display
+/// values and its own markers. A test without `@parametrize` has one row with no id.
 #[derive(Clone, Default)]
 struct Row {
     ids: Vec<String>,
     values: HashMap<String, String>,
+    displays: Vec<String>,
     markers: Vec<TestMarker>,
 }
 
@@ -93,6 +97,10 @@ pub(crate) fn plan(
             functions.insert(function.name.clone(), (declaration, function));
         }
     }
+    let semantics = session
+        .require_testing_marker_semantics()
+        .map_err(|error| error.message)?;
+    let aliases = incan_frontend::decorator_resolution::collect_import_aliases(&program);
     let writer = EntryWriter {
         source: &source,
         fixtures: discovery
@@ -123,17 +131,9 @@ pub(crate) fn plan(
             ));
         }
         let function = writer.function(&test.function_name)?;
-        if test
-            .markers
-            .iter()
-            .any(|marker| matches!(marker, TestMarker::Parametrize(..)))
-        {
-            return Err(format!(
-                "unsupported test contract for `{}`: parameters",
-                test.function_name
-            ));
-        }
-        for row in [Row::default()] {
+        let parametrized = parametrize_decorators(function, &aliases, &semantics);
+        let text = |node: &Spanned<Expr>| writer.text(node.span.start, node.span.end).to_string();
+        for row in rows(test, &parametrized, &text)? {
             let entry = format!("{PREFIX}_{}", cases.len());
             generated.push_str(&writer.entry(&entry, test, function, &row, &autouse)?);
             let name = if row.ids.is_empty() {
@@ -145,6 +145,7 @@ pub(crate) fn plan(
                 test: index,
                 name,
                 entry,
+                parameters: row.displays,
                 markers: row.markers,
             });
         }
@@ -168,6 +169,7 @@ fn plain_case(index: usize, test: &TestInfo) -> NativeCase {
         test: index,
         name: test.function_name.clone(),
         entry: test.function_name.clone(),
+        parameters: Vec::new(),
         markers: Vec::new(),
     }
 }
@@ -186,6 +188,128 @@ fn autouse_fixtures<'a>(discovery: &'a DiscoveryResult, test: &TestInfo) -> Vec<
         .filter(|fixture| fixture.autouse && !test.parameter_names.contains(&fixture.name))
         .map(|fixture| fixture.name.as_str())
         .collect()
+}
+
+/// The test's `@parametrize` decorators in source order, each as its argument names and its argument-value list.
+fn parametrize_decorators<'a>(
+    function: &'a FunctionDecl,
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &incan_frontend::testing_markers::TestingMarkerSemantics,
+) -> Vec<(Vec<String>, Vec<&'a Spanned<Expr>>)> {
+    let mut found = Vec::new();
+    for decorator in &function.decorators {
+        if resolve_testing_marker_kind(&decorator.node, aliases, semantics) != Some(TestingMarkerKind::Parametrize) {
+            continue;
+        }
+        let names = match decorator.node.args.first() {
+            Some(DecoratorArg::Positional(expr)) => match &expr.node {
+                Expr::Literal(incan_frontend::ast::Literal::String(names)) => names
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        let values = match decorator.node.args.get(1) {
+            Some(DecoratorArg::Positional(list)) => match &list.node {
+                Expr::List(items) => items
+                    .iter()
+                    .filter_map(|item| match item {
+                        ListEntry::Element(value) => Some(value),
+                        ListEntry::Spread(_) => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        found.push((names, values));
+    }
+    found
+}
+
+/// Expand a test's `@parametrize` decorators into parameter rows: the cartesian product in decorator order, the first
+/// decorator varying slowest, as 0.5.1 orders `test_stacked[1-a]`, `test_stacked[1-b]`, `test_stacked[2-a]`.
+fn rows(
+    test: &TestInfo,
+    decorators: &[(Vec<String>, Vec<&Spanned<Expr>>)],
+    text: &dyn Fn(&Spanned<Expr>) -> String,
+) -> Result<Vec<Row>, String> {
+    let collected: Vec<&Vec<ParametrizeCase>> = test
+        .markers
+        .iter()
+        .filter_map(|marker| match marker {
+            TestMarker::Parametrize(_, cases) => Some(cases),
+            _ => None,
+        })
+        .collect();
+    if collected.len() != decorators.len() {
+        return Err(format!(
+            "unsupported test contract for `{}`: a `@parametrize` decorator the native harness cannot read",
+            test.function_name
+        ));
+    }
+    let mut rows = vec![Row::default()];
+    for ((names, values), cases) in decorators.iter().zip(collected) {
+        if values.len() != cases.len() {
+            return Err(format!(
+                "unsupported test contract for `{}`: `@parametrize` values must be listed one by one",
+                test.function_name
+            ));
+        }
+        let mut expanded = Vec::new();
+        for row in &rows {
+            for (value, case) in values.iter().zip(cases) {
+                let arguments = case_arguments(value);
+                if arguments.len() != names.len() {
+                    return Err(format!(
+                        "parametrize case `{}` for test `{}` expected {} value(s), got {}",
+                        case.display_id,
+                        test.function_name,
+                        names.len(),
+                        arguments.len()
+                    ));
+                }
+                let mut next = row.clone();
+                next.ids.push(case.display_id.clone());
+                for (name, argument) in names.iter().zip(arguments) {
+                    next.values.insert(name.clone(), text(argument));
+                }
+                next.displays.extend(case.parameters.iter().cloned());
+                next.markers.extend(case.markers.iter().cloned());
+                expanded.push(next);
+            }
+        }
+        rows = expanded;
+    }
+    Ok(rows)
+}
+
+/// The argument expressions of one parameter set: a tuple's elements, a single value, or `param_case`'s value.
+fn case_arguments(value: &Spanned<Expr>) -> Vec<&Spanned<Expr>> {
+    let case_value = match &value.node {
+        Expr::Call(callee, _, args) if matches!(&callee.node, Expr::Ident(name) if name == "param_case") => {
+            first_positional(args)
+        }
+        Expr::Constructor(name, args) if name == "param_case" => first_positional(args),
+        _ => None,
+    };
+    let value = case_value.unwrap_or(value);
+    match &value.node {
+        Expr::Tuple(elements) => elements.iter().collect(),
+        _ => vec![value],
+    }
+}
+
+/// The first positional argument of a call.
+fn first_positional(args: &[CallArg]) -> Option<&Spanned<Expr>> {
+    args.iter().find_map(|arg| match arg {
+        CallArg::Positional(value) => Some(value),
+        _ => None,
+    })
 }
 
 /// Writes entries from the test file's own text: fixture and test signatures, parameter values and `yield` bodies.

@@ -1,0 +1,60 @@
+# behavior: `@parametrize` runs one test per case, named by its values, its ids or `param_case`, stacked decorators in decorator order, with per-case marks and with fixtures; a failing case fails alone, as 0.5.1 runs them (#3149)
+# expect-stdout-contains:
+#   test_parametrize.incn::test_add[1-2-3] PASSED
+#   test_parametrize.incn::test_add[2-3-5] PASSED
+#   test_parametrize.incn::test_add[5-5-11] FAILED
+#   test_parametrize.incn::test_ids[short] PASSED
+#   test_parametrize.incn::test_ids[long] PASSED
+#   test_parametrize.incn::test_stacked[1-a] PASSED
+#   test_parametrize.incn::test_stacked[1-b] PASSED
+#   test_parametrize.incn::test_stacked[2-a] PASSED
+#   test_parametrize.incn::test_stacked[2-b] PASSED
+#   test_parametrize.incn::test_cases[one] PASSED
+#   test_parametrize.incn::test_cases[2] SKIPPED (not this case)
+#   test_parametrize.incn::test_cases[-3] PASSED
+#   test_parametrize.incn::test_with_fixture[1] PASSED
+#   test_parametrize.incn::test_with_fixture[2] PASSED
+# expect-stderr-contains:
+#   AssertionError
+# expect-exit: 1
+
+"""Parametrized tests run one case per parameter set, as 0.5.1 runs them."""
+
+from std.testing import assert_eq, fixture, param_case, parametrize, skip
+
+
+@fixture
+def base() -> int:
+    """A fixture a parametrized test also receives."""
+    return 40
+
+
+@parametrize("a, b, expected", [(1, 2, 3), (2, 3, 5), (5, 5, 11)])
+def test_add(a: int, b: int, expected: int) -> None:
+    """Each tuple is one case; the last one fails alone."""
+    assert_eq(a + b, expected)
+
+
+@parametrize("name", ["x", "yy"], ids=["short", "long"])
+def test_ids(name: str) -> None:
+    """Explicit ids name the cases."""
+    assert len(name) > 0
+
+
+@parametrize("x", [1, 2])
+@parametrize("y", ["a", "b"])
+def test_stacked(x: int, y: str) -> None:
+    """Stacked decorators multiply, the first one varying slowest."""
+    assert x > 0 and len(y) == 1
+
+
+@parametrize("v", [param_case(1, id="one"), param_case(2, marks=[skip("not this case")]), -3])
+def test_cases(v: int) -> None:
+    """`param_case` names a case or marks it alone."""
+    assert v != 0 and v != 2
+
+
+@parametrize("n", [1, 2])
+def test_with_fixture(n: int, base: int) -> None:
+    """Parameters and fixtures combine by name."""
+    assert_eq(base + n > 40, true)
