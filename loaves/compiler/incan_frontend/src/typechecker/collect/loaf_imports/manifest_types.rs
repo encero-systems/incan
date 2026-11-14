@@ -33,16 +33,9 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(
-                &export.name,
-                &export.fields,
-                export.fields.iter().any(|field| {
-                    matches!(
-                        field.visibility,
-                        crate::library_manifest::MemberVisibilityExport::Private
-                    )
-                }),
-            ),
+            // An omitted field is filled by the provider's published field-default frame whatever the fields'
+            // visibility, so a default counts whether or not its value is materializable in the consumer.
+            fields: self.fields_from_manifest(&export.name, &export.fields, true),
             field_defaults: Box::new(
                 export
                     .fields

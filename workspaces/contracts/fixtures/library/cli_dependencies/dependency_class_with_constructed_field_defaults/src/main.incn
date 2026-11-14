@@ -1,0 +1,13 @@
+# behavior: a consumer constructs a dependency's class whose public fields default to constructed models, omitting all of them or some, and each omitted field gets the dependency's default
+# expect-stdout:
+#   channel 3 3
+#   given 3 3
+#   channel 5 3
+
+from pub::channels.channels import Channel, Credits, described
+
+
+def main() -> None:
+    println(described(Channel()))
+    println(described(Channel(name="given")))
+    println(described(Channel(pending=Credits(limit=5))))
