@@ -286,34 +286,9 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
             continue
         for profile in package.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if profile.is_dir():
-                require_executable_set(profile, package.name())?
                 for artifact in admit_provider(profile)?:
                     paths[artifact.0] = artifact
     return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
-
-
-def require_executable_set(directory: Path, stem: str) -> Result[None, str]:
-    """
-    Refuse a standard Loaf that is only partly there: its native library, interface, bodies and native description
-    are admitted together, each under its producer record, or not at all.
-
-    A member without a record would be skipped by admission and refused only when a unit first links it, after the
-    installation replaced a working one. A directory that holds none of the members is a Loaf not built yet.
-    """
-    members = [f"lib{stem}.rlib", f"{stem}.incnlib", f"{stem}.incnbody", f"{stem}.native.json"]
-    mut present = 0
-    mut incomplete: list[str] = []
-    for name in members:
-        member = directory.joinpath(name)
-        if member.is_file() or record_path(member).is_file():
-            present += 1
-        if not member.is_file():
-            incomplete.append(f"{member.0} is missing")
-        elif not record_path(member).is_file():
-            incomplete.append(f"{member.0} has no producer record")
-    if present == 0 or len(incomplete) == 0:
-        return Ok(None)
-    return Err("incomplete standard Loaf: " + "; ".join(incomplete))
 
 
 def admit_provider(directory: Path) -> Result[list[Path], str]:
