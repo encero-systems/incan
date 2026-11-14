@@ -29,7 +29,14 @@ from rust_target import inherited_deployment_configuration
 from home import home
 from home_paths import installation_catalog
 from home_views import selected_home_view
-from engine_overlay import OverlayDiagnostic, editor_view_name, mirror_overlay, projected_diagnostics
+from engine_overlay import (
+    OverlayDiagnostic,
+    editor_view_name,
+    mirror_overlay,
+    overlay_entry,
+    program_root,
+    projected_diagnostics,
+)
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -57,13 +64,16 @@ pub def execute_overlay(
     """
     # 1. The overlay has the program's logical names, so its records and units are the ones a build of these bytes has.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    entry = overlay_entry(absolute)?
     bound = selected_home_view()?
-    project = project_view_name(view_scope(bound)?, absolute.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
+    project = project_view_name(view_scope(bound)?, entry.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
     editor = editor_view_name(project)?
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     program = program_root(absolute)
     document = absolute.0[len(program.0) + 1:]
+    if not entry.0.startswith(program.0 + "/"):
+        return Err(f"the program entry {entry.0} lies outside {program.0}")
     # The overlay root lies in the home, not the bakery: capture treats everything under the bakery as frozen.
     overlay = home()?.joinpath("editor").joinpath(editor)
     text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
@@ -74,7 +84,8 @@ pub def execute_overlay(
     # 3. The overlay is captured and produced exactly as a build of the same bytes would be.
     console_capture["capturing"] = "yes"
     console_capture["captured"] = ""
-    outcome = execute_in("build", overlay.joinpath(document), profile, arguments, None, "", false, editor, None)
+    target = overlay.joinpath(entry.0[len(program.0) + 1:])
+    outcome = execute_in("build", target, profile, arguments, None, "", false, editor, None)
     console = console_capture.get("captured", "")
     console_capture["capturing"] = ""
     code = outcome?
@@ -100,16 +111,6 @@ def diagnostic_json(found: OverlayDiagnostic, overlay: str, program: str) -> Jso
             found.column,
         ), "severity": JsonValue.string(found.severity)},
     )
-
-
-def program_root(source: Path) -> Path:
-    """The program an editor's document belongs to: the nearest directory with `loaf.toml`, else its own directory."""
-    mut directory = source.parent()
-    while directory.0.startswith("/") and directory.0 != "/":
-        if directory.joinpath("loaf.toml").is_file():
-            return directory
-        directory = directory.parent()
-    return source.parent()
 
 
 pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:

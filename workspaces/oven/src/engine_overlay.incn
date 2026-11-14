@@ -1,13 +1,15 @@
 """
 Overlay requests (14.1): an editor's unsaved buffer reaches the records engine through an editor view.
 
-Each project view has one editor view, forked from it on the first overlay request and never merged back. The
-editor's buffer and the program's other editable files are mirrored into an overlay root under the bakery, so the
-engine captures and compiles the overlay exactly as it would a build, with the same logical names and therefore the
-same record keys and unit identities. A refused unit answers with its diagnostics in document coordinates.
+Each project view has one editor view, forked on the first overlay request and never merged back. The editor's buffer
+and the program's other editable files are mirrored into an overlay root in the home, outside the bakery whose files
+capture never re-reads, so the engine captures and compiles the overlay exactly as it would a build, with the same
+logical names and therefore the same record keys and unit identities. A refused unit answers with its diagnostics in
+document coordinates.
 """
 
 from std.fs import Path
+from intake import ManifestReader, entry_source
 from unit_freshness import fingerprint
 
 # The prefix of every editor view, which the producer recognizes to keep the overlay's records in that view.
@@ -32,6 +34,25 @@ pub def editor_view_name(project_view: str) -> Result[str, str]:
 pub def is_editor_view(view: str) -> bool:
     """Whether a view holds an editor's overlay requests."""
     return view.startswith(EDITOR_VIEW_PREFIX)
+
+
+pub def program_root(document: Path) -> Path:
+    """The program an editor's document belongs to: the nearest directory with `loaf.toml`, else its own directory."""
+    mut directory = document.parent()
+    while directory.0.startswith("/") and directory.0 != "/":
+        if directory.joinpath("loaf.toml").is_file():
+            return directory
+        directory = directory.parent()
+    return document.parent()
+
+
+pub def overlay_entry(document: Path) -> Result[Path, str]:
+    """The program an overlay of `document` builds: its package's entry, or a manifest-free document itself."""
+    program = program_root(document)
+    if program.joinpath("loaf.toml").is_file():
+        if let Some(entry) = entry_source(program, ManifestReader())?:
+            return Ok(entry)
+    return Ok(document)
 
 
 pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
