@@ -5,7 +5,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import check_program, obtain, prepare_selection
+from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
 from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned
@@ -177,6 +177,10 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     mut status = CompletionStatus.Success
     if outcome.code != 0:
         status = CompletionStatus.Failed
+    # A requested report shows that a check produced no unit: no bodies, plans or native bake.
+    mut observation = ""
+    if pending.proofs:
+        observation = retain(store, hexlify(pending.request), pending.capture.counters, ProgramOutcome(code=outcome.code))?
     return Ok(
         Ready(
             message=Complete(
@@ -185,7 +189,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
                 result_handles="",
                 binding_outcome=BindingOutcome.NotSelected,
                 status=status,
-                observation_handle="",
+                observation_handle=observation,
             ),
             console=outcome.console,
         ),

@@ -1,7 +1,7 @@
 """Overlay requests: an editor view per project view, a mirrored overlay root and diagnostics in document coordinates."""
 
 from std.fs import Path
-from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, projected_diagnostics
+from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, report_diagnostics
 from scratch import scratch_directory
 
 
@@ -39,19 +39,23 @@ pub def test_the_overlay_root_mirrors_the_program_and_places_the_buffer() -> Res
 
 
 pub def test_diagnostics_are_projected_into_document_coordinates() -> Result[None, str]:
-    """A refused unit's diagnostics name their message, document and one-based line and column, colors removed."""
-    escape = "\u{1b}"
-    header = f"{escape}[1m{escape}[31mtype error{escape}[0m{escape}[1m: Type 'Point' has no field 'z'{escape}[0m\n"
-    location = f"  {escape}[36m-->{escape}[0m /overlay/main.incn:4:11\n"
-    gutter = f"  {escape}[36m   |{escape}[0m\n"
-    console = header + location + gutter + "error: Unknown symbol 'missing'\n" + "  --> /overlay/helper.incn:2:5\n"
-    found = projected_diagnostics(console)
+    """A check report's diagnostics keep message, code, start and end, and name the editor's document paths."""
+    first = "{\"code\": \"INCAN-T0001\", \"severity\": \"error\", \"message\": \"Type 'Point' has no field 'z'\", "
+    first_span = "\"primary_span\": {\"file\": \"/overlay/main.incn\", \"start\": {\"line\": 4, \"column\": 11}, "
+    first_end = "\"end\": {\"line\": 4, \"column\": 12}}}"
+    second = "{\"code\": \"INCAN-W0002\", \"severity\": \"warning\", \"message\": \"Unused 'value'\", "
+    second_span = "\"primary_span\": {\"file\": \"/elsewhere/lib.incn\", \"start\": {\"line\": 2, \"column\": 5}, "
+    second_end = "\"end\": {\"line\": 2, \"column\": 10}}}"
+    report = "{\"schema_version\": 2, \"ok\": false, \"diagnostics\": [" + first + first_span + first_end + ", "
+    found = report_diagnostics(report + second + second_span + second_end + "]}", "/overlay", "/program")?
     assert len(found) == 2, f"{len(found)} diagnostics"
-    assert found[0].message == "type error: Type 'Point' has no field 'z'", found[0].message
-    assert found[0].path == "/overlay/main.incn"
-    assert found[0].line == 4 and found[0].column == 11
-    assert found[1].message == "error: Unknown symbol 'missing'"
-    assert found[1].path == "/overlay/helper.incn" and found[1].line == 2 and found[1].column == 5
+    assert found[0].message == "Type 'Point' has no field 'z'", found[0].message
+    assert found[0].code == "INCAN-T0001" and found[0].severity == "error"
+    assert found[0].path == "/program/main.incn", found[0].path
+    assert found[0].line == 4 and found[0].column == 11 and found[0].end_line == 4 and found[0].end_column == 12
+    assert found[1].severity == "warning" and found[1].path == "/elsewhere/lib.incn"
+    assert found[1].line == 2 and found[1].column == 5 and found[1].end_column == 10
+    assert report_diagnostics("", "/overlay", "/program").is_err(), "an empty report was read as no diagnostics"
     return Ok(None)
 
 

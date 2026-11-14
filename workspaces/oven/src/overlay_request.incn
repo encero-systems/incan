@@ -1,4 +1,7 @@
-"""`incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]`."""
+"""
+`incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
+[--engine-report]`.
+"""
 
 
 pub model OverlayRequest:
@@ -8,6 +11,8 @@ pub model OverlayRequest:
     pub buffer: str
     pub version: int
     pub profile: str
+    # Whether the answer carries the engine's work counters.
+    pub report: bool = false
 
 
 pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
@@ -16,6 +21,10 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
+        if argument == "--engine-report":
+            request.report = true
+            index += 1
+            continue
         if argument in ["--overlay", "--document-version", "--profile", "--format"]:
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")

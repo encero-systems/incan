@@ -13,6 +13,7 @@ from engine_epochs import record_text, prepare_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
+from overlay_request import OverlayRequest
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -35,7 +36,7 @@ from engine_overlay import (
     mirror_overlay,
     overlay_entry,
     program_root,
-    projected_diagnostics,
+    report_diagnostics,
 )
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -46,70 +47,124 @@ const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
 static console_capture: dict[str, str] = {}
 
 
-pub def execute_overlay(
-    source: Path,
-    buffer: Path,
-    version: int,
-    profile: str,
-    arguments: list[str],
-) -> Result[str, str]:
-    """
-    Answer one editor overlay request: the diagnostics of `source` with `buffer` in place of its file, as an
-    `incan.overlay-diagnostics/1` document carrying the editor's document `version`.
+model CheckAnswer:
+    """One engine check: whether it passed, the compiler's report, its error text and the engine's work counters."""
 
-    1. Name the program's project view and its editor view, and mirror the program into the overlay root.
-    2. Fork the editor view from the store's shared records on its first request.
-    3. Run the build the engine runs for the program, in the editor view, collecting the compiler's console.
-    4. Project the diagnostics onto the editor's document paths.
+    passed: bool
+    report: str
+    errors: str
+    work: JsonValue
+
+
+pub def execute_overlay(request: OverlayRequest) -> Result[str, str]:
+    """Answer one overlay request over a connection of its own."""
+    store = bakery()?
+    mut channel = engine_channel(store)?
+    answer = answer_overlay(channel, store, request)
+    _ = channel.transport.close()
+    return answer
+
+
+def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -> Result[str, str]:
     """
-    # 1. The overlay has the program's logical names, so its records and units are the ones a build of these bytes has.
-    absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    Answer one overlay request: the diagnostics of its source with its buffer in place of the file, as an
+    `incan.overlay-diagnostics/1` document carrying the editor's document version.
+
+    1. Name the program's editor view, and mirror the program with the buffer in place into its overlay root.
+    2. Fork the editor view from the store's shared records on its first request.
+    3. Check the program's entry in the editor view, collecting the compiler's JSON report.
+    4. Place each diagnostic on the editor's document path.
+    """
+    # 1. The overlay has the program's logical names, so its unit key is the one a build of these bytes has.
+    absolute = Path(request.source).absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     entry = overlay_entry(absolute)?
     bound = selected_home_view()?
-    project = project_view_name(view_scope(bound)?, entry.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
+    project = project_view_name(view_scope(bound)?, entry.0, request.profile, get_optional("OVEN_BODY_REFUSALS"))?
     editor = editor_view_name(project)?
-    store = bakery()?
-    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     program = program_root(absolute)
     document = absolute.0[len(program.0) + 1:]
     if not entry.0.startswith(program.0 + "/"):
         return Err(f"the program entry {entry.0} lies outside {program.0}")
-    # The overlay root lies in the home, not the bakery: capture treats everything under the bakery as frozen.
-    overlay = home()?.joinpath("editor").joinpath(editor)
+    # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
+    overlay = store.parent().joinpath("editor").joinpath(editor)
+    buffer = Path(request.buffer)
     text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
     _ = mirror_overlay(program, overlay, document, text)?
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         fork_project_view(store, HOME_VIEW, editor)?
-    # 3. The overlay is captured and produced exactly as a build of the same bytes would be.
-    console_capture["capturing"] = "yes"
-    console_capture["captured"] = ""
+    # 3. A check runs no lowering, planning or native compile.
     target = overlay.joinpath(entry.0[len(program.0) + 1:])
-    outcome = execute_in("build", target, profile, arguments, None, "", false, editor, None)
-    console = console_capture.get("captured", "")
-    console_capture["capturing"] = ""
-    code = outcome?
+    checked = submit_check(channel, store, editor, target, request.profile, request.report)?
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
-    for found in projected_diagnostics(console):
-        entries.append(diagnostic_json(found, overlay.0, program.0))
-    document_json = JsonValue.object(
-        {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(version), "ok": JsonValue.bool(
-            code == 0,
-        ), "editor_view": JsonValue.string(editor), "diagnostics": JsonValue.array(entries)},
+    for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
+        (reason) => f"{reason}: {checked.errors.strip()}",
+    )?:
+        entries.append(diagnostic_json(found))
+    mut fields = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
+        checked.passed,
+    ), "editor_view": JsonValue.string(editor), "diagnostics": JsonValue.array(entries)}
+    if request.report:
+        fields["work"] = checked.work
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def submit_check(
+    mut channel: Channel,
+    store: Path,
+    view: str,
+    target: Path,
+    profile: str,
+    proofs: bool,
+) -> Result[CheckAnswer, str]:
+    """Submit one check of `target` in `view` and collect the compiler's report from the request's console."""
+    request = session_id()?
+    mut policy = ""
+    if proofs:
+        policy = "proofs"
+    submit = Submit(
+        command="check",
+        view=view,
+        input_selection=profile,
+        requested_roots=target.0,
+        options="json",
+        observation_policy=policy,
     )
-    return document_json.to_json().map_err((error) => error.message())
+    send(channel, request, Message.Submit(submit))?
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    console_capture["errors"] = ""
+    completed = await_completion(channel, request)
+    report_text = console_capture.get("captured", "")
+    errors = console_capture.get("errors", "")
+    console_capture["capturing"] = ""
+    complete, _ = completed?
+    mut work = JsonValue.null()
+    if complete.observation_handle != "":
+        work = parse(report(store, complete.observation_handle)?).map_err((error) => error.message())?
+    return Ok(
+        CheckAnswer(passed=complete.status == CompletionStatus.Success, report=report_text, errors=errors, work=work),
+    )
 
 
-def diagnostic_json(found: OverlayDiagnostic, overlay: str, program: str) -> JsonValue:
-    """One diagnostic on the editor's path for its document."""
-    mut path = found.path
-    if path.startswith(overlay + "/"):
-        path = program + path[len(overlay):]
+def engine_channel(store: Path) -> Result[Channel, str]:
+    """Connect to the store's records engine, starting it when none runs; a check may outlive any read deadline."""
+    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    identity = identity_for(store, installed_compiler()?)?
+    mut channel = connect(store, identity).map_err(detail)?
+    channel.transport.wait_at_most(0)
+    return Ok(channel)
+
+
+def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:
+    """One diagnostic of an overlay answer."""
     return JsonValue.object(
-        {"message": JsonValue.string(found.message), "path": JsonValue.string(path), "line": JsonValue.int(found.line), "column": JsonValue.int(
-            found.column,
-        ), "severity": JsonValue.string(found.severity)},
+        {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
+            found.severity,
+        ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
+            found.end_line,
+        ), "end_column": JsonValue.int(found.end_column)},
     )
 
 
@@ -426,9 +481,9 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
             Message.Event(event) =>
                 if event.status == "Console":
                     if console_capture.get("capturing", "") == "yes":
-                        console_capture["captured"] = console_capture.get("captured", "") + collect_console(
-                            event.trace_handle,
-                        )?
+                        streams = collect_console(event.trace_handle)?
+                        console_capture["captured"] = console_capture.get("captured", "") + streams[0]
+                        console_capture["errors"] = console_capture.get("errors", "") + streams[1]
                     else:
                         relay_console(event.trace_handle)?
             Message.Complete(value) =>
