@@ -1,7 +1,8 @@
 """
 Workspace inheritance, as 0.5.1 shipped it (RFC 077, #3141): a member's `[dependencies] NAME = { workspace = true }`
 takes the entry its workspace root declares under `[workspace.dependencies]`, a local `path` rebased from the root onto
-the member, so the shared entry is spelled once for every member.
+the member, so the shared entry is spelled once for every member. A member's environment extends the root's
+`[workspace.envs.NAME]` fragment as `workspace:NAME`.
 """
 
 from std import toml
@@ -30,17 +31,10 @@ pub def inherited(alias: str, manifest: str) -> Result[InheritedDependency, Inta
     field = ["dependencies", alias, "workspace"]
     member = absolute_directory(manifest)
     # 1. The nearest workspace root.
-    mut directory = member
-    mut found: Option[tuple[Path, Dict[str, TomlValue]]] = None
-    while found is None:
-        found = workspace_at(directory)
-        parent = directory.parent()
-        if found is None and (parent.0 == directory.0 or parent.0 == ""):
+    match enclosing_workspace(member):
+        None =>
             detail = f"`{alias}` inherits from a workspace, but no `loaf.toml` above declares [workspace]"
             return Err(refused(manifest, field, IntakeErrorKind.Missing, detail))
-        directory = parent
-    match found:
-        None => return Err(refused(manifest, field, IntakeErrorKind.Missing, "no workspace root"))
         Some(root) =>
             root_directory, workspace = root
             root_manifest = root_directory.joinpath("loaf.toml").0
@@ -65,6 +59,42 @@ pub def inherited(alias: str, manifest: str) -> Result[InheritedDependency, Inta
                                     Err(_) => pass
                         Err(_) => pass
                     return Ok(InheritedDependency(value=value, root_manifest=root_manifest, path=rebased))
+
+
+pub def workspace_envs(manifest: str) -> Dict[str, TomlValue]:
+    """
+    The `[workspace.envs.NAME]` fragments, by name, of the workspace root that is `manifest`'s project or lists it in
+    `members`; members extend them as `workspace:NAME`, as in 0.5.1. A project outside a workspace has none.
+    """
+    mut fragments: Dict[str, TomlValue] = {}
+    member = absolute_directory(manifest)
+    match enclosing_workspace(member):
+        None => return fragments
+        Some(root) =>
+            root_directory, workspace = root
+            below = relative(member.0, root_directory.0)
+            if (below != "." and below not in members(workspace)) or "envs" not in workspace:
+                return fragments
+            match workspace["envs"].as_table():
+                Err(_) => return fragments
+                Ok(envs) =>
+                    for name in sorted([name for name in envs.keys()]):
+                        fragments[name] = envs[name]
+    return fragments
+
+
+def enclosing_workspace(member: Path) -> Option[tuple[Path, Dict[str, TomlValue]]]:
+    """The nearest directory at or above `member` whose `loaf.toml` declares `[workspace]`, with that table."""
+    mut directory = member.clone()
+    while true:
+        found = workspace_at(directory)
+        if found is not None:
+            return found
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 == "":
+            return None
+        directory = parent
+    return None
 
 
 def workspace_at(directory: Path) -> Option[tuple[Path, Dict[str, TomlValue]]]:

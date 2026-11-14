@@ -4,7 +4,8 @@ Named project environments and toolchain requirements (RFC 073, RFC 117): `oven 
 
 Every Loaf has the standard environments `dev`, `test`, `lint` and `docs`; `[envs.NAME]` declares another or adds to
 one. An environment resolves through its overlay chain: the project, then `dev` unless it is `dev` or `detached`, then
-each environment it `extends`, then itself. Later layers replace earlier `cwd` and add or replace variables and
+each environment it `extends`, then itself; `extends` reaches a workspace root's `[workspace.envs.NAME]` fragment as
+`workspace:NAME`. Later layers replace earlier `cwd` and add or replace variables and
 scripts. Every `requires-incan` along the chain must hold together: a layer narrows the requirement, never widens it.
 """
 
@@ -19,9 +20,12 @@ from home_paths import TOOLCHAIN, home
 from semver_req import Version, VersionReq, parse_requirement, parse_version, requirement_matches
 from unit import project_root_of
 from intake import read_project
+from workspace_inheritance import workspace_envs
 
 pub const ENV_USAGE: str = "oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]"
 pub const STANDARD: FrozenList[str] = ["dev", "test", "lint", "docs"]
+# The prefix that names a workspace root's environment fragment in `extends` (RFC 077).
+const WORKSPACE_FRAGMENT: str = "workspace:"
 
 
 pub model Layer:
@@ -115,7 +119,7 @@ pub def env_command(request: EnvRequest) -> Result[i32, str]:
     # The manifest is validated as every project command validates it, so an invalid requirement is refused here too.
     read_project(root).map_err((error) => error.message())?
     document = manifest(root)?
-    declared = declared_environments(document)?
+    declared = with_workspace_fragments(declared_environments(document)?, root)
     if request.action == "list":
         names = environment_names(declared)
         if request.format == "json":
@@ -169,11 +173,25 @@ def declared_environments(document: TomlValue) -> Result[Dict[str, TomlValue], s
     return root["envs"].as_table().map_err((error) => f"[envs]: {error.message()}")
 
 
+def with_workspace_fragments(declared: Dict[str, TomlValue], root: Path) -> Dict[str, TomlValue]:
+    """
+    The project's environments and, as `workspace:NAME`, its workspace root's `[workspace.envs.NAME]` fragments, which
+    an environment reaches only through `extends`, as in 0.5.1.
+    """
+    mut available: Dict[str, TomlValue] = {}
+    for name in sorted([name for name in declared.keys()]):
+        available[name] = declared[name]
+    fragments = workspace_envs(root.joinpath("loaf.toml").0)
+    for name in sorted([name for name in fragments.keys()]):
+        available[f"{WORKSPACE_FRAGMENT}{name}"] = fragments[name]
+    return available
+
+
 pub def environment_names(declared: Dict[str, TomlValue]) -> list[str]:
-    """The standard environments, then each other declared one in name order."""
+    """The standard environments, then each other declared one in name order; workspace fragments are not listed."""
     mut names = list(STANDARD)
     for name in sorted([name for name in declared.keys()]):
-        if name not in names:
+        if name not in names and not name.startswith(WORKSPACE_FRAGMENT):
             names.append(name)
     return names
 
