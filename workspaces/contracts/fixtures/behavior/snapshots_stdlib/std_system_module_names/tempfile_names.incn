@@ -1,0 +1,20 @@
+from std.tempfile import BytesIO, File, IoError, Path, TemporaryDirectory
+
+
+def is_dir(path: Path) -> bool:
+    return path.is_dir()
+
+
+def opened(file: File) -> bool:
+    return true
+
+
+pub def tempfile_line() -> Result[str, IoError]:
+    """Use the BytesIO, File, IoError and Path names std.tempfile publishes."""
+    directory = TemporaryDirectory.try_new()?
+    root = directory.path()
+    target = root / "spool.bin"
+    buffer = BytesIO(b"xyz")
+    target.write_bytes(buffer.getvalue())?
+    file = target.open("rb")?
+    return Ok(f"tempfile {is_dir(root)} {opened(file)} {len(buffer.getvalue())}")
