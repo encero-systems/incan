@@ -55,6 +55,8 @@ pub model CheckedBodyCounts:
 
     pub checked: int = 0
     pub reused: int = 0
+    # Restored bodies whose pages the compiler decoded itself, rather than found decoded by an earlier check.
+    pub decoded: int = 0
 
 
 pub def compile_prepared_unit(
@@ -154,8 +156,12 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
         return Err(f"unsupported checked bodies report {schema}")
     checked = value.require("checked").and_then((field) => field.expect_int()).map_err((error) => error.message())?
     reused = value.require("reused").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    # A compiler that reports no decode count decoded every page it restored.
+    mut decoded = reused
+    if let Some(field) = value.get("decoded"):
+        decoded = field.expect_int().map_err((error) => error.message())?
     discard_file(report)
-    return Ok(CheckedBodyCounts(checked=checked, reused=reused))
+    return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
 
 
 pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:

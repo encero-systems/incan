@@ -34,7 +34,9 @@ pub def prepare_report(
             "unit-record",
         ), "unit_evaluations": JsonValue.int(produced.evaluations), "body_evaluations": JsonValue.int(
             produced.body_evaluations,
-        ), "body_reuses": JsonValue.int(produced.body_reuses), "body_ir_evaluations": JsonValue.int(
+        ), "body_reuses": JsonValue.int(produced.body_reuses), "body_page_decodes": JsonValue.int(
+            produced.body_page_decodes,
+        ), "body_ir_evaluations": JsonValue.int(
             produced.body_ir_evaluations,
         ), "native_bakes": JsonValue.int(
             produced.native_bakes,
