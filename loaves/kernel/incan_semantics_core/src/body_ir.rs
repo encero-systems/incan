@@ -282,6 +282,27 @@ mod tests;
 /// A body's checked nominal bindings, shared between clones of the body.
 pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>;
 
+/// Point bodies whose identity maps are equal at one shared map. A module's bodies are built from the same
+/// module-wide checked bindings, so most of them carry equal maps, and each map can be large; sharing keeps one
+/// allocation per distinct map rather than one per body. Contents, and so every encoded body record, are unchanged.
+pub fn share_equal_identity_maps(bodies: &mut [Body]) {
+    use std::hash::{Hash, Hasher};
+    let mut distinct: std::collections::HashMap<u64, Vec<SharedIdentities>> = std::collections::HashMap::new();
+    for body in bodies {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        body.named_type_identities.as_ref().hash(&mut hasher);
+        let candidates = distinct.entry(hasher.finish()).or_default();
+        let equal = candidates.iter().position(|candidate| {
+            std::sync::Arc::ptr_eq(candidate, &body.named_type_identities)
+                || candidate.as_ref() == body.named_type_identities.as_ref()
+        });
+        match equal {
+            Some(position) => body.named_type_identities = std::sync::Arc::clone(&candidates[position]),
+            None => candidates.push(std::sync::Arc::clone(&body.named_type_identities)),
+        }
+    }
+}
+
 /// Serialize [`SharedIdentities`] as the map itself, so the published representation is unchanged.
 mod shared_identities {
     use super::{CanonicalSymbolId, SharedIdentities};
