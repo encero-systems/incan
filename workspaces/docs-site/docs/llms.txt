@@ -20,7 +20,7 @@ Reference:
 
 Machine-readable command surfaces:
 - incan check PATH --format json
-- incan explain CODE
+- incan explain CODE --format json
 - incan inspect codegraph PATH --format jsonl
 - oven describe-unit PATH
 

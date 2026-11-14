@@ -26,7 +26,7 @@ Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origi
 | Field | Type | Contract |
 | --- | --- | --- |
 | `path` | String | A path-origin Loaf's path relative to the lock directory. Generated paths are never absolute. |
-| `registry` | String | Registry identity. Until a registry has a content-derived id, its configured name is recorded. |
+| `registry` | String | Registry identity. Until a registry has a content-derived id, its configured name is recorded. A toolchain-origin Loaf records the registry its toolchain registry unit names. |
 | `protocol` | String | Registry provider protocol. Reserved in format 1. |
 | `revision` | Integer | Exact registry record revision. Zero when absent. |
 | `checksum` | String | Immutable registry source digest. A toolchain-origin Loaf records the source digest the toolchain's registry closure records for its unit, and none when the closure records none. |

@@ -1,8 +1,10 @@
 # Library artifact sets
 
-A library build publishes `lib<crate>.rlib` (the package name with `-` replaced by `_`), `<package>.incnlib`, `<package>.incnbody`, `<package>.native.json` and `<package>.incngraph`. When produced, `<package>.rustabi` and, for a library with a vocabulary desugarer, `vocab-worker` join the set. The artifacts of one set come from one library build.
+A library build publishes `lib<crate>.rlib` (the package name with `-` replaced by `_`), `<package>.incnlib`, `<package>.incnbody` and `<package>.native.json`. When produced, `<package>.rustabi` and, for a library with a vocabulary desugarer, `vocab-worker` join the set. `<package>.incngraph` joins it only for a build with [`--codegraph`](cli_reference.md#oven-build); a library build without the flag removes an earlier one. The artifacts of one set come from one library build.
 
 A source file named `lib.incn` selects a library build. Active path dependency artifacts reside under `<consumer>/target/incan/loaves/<package>/<profile>/`. Standard-package artifacts reside under `<home>/toolchains/0.6.0-dev.9/loaves/<package>/<profile>/`.
+
+When the inputs a Rust library the toolchain installs prebuilt was produced from change on the host, a build rebuilds it from the source the toolchain ships, into the home's bakery, and a check checks against the prebuilt library. A shipped source that is missing is refused with `installed native NAME cannot rebuild because shipped source is missing: PATH`. The host's Apple SDK is an input only of steps that link natively: program and test links and Rust library kinds that link, such as a procedural macro. `rlib` and Incan library artifacts are reused across SDK versions.
 
 Public imports resolve through the dependency's checked namespace. Library declarations retain their identities through consumer aliases and re-exports. A missing or incompatible required artifact is refused; a source declaration does not replace an unavailable compiled library.
 
