@@ -237,6 +237,65 @@ pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[No
     return Ok(None)
 
 
+pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
+    """
+    A compiler worker names the native inputs of shared carriers, the driver among them, by their bytes once per file
+    identity: the store records each digest, so a fresh worker hashes no input an earlier worker hashed.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"fresh {edit}\")\n")?
+        # Each activation retires its worker, so the second edit is compiled by a fresh one.
+        outcome = Command
+            .new(binary)
+            .arg("run")
+            .arg(source.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_TRACE_DIR", observations.0)
+            .env("INCAN_WORKER_FOOTPRINT_BOUND", "1")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success() or outcome.stdout != f"fresh {edit}\n".encode("utf-8"):
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"fresh-worker run {edit}: status={outcome.status.code()} stderr={error}")
+    stop_engine(store, binary)?
+    mut hashed_by: Dict[str, int] = {}
+    for entry in observations.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut inputs: set[str] = set()
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::native_input_digest",
+            ):
+                fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                    (error) => error.message(),
+                )?
+                inputs.add(fields["input"].expect_str().map_err((error) => error.message())?)
+        for input in inputs:
+            hashed_by[input] = hashed_by.get(input, 0) + 1
+    println(f"native inputs hashed: {len(hashed_by)}")
+    # The first edit's worker names every carrier input, so a driver that traces none of its hashes cannot pass.
+    assert len(hashed_by) > 0, "no worker traced a native input hash"
+    again = sorted([input for input in hashed_by.keys() if hashed_by[input] > 1])
+    assert len(again) == 0, f"fresh workers hashed native inputs an earlier worker hashed: {again}"
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?

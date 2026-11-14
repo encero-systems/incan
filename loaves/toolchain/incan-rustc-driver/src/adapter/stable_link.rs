@@ -76,12 +76,12 @@ fn link_input_suffix(path: &Path) -> io::Result<Option<&'static str>> {
 
 /// Publish one link input once beneath its digest; an existing content name must still contain those exact bytes.
 fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf> {
-    let digest = identified_digest(store, source)?;
+    let digest = identified_digest(store, source, link_input_digest)?;
     let directory = store.join("link-inputs/sha256").join(&digest[..2]);
     let target = directory.join(format!("{digest}.{suffix}"));
     fs::create_dir_all(&directory)?;
     if target.is_file() {
-        if identified_digest(store, &target)? == digest {
+        if identified_digest(store, &target, link_input_digest)? == digest {
             return Ok(target);
         }
         return Err(io::Error::new(
@@ -126,12 +126,16 @@ fn copy_object(source: &Path, target: &Path) -> io::Result<()> {
     fs::set_permissions(target, permissions)
 }
 
-/// A link input's digest, hashed once per file identity: device, inode, size, and modification and change times.
+/// A native input's digest, hashed once per file identity: device, inode, size, and modification and change times.
 ///
 /// The store keeps one record per device and inode with the identity it was hashed at. A record whose identity still
 /// matches answers without reading the file; any write changes the identity, so the file is hashed again. A file whose
-/// identity changed while it was hashed is not recorded.
-fn identified_digest(store: &Path, path: &Path) -> io::Result<String> {
+/// identity changed while it was hashed is not recorded. `hash` reads the bytes, as the caller traces it.
+pub(crate) fn identified_digest(
+    store: &Path,
+    path: &Path,
+    hash: fn(&Path) -> io::Result<String>,
+) -> io::Result<String> {
     let metadata = fs::metadata(path)?;
     let before = file_identity(&metadata);
     let record = store
@@ -144,7 +148,7 @@ fn identified_digest(store: &Path, path: &Path) -> io::Result<String> {
             }
         }
     }
-    let digest = link_input_digest(path)?;
+    let digest = hash(path)?;
     if file_identity(&fs::metadata(path)?) == before {
         record_identity(&record, &format!("{before} {digest}\n"));
     }
