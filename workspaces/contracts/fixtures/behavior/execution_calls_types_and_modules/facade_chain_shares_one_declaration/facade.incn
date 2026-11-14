@@ -1,6 +1,7 @@
 """Provide the sibling declarations used by the fixture."""
 
-pub from provider import compute, select_target, Selectable
+pub from provider import compute, select_target, Selectable, keyed, Marker
 
 pub renamed = alias compute
 pub renamed_target = alias select_target
+pub renamed_keyed = alias keyed

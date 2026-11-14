@@ -1,0 +1,17 @@
+"""A type-keyed overload set whose bounds name this module's models."""
+
+
+pub model IntCol:
+    pub src: str
+
+
+pub model FloatCol:
+    pub src: str
+
+
+pub def kind[T with IntCol]() -> str:
+    return "int column"
+
+
+pub def kind[T with FloatCol]() -> str:
+    return "float column"

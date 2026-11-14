@@ -1,14 +1,18 @@
-# behavior: a function and a primitive-or-trait type-token overload set reached directly, re-exported through a facade and through aliases keep one declaration surface and precise selected result types (#1033)
+# behavior: a function, a primitive-or-trait type-token overload set and a type-keyed overload set reached directly, re-exported through a facade and through aliases keep one declaration surface and precise selected result types; a type bound names its declaring module's type, so its alias needs no import where the set is called and a type imported under another name satisfies it (#1033)
 # expect-stdout:
 #   42
 #   7
 #   8
 #   trait 9
+#   10
+#   11
+#   marker 12
 
 """A function reached directly, re-exported through a facade and through its alias is one declaration with one result."""
 
-from provider import compute, select_target
+from provider import compute, select_target, keyed, IntTarget
 from facade import compute as reexported, renamed, select_target as reexported_target, renamed_target, Selectable as FacadeSelectable
+from facade import keyed as reexported_keyed, renamed_keyed, Marker as FacadeMarker
 
 
 def main() -> None:
@@ -18,3 +22,7 @@ def main() -> None:
     println(int(reexported_target(8, float).value))
     assert renamed_target(9, int).value == 9
     println(renamed_target(9, FacadeSelectable).value)
+    whole: IntTarget = keyed[int](10)
+    println(whole.value)
+    println(int(reexported_keyed[float](11).value))
+    println(renamed_keyed[FacadeMarker](12).value)

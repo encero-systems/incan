@@ -32,3 +32,22 @@ pub def select_target(value: int, target: Type[float]) -> FloatTarget:
 
 pub def select_target(value: int, target: Type[Selectable]) -> TraitTarget:
     return TraitTarget(value=f"trait {value}")
+
+
+pub type Whole = int
+
+
+pub model Marker:
+    pub label: str
+
+
+pub def keyed[T with Whole](value: int) -> IntTarget:
+    return IntTarget(value=value)
+
+
+pub def keyed[T with float](value: int) -> FloatTarget:
+    return FloatTarget(value=float(value))
+
+
+pub def keyed[T with Marker](value: int) -> TraitTarget:
+    return TraitTarget(value=f"marker {value}")
