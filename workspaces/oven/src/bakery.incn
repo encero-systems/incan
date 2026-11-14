@@ -591,13 +591,19 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
                 target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
             view_file(store, file, target)?
         elif target.is_symlink():
-            resolved = target.resolve().map_err((error) => f"cannot resolve {error.message()}")?
-            if resolved.0 != source.0:
-                return Err(f"{target.0}: library binding names another payload")
+            match target.resolve():
+                Ok(resolved) =>
+                    if resolved.0 != source.0:
+                        return Err(f"{target.0}: library binding names another payload")
+                # A link whose payload is gone was written for another location of this bakery. The fact names the
+                # payload by digest, so the binding is made again.
+                Err(_) =>
+                    target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+                    link_payload(store, source, target)?
         elif target.exists():
             return Err(f"{target.0}: library binding is not a payload link")
         else:
-            target.symlink_to(source).map_err((error) => f"cannot create symbolic link {error.message()}")?
+            link_payload(store, source, target)?
     if not selected.joinpath(VIEW_RECORD).is_file():
         marker = JsonValue.object(
             {"identity": JsonValue.string(fact.identity), "layout": JsonValue.string(layout), "fact": JsonValue.string(
@@ -607,6 +613,20 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
         publish(selected.joinpath(VIEW_RECORD), json_text(marker)?)?
     admit_views(fact.files, selected, "")?
     return Ok(selected)
+
+
+def link_payload(store: Path, source: Path, target: Path) -> Result[None, str]:
+    """
+    Bind `target` to the payload `source` by a link relative to the bakery, so the binding names the same payload
+    wherever the bakery is.
+    """
+    prefix = store.0 + "/"
+    if not source.0.startswith(prefix) or not target.0.startswith(prefix):
+        return Err(f"{target.0}: library binding leaves the bakery")
+    mut text = source.0[len(prefix):]
+    for _ in range(len(target.0[len(prefix):].split("/")) - 1):
+        text = "../" + text
+    return target.symlink_to(Path(text)).map_err((error) => f"cannot create symbolic link {error.message()}")
 
 
 pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
