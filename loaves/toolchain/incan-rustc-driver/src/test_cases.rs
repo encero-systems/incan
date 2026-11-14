@@ -20,6 +20,7 @@ use std::path::Path;
 
 use crate::test_conftest::{Conftest, appended};
 use crate::test_entries::{EntryWriter, PREFIX, Stage};
+use crate::test_groups::{GROUP, Member, reached, shared_fixtures, write_group};
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned};
@@ -38,6 +39,8 @@ pub(crate) struct NativeCase {
     pub(crate) name: String,
     /// The zero-argument function the harness registers.
     pub(crate) entry: String,
+    /// In a file group, the function that runs this case, which the group calls (`crate::test_groups`).
+    pub(crate) case: Option<String>,
     /// Each parametrized argument's display value, in parameter-set order.
     pub(crate) parameters: Vec<String>,
     /// Markers a `param_case(..., marks=[...])` adds to this case alone.
@@ -124,7 +127,7 @@ pub(crate) fn plan(
         })
         .collect();
     let fixtures: Vec<&FixtureInfo> = shared.iter().copied().chain(discovery.fixtures.iter()).collect();
-    let writer = EntryWriter::new(
+    let mut writer = EntryWriter::new(
         &combined,
         fixtures
             .iter()
@@ -136,34 +139,16 @@ pub(crate) fn plan(
         .require_testing_marker_semantics()
         .map_err(|error| error.message)?;
 
-    // 3. One entry per parameter row.
-    let mut cases = Vec::new();
-    let mut generated = String::new();
-    for (index, test) in discovery.tests.iter().enumerate() {
-        let autouse = autouse_fixtures(&fixtures, test);
-        if test.parameter_names.is_empty() && autouse.is_empty() {
-            cases.push(plain_case(index, test));
-            continue;
-        }
-        let function = writer.function(&test.function_name)?;
-        let parametrized = parametrize_decorators(function, &aliases, &semantics);
-        let text = |node: &Spanned<Expr>| writer.text(node.span.start, node.span.end).to_string();
-        for row in rows(test, &parametrized, &text)? {
-            let entry = format!("{PREFIX}_{}", cases.len());
-            generated.push_str(&write_entry(&writer, &entry, test, function, &row, &autouse)?);
-            let name = if row.ids.is_empty() {
-                test.function_name.clone()
-            } else {
-                format!("{}[{}]", test.function_name, row.ids.join("-"))
-            };
-            cases.push(NativeCase {
-                test: index,
-                name,
-                entry,
-                parameters: row.displays,
-                markers: row.markers,
-            });
-        }
+    // 3. One entry per parameter row; module- and session-scoped fixtures make the file one group.
+    let mut roots: Vec<&str> = Vec::new();
+    for test in &discovery.tests {
+        roots.extend(test.parameter_names.iter().map(String::as_str));
+        roots.extend(autouse_fixtures(&fixtures, test));
+    }
+    writer.shared = shared_fixtures(&writer, &reached(&writer, &roots));
+    let (cases, mut generated, members) = write_cases(&writer, discovery, &fixtures, &aliases, &semantics)?;
+    if !writer.shared.is_empty() {
+        generated.push_str(&write_group(&writer, &members, &roots)?);
     }
 
     // 4. The checked text.
@@ -212,6 +197,75 @@ fn hoisted(session: &CompilationSession, path: &Path, text: &str) -> Result<Opti
         lifted.push_str(line.strip_prefix(indent).unwrap_or(line));
     }
     Ok(Some(lifted))
+}
+
+/// Write every test's entries, one per parameter row. In a file group (`crate::test_groups`) every case, a plain test
+/// included, registers the group's entry and names its own function as the group member that runs it.
+fn write_cases(
+    writer: &EntryWriter<'_>,
+    discovery: &DiscoveryResult,
+    fixtures: &[&FixtureInfo],
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &incan_frontend::testing_markers::TestingMarkerSemantics,
+) -> Result<(Vec<NativeCase>, String, Vec<Member>), String> {
+    let grouped = !writer.shared.is_empty();
+    let mut cases = Vec::new();
+    let mut generated = String::new();
+    let mut members = Vec::new();
+    for (index, test) in discovery.tests.iter().enumerate() {
+        let autouse = autouse_fixtures(fixtures, test);
+        let function = writer.function(&test.function_name)?;
+        let returns = return_type(writer, function);
+        let mut roots: Vec<&str> = test.parameter_names.iter().map(String::as_str).collect();
+        roots.extend(autouse.iter().copied());
+        if grouped && writer.awaits(test, &roots) {
+            return Err(format!(
+                "unsupported test contract for `{}`: an async test or fixture in a file with module- or session-scoped fixtures",
+                test.function_name
+            ));
+        }
+        if test.parameter_names.is_empty() && autouse.is_empty() {
+            let mut case = plain_case(index, test);
+            if grouped {
+                members.push(Member {
+                    entry: case.entry.clone(),
+                    returns: returns.clone(),
+                });
+                case.case = Some(std::mem::replace(&mut case.entry, GROUP.to_string()));
+            }
+            cases.push(case);
+            continue;
+        }
+        let parametrized = parametrize_decorators(function, aliases, semantics);
+        let text = |node: &Spanned<Expr>| writer.text(node.span.start, node.span.end).to_string();
+        for row in rows(test, &parametrized, &text)? {
+            let entry = format!("{PREFIX}_{}", cases.len());
+            generated.push_str(&write_entry(writer, &entry, test, function, &row, &autouse)?);
+            let name = if row.ids.is_empty() {
+                test.function_name.clone()
+            } else {
+                format!("{}[{}]", test.function_name, row.ids.join("-"))
+            };
+            let (registered, case) = if grouped {
+                members.push(Member {
+                    entry: entry.clone(),
+                    returns: returns.clone(),
+                });
+                (GROUP.to_string(), Some(entry))
+            } else {
+                (entry, None)
+            };
+            cases.push(NativeCase {
+                test: index,
+                name,
+                entry: registered,
+                case,
+                parameters: row.displays,
+                markers: row.markers,
+            });
+        }
+    }
+    Ok((cases, generated, members))
 }
 
 /// Write one case's entry: a stage per `yield` fixture, outermost first, then the stage that calls the test. Stage
@@ -285,6 +339,7 @@ fn plain_case(index: usize, test: &TestInfo) -> NativeCase {
         test: index,
         name: test.function_name.clone(),
         entry: test.function_name.clone(),
+        case: None,
         parameters: Vec::new(),
         markers: Vec::new(),
     }

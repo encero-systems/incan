@@ -14,6 +14,8 @@ pub(crate) struct CollectedTest {
     pub(crate) name: String,
     // The zero-argument function the native harness registers: the test itself, or its generated case entry.
     pub(crate) entry: String,
+    // In a file group, the function the group runs for this case; the runner selects cases by it.
+    case: Option<String>,
     // A parametrized case's display values, which machine-readable reports carry.
     parameters: Vec<String>,
     skip: Option<String>,
@@ -62,6 +64,7 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
         let mut entry = CollectedTest {
             name: case.name,
             entry: case.entry,
+            case: case.case,
             parameters: case.parameters,
             skip: None,
             xfail: None,
@@ -125,6 +128,7 @@ pub(crate) fn report(tests: &[CollectedTest], native: &[String]) -> Result<serde
                 serde_json::json!({
                     "name": test.name,
                     "native": native,
+                    "case": test.case,
                     "parameters": test.parameters,
                     "skip": test.skip,
                     "xfail": test.xfail,

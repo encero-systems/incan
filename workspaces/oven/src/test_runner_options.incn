@@ -3,6 +3,7 @@
 from runner_options import ReportFormat, duration_ms, split_runner_options
 from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
 from runner_selection import keyword_matches, markers_match, shuffled
+from testing import group_case, group_edges
 
 
 pub def test_every_runner_option_parses_and_leaves_unit_options() -> Result[None, str]:
@@ -84,7 +85,8 @@ pub def test_selection_expressions_and_seeded_order() -> Result[None, str]:
 
 
 pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
-    """JSON Lines records, the summary, JUnit XML and the slowest durations name each outcome as 0.5.1 did."""
+    """JSON Lines records, the summary, JUnit XML, the slowest durations and a file group's per-case output name each
+    outcome as 0.5.1 did."""
     passed = Outcome(
         file="tests/test_a.incn",
         label="test_a.incn",
@@ -131,6 +133,12 @@ pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
         "  1500ms test_a.incn::test_three",
     ]
     assert summary_line([passed, skipped, failed], 1600) == "1 passed, 1 failed, 1 skipped in 1.600s"
+    printed = "running 1 test\ntest incan_case_group ... module setup\nincan-case-start incan_case_0\nfirst\nincan-case-end incan_case_0 passed\nincan-case-start incan_case_1\nincan-case-end incan_case_1 failed boom\nmodule teardown\nok\n\ntest result: ok. 1 passed\n"
+    first = group_case(printed, "incan_case_0")
+    assert first.finished and first.passed and first.output == "first\n"
+    second = group_case(printed, "incan_case_1")
+    assert second.finished and not second.passed and second.message == "boom"
+    assert group_edges(printed, "incan_case_group") == ("module setup\n", "module teardown\n")
     return Ok(None)
 
 

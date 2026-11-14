@@ -1,0 +1,14 @@
+# behavior: a module-scoped `yield` fixture is set up once for its file and torn down after the file's last test, and a session-scoped fixture is set up once on its first use, in one process, as 0.5.1 runs them (#3149).
+# cli-commands:
+#   test tests/test_scopes.incn --nocapture
+# expect-stdout:
+#   module setup
+#   session setup
+#   first test
+#   test_scopes.incn::test_first PASSED
+#   second test
+#   module teardown
+#   test_scopes.incn::test_second PASSED
+
+def main() -> None:
+    println("main")

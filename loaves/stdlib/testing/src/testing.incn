@@ -263,8 +263,9 @@ pub def fixture() -> None:
     it run after the test, also when the test fails, and can read the setup's locals and parameters. An `async def`
     fixture is awaited, and so are tests that use it.
 
-    `scope="module"` and `scope="session"` are accepted. `incan test` runs each test in its own process, so a module
-    or session fixture is set up, and torn down, once for each test that uses it.
+    `scope="module"` sets a fixture up once for its test file, on its first use (a `yield` one before the file's first
+    test), and tears it down after the file's last test; `scope="session"` does the same for the file's test process.
+    `incan test` runs such a file's tests in one process, and every other test in its own.
 
     Example:
 

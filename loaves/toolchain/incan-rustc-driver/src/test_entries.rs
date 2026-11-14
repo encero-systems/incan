@@ -5,7 +5,7 @@
 //! (`crate::test_cases`).
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use incan_driver::testing::types::{FixtureInfo, TestInfo};
 use incan_frontend::ast::{Declaration, Expr, FunctionDecl, Spanned, Statement};
@@ -44,6 +44,8 @@ impl Builtin {
 struct Uses {
     panic_boundary: bool,
     working_directory: bool,
+    /// A file group selects its cases from the environment (`crate::test_groups`).
+    group: bool,
     /// One directory helper per built-in fixture and parameter type: its kind, the type's text and its name.
     directories: Vec<(Builtin, String, String)>,
 }
@@ -84,6 +86,9 @@ pub(crate) struct EntryWriter<'a> {
     pub(crate) source: &'a str,
     pub(crate) fixtures: HashMap<String, &'a FixtureInfo>,
     pub(crate) functions: HashMap<String, &'a FunctionDecl>,
+    /// Module- and session-scoped fixtures a file group sets up once (`crate::test_groups`); a case reads their
+    /// values.
+    pub(crate) shared: HashSet<String>,
     uses: RefCell<Uses>,
     locals: Cell<usize>,
 }
@@ -99,6 +104,7 @@ impl<'a> EntryWriter<'a> {
             source,
             fixtures,
             functions,
+            shared: HashSet::new(),
             uses: RefCell::new(Uses::default()),
             locals: Cell::new(0),
         }
@@ -125,9 +131,9 @@ impl<'a> EntryWriter<'a> {
     }
 
     /// Set up `name` for one parameter of type `ty`, appending any statement it needs to `prelude`, and return the
-    /// expression that passes it: a `yield` fixture's staged value, a built-in fixture, or a call that sets up the
-    /// fixture's own parameters first, again for each use as 0.5.1 does. A value passed to a `mut` parameter is bound
-    /// to a `mut` local first.
+    /// expression that passes it: a `yield` fixture's staged value, a shared fixture's value as its file group set it
+    /// up, a built-in fixture, or a call that sets up the fixture's own parameters first, again for each use as 0.5.1
+    /// does. A value passed to a `mut` parameter is bound to a `mut` local first.
     fn setup(
         &self,
         name: &str,
@@ -140,12 +146,39 @@ impl<'a> EntryWriter<'a> {
         if staged.contains(&name) {
             return Ok(name.to_string());
         }
-        let Some(fixture) = self.fixtures.get(name).copied() else {
+        if let Some(fixture) = self.fixtures.get(name).copied()
+            && self.shared.contains(name)
+        {
+            // A shared `yield` fixture is set up by its group before any case; a plain one on its first use.
+            return Ok(if fixture.has_teardown {
+                format!("{PREFIX}_scope_{name}[0]")
+            } else {
+                format!("{PREFIX}_shared_{name}()")
+            });
+        }
+        if !self.fixtures.contains_key(name) {
             return match Builtin::named(name) {
                 Some(builtin) => Ok(self.builtin(builtin, ty, &format!("{label}-{name}"))),
                 None => Err(format!("missing fixture `{name}`")),
             };
-        };
+        }
+        self.fixture_call(name, label, staged, prelude, depth)
+    }
+
+    /// A call of fixture `name` that sets up its own parameters first.
+    pub(crate) fn fixture_call(
+        &self,
+        name: &str,
+        label: &str,
+        staged: &[&str],
+        prelude: &mut Vec<String>,
+        depth: usize,
+    ) -> Result<String, String> {
+        let fixture = self
+            .fixtures
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("missing fixture `{name}`"))?;
         if depth > self.fixtures.len() {
             return Err(format!("fixture dependency cycle through `{name}`"));
         }
@@ -213,7 +246,7 @@ impl<'a> EntryWriter<'a> {
             let Some(fixture) = self.fixtures.get(name).copied() else {
                 continue;
             };
-            if ordered.iter().any(|staged| staged.name == fixture.name) {
+            if self.shared.contains(&fixture.name) || ordered.iter().any(|staged| staged.name == fixture.name) {
                 continue;
             }
             if depth > self.fixtures.len() {
@@ -224,6 +257,7 @@ impl<'a> EntryWriter<'a> {
                 .iter()
                 .filter(|dependency| {
                     self.fixtures.contains_key(dependency.as_str())
+                        && !self.shared.contains(dependency.as_str())
                         && !ordered.iter().any(|staged| &staged.name == *dependency)
                 })
                 .collect::<Vec<_>>();
@@ -460,6 +494,9 @@ impl<'a> EntryWriter<'a> {
             ));
             imports.push(format!("from rust::std::process import id as {PREFIX}_process_id"));
         }
+        if uses.group {
+            imports.push(format!("from std.environ import get_or as {PREFIX}_get_or"));
+        }
         if !imports.is_empty() {
             finished.push_str("\n\n");
             finished.push_str(&imports.join("\n"));
@@ -550,6 +587,16 @@ fn yielded_value<'f>(
         }
     }
     Err(format!("fixture `{name}` has no top-level `yield`"))
+}
+
+impl EntryWriter<'_> {
+    /// Record that the written text needs the native panic boundary, and the environment when a file group reads its
+    /// selected cases.
+    pub(crate) fn uses_group(&self) {
+        let mut uses = self.uses.borrow_mut();
+        uses.panic_boundary = true;
+        uses.group = true;
+    }
 }
 
 /// The language's spellings of `Ok`, `Err`, `Some` and `None`, which the generated text writes.
