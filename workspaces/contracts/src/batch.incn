@@ -20,6 +20,8 @@ const ENTRY_OPTION: str = "program-entry"
 pub const SHARED_ENTRIES_REFUSED: str = "the selected engine refuses shared program entries"
 # Why a successful shared compilation that printed anything is not taken whole: its output belongs to some case.
 const OUTPUT_ATTRIBUTION: str = "compiler output requires isolated attribution"
+# Why a module case keeps its own command when one of its imports resolves only from its own source root.
+const ROOT_IMPORT: str = "an import that only the case's source root resolves names no module inside a group"
 
 
 pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
@@ -224,10 +226,12 @@ def entry(fixture: Fixture) -> Result[Entry, str]:
         return Err("check-only cases keep their own diagnostic context")
     admit_source(program.source)?
     if fixture.shape == "module":
-        for relative in fixture_files(fixture)?.keys():
+        files = fixture_files(fixture)?
+        for relative in files.keys():
             if relative.startswith("src/") and relative.endswith(".incn"):
-                module = fixture.entry.joinpath(relative[4:])
-                admit_source(fixture.input.text(module)?)?
+                text = fixture.input.text(fixture.entry.joinpath(relative[4:]))?
+                admit_source(text)?
+                admit_imports(relative, text, files)?
     return Ok(Entry(fixture=fixture, source=program.source))
 
 
@@ -243,6 +247,54 @@ def admit_source(source: str) -> Result[None, str]:
         if line.startswith("@"):
             return Err("decorator initialization has not been proven equivalent before entry setup")
     return Ok(None)
+
+
+def admit_imports(relative: str, source: str, files: Dict[str, bytes]) -> Result[None, str]:
+    """
+    Refuse a module case one of whose imports resolves only from the case's source root. An import resolves from the
+    importing file's directory or from the source root, and in a group the case's sources sit under `src/case_N/`: a
+    `crate` path, or a nested file's import that only the case's root defines, names no module there. A top-level file's
+    directory is the case's root, so its imports still resolve.
+    """
+    parts = relative.split("/")
+    directory = "/".join(parts[0:len(parts) - 1]) + "/"
+    for module in imported_modules(source):
+        first = module.split(".")[0]
+        if first == "crate":
+            return Err(ROOT_IMPORT)
+        if directory != "src/" and defines(files, "src/", first) and not defines(files, directory, first):
+            return Err(ROOT_IMPORT)
+    return Ok(None)
+
+
+def defines(files: Dict[str, bytes], directory: str, name: str) -> bool:
+    """Whether the sources in `directory` hold a module or a package named `name`."""
+    if f"{directory}{name}.incn" in files:
+        return true
+    package = f"{directory}{name}/"
+    for relative in files.keys():
+        if relative.startswith(package):
+            return true
+    return false
+
+
+def imported_modules(source: str) -> list[str]:
+    """The dotted module paths a source's `import` and `from` statements name; relative imports are left out."""
+    mut modules: list[str] = []
+    for line in source.split("\n"):
+        mut statement = line.strip()
+        if statement.startswith("pub "):
+            statement = statement[4:].strip()
+        mut names = ""
+        if statement.startswith("from "):
+            names = statement[5:].strip().split(" ")[0]
+        elif statement.startswith("import "):
+            names = statement[7:]
+        for name in names.split(","):
+            path = name.strip().split(" ")[0].replace("::", ".")
+            if path != "" and not path.startswith("."):
+                modules.append(path)
+    return modules
 
 
 def observes_module_identity(source: str) -> bool:
