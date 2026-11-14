@@ -266,7 +266,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         if len(rest) > 0 and rest[0] == "bake":
             syntax_error("interop", f"`{OVEN} {INTEROP_BAKE_MOVED}")
         if len(rest) == 0 or rest[0] != "stage":
-            syntax_error("interop", "stages with `stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]`")
+            syntax_error("interop", "stages with `stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]`")
         match stage_options(rest[1:]):
             Err(reason) => syntax_error("interop", reason)
             Ok(options) => finish("interop", stage_interop(options))
