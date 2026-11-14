@@ -1,6 +1,7 @@
 """Owned byte storage and shared binary I/O contracts without higher-level stream policy."""
 
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
+from rust::std::slice import Iter
 from crate.primitives.errors import Error
 
 
@@ -264,9 +265,6 @@ def _host_error(operation: str, position: int, detail: str) -> IoError:
     elif detail.contains("failed to fill whole buffer") or detail.contains("early eof"):
         return IoError(operation=operation, kind="unexpected_eof", detail=detail, position=position)
     return IoError(operation=operation, kind="other", detail=detail, position=position)
-
-
-from rust::std::slice import Iter
 
 
 pub type ReadCursor = rusttype Iter[u8]:

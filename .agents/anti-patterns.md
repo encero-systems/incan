@@ -30,7 +30,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2589 |
 | IN2 | String-literal `match` arms where an `Enum(str)` belongs | 172 | 172 | 172 |
 | IN3 | Repeated `kind == "a" or kind == "b"` chains | 46 | 46 | 46 |
-| IN4 | Imports after the first declaration | 1 | 1 | 1 |
+| IN4 | Imports after the first declaration | 1 | 1 | 0 |
 | IN5 | Incan lines over 120 characters | 1252 | 1252 | 1252 |
 | IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | 32 | 32 |
 | IN7 | `str("literal")` wrappers | 8 | 8 | 8 |
