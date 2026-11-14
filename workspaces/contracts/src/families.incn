@@ -24,6 +24,8 @@ pub const FAMILIES: FrozenList[str] = [
     "format",
     "graph",
 ]
+# The families other than `graph` by how long their workers run in the full census, longest first.
+const LONGEST_FIRST: FrozenList[str] = ["project", "behavior", "interop", "library", "check", "testing", "format"]
 # The expectations a run compares.
 const RUN: FrozenList[str] = [
     "expect-stdout",
@@ -190,8 +192,10 @@ pub def command(fixture: Fixture, header: Header) -> list[str]:
 
 pub def work_order(families: list[str], graph_cases: list[str]) -> list[str]:
     """
-    The order family workers start in: the first graph case, the other selected families, then the other graph
-    cases. Each graph case is one sequential protocol and runs in a worker of its own.
+    The order family workers start in: every graph case, then the other selected families longest first. Each graph
+    case is one sequential protocol in a worker of its own, and one of them runs about as long as the longest family;
+    a long worker that starts last outlasts the set however early the others finish.
     """
-    others = [family for family in families if family != "graph"]
-    return graph_cases[0:min([1, len(graph_cases)])] + others + graph_cases[min([1, len(graph_cases)]):]
+    mut others = [family for family in LONGEST_FIRST if family in families]
+    others.extend([family for family in families if family != "graph" and family not in LONGEST_FIRST])
+    return graph_cases + others
