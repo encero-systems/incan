@@ -17,7 +17,7 @@ use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
 use incan_frontend::ast::{ImportKind, ImportPath, Program};
 use incan_frontend::module::{
-    SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
+    MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
     logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,
     resolve_source_module_path, self_import_diagnostic_message,
 };
@@ -230,6 +230,7 @@ fn collect_modules_detailed_from_seeds(
             };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
+        let mut missing_modules = Vec::new();
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             let span = resolved.span;
             let module_ref = match resolved.resolution {
@@ -255,6 +256,10 @@ fn collect_modules_detailed_from_seeds(
                         diagnostics::DiagnosticPhase::Typecheck,
                     ));
                 }
+                SourceModuleImportResolution::Missing(missing) => {
+                    missing_modules.push(missing_module_error(session, &missing, span));
+                    continue;
+                }
                 SourceModuleImportResolution::External => continue,
             };
             let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
@@ -265,6 +270,15 @@ fn collect_modules_detailed_from_seeds(
                 to_process.push((dep_path_str, module_name, module_segments));
             }
             dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
+        }
+        // Every import of a module no file defines is refused here, each once, before checking binds its names.
+        if !missing_modules.is_empty() {
+            return Err(CliDiagnosticFailure::from_errors(
+                file_path,
+                source,
+                missing_modules,
+                diagnostics::DiagnosticPhase::Import,
+            ));
         }
 
         let source_positions = diagnostics::SourcePositionIndex::new(&source);
@@ -291,6 +305,33 @@ fn own_standard_module(session: &CompilationSession, module_path: &[String]) -> 
         return None;
     }
     resolve_source_module_path(&session.source_root, &module_path[1..])
+}
+
+/// Refuse an import of a source module that no file defines, naming each file that would define it relative to the
+/// project root, the way the user sees the project.
+fn missing_module_error(
+    session: &CompilationSession,
+    missing: &MissingSourceModule,
+    span: incan_frontend::ast::Span,
+) -> diagnostics::CompileError {
+    let project_root = &session.unit().project_root;
+    let project_root = project_root.canonicalize().unwrap_or_else(|_| project_root.clone());
+    let module_files = missing
+        .module_files
+        .iter()
+        .map(|file| {
+            file.strip_prefix(&project_root)
+                .unwrap_or(file)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    diagnostics::errors::source_module_not_found(
+        &missing.spelling,
+        missing.standard_module.as_deref(),
+        &module_files,
+        span,
+    )
 }
 
 /// Return modules in stable topological order (dependencies first).
