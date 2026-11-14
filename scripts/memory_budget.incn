@@ -72,6 +72,15 @@ pub model Measurement:
     pub largest_process: str
     pub largest_process_peak_bytes: int
     pub wall_ms: int
+    pub live_peak_bytes: int = -1
+    pub live_peak_process: int = 0
+
+
+pub model HeapPeak:
+    """The greatest live heap one traced compiler process recorded; `bytes` is -1 when no process recorded one."""
+
+    pub bytes: int
+    pub process: int
 
 
 def main() -> None:
@@ -385,6 +394,11 @@ pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[
     if len(exceeded) > 0:
         return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
     return Ok(None)
+
+
+pub def heap_peak(trace: str, peak: HeapPeak) -> Result[HeapPeak, str]:
+    """No measurement reads a compiler trace yet: the peak passes through unchanged."""
+    return Ok(peak)
 
 
 def summary(result: Measurement) -> str:
