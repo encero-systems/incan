@@ -31,7 +31,7 @@ const RUST_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
     ArtifactFieldSchema {
         name: "checked_constants",
-        codec: "refused",
+        codec: "span-string",
     },
     ArtifactFieldSchema {
         name: "checked_calls",
@@ -147,13 +147,21 @@ const RUST_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "c2b32ae6f903eb39d0d95aedf09480fc71a7f21501389e0fc37fe04b5c61af91";
+const GENERATOR_SHA256: &str = "34d65493f90fa358fffd581ac1d1c78e580f69967a8cc0b9d34b7b3a08220819";
 
 pub(super) fn project(
     positions: &Positions,
     rust: &crate::typechecker::type_info::RustInteropArtifacts,
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
+    for (span, value) in &rust.checked_constants {
+        fields.push(vec![
+            "artifact-rust".into(),
+            positions.nodes.anchor(*span)?.path,
+            "checked_constants".into(),
+            value.clone(),
+        ]);
+    }
     rust_artifact_admission::project_checked_calls(positions, &rust.checked_calls, fields)?;
     Ok(())
 }
@@ -169,6 +177,12 @@ pub(super) fn restore(
     let span = positions.span(&row[1])?;
     let mut values = row[3..].iter();
     match row[2].as_str() {
+        "checked_constants" => {
+            let value = next(&mut values)?.to_owned();
+            if value.is_empty() || rust.checked_constants.insert(span, value).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "checked_calls" => {
             rust_artifact_admission::restore_checked_calls(positions, &mut rust.checked_calls, span, &mut values)?
         }
@@ -236,6 +250,14 @@ mod generated_tests {
         super::super::rust_artifact_admission::restore_checked_calls(&positions, &mut restored, span, &mut values)?;
         assert_eq!(restored.get(&owner), Some(&call));
         assert_eq!(values.next(), None);
+        let mut rust = crate::typechecker::type_info::RustInteropArtifacts::default();
+        rust.checked_constants.insert(owner, "native::LIMIT".into());
+        let mut fields = Vec::new();
+        super::project(&positions, &rust, &mut fields)?;
+        let row = fields.first().ok_or("missing checked-constant row")?;
+        let mut restored = crate::typechecker::type_info::RustInteropArtifacts::default();
+        assert!(super::restore(&positions, &mut restored, row)?);
+        assert_eq!(restored.checked_constants, rust.checked_constants);
         Ok(())
     }
 }
