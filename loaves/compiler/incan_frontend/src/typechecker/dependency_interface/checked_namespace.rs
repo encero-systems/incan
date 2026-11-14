@@ -115,13 +115,13 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
+        let mut remapping = checked_namespace_foreign_nominal_remapping(&self.api);
         let identities = self
             .identities
             .iter()
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
-        let nominal_scope = Arc::new(
+        let nominal_scope: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>> = Arc::new(
             identities
                 .iter()
                 .filter(|(_, identity)| {
@@ -136,6 +136,9 @@ impl CheckedNamespaceInterface {
                 .map(|(name, identity)| (name.clone(), identity.clone()))
                 .collect(),
         );
+        remapping.extend(nominal_scope.iter().filter_map(|(name, identity)| {
+            incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+        }));
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
@@ -348,7 +351,7 @@ mod tests {
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
-        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n";
+        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub model Failure:\n    pub message: str\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n\npub def load() -> Result[Order, Failure]:\n    return Ok(Order(quantity=1, unit_price=1.0))\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["domain".to_string()];
@@ -386,6 +389,18 @@ mod tests {
             .get(identity_function)
             .ok_or("missing identity callable templates")?;
         assert_eq!(callable.return_type, ResolvedType::Named("Order".into()));
+        let consumer_source = "from domain import load, total\n\npub def retained_total() -> Result[float, str]:\n    loaded = load().map_err((error) => error.message)?\n    return Ok(total(loaded))\n";
+        let consumer_tokens = crate::lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
+        let consumer = crate::parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
+        let dependencies = [("domain", &program)];
+        let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+        consumer_checker.register_dependency_module_path_segments("domain", module_path);
+        consumer_checker.record_nominal_declaring_modules(&consumer, &dependencies);
+        consumer_checker.install_dependency_interfaces_directly(&[installed]);
+        consumer_checker
+            .check_program_with_dependency_semantics(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
         Ok(())
     }
 }
