@@ -1,5 +1,6 @@
 """Admit finite Crumb envelopes completely before exposing records or independently retained field views."""
 
+from rust::incan_std_primitives::crumb import count_twin_row_read
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.hash_stream import HashOutput, OutputMode
 from crate.primitives.crumb.hashes import start_seal, append_seal
@@ -158,6 +159,7 @@ def read_envelope(
     mut budget: Budget,
 ) -> Result[tuple[RowSet, int], BinaryError]:
     """Check header and frame before descriptions, then admit all values and any seal before returning a set."""
+    count_twin_row_read()
     mut cursor = EncodingCursor.create(view)?
     magic = copied(cursor.take(4, budget)?, 0, budget)?
     if magic != b"CRMB":
