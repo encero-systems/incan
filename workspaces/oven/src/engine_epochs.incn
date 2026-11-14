@@ -136,16 +136,23 @@ def diagnostic_features() -> list[str]:
 
 
 pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, str]:
-    """Capture post-projection metadata before the atomic commit; refuse semantic changes during production."""
+    """
+    Capture post-projection metadata before the atomic commit; refuse semantic changes during production.
+
+    1. A request that publishes nothing has nothing to refresh.
+    2. A request captured by listing whose unit recorded its first source graph meanwhile is published with that
+       graph's reach when it captures the same identity, so the first rerun captures exactly what was published.
+    3. Otherwise the request's own reach is captured again, and a changed input refuses publication.
+    """
+    # 1. An unchanged request staged no epoch.
     if captured.commits == 0:
         return Ok(captured)
-    request = CaptureRequest(
-        roots=captured.epoch.roots,
-        selection=captured.epoch.selection,
-        whole_unit=true,
-        reach=captured.reach,
-    )
-    checked = capture(request, Some(captured.epoch), captured.selected.admitted, 0)?
+    # 2. The same inputs by name instead of by listing.
+    if captured.reach is None:
+        if let Some(graphed) = graph_published(captured)?:
+            return Ok(graphed)
+    # 3. The reach the request was captured with.
+    checked = capture(recaptured(captured, captured.reach), Some(captured.epoch), captured.selected.admitted, 0)?
     match checked.epoch:
         None => return Err("inputs did not settle before request publication")
         Some(epoch) =>
@@ -153,15 +160,44 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
                 return Err("captured inputs changed before request publication")
             if checked.outcome == CaptureOutcome.Unchanged:
                 return Ok(captured)
-            mut refreshed = captured
-            encoded = epoch.encoded()?
-            refreshed.epoch = epoch
-            refreshed.revision = fingerprint([encoded])?
-            mut transaction = begin(captured.snapshot)
-            transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
-            transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
-            refreshed.transaction = Some(transaction)
-            return Ok(refreshed)
+            return refreshed_request(captured, epoch, captured.reach)
+
+
+def graph_published(captured: CapturedRequest) -> Result[Option[CapturedRequest], str]:
+    """The request refreshed with its unit's newly recorded graph reach, when that reach captures the same identity."""
+    reach = recorded_reach(Path(captured.epoch.roots[0]), captured.epoch.selection.profile)
+    if reach is None:
+        return Ok(None)
+    graphed = capture(recaptured(captured, reach), Some(captured.epoch), captured.selected.admitted, 0)?
+    match graphed.epoch:
+        None => return Ok(None)
+        Some(epoch) =>
+            if graphed.outcome != CaptureOutcome.Refreshed:
+                return Ok(None)
+            return Ok(Some(refreshed_request(captured, epoch, reach)?))
+
+
+def recaptured(captured: CapturedRequest, reach: Option[SourceGraph]) -> CaptureRequest:
+    """The whole-unit request `captured` was taken for, over `reach`."""
+    return CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true, reach=reach)
+
+
+def refreshed_request(
+    captured: CapturedRequest,
+    epoch: BuildEpoch,
+    reach: Option[SourceGraph],
+) -> Result[CapturedRequest, str]:
+    """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
+    mut refreshed = captured
+    encoded = epoch.encoded()?
+    refreshed.epoch = epoch
+    refreshed.revision = fingerprint([encoded])?
+    refreshed.reach = reach
+    mut transaction = begin(captured.snapshot)
+    transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
+    transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
+    refreshed.transaction = Some(transaction)
+    return Ok(refreshed)
 
 
 def previous_epoch(view: Snapshot, head: str) -> Result[tuple[str, str, Option[BuildEpoch]], str]:
