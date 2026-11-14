@@ -1,0 +1,10 @@
+[project]
+name = "default_members_at_the_root"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["alpha", "beta"]
+default-members = ["beta"]
