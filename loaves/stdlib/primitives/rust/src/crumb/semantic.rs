@@ -11,6 +11,8 @@ mod adaptation;
 mod blocks;
 #[path = "semantic_columns.rs"]
 mod columns;
+#[path = "semantic_envelope.rs"]
+mod envelope;
 #[path = "semantic_hash.rs"]
 mod hash;
 #[path = "semantic_print.rs"]
@@ -611,6 +613,28 @@ mod tests {
         );
         assert_eq!(missing.kind, 0);
         assert_eq!(missing.decoded, b"\x01\x10invalid_selector");
+    }
+
+    #[test]
+    fn column_envelopes_round_trip_groups_and_refuse_reserved_flags() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let input = "43524d42020100350101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770101010001010003000100";
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            format!(r#"{{"operation":"binary_decode","input_hex":"{input}","supplied_descriptions":{description}}}"#),
+        );
+        assert_eq!(accepted.kind, 0);
+        let encoded: String = accepted.encoded.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(encoded, input);
+        assert_eq!(&accepted.decoded[..3], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"binary_decode","input_hex":"43524d4202010200"}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0ereserved_flags");
     }
 
     #[test]

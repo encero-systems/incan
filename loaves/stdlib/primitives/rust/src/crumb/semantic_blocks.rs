@@ -8,11 +8,12 @@
 use serde_json::Value as Json;
 
 use super::columns::{self, Budget, Cursor, KeyType, Refused};
-use super::hash::{self, Projection, Value};
+use super::hash::{self, Node, Projection, Value};
+use super::rows::Stored;
 
 /// One stored cell type.
 #[derive(Clone)]
-enum CellType {
+pub(super) enum CellType {
     Integer(bool, usize),
     Decimal(i64, i64),
     Text,
@@ -21,6 +22,7 @@ enum CellType {
     Float(usize),
     Option(Box<CellType>),
     List(Box<CellType>),
+    Nominal(Node),
 }
 
 /// A decoded block: its encoding identifier and every logical row value.
@@ -39,7 +41,7 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     for length in lengths {
         let mut budget = columns::case_budget(document)?;
-        match read_block(&node, absent, rows, &data[..length], keys.as_deref(), &mut budget) {
+        match read_block(&node, absent, rows, &data[..length], keys.as_deref(), &[], &mut budget) {
             Ok(Some((encoding, values))) => {
                 output.push(0);
                 hash::unsigned(&mut output, u128::from(encoding));
@@ -66,7 +68,14 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
         return Some(Vec::new());
     };
     let encoding = u8::try_from(expected.get("encoding")?.as_u64()?).ok()?;
-    write_block(&node, absent, hash::logical_items(values)?, encoding, keys.as_deref())
+    write_block(
+        &node,
+        absent,
+        hash::logical_items(values)?,
+        encoding,
+        keys.as_deref(),
+        &[],
+    )
 }
 
 /// Parse the declared type and absence, and build any supplied external dictionary keys.
@@ -122,6 +131,14 @@ fn cell_type(name: &str) -> Option<CellType> {
     })
 }
 
+/// The cell type of an admitted storage node: nominal selectors decode through the dictionary.
+pub(super) fn from_node(node: &Node) -> Option<CellType> {
+    match node {
+        Node::Nominal(..) => Some(CellType::Nominal(node.clone())),
+        _ => cell_type(&hash::selector_spelling(node)?),
+    }
+}
+
 /// The dictionary key type of a stored cell type, when it has one.
 fn key_type_of(node: &CellType) -> Option<KeyType> {
     match node {
@@ -150,6 +167,7 @@ fn read_block(
     rows: i64,
     data: &[u8],
     keys: Option<&[Value]>,
+    dictionary: &[Stored],
     budget: &mut Budget,
 ) -> Result<Option<Decoded>, Refused> {
     let Some(stored) = stored_type(node, absent) else {
@@ -180,7 +198,7 @@ fn read_block(
         return Err("unsupported_encoding");
     }
     let encoding = encoding as u8;
-    let stored_values = match stored_values(&stored, encoding, present, &mut cursor, keys, budget)? {
+    let stored_values = match stored_values(&stored, encoding, present, &mut cursor, keys, dictionary, budget)? {
         Some(values) => values,
         None => return Ok(None),
     };
@@ -214,6 +232,7 @@ fn stored_values(
     present: usize,
     cursor: &mut Cursor,
     keys: Option<&[Value]>,
+    dictionary: &[Stored],
     budget: &mut Budget,
 ) -> Result<Option<Vec<Value>>, Refused> {
     if present == 0 && encoding != 0 {
@@ -236,12 +255,17 @@ fn stored_values(
             let (table, width, data) = columns::read_index(cursor, present, budget)?;
             let mut values = Vec::with_capacity(present);
             for position in 0..present {
-                values.push(cell(node, selected(table, width, data, position, budget)?, budget)?);
+                values.push(cell(
+                    node,
+                    selected(table, width, data, position, budget)?,
+                    dictionary,
+                    budget,
+                )?);
             }
             Ok(Some(values))
         }
-        1 | 2 => numeric_values(node, encoding, present, cursor, budget),
-        3 | 5 => read_runs(node, encoding, present, cursor, keys, budget).map(Some),
+        1 | 2 => numeric_values(node, encoding, present, cursor, dictionary, budget),
+        3 | 5 => read_runs(node, encoding, present, cursor, keys, dictionary, budget).map(Some),
         _ => {
             let keys = keys.ok_or("missing_dictionary")?;
             let width = cursor.length(budget)?;
@@ -283,10 +307,11 @@ fn numeric_values(
     encoding: u8,
     present: usize,
     cursor: &mut Cursor,
+    dictionary: &[Stored],
     budget: &mut Budget,
 ) -> Result<Option<Vec<Value>>, Refused> {
     let raw = cursor.frame(budget)?;
-    let base_value = cell(node, raw, budget)?;
+    let base_value = cell(node, raw, dictionary, budget)?;
     let Some(base) = coefficient(&base_value) else {
         return Ok(None);
     };
@@ -339,6 +364,7 @@ fn read_runs(
     present: usize,
     cursor: &mut Cursor,
     keys: Option<&[Value]>,
+    dictionary: &[Stored],
     budget: &mut Budget,
 ) -> Result<Vec<Value>, Refused> {
     let count = cursor.length(budget)?;
@@ -358,7 +384,7 @@ fn read_runs(
                 return Err("adjacent_runs");
             }
             previous_raw = raw;
-            cell(node, raw, budget)?
+            cell(node, raw, dictionary, budget)?
         } else {
             let code = cursor.length(budget)?;
             if previous_code == Some(code) {
@@ -468,10 +494,18 @@ fn from_coefficient(node: &CellType, number: i128) -> Option<Value> {
 }
 
 /// Decode one typed cell that must consume its complete frame.
-fn cell(node: &CellType, raw: &[u8], budget: &mut Budget) -> Result<Value, Refused> {
+fn cell(node: &CellType, raw: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
     budget.elements(1)?;
     let mut cursor = Cursor::new(raw);
     let value = match node {
+        CellType::Nominal(selector) => {
+            let key = hash::closed_selector(selector).ok_or("invalid_selector")?;
+            let entry = dictionary
+                .iter()
+                .find(|entry| entry.key == key)
+                .ok_or("invalid_selector")?;
+            return super::rows::read_root(entry, raw, dictionary, budget);
+        }
         CellType::Integer(signed, width) => {
             if raw.len() != *width {
                 return Err("invalid_cell");
@@ -501,7 +535,7 @@ fn cell(node: &CellType, raw: &[u8], budget: &mut Budget) -> Result<Value, Refus
         }
         CellType::Option(inner) => match cursor.byte(budget)? {
             0 => Value::Absent,
-            1 => Value::Some(Box::new(cell(inner, cursor.frame(budget)?, budget)?)),
+            1 => Value::Some(Box::new(cell(inner, cursor.frame(budget)?, dictionary, budget)?)),
             _ => return Err("invalid_cell"),
         },
         CellType::List(inner) => {
@@ -510,7 +544,12 @@ fn cell(node: &CellType, raw: &[u8], budget: &mut Budget) -> Result<Value, Refus
             let (table, width, data) = columns::read_index(&mut cursor, count, budget)?;
             let mut items = Vec::with_capacity(count);
             for position in 0..count {
-                items.push(cell(inner, selected(table, width, data, position, budget)?, budget)?);
+                items.push(cell(
+                    inner,
+                    selected(table, width, data, position, budget)?,
+                    dictionary,
+                    budget,
+                )?);
             }
             Value::List(items)
         }
@@ -575,6 +614,7 @@ fn write_block(
     values: Vec<Value>,
     encoding: u8,
     keys: Option<&[Value]>,
+    dictionary: &[Stored],
 ) -> Option<Vec<u8>> {
     if values.is_empty() || values.len() > 256 {
         return None;
@@ -589,7 +629,7 @@ fn write_block(
         let Some(value) = present(value, absent)? else {
             continue;
         };
-        cells.push(write_cell(&stored_node, &value)?);
+        cells.push(write_cell(&stored_node, &value, dictionary)?);
         stored.push(value);
         if absent != 'r' {
             *bitmap.last_mut()? |= 1 << (index % 8);
@@ -727,18 +767,23 @@ fn pack(width: usize, values: &[u128]) -> Option<Vec<u8>> {
 }
 
 /// Write one canonical typed cell.
-fn write_cell(node: &CellType, value: &Value) -> Option<Vec<u8>> {
+fn write_cell(node: &CellType, value: &Value, dictionary: &[Stored]) -> Option<Vec<u8>> {
     match (node, value) {
+        (CellType::Nominal(selector), _) => {
+            let key = hash::closed_selector(selector)?;
+            let entry = dictionary.iter().find(|entry| entry.key == key)?;
+            super::row_write::write_root(entry, value, dictionary)
+        }
         (CellType::Option(_), Value::Absent) => Some(vec![0]),
         (CellType::Option(inner), Value::Some(item)) => {
             let mut output = vec![1];
-            hash::frame(&mut output, &write_cell(inner, item)?);
+            hash::frame(&mut output, &write_cell(inner, item, dictionary)?);
             Some(output)
         }
         (CellType::List(inner), Value::List(items)) => {
             let cells: Vec<Vec<u8>> = items
                 .iter()
-                .map(|item| write_cell(inner, item))
+                .map(|item| write_cell(inner, item, dictionary))
                 .collect::<Option<_>>()?;
             let mut output = Vec::new();
             hash::unsigned(&mut output, cells.len() as u128);
@@ -758,7 +803,7 @@ pub(super) fn decode_column(document: &Json) -> Option<Vec<u8>> {
     let rows = usize::try_from(document.get("logical_count")?.as_u64()?).ok()?;
     let mut budget = columns::case_budget(document)?;
     let mut output = Vec::new();
-    match read_column(&node, absent, rows, &data, &mut budget) {
+    match read_column(&node, absent, rows, &data, &[], &mut budget) {
         Ok(Some((encodings, values))) => {
             output.push(0);
             hash::unsigned(&mut output, encodings.len() as u128);
@@ -794,10 +839,21 @@ pub(super) fn encode_column(document: &Json) -> Option<Vec<u8>> {
         .iter()
         .map(|item| item.as_u64().and_then(|value| u8::try_from(value).ok()))
         .collect::<Option<_>>()?;
+    write_column(&node, absent, values, &encodings, &[])
+}
+
+/// Write one complete column: the optional shared dictionary, then each 256-row block with its encoding.
+pub(super) fn write_column(
+    node: &CellType,
+    absent: char,
+    values: Vec<Value>,
+    encodings: &[u8],
+    dictionary: &[Stored],
+) -> Option<Vec<u8>> {
     if encodings.len() != values.len().div_ceil(256) || values.is_empty() {
         return None;
     }
-    let stored_node = stored_type(&node, absent)?;
+    let stored_node = stored_type(node, absent)?;
     let mut output = Vec::new();
     let mut keys: Option<Vec<Value>> = None;
     if encodings.iter().any(|encoding| matches!(encoding, 4 | 5)) {
@@ -819,11 +875,12 @@ pub(super) fn encode_column(document: &Json) -> Option<Vec<u8>> {
     let mut blocks = Vec::with_capacity(encodings.len());
     for (index, chunk) in values.chunks(256).enumerate() {
         blocks.push(write_block(
-            &node,
+            node,
             absent,
             chunk.to_vec(),
             encodings[index],
             keys.as_deref(),
+            dictionary,
         )?);
     }
     output.extend(columns::indexed(&blocks));
@@ -841,11 +898,12 @@ fn absence(document: &Json) -> Option<char> {
 }
 
 /// Admit a complete column and require its dictionary to be used by codes and fully referenced.
-fn read_column(
+pub(super) fn read_column(
     node: &CellType,
     absent: char,
     rows: usize,
     data: &[u8],
+    dictionary: &[Stored],
     budget: &mut Budget,
 ) -> Result<Option<(Vec<u8>, Vec<Value>)>, Refused> {
     if rows < 1 {
@@ -875,7 +933,8 @@ fn read_column(
             return Err("invalid_offsets");
         }
         let length = (rows - index * 256).min(256) as i64;
-        let Some((encoding, block)) = read_block(node, absent, length, raw, keys.as_deref(), budget)? else {
+        let Some((encoding, block)) = read_block(node, absent, length, raw, keys.as_deref(), dictionary, budget)?
+        else {
             return Ok(None);
         };
         if mode == 1 {

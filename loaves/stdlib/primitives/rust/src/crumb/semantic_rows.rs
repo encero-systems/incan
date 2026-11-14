@@ -247,7 +247,11 @@ fn read_records(
 }
 
 /// Read the dictionary in strict K order, admitting inline and supplied reference descriptions.
-fn read_dictionary(cursor: &mut Cursor, supplied: &[Meta], budget: &mut Budget) -> Result<Vec<Stored>, Refused> {
+pub(super) fn read_dictionary(
+    cursor: &mut Cursor,
+    supplied: &[Meta],
+    budget: &mut Budget,
+) -> Result<Vec<Stored>, Refused> {
     let count = bounded_count(cursor, budget)?;
     let mut entries: Vec<Stored> = Vec::with_capacity(count);
     for index in 0..count {
@@ -582,7 +586,7 @@ fn member_identity(value: &Meta) -> Result<Vec<u8>, Refused> {
 }
 
 /// Read a complete K: identity, argument count and framed canonical argument spellings.
-fn parse_key(key: &[u8], record: bool, budget: &mut Budget) -> Result<Node, Refused> {
+pub(super) fn parse_key(key: &[u8], record: bool, budget: &mut Budget) -> Result<Node, Refused> {
     if key.len() < 7 {
         return Err("invalid_cell");
     }
@@ -830,7 +834,12 @@ fn property_name(value: &str) -> bool {
 }
 
 /// Decode one root record or enum row.
-fn read_root(stored: &Stored, raw: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
+pub(super) fn read_root(
+    stored: &Stored,
+    raw: &[u8],
+    dictionary: &[Stored],
+    budget: &mut Budget,
+) -> Result<Value, Refused> {
     let mut cursor = Cursor::new(raw);
     if stored.record {
         return Ok(Value::Record(read_fields(
