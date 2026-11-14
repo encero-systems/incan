@@ -26,7 +26,7 @@ from decls import library_enum_item
 from option_tests import is_option_carrier, option_isinstance, enum_tag
 from enums import enum_owner
 from unions import union_test_slots, test_union_tag, carrier_injection
-from text_plan import clone_text_reference, owned_slice_text
+from text_plan import owned_slice_text
 from options import assign_carrier, variant_condition
 from numerics import numeric_carrier
 from patterns import pattern_binds, carrier_pattern_slot, carrier_payload_types
@@ -126,9 +126,6 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
-    # Text an inferred-shared parameter lends reaching a destination that owns text is that destination's copy.
-    if source == PlanType.StringRef and target == PlanType.String:
-        return Ok(read_place(clone_text_reference(builder, value, span)?, true, span))
     # A `const` str reaching a destination that owns text, such as an `Err` payload or a list element, becomes owned
     # text there, as at a `str` parameter.
     if source == PlanType.FrozenStr and target == PlanType.String:
