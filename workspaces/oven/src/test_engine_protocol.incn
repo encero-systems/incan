@@ -395,6 +395,10 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
+    compilations = len([line for line in lines if "rustc_codegen_link_teardown" in line])
+    frontend_releases = len([line for line in lines if "frontend_heap_released" in line])
+    # Each compilation returns its checked program's freed heap before rustc allocates on top of it.
+    assert compilations > 0 and frontend_releases == compilations, f"{frontend_releases} of {compilations} compilations released the frontend heap before rustc"
     # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
     # after each activation. No activation may be detached from the observer that owns its completion.
     assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
