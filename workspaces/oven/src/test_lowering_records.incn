@@ -322,6 +322,116 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     return verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))
 
 
+pub def test_retained_namespace_warm_edits_match_cold_builds() -> Result[None, str]:
+    """Retained editable namespaces preserve model fields and foreign carriers across body, signature and doc edits."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    typed = "examples/advanced/typed_data_processor"
+    verify_retained_namespace_edit(
+        binary,
+        root.joinpath("typed-body"),
+        typed,
+        "src/transform.incn",
+        "return float(quantity) * unit_price",
+        "return float(quantity) * unit_price + 0.0",
+        "order_report",
+    )?
+    verify_retained_namespace_edit(
+        binary,
+        root.joinpath("typed-signature"),
+        typed,
+        "src/transform.incn",
+        "pub def is_acceptable(quantity: int, unit_price: float) -> bool:\n    \"\"\"Accept only positive quantities with non-negative prices.\"\"\"\n\n    return quantity > 0 and unit_price >= 0.0",
+        "pub def is_acceptable(quantity: int, price: float) -> bool:\n    \"\"\"Accept only positive quantities with non-negative prices.\"\"\"\n\n    return quantity > 0 and price >= 0.0",
+        "order_report",
+    )?
+    verify_retained_namespace_edit(
+        binary,
+        root.joinpath("typed-doc"),
+        typed,
+        "src/main.incn",
+        "Read orders, validate them, and write a typed JSON report.",
+        "Read typed orders, validate them, and write a JSON report.",
+        "order_report",
+    )?
+    importer = "examples/pro/codegraph_importer"
+    verify_retained_namespace_edit(
+        binary,
+        root.joinpath("importer-body"),
+        importer,
+        "src/importer.incn",
+        "return version >= 1 and version <= 9",
+        "return version >= 1 and version <= 9 and true",
+        "codegraph_importer_experiment",
+    )?
+    return verify_retained_namespace_edit(
+        binary,
+        root.joinpath("importer-doc"),
+        importer,
+        "src/main.incn",
+        "Import a selected compiler codegraph snapshot and print a deterministic summary.",
+        "Import one selected compiler codegraph snapshot and print a deterministic summary.",
+        "codegraph_importer_experiment",
+    )
+
+
+def verify_retained_namespace_edit(
+    binary: str,
+    root: Path,
+    fixture: str,
+    relative_source: str,
+    before: str,
+    after: str,
+    crate_name: str,
+) -> Result[None, str]:
+    """Build one repository example cold, edit it, and require the warm plan and executable to equal a cold rebuild."""
+    Path(fixture).copy(root, false, false).map_err((error) => error.message())?
+    lock = root.joinpath("oven.lock")
+    if lock.exists():
+        lock.unlink().map_err((error) => error.message())?
+    warm_store = root.joinpath("warm-store")
+    _ = retained_namespace_build(binary, root, warm_store)?
+    source = root.joinpath(relative_source)
+    original = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    edited = original.replace(before, after)
+    if edited == original:
+        return Err("retained-namespace fixture edit matched no source")
+    write(source, edited)?
+    warm = retained_namespace_build(binary, root, warm_store)?
+    warm_diagnostic = warm.to_json().map_err((error) => error.message())?
+    warm_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath("target/incan/release/bin").joinpath(crate_name)
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    cold = retained_namespace_build(binary, root, cold_store)?
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    assert warm_plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?, warm_diagnostic
+    assert warm_executable == executable.read_bytes().map_err((error) => error.message())?, cold_diagnostic
+    return stop_example_engine(binary, cold_store)
+
+
+def retained_namespace_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one project through the records engine and decode its requested proof report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(project.0)
+        .args(["--profile", "release", "--engine-report"])
+        .env("INCAN_NATIVE_PLAN_REPORT", project.joinpath("native.plan").0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"retained namespace build: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:
     """Deleting an imported module refuses a warm build with exactly the refusal a cold build of the same source gives."""
     root.mkdir(true, true).map_err((error) => error.message())?
