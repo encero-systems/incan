@@ -163,8 +163,7 @@ fn self_returning_methods(
                 .get(&identity.declaration_span)?;
             (identity.kind == SemanticSourceTargetKind::Method
                 && identity.origin == owner.origin
-                && owner.declaration_span.start <= identity.declaration_span.start
-                && identity.declaration_span.end <= owner.declaration_span.end
+                && owner.declares(&identity)
                 && binding.identity.as_ref() == Some(identity)
                 && binding.return_type == ResolvedType::SelfType
                 && body.params.len() == 1

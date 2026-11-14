@@ -248,10 +248,9 @@ impl BodyIrModule {
             return false;
         }
         for (name, field) in declaration.fields.iter().zip(&declaration.field_identities) {
-            let mut expected = declaration.canonical.clone();
-            expected.namespace = SymbolNamespace::Member;
-            expected.kind = SemanticSourceTargetKind::Field;
-            expected.declaration_name = name.clone();
+            let expected = declaration
+                .canonical
+                .generated_member(name.clone(), SemanticSourceTargetKind::Field);
             if *field != expected {
                 return false;
             }

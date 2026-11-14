@@ -163,6 +163,7 @@ impl TypeChecker {
                 declaration_name,
                 kind: SemanticSourceTargetKind::RustItem,
                 scope_discriminant: None,
+                owner: None,
                 declaration_span: HirSourceSpan::new(0, 0),
             },
         );

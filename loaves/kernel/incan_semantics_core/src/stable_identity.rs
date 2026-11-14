@@ -273,6 +273,7 @@ mod tests {
             declaration_name: name.to_string(),
             kind,
             scope_discriminant: scope.map(ScopeDiscriminant),
+            owner: None,
             declaration_span: HirSourceSpan::new(span.0, span.1),
         }
     }

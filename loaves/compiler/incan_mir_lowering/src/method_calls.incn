@@ -244,8 +244,7 @@ def concrete_iterator_collect(
             ):
                 continue
             if not (
-                protocol.declaration_span.start <= method.declaration_span.start
-                and method.declaration_span.end <= protocol.declaration_span.end
+                protocol.declares(method)
             ):
                 continue
             if implementation.implementation != method:
@@ -283,8 +282,7 @@ def retained_iterator_default(
                 if (
                     standard_iterator_protocol(protocol)
                     and protocol.origin == identity.origin
-                    and protocol.declaration_span.start <= identity.declaration_span.start
-                    and identity.declaration_span.end <= protocol.declaration_span.end
+                    and protocol.declares(identity)
                 ):
                     standard = true
             if not standard:
@@ -573,10 +571,8 @@ def sdk_forwarded_type_arguments(
                             standard_iterator_protocol(protocol)
                             and selected.origin == protocol.origin
                             and caller.origin == protocol.origin
-                            and protocol.declaration_span.start <= selected.declaration_span.start
-                            and selected.declaration_span.end <= protocol.declaration_span.end
-                            and protocol.declaration_span.start <= caller.declaration_span.start
-                            and caller.declaration_span.end <= protocol.declaration_span.end
+                            and protocol.declares(selected)
+                            and protocol.declares(caller)
                         ):
                             authenticated = true
     if not authenticated:

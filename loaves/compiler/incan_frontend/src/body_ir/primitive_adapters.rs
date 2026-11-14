@@ -106,8 +106,7 @@ fn checked_decoder(
     };
     identity.origin == owner.canonical.origin
         && identity.declaration_name == specification.decoded_value
-        && owner.canonical.declaration_span.start <= identity.declaration_span.start
-        && identity.declaration_span.end <= owner.canonical.declaration_span.end
+        && owner.canonical.declares(&identity)
         && body.type_parameters.is_empty()
         && !body.is_async
         && matches!(body.params.as_slice(), [parameter] if parameter.ty == IncanType::Primitive(IncanPrimitiveType::Bytes))

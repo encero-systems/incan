@@ -88,6 +88,11 @@ pub struct CanonicalSymbolId {
     pub scope_discriminant: Option<ScopeDiscriminant>,
     /// Provenance anchor: the one declaration site.
     pub declaration_span: crate::HirSourceSpan,
+    /// The declaration owning a member, by its declaration name in the member's origin and scope.
+    ///
+    /// Present exactly for member-namespace identities. Two owners' same-named members differ here, and ownership is
+    /// decided here ([`Self::declares`]), never by whether one declaration site lies inside another.
+    pub owner: Option<String>,
 }
 
 /// Checked, non-positional context needed to project a nested canonical identity across edits.
@@ -127,6 +132,7 @@ impl CanonicalSymbolId {
             kind,
             scope_discriminant: None,
             declaration_span,
+            owner: None,
         }
     }
 
@@ -143,7 +149,18 @@ impl CanonicalSymbolId {
             kind,
             scope_discriminant: self.scope_discriminant,
             declaration_span: self.declaration_span,
+            owner: Some(self.declaration_name.clone()),
         }
+    }
+
+    /// Whether this declaration owns `member`: the member names this declaration as its owner, in its origin and
+    /// scope. Declaration sites play no part, so ownership holds however either declaration moves in its file.
+    pub fn declares(&self, member: &Self) -> bool {
+        member.namespace == SymbolNamespace::Member
+            && self.namespace != SymbolNamespace::Member
+            && member.origin == self.origin
+            && member.scope_discriminant == self.scope_discriminant
+            && member.owner.as_deref() == Some(self.declaration_name.as_str())
     }
 
     /// Return the owning module path when this identity is owned by a project source module.

@@ -144,6 +144,7 @@ fn sample_provider_operation_plan() -> ProviderOperationPlan {
             declaration_name: "charge".to_string(),
             kind: SemanticSourceTargetKind::Function,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(40, 60),
         },
         provider: ProviderActivation {

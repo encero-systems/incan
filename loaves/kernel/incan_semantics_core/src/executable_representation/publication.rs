@@ -281,7 +281,7 @@ pub(super) fn project_body(
     let trait_owner = source
         .canonical
         .as_ref()
-        .and_then(|member| module.trait_declarations.iter().find(|owner| encloses(owner, member)));
+        .and_then(|member| module.trait_declarations.iter().find(|owner| owner.declares(member)));
     audit.trait_self = trait_owner.is_some()
         || source.locals.first().is_some_and(|local| {
             local.ty == IncanType::SelfType && matches!(local.origin, crate::body_ir::LocalOrigin::Receiver { .. })
@@ -289,7 +289,7 @@ pub(super) fn project_body(
     audit.type_parameters.extend(source.type_parameters.iter().cloned());
     if let Some(member) = &source.canonical {
         for owner in &module.nominal_declarations {
-            if encloses(&owner.canonical, member) || owns_default_frame(owner, source) {
+            if owner.canonical.declares(member) || owns_default_frame(owner, source) {
                 audit.type_parameters.extend(owner.type_parameters.iter().cloned());
             }
         }
@@ -515,20 +515,18 @@ pub(super) fn generated_value_enum_member_owner(
 }
 
 /// Authenticate generated scalar-enum members by their exact declaring identity at publication and index validation.
-/// A matching spelling alone never grants an enum's executable layout to an ordinary source method.
+/// A matching spelling alone never grants an enum's executable layout: the member must name this enum as its owner,
+/// and carry the enum's declaration site, which marks it generated rather than an ordinary source method.
 pub(super) fn is_generated_value_enum_member(identity: &CanonicalSymbolId, owner: &CanonicalSymbolId) -> bool {
-    identity.namespace == crate::SymbolNamespace::Member
-        && identity.kind == crate::SemanticSourceTargetKind::Method
+    identity.kind == crate::SemanticSourceTargetKind::Method
         && matches!(identity.declaration_name.as_str(), "value" | "from_value")
         && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
         && owner.kind == crate::SemanticSourceTargetKind::Enum
-        && owner.declaration_span.end > owner.declaration_span.start
-        && owner.origin == identity.origin
-        && owner.scope_discriminant == identity.scope_discriminant
+        && owner.declares(identity)
         && owner.declaration_span == identity.declaration_span
 }
 
-/// Require the same canonical origin and enclosing declaration span before borrowing an owner's binders.
+/// Require the same canonical origin and an enclosing declaration span before a callable lends its generic binders.
 fn encloses(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
     owner != member
         && owner.origin == member.origin
@@ -559,7 +557,7 @@ fn generic_metadata_belongs_to(
     };
     contains_binder(callable)
         || nominals.iter().any(|owner| {
-            encloses(&owner.canonical, callable)
+            owner.canonical.declares(callable)
                 && owner.type_parameters.contains(&binder.declaration_name)
                 && contains_binder(&owner.canonical)
         })

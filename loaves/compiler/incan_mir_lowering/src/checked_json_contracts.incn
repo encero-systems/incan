@@ -73,8 +73,7 @@ pub def selected_deserialize_hook(
             if (
                 hook.kind != SemanticSourceTargetKind.Method
                 or hook.origin != declaration.canonical.origin
-                or hook.declaration_span.start < declaration.canonical.declaration_span.start
-                or hook.declaration_span.end > declaration.canonical.declaration_span.end
+                or not declaration.canonical.declares(hook)
             ):
                 return Err("unsupported Body IR checked Deserialize hook owner provenance")
             mut found: Option[Body] = None

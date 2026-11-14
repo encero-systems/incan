@@ -128,10 +128,7 @@ pub fn native_enum_variant(path: &str, name: &str) -> Option<(CanonicalSymbolId,
         return None;
     }
     let module = native_nominal_module(&owner)?;
-    let mut identity = owner;
-    identity.namespace = crate::SymbolNamespace::Member;
-    identity.kind = crate::SemanticSourceTargetKind::Variant;
-    identity.declaration_name = name.to_owned();
+    let identity = owner.generated_member(name, crate::SemanticSourceTargetKind::Variant);
     Some((
         identity,
         CompilerNodeId::declaration_span(&format!("{module}::variant::{name}"), 0, 0),

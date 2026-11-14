@@ -68,6 +68,7 @@ fn public_abstract_trait_slot_resolves_to_trait_context() -> Result<(), Box<dyn 
     let mut slot = identity("get", 3);
     slot.kind = SemanticSourceTargetKind::Method;
     slot.namespace = SymbolNamespace::Member;
+    slot.owner = Some("Reading".into());
     slot.declaration_span = HirSourceSpan::new(210, 225);
     let mut module = module(Vec::new());
     module.trait_declarations.push(owner.clone());
@@ -89,6 +90,7 @@ fn public_default_trait_body_requires_its_declaring_context() -> Result<(), Box<
     let mut slot = identity("touch", 3);
     slot.kind = SemanticSourceTargetKind::Method;
     slot.namespace = SymbolNamespace::Member;
+    slot.owner = Some("Reading".into());
     slot.declaration_span = HirSourceSpan::new(210, 225);
     let mut default = body("touch", 3);
     default.canonical = Some(slot.clone());
@@ -119,6 +121,7 @@ fn public_normal_enum_payload_context_round_trips() -> Result<(), Box<dyn std::e
     let mut variant = identity("Ready", 3);
     variant.kind = SemanticSourceTargetKind::Variant;
     variant.namespace = SymbolNamespace::Member;
+    variant.owner = Some("Signal".into());
     let value = crate::body_ir::EnumDeclaration {
         record_package_identity: None,
         native_item: String::new(),
@@ -185,10 +188,12 @@ fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn st
     let mut field = identity("value", 3);
     field.kind = SemanticSourceTargetKind::Field;
     field.namespace = SymbolNamespace::Member;
+    field.owner = Some("Holder".into());
     let mut method = body("get", 4);
     let mut method_id = identity("get", 4);
     method_id.kind = SemanticSourceTargetKind::Method;
     method_id.namespace = SymbolNamespace::Member;
+    method_id.owner = Some("Holder".into());
     method.canonical = Some(method_id.clone());
     method.return_type = IncanType::TypeVar("T".into());
     let mut user = body("use_holder", 1);
@@ -215,6 +220,7 @@ fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn st
     let mut slot = identity("unavailable_default", 7);
     slot.kind = SemanticSourceTargetKind::Method;
     slot.namespace = SymbolNamespace::Member;
+    slot.owner = Some("UnusedProtocol".into());
     slot.declaration_span = HirSourceSpan::new(610, 625);
     let mut unavailable = body("unavailable_default", 7);
     unavailable.canonical = Some(slot.clone());
@@ -310,6 +316,7 @@ fn public_type_context_retains_private_fields_and_requires_checked_layouts() -> 
     let mut field = identity("private_field", 3);
     field.kind = SemanticSourceTargetKind::Field;
     field.namespace = SymbolNamespace::Member;
+    field.owner = Some("Record".into());
     let mut exported = body("exported", 1);
     exported.return_type = IncanType::Named("Record".into());
     let mut module = module(vec![exported]);

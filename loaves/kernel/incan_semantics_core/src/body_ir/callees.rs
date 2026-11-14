@@ -717,6 +717,7 @@ impl MethodTarget {
             && member.declaration_name == "__fields__"
             && member.origin == owner.origin
             && member.scope_discriminant == owner.scope_discriminant
+            && owner.declares(member)
             && member.declaration_span == owner.declaration_span
             && self.type_args.is_empty()
             && self.intrinsic_carrier.is_none()

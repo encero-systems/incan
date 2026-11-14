@@ -200,14 +200,13 @@ impl crate::body_ir::PrimitiveTraitAdapter {
     }
 }
 
-/// Whether `member` is declared inside `owner`: its declaration site lies within the owner's.
+/// Whether `member` is declared by `owner`: the member's identity names that owner.
 ///
 /// A canonical identity's origin names the module, not the declaration, so two declarations of one module with a
-/// same-named member (`A.value` and `B.value`) give member identities that agree on everything else. The declaration
-/// site is the one fact that tells them apart.
+/// same-named member (`A.value` and `B.value`) give member identities that differ only in the owner they name. The
+/// declaration sites decide nothing, so an edit that moves either declaration keeps the relation.
 fn declares_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
-    owner.declaration_span.start <= member.declaration_span.start
-        && member.declaration_span.end <= owner.declaration_span.end
+    owner.declares(member)
 }
 
 /// Validate the implicit immutable getter receiver independently of the member's owning nominal layout.

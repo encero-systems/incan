@@ -407,11 +407,10 @@ impl TypeCheckInfo {
             .compiler_generated_member_identities
             .get(selected)
             .or_else(|| {
-                self.declarations.named_type_identities.values().find(|owner| {
-                    owner.origin == selected.origin
-                        && owner.scope_discriminant == selected.scope_discriminant
-                        && owner.declaration_span == selected.declaration_span
-                })
+                self.declarations
+                    .named_type_identities
+                    .values()
+                    .find(|owner| owner.declares(selected) && owner.declaration_span == selected.declaration_span)
             })?;
         let owner_name = self
             .declarations

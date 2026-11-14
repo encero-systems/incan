@@ -57,8 +57,7 @@ pub(super) fn has_checked_string_payload(
         && hook.namespace == SymbolNamespace::Member
         && hook.origin == owner.origin
         && canonical_module_identity(hook).as_deref() == Some(module_identity)
-        && hook.declaration_span.start >= owner.declaration_span.start
-        && hook.declaration_span.end <= owner.declaration_span.end
+        && owner.declares(&hook)
 }
 
 /// Retain a canonical local string hook or an unbounded identity-binder hook without changing legacy facts.
@@ -110,8 +109,7 @@ pub(super) fn checked_deserialize_selection(
         || hook.declaration_name != *selected_name
         || canonical_module_identity(hook).as_deref() != Some(owner_module.as_str())
         || hook.origin != owner.origin
-        || hook.declaration_span.start < owner.declaration_span.start
-        || hook.declaration_span.end > owner.declaration_span.end
+        || !owner.declares(&hook)
         || method.node.receiver.is_some()
         || method.node.receiver_binding.is_some()
         || method.node.trait_target.is_some()

@@ -96,6 +96,7 @@ pub def test_plan_package_versions_are_authenticated() -> Result[None, str]:
         kind=RustDeclarationKind.Trait,
         scope_discriminant=None,
         declaration_span=RustHirSourceSpan.new(4, 12),
+        owner=None,
     )
     mut source_files: BTreeMap[str, str] = BTreeMap.new()
     source_files.insert("pub::contracts::traits", "registry/contracts/traits.incn")

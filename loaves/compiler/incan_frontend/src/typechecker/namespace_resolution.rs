@@ -574,6 +574,7 @@ impl TypeChecker {
             declaration_name: surface_types::as_str(surface).to_string(),
             kind: SemanticSourceTargetKind::Builtin,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(0, 0),
         }
     }

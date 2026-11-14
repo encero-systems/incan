@@ -103,6 +103,7 @@ pub model CanonicalSymbolId:
     pub kind: DeclarationKind
     pub scope_discriminant: Option[int]
     pub declaration_span: HirSourceSpan
+    pub owner: Option[str] = None
 
 
 @derive(Eq, Serialize, Deserialize)

@@ -278,11 +278,7 @@ pub(super) fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bo
                 | crate::SemanticSourceTargetKind::Method
                 | crate::SemanticSourceTargetKind::Property
         )
-        && !module.trait_declarations.iter().any(|owner| {
-            owner.origin == identity.origin
-                && owner.declaration_span.start <= identity.declaration_span.start
-                && owner.declaration_span.end >= identity.declaration_span.end
-        })
+        && !module.trait_declarations.iter().any(|owner| owner.declares(identity))
 }
 
 /// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
@@ -554,9 +550,7 @@ pub(super) fn record_trait_slots(
         }
         for (member, coverage) in declarations.iter_mut() {
             if member.kind == crate::SemanticSourceTargetKind::Method
-                && member.origin == identity.origin
-                && member.declaration_span.start >= identity.declaration_span.start
-                && member.declaration_span.end <= identity.declaration_span.end
+                && identity.declares(member)
                 && !admitted.contains_key(member)
                 && matches!(
                     coverage,

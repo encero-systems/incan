@@ -23,6 +23,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        self.record_member_owners(&module_ast.declarations);
         let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();
@@ -111,6 +112,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        self.record_member_owners(&module_ast.declarations);
         let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();

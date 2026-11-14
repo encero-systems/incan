@@ -494,6 +494,7 @@ pub fn rust_item_identity(path: &str) -> Option<CanonicalSymbolId> {
         declaration_name: name,
         kind: crate::SemanticSourceTargetKind::RustItem,
         scope_discriminant: None,
+        owner: None,
         declaration_span: crate::HirSourceSpan::new(0, 0),
     })
 }

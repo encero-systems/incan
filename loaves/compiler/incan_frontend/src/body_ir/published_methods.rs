@@ -29,8 +29,7 @@ pub(super) fn collect(context: &[bir::BodyIrModule]) -> Vec<PublishedMethod> {
                 if identity.kind != SemanticSourceTargetKind::Method
                     || identity.namespace != SymbolNamespace::Member
                     || identity.origin != owner.canonical.origin
-                    || identity.declaration_span.start < owner.canonical.declaration_span.start
-                    || identity.declaration_span.end > owner.canonical.declaration_span.end
+                    || !owner.canonical.declares(&identity)
                     || !body.type_parameters.is_empty()
                 {
                     continue;

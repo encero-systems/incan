@@ -231,6 +231,7 @@ mod tests {
             declaration_name: "Target".into(),
             kind,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(1, 2),
         };
         let target_path = vec!["owner".into(), "Target".into()];

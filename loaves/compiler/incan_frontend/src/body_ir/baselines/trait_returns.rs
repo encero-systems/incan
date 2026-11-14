@@ -364,18 +364,14 @@ fn method_return_witness(
                 ))
             })
             .collect::<Option<HashMap<_, _>>>()?;
-        let own_method = record.implementation.origin == owner.canonical.origin
-            && owner.canonical.declaration_span.start <= record.implementation.declaration_span.start
-            && record.implementation.declaration_span.end <= owner.canonical.declaration_span.end;
+        let own_method =
+            record.implementation.origin == owner.canonical.origin && owner.canonical.declares(&record.implementation);
         if !own_method {
             bindings = trait_bindings;
         }
         signature
     } else {
-        if selected.origin != owner.canonical.origin
-            || selected.declaration_span.start < owner.canonical.declaration_span.start
-            || selected.declaration_span.end > owner.canonical.declaration_span.end
-        {
+        if selected.origin != owner.canonical.origin || !owner.canonical.declares(&selected) {
             return None;
         }
         signatures.get(selected)?

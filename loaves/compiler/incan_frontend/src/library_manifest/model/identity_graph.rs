@@ -300,6 +300,9 @@ pub struct CanonicalIdentityExport {
     pub declaration_name: String,
     pub kind: String,
     pub declaration_span: CanonicalIdentitySpanExport,
+    /// The declaration owning a member, by its declaration name; absent outside the member namespace.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 impl CanonicalIdentityExport {
@@ -330,6 +333,7 @@ impl CanonicalIdentityExport {
                 end: u64::try_from(identity.declaration_span.end).ok()?,
                 expansion: identity.declaration_span.expansion,
             },
+            owner: identity.owner.clone(),
         })
     }
 
@@ -353,6 +357,7 @@ impl CanonicalIdentityExport {
             declaration_name: self.declaration_name.clone(),
             kind,
             scope_discriminant: None,
+            owner: self.owner.clone(),
             declaration_span: HirSourceSpan::new(
                 usize::try_from(self.declaration_span.start).ok()?,
                 usize::try_from(self.declaration_span.end).ok()?,
@@ -400,6 +405,7 @@ impl CanonicalIdentityExport {
             && self.declaration_span.end == end
             && self.declaration_span.expansion == identity.declaration_span.expansion
             && identity.scope_discriminant.is_none()
+            && self.owner == identity.owner
     }
 }
 

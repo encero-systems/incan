@@ -168,6 +168,7 @@ pub fn import_link_loop(links: &[(String, SymbolOrigin, Span)], span: Span) -> C
             declaration_name: spelling.rsplit('.').next().unwrap_or(spelling).to_string(),
             kind: SemanticSourceTargetKind::Other("import".to_string()),
             scope_discriminant: None,
+            owner: None,
             declaration_span: *declaration_span,
         };
         error = error.with_related_declaration(identity, format!("`{spelling}` is `{target}`{suffix}"));

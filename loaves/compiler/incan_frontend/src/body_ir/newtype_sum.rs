@@ -329,8 +329,7 @@ fn sum_hook_matches(owner: &CanonicalSymbolId, name: Option<&str>, hook: Option<
             hook.declaration_name == name
                 && hook.kind == super::SemanticSourceTargetKind::Method
                 && hook.origin == owner.origin
-                && owner.declaration_span.start <= hook.declaration_span.start
-                && hook.declaration_span.end <= owner.declaration_span.end
+                && owner.declares(&hook)
         }
         _ => false,
     }

@@ -49,6 +49,7 @@ fn identity(name: &str, ordinal: usize) -> CanonicalSymbolId {
         declaration_name: name.into(),
         kind: SemanticSourceTargetKind::Function,
         scope_discriminant: None,
+        owner: None,
         declaration_span: HirSourceSpan::new(ordinal * 100, ordinal * 100 + 99),
     }
 }
@@ -199,6 +200,7 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     field.origin = SymbolOrigin::Module(vec!["lib".into()]);
     field.kind = SemanticSourceTargetKind::Field;
     field.namespace = SymbolNamespace::Member;
+    field.owner = Some("Holder".into());
     let mut declaration = generic_holder_declaration(owner, field);
     declaration.record_package_identity = Some(crate::record_identity::RecordPackageIdentity {
         registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
@@ -286,11 +288,13 @@ fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Re
     let mut field = identity("value", 3);
     field.origin = owner.origin.clone();
     field.namespace = SymbolNamespace::Member;
+    field.owner = Some("Checked".into());
     field.kind = SemanticSourceTargetKind::Field;
     field.declaration_span = HirSourceSpan::new(240, 260);
     let mut validator = identity("validate", 4);
     validator.origin = owner.origin.clone();
     validator.namespace = SymbolNamespace::Member;
+    validator.owner = Some("Checked".into());
     validator.kind = SemanticSourceTargetKind::Method;
     validator.declaration_span = HirSourceSpan::new(300, 399);
     let mut declaration = generic_holder_declaration(owner.clone(), field);

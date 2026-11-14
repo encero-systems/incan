@@ -97,7 +97,7 @@ pub def fallible_factory(
 
 
 def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
-    """A spelling grants no factory: the actual standard trait must enclose the checked member identity."""
+    """A spelling grants no factory: the checked member identity must name the actual standard trait as its owner."""
     if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member:
         return false
     for root_position in range(len(module.trait_declarations)):
@@ -257,8 +257,7 @@ def retain_shared_factory_poll(
                 ):
                     continue
                 if (
-                    identity.declaration_span.start < declaration.canonical.declaration_span.start
-                    or identity.declaration_span.end > declaration.canonical.declaration_span.end
+                    not declaration.canonical.declares(identity)
                 ):
                     continue
             None => continue

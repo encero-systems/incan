@@ -217,6 +217,7 @@ impl TypeChecker {
                     declaration_name: decorators::as_str(id).to_string(),
                     kind: SemanticSourceTargetKind::Builtin,
                     scope_discriminant: None,
+                    owner: None,
                     declaration_span: HirSourceSpan::new(0, 0),
                 },
             );

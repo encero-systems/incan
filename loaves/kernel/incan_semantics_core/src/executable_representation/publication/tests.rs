@@ -18,6 +18,7 @@ fn callable() -> CanonicalSymbolId {
         kind: SemanticSourceTargetKind::Function,
         scope_discriminant: None,
         declaration_span: HirSourceSpan::new(0, 100),
+        owner: None,
     }
 }
 
@@ -28,10 +29,7 @@ fn metadata_target() -> MethodTarget {
     binder.kind = SemanticSourceTargetKind::GenericBinder;
     binder.scope_discriminant = Some(ScopeDiscriminant(1));
     binder.declaration_span = HirSourceSpan::new(12, 13);
-    let mut member = binder.clone();
-    member.namespace = SymbolNamespace::Member;
-    member.kind = SemanticSourceTargetKind::Method;
-    member.declaration_name = "__fields__".to_owned();
+    let member = binder.generated_member("__fields__", SemanticSourceTargetKind::Method);
     let mut target = MethodTarget::synthesized("__fields__");
     target.canonical = Some(member);
     target.operation = Some(ReflectionOperation::GenericMetadata(binder));
@@ -75,7 +73,7 @@ fn metadata_rejects_a_mismatched_method_target() {
     let parameters = BTreeSet::from(["T".to_owned()]);
     let mut target = metadata_target();
     if let Some(member) = &mut target.canonical {
-        member.declaration_span = HirSourceSpan::new(20, 21);
+        member.owner = Some("U".to_owned());
     }
     assert!(!generic_metadata_belongs_to(&target, &callable(), &parameters, &[]));
     target = metadata_target();

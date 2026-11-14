@@ -222,6 +222,7 @@ mod tests {
             declaration_name: "function".into(),
             kind: SemanticSourceTargetKind::Function,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(1, 2),
         };
         export.canonical = Some(CanonicalIdentityExport::from_canonical("pkg", &canonical).ok_or("identity missing")?);

@@ -190,7 +190,7 @@ pub(super) fn attach_method_partial_defaults(
 
 /// Lower one method partial's frame with its retained owner arguments, presets as defaults and an empty block.
 /// The receiver is the same checked owner template the target method uses; layout specialization closes both together.
-/// The selected physical method must belong to that exact owner origin and declaration extent; package publication
+/// The selected physical method must name that exact owner as its own in the same origin; package publication
 /// changes the origin without changing this ownership relation.
 fn method_partial_frame(
     owner: &bir::NominalDeclaration,
@@ -210,8 +210,7 @@ fn method_partial_frame(
     if target.kind != SemanticSourceTargetKind::Method
         || target.namespace != incan_semantics_core::SymbolNamespace::Member
         || target.origin != owner.canonical.origin
-        || target.declaration_span.start < owner.canonical.declaration_span.start
-        || target.declaration_span.end > owner.canonical.declaration_span.end
+        || !owner.canonical.declares(&target)
     {
         return None;
     }

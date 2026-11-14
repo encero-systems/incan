@@ -13,6 +13,7 @@ impl SymbolTable {
             current_scope: 0,
             current_scope_binding_transaction: None,
             identities: HashMap::new(),
+            member_owners: HashMap::new(),
             module_path: Vec::new(),
             package_identity: None,
             minting_builtins: false,

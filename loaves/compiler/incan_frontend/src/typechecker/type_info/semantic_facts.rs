@@ -114,10 +114,11 @@ impl TypeCheckInfo {
             if matches!(
                 identity.kind,
                 SemanticSourceTargetKind::Field | SemanticSourceTargetKind::Variant
-            ) && let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
-                declarations.iter().copied().filter(|candidate| *candidate != *identity),
-                identity.declaration_span,
-            ) {
+            ) && let Some(owner) = declarations
+                .iter()
+                .copied()
+                .find(|candidate| candidate.declares(identity))
+            {
                 facts.push(SemanticFact::new(
                     CompilerNodeId::declaration_at(module_identity, identity.declaration_span),
                     SemanticFactKind::RequiredMemberOwner,

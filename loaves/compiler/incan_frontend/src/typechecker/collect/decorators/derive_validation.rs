@@ -42,6 +42,7 @@ impl TypeChecker {
                             declaration_name: canonical.to_string(),
                             kind: SemanticSourceTargetKind::Builtin,
                             scope_discriminant: None,
+                            owner: None,
                             declaration_span: HirSourceSpan::new(0, 0),
                         })
                     })

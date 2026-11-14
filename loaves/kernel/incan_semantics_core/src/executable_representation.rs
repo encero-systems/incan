@@ -88,12 +88,14 @@ use crate::body_ir::{
 /// templates carry their exact result types until the consuming instantiation proves independent storage.
 /// Version 56 passes eligible immutable parameters through inferred shared storage. Owned uses still materialize at
 /// their typed operation, so older owners with by-value parameter frames cannot be reused under this ABI.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 56;
+/// Version 57 names each member's owner in its canonical identity, so ownership is decided by that owner rather than by
+/// declaration-site enclosure. The added positional identity field requires fresh producers.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 57;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 56;
+const OLDEST_SUPPORTED_VERSION: u32 = 57;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

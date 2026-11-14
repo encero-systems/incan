@@ -125,6 +125,41 @@ impl TypeChecker {
         self.register_source_ordered_member_bindings(owner, declarations);
     }
 
+    /// Record the owner of every member a module declares, before any of its member identities is minted.
+    ///
+    /// The checked module and each imported module's declarations mint member identities through several paths; all
+    /// of them read the owner recorded here, so one member names one owner however its identity is reached.
+    pub(super) fn record_member_owners(&mut self, declarations: &[Spanned<Declaration>]) {
+        for decl in declarations {
+            let (owner, spans): (&str, Vec<Span>) = match &decl.node {
+                Declaration::Model(model) => (
+                    &model.name,
+                    spans_of(&model.fields)
+                        .chain(spans_of(&model.properties))
+                        .chain(spans_of(&model.methods))
+                        .collect(),
+                ),
+                Declaration::Class(class) => (
+                    &class.name,
+                    spans_of(&class.fields)
+                        .chain(spans_of(&class.properties))
+                        .chain(spans_of(&class.methods))
+                        .collect(),
+                ),
+                Declaration::Trait(tr) => (
+                    &tr.name,
+                    spans_of(&tr.properties).chain(spans_of(&tr.methods)).collect(),
+                ),
+                Declaration::Newtype(nt) => (&nt.name, spans_of(&nt.methods).collect()),
+                Declaration::Enum(en) => (&en.name, spans_of(&en.variants).chain(spans_of(&en.methods)).collect()),
+                _ => continue,
+            };
+            for span in spans {
+                self.symbols.record_member_owner(owner, span);
+            }
+        }
+    }
+
     /// Apply the one source-ordered, first-wins collision decision shared by every member-bearing declaration.
     pub(super) fn register_source_ordered_member_bindings(
         &mut self,
@@ -231,4 +266,9 @@ impl TypeChecker {
                 previous_span.start, previous_span.end
             )));
     }
+}
+
+/// Each declaration's source site, in declaration order.
+fn spans_of<T>(items: &[Spanned<T>]) -> impl Iterator<Item = Span> + '_ {
+    items.iter().map(|item| item.span)
 }

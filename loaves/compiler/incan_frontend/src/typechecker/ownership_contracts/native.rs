@@ -91,6 +91,7 @@ fn native_input_call(
         origin: SymbolOrigin::RustCrate(segments),
         kind: SemanticSourceTargetKind::Function,
         scope_discriminant: None,
+        owner: None,
         declaration_span: span,
     };
     let call = InputCall {

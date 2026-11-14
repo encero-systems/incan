@@ -22,6 +22,7 @@ fn trait_alias_origins_are_not_nominal_layout_requests() -> Result<(), Box<dyn s
             declaration_name: name.into(),
             kind,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(1, 2),
         };
         manifest.exports.aliases.push(AliasExport {

@@ -47,9 +47,12 @@ impl SymbolTable {
             }
             _ => (self.declaration_origin(), symbol.name.clone(), symbol.span),
         };
-        // A member is owned by its nominal type and distinguished by its declaration span, not by which table scope
-        // its convenience binding happened to be defined in — so member identities never carry a scope discriminant
-        // and compare equal however they are reached.
+        // A member is owned by its nominal type, which its identity names, not by which table scope its convenience
+        // binding happened to be defined in — so member identities never carry a scope discriminant and compare equal
+        // however they are reached.
+        let owner = (namespace == SymbolNamespace::Member)
+            .then(|| self.member_owner(&origin, declaration_span))
+            .flatten();
         let scope_discriminant =
             (namespace != SymbolNamespace::Member && scope != 0).then_some(ScopeDiscriminant(scope));
         CanonicalSymbolId {
@@ -58,6 +61,7 @@ impl SymbolTable {
             declaration_name,
             kind,
             scope_discriminant,
+            owner,
             declaration_span,
         }
     }
@@ -144,6 +148,7 @@ impl SymbolTable {
             declaration_name: name.to_string(),
             kind,
             scope_discriminant: None,
+            owner: None,
             declaration_span: span,
         }
     }
@@ -168,6 +173,7 @@ impl SymbolTable {
             declaration_name,
             kind: SemanticSourceTargetKind::Module,
             scope_discriminant: None,
+            owner: None,
             declaration_span: HirSourceSpan::new(0, 0),
         })
     }
@@ -176,21 +182,36 @@ impl SymbolTable {
     ///
     /// Members live in RFC 120's member namespace: they are reached `.`-directed from an owner type, never through
     /// the scope chain, so a member and a lexical binding sharing one spelling never compare equal. Two owners'
-    /// same-named members stay distinct through their declaration spans.
+    /// same-named members stay distinct through the owner each names, recorded by [`Self::record_member_owner`].
     pub fn member_declaration_identity(
         &self,
         name: &str,
         kind: SemanticSourceTargetKind,
         span: Span,
     ) -> CanonicalSymbolId {
+        let origin = self.declaration_origin();
         CanonicalSymbolId {
             namespace: SymbolNamespace::Member,
-            origin: self.declaration_origin(),
+            owner: self.member_owner(&origin, span),
+            origin,
             declaration_name: name.to_string(),
             kind,
             scope_discriminant: None,
             declaration_span: span,
         }
+    }
+
+    /// Record the nominal declaration owning the current module's member declared at `span`.
+    ///
+    /// Every member identity minted afterwards for that declaration names this owner, whichever path mints it.
+    pub fn record_member_owner(&mut self, owner: &str, span: Span) {
+        self.member_owners
+            .insert((self.declaration_origin(), span), owner.to_string());
+    }
+
+    /// Return the recorded owner of the member declared at `span` in `origin`.
+    fn member_owner(&self, origin: &SymbolOrigin, span: Span) -> Option<String> {
+        self.member_owners.get(&(origin.clone(), span)).cloned()
     }
 
     /// Attach the explicit registry identity for one builtin definition.

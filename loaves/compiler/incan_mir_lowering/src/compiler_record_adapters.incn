@@ -81,6 +81,7 @@ pub def canonical_symbol_id(
         kind=declaration_kind(identity.kind),
         scope_discriminant=scope_discriminant(identity.scope_discriminant),
         declaration_span=hir_source_span(identity.declaration_span, source_file),
+        owner=identity.owner.clone(),
     )
 
 
@@ -127,6 +128,7 @@ pub def native_canonical_symbol_id(identity: &CanonicalSymbolId) -> Result[RustC
             kind=native_declaration_kind(identity.kind.clone()),
             scope_discriminant=native_scope_discriminant(identity.scope_discriminant),
             declaration_span=native_hir_source_span(identity.declaration_span)?,
+            owner=identity.owner.clone(),
         ),
     )
 
@@ -484,6 +486,7 @@ def complete_authored_provenance(
                 end=span.end,
                 expansion=span.expansion,
             ),
+            owner=identity.owner,
         ),
     )
 

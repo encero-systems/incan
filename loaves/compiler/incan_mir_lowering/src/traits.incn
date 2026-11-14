@@ -78,8 +78,7 @@ pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
                 owner = borrowed_at(module.trait_declarations, protocol_position)
                 if (
                     owner.origin == identity.origin
-                    and owner.declaration_span.start <= identity.declaration_span.start
-                    and identity.declaration_span.end <= owner.declaration_span.end
+                    and owner.declares(identity)
                 ):
                     return true
     return false
@@ -187,8 +186,7 @@ pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
                 if (
                     len(owner.type_parameters) != 0
                     and owner.canonical.origin == identity.origin
-                    and owner.canonical.declaration_span.start <= identity.declaration_span.start
-                    and identity.declaration_span.end <= owner.canonical.declaration_span.end
+                    and owner.canonical.declares(identity)
                 ):
                     return true
     return false
@@ -602,8 +600,7 @@ def declared_owner_method(
                     identity.origin != owner.origin
                     or identity.kind != SemanticSourceTargetKind.Method
                     or identity.declaration_name != name
-                    or identity.declaration_span.start < owner.declaration_span.start
-                    or identity.declaration_span.end > owner.declaration_span.end
+                    or not owner.declares(identity)
                 ):
                     continue
                 match selected:
@@ -620,8 +617,7 @@ def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId)
     return (
         method.origin == owner.origin
         and method.kind == SemanticSourceTargetKind.Method
-        and method.declaration_span.start >= owner.declaration_span.start
-        and method.declaration_span.end <= owner.declaration_span.end
+        and owner.declares(method)
     )
 
 

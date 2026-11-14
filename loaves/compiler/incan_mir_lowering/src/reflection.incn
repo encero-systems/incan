@@ -156,6 +156,7 @@ pub def lower_field_metadata(
                                             return Err("unsupported Body IR generic field metadata capability")
                                     elif (
                                         identity.origin != declaration.origin
+                                        or not declaration.declares(identity)
                                         or identity.declaration_span != declaration.declaration_span
                                         or identity.scope_discriminant != declaration.scope_discriminant
                                         or identity.declaration_name != "__fields__"
@@ -193,6 +194,7 @@ pub def lower_static_field_metadata(
                             declaration = builder.nominals[owner].canonical
                             if (
                                 identity.origin != declaration.origin
+                                or not declaration.declares(identity)
                                 or identity.declaration_span != declaration.declaration_span
                                 or identity.scope_discriminant != declaration.scope_discriminant
                             ):
@@ -266,6 +268,7 @@ def validate_reflection_fields(
                 declaration = builder.nominals[owner].canonical
                 if (
                     identity.origin != declaration.origin
+                    or not declaration.declares(identity)
                     or identity.declaration_span != declaration.declaration_span
                     or identity.scope_discriminant != declaration.scope_discriminant
                 ):

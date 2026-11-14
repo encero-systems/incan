@@ -198,6 +198,7 @@ fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
         declaration_name: canonical_name.to_string(),
         kind: SemanticSourceTargetKind::Builtin,
         scope_discriminant: None,
+        owner: None,
         declaration_span: HirSourceSpan::new(0, 0),
     }
 }
@@ -214,6 +215,7 @@ pub(crate) fn canonical_builtin_member_identity(owner: &str, member: &str) -> Ca
         declaration_name: format!("{owner}.{member}"),
         kind: SemanticSourceTargetKind::Method,
         scope_discriminant: None,
+        owner: None,
         declaration_span: HirSourceSpan::new(0, 0),
     }
 }
@@ -310,6 +312,12 @@ pub struct SymbolTable {
     /// placeholder whose defining site did not state its kind) deliberately has no entry — absent means unproven,
     /// never "rebuild it from the name".
     identities: HashMap<SymbolId, CanonicalSymbolId>,
+    /// The nominal declaration owning each source member, by the member's origin and declaration site.
+    ///
+    /// Filled when a declaration's members are registered, before any member identity is minted, so every path that
+    /// mints one member's identity names the same owner. Ownership is a fact recorded here, never derived from
+    /// whether one declaration site lies inside another.
+    member_owners: HashMap<(SymbolOrigin, Span), String>,
     /// Module path owning locally-declared symbols, used as the minted [`SymbolOrigin`].
     ///
     /// Empty until the typechecker learns the module path; identities minted before that carry an empty module

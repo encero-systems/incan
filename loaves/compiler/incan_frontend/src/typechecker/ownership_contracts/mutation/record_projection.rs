@@ -14,6 +14,7 @@ fn owner(name: &str) -> CanonicalSymbolId {
         declaration_name: name.into(),
         kind: SemanticSourceTargetKind::Function,
         scope_discriminant: None,
+        owner: None,
         declaration_span: Span::new(1, 2),
     }
 }

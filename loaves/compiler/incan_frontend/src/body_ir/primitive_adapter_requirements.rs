@@ -101,10 +101,7 @@ fn activated(
     })
 }
 
-/// Preserve a public source member's physical owner boundary; a same-name member in another owner grants nothing.
+/// Preserve a public source member's owner, which its identity names; another owner's same-name member grants nothing.
 fn owned_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
-    member.kind == SemanticSourceTargetKind::Method
-        && member.origin == owner.origin
-        && owner.declaration_span.start <= member.declaration_span.start
-        && member.declaration_span.end <= owner.declaration_span.end
+    member.kind == SemanticSourceTargetKind::Method && member.origin == owner.origin && owner.declares(&member)
 }

@@ -428,6 +428,7 @@ impl Positions {
                         declaration_name: parameter.node.name.clone(),
                         kind: SemanticSourceTargetKind::Parameter,
                         scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                        owner: None,
                         declaration_span: parameter.span,
                     })
             })
@@ -493,6 +494,7 @@ impl Positions {
                 declaration_name: row[3].clone(),
                 kind: SemanticSourceTargetKind::Local,
                 scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                owner: None,
                 declaration_span: span,
             };
             if positions.identities.insert(row[3].clone(), canonical).is_some() {

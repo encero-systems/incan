@@ -86,6 +86,15 @@ pub fn encode_incan_symbol_identity(identity: &CanonicalSymbolId) -> String {
         }
         None => payload.push(0),
     }
+    if identity.namespace == SymbolNamespace::Member {
+        match &identity.owner {
+            Some(owner) => {
+                payload.push(1);
+                write_string(&mut payload, owner);
+            }
+            None => payload.push(0),
+        }
+    }
     write_usize(&mut payload, identity.declaration_span.start);
     write_usize(&mut payload, identity.declaration_span.end);
     let prefix = if let Some(expansion) = identity.declaration_span.expansion {
@@ -147,6 +156,15 @@ pub fn decode_incan_symbol_identity(identifier: &str) -> Result<Option<Canonical
         1 => Some(ScopeDiscriminant(reader.usize("scope_discriminant")?)),
         _ => return Err(EmittedSymbolDecodeError::InvalidPayload("scope_presence")),
     };
+    let owner = if namespace == SymbolNamespace::Member {
+        match reader.byte("owner_presence")? {
+            0 => None,
+            1 => Some(reader.string("owner")?),
+            _ => return Err(EmittedSymbolDecodeError::InvalidPayload("owner_presence")),
+        }
+    } else {
+        None
+    };
     let mut declaration_span = HirSourceSpan::new(
         reader.usize("declaration_span.start")?,
         reader.usize("declaration_span.end")?,
@@ -167,6 +185,7 @@ pub fn decode_incan_symbol_identity(identifier: &str) -> Result<Option<Canonical
         declaration_name,
         kind,
         scope_discriminant,
+        owner,
         declaration_span,
     }))
 }
@@ -453,6 +472,7 @@ mod tests {
                 declaration_name: format!("symbol_{index}_λ"),
                 kind,
                 scope_discriminant: (index % 2 == 0).then_some(ScopeDiscriminant(index)),
+                owner: (index % 3 == 1).then(|| format!("Owner_{index}")),
                 declaration_span: HirSourceSpan::new(index * 7, index * 7 + 5),
             })
             .collect()

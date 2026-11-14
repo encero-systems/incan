@@ -210,8 +210,5 @@ def retained_body(retained: &BodyIrModule, identity: &CanonicalSymbolId) -> bool
 
 
 pub def contains(owner: CanonicalSymbolId, member: CanonicalSymbolId) -> bool:
-    """Whether the owner's declaration span encloses the member's; callers compare origins, as spans of files nest."""
-    return (
-        owner.declaration_span.start <= member.declaration_span.start
-        and member.declaration_span.end <= owner.declaration_span.end
-    )
+    """Whether the member's identity names this owner as the declaration that owns it."""
+    return owner.declares(member)
