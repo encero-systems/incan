@@ -1,0 +1,101 @@
+"""
+The release signer and trust root a home carries, and the admission of a release asset against them (DD-0016).
+
+A signed toolchain archive ships `release-trust.json`: the identity that signs releases and the Sigstore trust root.
+Installing it makes the home carry those facts, and from then on the home admits only assets whose signature bundle,
+`ASSET.sigstore.json` beside the asset, verifies against them. A home that carries none is a development home: it
+has nothing to verify against, and says so by returning no verification.
+"""
+
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from release_signature import Signer, TrustRoot, Verified, trust_root, verify_bundle
+
+pub const CARRIED_TRUST: str = "release-trust.json"
+pub const BUNDLE_SUFFIX: str = ".sigstore.json"
+
+
+pub model Carried:
+    """The facts a home verifies releases against."""
+
+    pub signer: Signer
+    pub root: TrustRoot
+
+
+pub def read_trust(path: Path) -> Result[Carried, str]:
+    """Read a `release-trust.json`: a signer's identity and issuer, and a Sigstore trusted root whose chains verify."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    document = JsonValue.parse(text).map_err((error) => f"malformed {path.0}: {error.message()}")?
+    signer = document.require("signer").map_err((error) => f"malformed {path.0}: {error.message()}")?
+    root = document.require("trusted_root").map_err((error) => f"malformed {path.0}: {error.message()}")?
+    return Ok(
+        Carried(
+            signer=Signer(identity=text_member(signer, "identity", path)?, issuer=text_member(signer, "issuer", path)?),
+            root=trust_root(root.to_json().map_err((error) => f"malformed {path.0}: {error.message()}")?)?,
+        ),
+    )
+
+
+pub def carried(home: Path) -> Result[Option[Carried], str]:
+    """The facts `home` carries, or none for a home no signed release was installed into; a damaged file refuses."""
+    path = home.joinpath(CARRIED_TRUST)
+    if not path.is_file():
+        return Ok(None)
+    return Ok(Some(read_trust(path)?))
+
+
+pub def admit_release(asset: Path, home: Path) -> Result[Option[Verified], str]:
+    """
+    Verify a release asset before anything is unpacked or installed from it.
+
+    1. A home that carries no signer has nothing to verify against.
+    2. Otherwise the asset's signature bundle must be beside it; an unsigned asset is refused by name.
+    3. The bundle must verify for the asset's digest against the carried signer and trust root.
+    """
+    # 1. Only a home a signed release was installed into verifies.
+    match carried(home)?:
+        None => return Ok(None)
+        Some(facts) =>
+            # 2. Nothing downgrades to an unsigned install.
+            bundle = Path(asset.0 + BUNDLE_SUFFIX)
+            if not bundle.is_file():
+                return Err(
+                    f"{asset.0} is not signed: there is no signature bundle {bundle.0}, and this home installs " +
+                    f"only releases signed by {facts.signer.identity}",
+                )
+            # 3. The one verifier.
+            text = bundle.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+            digest = file_digest(asset, "sha256").map_err((error) => f"cannot digest {asset.0}: {error.message()}")?
+            match verify_bundle(text, digest, facts.root, facts.signer):
+                Ok(verified) => return Ok(Some(verified))
+                Err(reason) => return Err(f"{asset.0} is refused: {reason}")
+
+
+pub def adopt(stage: Path, home: Path) -> Result[bool, str]:
+    """
+    Make `home` carry the trust an admitted archive ships, and report whether it shipped any.
+
+    The shipped file is read whole first, so a home never comes to carry facts it could not verify with.
+    """
+    shipped = stage.joinpath(CARRIED_TRUST)
+    if not shipped.is_file():
+        return Ok(false)
+    _ = read_trust(shipped)?
+    text = shipped.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    pending = home.joinpath(CARRIED_TRUST + ".next")
+    target = home.joinpath(CARRIED_TRUST)
+    pending.write_text(text, "utf-8", "strict", None).map_err((error) => f"cannot {error.message()}")?
+    if target.is_file():
+        target.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = pending.move(target).map_err((error) => f"cannot {error.message()}")?
+    return Ok(true)
+
+
+def text_member(value: JsonValue, key: str, path: Path) -> Result[str, str]:
+    """The required string member `key`."""
+    return value
+        .require(key)
+        .map_err((error) => f"malformed {path.0}: {error.message()}")?
+        .expect_str()
+        .map_err((error) => f"malformed {path.0}: {error.message()}")
