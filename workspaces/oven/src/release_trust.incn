@@ -72,19 +72,31 @@ pub def admit_release(asset: Path, home: Path) -> Result[Option[Verified], str]:
                 Err(reason) => return Err(f"{asset.0} is refused: {reason}")
 
 
+pub def ship(installed: Path, stage: Path) -> Result[bool, str]:
+    """
+    Stage the signer an installed toolchain carries into an archive being packed, and report whether it carries one.
+
+    Trust anchors travel inside the signed archive, so the file is read whole first and a damaged one stops the pack.
+    """
+    return copied(installed.joinpath(CARRIED_TRUST), stage.joinpath(CARRIED_TRUST))
+
+
 pub def adopt(stage: Path, home: Path) -> Result[bool, str]:
     """
     Make `home` carry the trust an admitted archive ships, and report whether it shipped any.
 
     The shipped file is read whole first, so a home never comes to carry facts it could not verify with.
     """
-    shipped = stage.joinpath(CARRIED_TRUST)
-    if not shipped.is_file():
+    return copied(stage.joinpath(CARRIED_TRUST), home.joinpath(CARRIED_TRUST))
+
+
+def copied(source: Path, target: Path) -> Result[bool, str]:
+    """Replace `target` with a signer file that reads as one; report false, and change nothing, when there is none."""
+    if not source.is_file():
         return Ok(false)
-    _ = read_trust(shipped)?
-    text = shipped.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
-    pending = home.joinpath(CARRIED_TRUST + ".next")
-    target = home.joinpath(CARRIED_TRUST)
+    _ = read_trust(source)?
+    text = source.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    pending = Path(target.0 + ".next")
     pending.write_text(text, "utf-8", "strict", None).map_err((error) => f"cannot {error.message()}")?
     if target.is_file():
         target.unlink().map_err((error) => f"cannot {error.message()}")?
