@@ -199,10 +199,10 @@ pub fn duplicate_trait_instantiation(
     .with_hint("Remove the duplicate `with` entry or use a different trait type argument")
 }
 
-/// Report `@rust.derive` attached to a declaration kind that cannot emit Rust derive attributes.
+/// Report `@rust.derive` attached to a declaration kind that cannot carry Rust derive attributes.
 pub fn rust_derive_unsupported_attachment(kind: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("@rust.derive is not supported on {kind} declarations"), span)
-        .with_hint("@rust.derive currently lowers only onto generated Rust structs and enums")
+        .with_hint("@rust.derive currently lowers only onto native structs and enums")
 }
 
 /// Report `@rust.derive` on a `rusttype`, which currently lowers to a Rust alias.

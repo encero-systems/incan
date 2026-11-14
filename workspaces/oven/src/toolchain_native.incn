@@ -7,6 +7,7 @@ from std.json import JsonValue
 from std.environ import get_or
 from features import FeatureRequest
 from files import json_text, read_json, read
+from graph_incan import inspect_prepared, publish_prepared_graph
 from home import home, standard_artifact_dir, standard_packages
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, local_facet_session, unique
 from publication import publish
@@ -37,7 +38,7 @@ def main() -> Result[None, str]:
     """
     # 1. Only support production and a package/profile description are accepted.
     arguments = [argument for argument in args()]
-    if len(arguments) >= 4 and arguments[2] in ["identify", "publish"]:
+    if len(arguments) >= 4 and arguments[2] in ["identify", "publish", "codegraph"]:
         return publish_prepared(arguments)
     if len(arguments) != 2 and len(arguments) != 4:
         return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
@@ -54,15 +55,21 @@ def main() -> Result[None, str]:
 
 def publish_prepared(arguments: list[str]) -> Result[None, str]:
     """
-    Identify a prepared native build before compilation, then publish its outputs under that same identity.
+    Identify a prepared native build before compilation, then publish its native or requested graph outputs under
+    that same identity.
 
     1. Read the exact compiler unit and select its metadata-only emission mode when requested.
     2. Retain its identity before compilation or refuse input changes after compilation.
-    3. Record completed output payloads separately from their producer identity.
+    3. Record completed native payloads, or publish a separately proved graph from the shared checked export.
     """
     # 1. The script supplies the same unit JSON the compiler consumes, including checked source interfaces.
-    if (arguments[2] == "identify" and len(arguments) != 4) or (arguments[2] == "publish" and len(arguments) != 5):
-        return Err("usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY")
+    if (
+        (arguments[2] == "identify" and len(arguments) != 4)
+        or (arguments[2] in ["publish", "codegraph"] and len(arguments) != 5)
+    ):
+        return Err(
+            "usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY | codegraph UNIT DIRECTORY",
+        )
     path = Path(arguments[3])
     mut unit = read_unit(read_json(path)?)?
     if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
@@ -88,8 +95,14 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
         )
     if read(identity)? != key.digest:
         return Err("prepared unit inputs changed while compiling")
-    # 3. Checking-only interfaces have no native library; their emission mode already distinguishes their identity.
+    # 3. Graph publication reuses the checked export producer and binds its independent proof to this native view.
     directory = Path(arguments[4])
+    if arguments[2] == "codegraph":
+        graph = inspect_prepared(unit, toolchain)?
+        if not publish_prepared_graph(unit, toolchain, directory, graph)?:
+            return Err("native publication changed while exporting its graph")
+        return Ok(None)
+    # Checking-only interfaces have no native library; their emission mode already distinguishes their identity.
     outputs = [artifact for artifact in artifact_files(directory, unit.package)? if artifact.is_file()]
     if len(outputs) == 0:
         return Err("native compilation published no unit payloads")

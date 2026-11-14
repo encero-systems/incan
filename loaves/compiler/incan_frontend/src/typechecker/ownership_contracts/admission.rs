@@ -2,12 +2,10 @@
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
 use super::CallableSource;
-use crate::ast::{
-    BinaryOp, Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement,
-};
+use crate::ast::{Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
-use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind};
 
 /// Source functions with statically bound parameters are executable under explicit ownership. Generic binders and
 /// ordinary defaults retain the same frame and declaration-owned contract; decorators remain outside this boundary
@@ -59,6 +57,7 @@ fn input_statements_supported(body: &[Spanned<Statement>], conditionals: bool) -
         Statement::Pass
         | Statement::Assignment(_)
         | Statement::FieldAssignment(_)
+        | Statement::IndexAssignment(_)
         | Statement::CompoundAssignment(_)
         | Statement::Expr(_)
         | Statement::Return(_)
@@ -187,8 +186,7 @@ impl TypeCheckInfo {
         proof.validate_local_storage()?;
         if !input_statements_supported(callable.body(), conditionals)
             || any_expr_in_body(callable.body(), |expression| {
-                matches!(expression, Expr::Binary(_, BinaryOp::And | BinaryOp::Or, _))
-                    || (!conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..)))
+                !conditionals && matches!(expression, Expr::Try(_) | Expr::Match(..))
             })
         {
             return Err("explicit inputs require direct straight-line source access in this implementation stage");
@@ -293,10 +291,15 @@ impl CheckedInputBody<'_> {
                 } else {
                     false
                 };
-                // A closure local passed to a parameter its callee only calls lends its callable object for the call.
                 if argument.access == IncanInputAccess::Inferred
                     && !copy
-                    && argument.source.is_some()
+                    && argument.source.as_ref().is_some_and(|source| {
+                        matches!(
+                            &source.root,
+                            super::flow::Root::Binding(identity)
+                                if identity.kind == SemanticSourceTargetKind::Parameter
+                        )
+                    })
                     && !super::projection::closure_argument(self.graph, argument)
                 {
                     return Err("ordinary non-Copy input requires its inferred access proof");

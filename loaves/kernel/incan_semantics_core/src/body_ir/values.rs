@@ -201,7 +201,7 @@ impl Constant {
 /// Duckborrower ownership decision for one place-read.
 ///
 /// This refines [`crate::types::AbiV0Ownership`] (which only distinguishes "trivially copy" from "owned") with the
-/// move/clone split that a real Rust emission boundary needs, plus an explicit [`OwnershipFact::Unknown`] escape
+/// move/clone split that a native lowering boundary needs, plus an explicit [`OwnershipFact::Unknown`] escape
 /// hatch for reads Body IR v0 cannot yet classify — per #653, ownership decisions must be represented "as
 /// Duckborrower facts or explicit unknowns," not silently defaulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

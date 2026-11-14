@@ -297,7 +297,7 @@ pub struct RustTraitImportInfo {
 /// A typechecker-resolved Rust extension-trait import required by a method call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RustMethodTraitImportUse {
-    /// Local import binding to retain in generated Rust.
+    /// Local import binding that brought the trait into scope.
     pub binding: String,
     /// Trait path selected for the call.
     pub trait_path: String,

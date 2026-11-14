@@ -234,7 +234,7 @@ pub struct CAbiVerificationError {
 
 /// Target-verified C enum values consumed by the ordinary Incan lowering path.
 ///
-/// The C probe is authoritative: generated Rust receives only the folded scalar after target verification, never a
+/// The C probe is authoritative: native lowering receives only the folded scalar after target verification, never a
 /// guessed header spelling or macro expansion from the binding source.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CAbiVerificationReceipt {

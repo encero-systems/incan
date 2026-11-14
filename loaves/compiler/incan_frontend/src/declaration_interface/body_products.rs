@@ -57,6 +57,7 @@ struct BodyInput {
     reads: Vec<ReadGuard>,
     declaration: Vec<Vec<String>>,
     local: Vec<Vec<String>>,
+    final_value: Vec<Vec<String>>,
 }
 
 /// One complete positive lookup and the exact source headers that produced its previously accepted signatures.
@@ -82,6 +83,7 @@ struct BodyProduct {
     reads: Vec<ReadGuard>,
     declaration: Vec<Vec<String>>,
     local: Vec<Vec<String>>,
+    final_value: Vec<Vec<String>>,
     contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     body: Body,
 }
@@ -257,8 +259,8 @@ impl CallableBodyProducts {
             if !resolved_scalar_header(&entry.header)? {
                 return Err(invalid("scalar body product has a nonprimitive checked signature"));
             }
-            if entry.declaration.is_empty() || entry.header_source.is_empty() {
-                return Err(invalid("scalar body product has no declaration record"));
+            if entry.declaration.is_empty() || entry.final_value.is_empty() || entry.header_source.is_empty() {
+                return Err(invalid("scalar body product has incomplete checker records"));
             }
             let mut body = entry.body.clone();
             if owner.get_or_insert_with(|| entry.header.identity().origin.clone()) != &entry.header.identity().origin {
@@ -347,7 +349,11 @@ impl CallableBodyInputs {
                 .available_local_record(declaration.span)
                 .cloned()
                 .unwrap_or_default();
+            let Some(mut final_value) = checker.available_final_record(declaration.span).cloned() else {
+                continue;
+            };
             normalize_local_record(&mut local);
+            normalize_final_record(&mut final_value);
             declarations.push(BodyInput {
                 header,
                 span: declaration.span,
@@ -356,6 +362,7 @@ impl CallableBodyInputs {
                 reads: capture_reads(reads, &checked_reads, &headers)?,
                 declaration: record.clone(),
                 local,
+                final_value,
             });
         }
 
@@ -416,6 +423,7 @@ impl CallableBodyInputs {
             reads,
             declaration,
             local,
+            final_value,
         } in self.declarations
         {
             let mut body = bodies
@@ -439,6 +447,7 @@ impl CallableBodyInputs {
                 reads,
                 declaration,
                 local,
+                final_value,
                 contexts,
                 body,
             });
@@ -464,6 +473,20 @@ fn normalize_local_record(rows: &mut [Vec<String>]) {
     if header.len() == 5
         && header[0] == "header"
         && header[3] == "local"
+        && header[4] == crate::checker_records::GRAPH_BODY_RECORD_PROFILE
+    {
+        header.remove(3);
+    }
+}
+
+/// Keep private callable products independent of the graph transport's explicit final-family discriminator.
+fn normalize_final_record(rows: &mut [Vec<String>]) {
+    let Some(header) = rows.first_mut() else {
+        return;
+    };
+    if header.len() == 5
+        && header[0] == "header"
+        && header[3] == "final"
         && header[4] == crate::checker_records::GRAPH_BODY_RECORD_PROFILE
     {
         header.remove(3);
@@ -554,6 +577,7 @@ impl ValidatedCallableBodies {
             let Ok(scope) = body_scope(&entry.contexts) else {
                 continue;
             };
+            checker.retain_callable_final_record(declaration.span, entry.final_value.clone());
             checker.type_info.reused_callable_scopes.insert(declaration.span, scope);
             checker
                 .type_info

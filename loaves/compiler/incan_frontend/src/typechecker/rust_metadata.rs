@@ -139,7 +139,7 @@ impl TypeChecker {
     /// Rewrite Rust's crate-relative type displays against the inspected callable or type path that produced them.
     ///
     /// rust-analyzer reports signatures from inside a Rust crate using displays such as
-    /// `crate::ScalarFunctionImplementation`. Incan source, imports, and generated Rust refer to the dependency by its
+    /// `crate::ScalarFunctionImplementation`. Incan source, imports, and native paths refer to the dependency by its
     /// crate name (`datafusion_expr::ScalarFunctionImplementation`), so boundary typing must canonicalize those
     /// displays before compatibility checks or contextual argument checking run.
     pub fn rust_display_for_owner_path(&self, rust_ty: &str, owner_path: &str) -> String {

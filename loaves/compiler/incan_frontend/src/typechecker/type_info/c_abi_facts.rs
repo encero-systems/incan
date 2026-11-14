@@ -171,7 +171,7 @@ pub struct CBindingSymbol {
     ///
     /// Each record names a raw checked scalar-pointer parameter and the exact `c.Size` parameter that bounds it. This
     /// lives with the descriptor so all later stages consume one checked association rather than recovering one from
-    /// argument names or generated Rust.
+    /// argument names.
     pub buffers: Vec<CBindingBuffer>,
     /// Raw outcomes that establish output-slot state after this call.
     pub outcomes: Vec<CBindingOutcome>,
@@ -315,7 +315,7 @@ pub struct CBindingStructField {
 /// Return a relocation-stable identity for one checked C binding declaration.
 ///
 /// The compiler owns this identity so inspection, codegraph, language-server, lock, and Oven tooling can join the
-/// exact descriptor they consumed without reconstructing it from source spelling or generated Rust. It deliberately
+/// exact descriptor they consumed without reconstructing it from source spelling. It deliberately
 /// includes the checked declaration contract and logical module path, but excludes source spans and source-file
 /// locations. The declared header spelling remains part of the ABI contract, so authors who require relocation-stable
 /// identities must use a portable header spelling rather than a machine-local absolute path.

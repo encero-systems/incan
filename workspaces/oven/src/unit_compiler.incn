@@ -68,6 +68,8 @@ pub def compile_prepared_unit(
         dependency_source_roots(unit),
         toolchain.sysroot,
     )? + shared_arguments(unit, development)?
+    if toolchain.codegraph_on_request:
+        native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
         records_path = Path(f"{path.0}.graph-body-records")
         if records_path.exists():
@@ -76,6 +78,7 @@ pub def compile_prepared_unit(
         generation = match unit.checked_context:
             Some(value) => value
             None => return Err("records lowering requires the complete compiler context")
+
         publish_binary(records_path.joinpath("producer-profile"), generation.encode("utf-8"))?
         for page in records:
             publish_binary(records_path.joinpath(page.key), page.value)?
@@ -113,7 +116,9 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
     for entry in report.iterdir().map_err((error) => f"cannot read plan record report {report.0}: {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        text = entry.read_text("utf-8", "strict").map_err((error) => f"cannot read plan record event {entry.0}: {error.message()}")?
+        text = entry
+            .read_text("utf-8", "strict")
+            .map_err((error) => f"cannot read plan record event {entry.0}: {error.message()}")?
         event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
         reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
             (error) => error.message(),

@@ -30,7 +30,6 @@ Select the primary areas touched (used for review routing; labels are managed se
 
 ## Testing / verification
 
-- [ ] `make test` / `cargo test`
 - [ ] `make examples` (if relevant)
 - [ ] `make test` (affected families, or list focused selectors below)
 - [ ] `incan fmt --check .` (if relevant)

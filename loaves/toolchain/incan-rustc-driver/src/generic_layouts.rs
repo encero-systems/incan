@@ -17,7 +17,7 @@ use thin_vec::{ThinVec, thin_vec};
 const MARKER_PREFIX: &str = "__incan_phantom";
 
 /// Declare the generic ADT and its checked derived implementations, excluding its private marker from output.
-/// Derive choices use the shared registry, while emitted Rust trait bounds name their physical owners. The compiled ABI
+/// Derive choices use the shared registry, while native trait bounds name their physical owners. The compiled ABI
 /// exposes every retained layout; the checked manifest governs source visibility separately.
 pub(crate) fn items(
     model: &GenericModelDeclaration,

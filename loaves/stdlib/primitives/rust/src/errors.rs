@@ -1,4 +1,4 @@
-//! Runtime error helpers for Incan-generated Rust code.
+//! Runtime error helpers for compiled Incan code.
 //!
 //! Rust remains necessary here because the current native ABI represents thrown Incan errors as Rust panics.
 //!
@@ -26,14 +26,14 @@ pub fn raise(err: impl Display) -> ! {
     panic!("{err}");
 }
 
-/// Compiler-only runtime helpers used by generated Rust.
+/// Compiler-only runtime helpers used by compiled Incan code.
 #[doc(hidden)]
 pub mod __private {
     /// Raise an explicit panic-hosted runtime-misuse boundary.
     ///
     /// This is reserved for generated or stdlib-backed surfaces that are intentionally not ordinary Incan
     /// exceptions, such as runner-only markers or proc-macro-backed decorator placeholders that cannot execute as
-    /// normal runtime functions. Keep these behind named helpers so generated Rust does not embed ad hoc `panic!`
+    /// normal runtime functions. Keep these behind named helpers so compiled code does not embed ad hoc `panic!`
     /// stubs inline.
     #[cold]
     #[track_caller]

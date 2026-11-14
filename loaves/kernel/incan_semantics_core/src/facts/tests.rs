@@ -34,7 +34,7 @@ fn fs_read_capability() -> super::CanonicalSymbolId {
     )
 }
 
-/// An allowed decision must be actionable without a consumer re-reading source or emitted Rust.
+/// An allowed decision must be actionable without a consumer re-reading source.
 #[test]
 fn an_allowed_authority_decision_carries_its_mode_and_grant_context() {
     use super::{AuthorityDecision, AuthorityGrantContext, AuthorityMode};

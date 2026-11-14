@@ -25,6 +25,8 @@ pub model Toolchain:
     pub externs: list[NativeCrate]
     pub search: list[str]
     pub registry_units: str
+    # This compiler accepts `--no-codegraph`; ordinary native builds may leave inspection to an explicit request.
+    pub codegraph_on_request: bool = false
     # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
     # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
     pub console: str = ""
@@ -51,6 +53,7 @@ pub model Toolchain:
             externs=self.externs,
             search=self.search,
             registry_units=self.registry_units,
+            codegraph_on_request=self.codegraph_on_request,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -67,6 +70,7 @@ pub model InstalledCompiler:
     pub externs: list[NativeCrate]
     pub search: list[str]
     pub registry_units: str
+    pub codegraph_on_request: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -81,6 +85,7 @@ pub model InstalledCompiler:
             externs=self.externs,
             search=self.search,
             registry_units=self.registry_units,
+            codegraph_on_request=self.codegraph_on_request,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

@@ -1,4 +1,4 @@
-//! Python-like numeric operations for Incan-generated Rust code.
+//! Python-like numeric operations for compiled Incan code.
 //!
 //! Rust remains necessary because compiler-emitted numeric calls use Rust integer, float, and native decimal carriers.
 //!
@@ -53,7 +53,7 @@ use incan_lang::{
 
 /// Admit a value into Incan's exact `f32` carrier only when it is finite.
 ///
-/// Generated Rust calls this whenever exact `f32` is created or observed, including arithmetic results and
+/// Compiled Incan code calls this whenever exact `f32` is created or observed, including arithmetic results and
 /// Incan-owned assignment, argument, field, collection, return, comparison, and output boundaries. IEEE `float`
 /// (`f64`) operations may still produce NaN or infinity; the `f32` carrier rejects non-finite values.
 #[inline]
@@ -258,7 +258,7 @@ where
     l / r
 }
 
-/// Python-like true division of two integer-family operands, which generated Rust widens to `f64` before the call.
+/// Python-like true division of two integer-family operands, which lowering widens to `f64` before the call.
 ///
 /// The widening erases the operands' family, so the family is carried by the helper instead: a zero divisor raises
 /// `ZeroDivisionError: division by zero`, where [`py_div`] over the same widened operands would name a float division.
@@ -554,7 +554,7 @@ pub fn py_mod_f32(a: f32, b: f32) -> f32 {
 
 /// Exact-width unsigned integer carriers whose `//` and `%` keep their own type.
 ///
-/// Sealed: generated Rust names only the six unsigned widths. In an unsigned domain rounding toward negative infinity
+/// Sealed: lowering names only the six unsigned widths. In an unsigned domain rounding toward negative infinity
 /// is truncation, so the native operators compute Python's results once the zero divisor is refused.
 pub trait IncanUnsignedInteger:
     sealed::Sealed + Copy + PartialEq + core::ops::Div<Output = Self> + core::ops::Rem<Output = Self>
@@ -615,7 +615,7 @@ pub fn py_mod_unsigned<T: IncanUnsignedInteger>(lhs: T, rhs: T) -> T {
 
 /// Exact-width signed integer carriers whose `//` and `%` keep their own type (RFC 009).
 ///
-/// Sealed: generated Rust names only the six signed widths. `i64` is here too so the helpers read the same for every
+/// Sealed: lowering names only the six signed widths. `i64` is here too so the helpers read the same for every
 /// signed width, although generated `int` and `i64` arithmetic calls [`py_floor_div_i64`] and [`py_mod_i64`].
 pub trait IncanSignedInteger:
     sealed::Sealed

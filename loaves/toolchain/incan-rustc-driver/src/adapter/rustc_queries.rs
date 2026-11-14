@@ -25,12 +25,28 @@ pub(crate) fn recover() {
 }
 
 /// Read the active plan without retaining the slot lock while rustc resolves callees.
-pub(crate) fn active_plan() -> Result<Arc<ActivePlan>, DriverError> {
+pub(crate) fn active_plan() -> Result<Arc<PlanReader>, DriverError> {
     PLAN.lock()
         .map_err(|_| DriverError::State)?
         .as_ref()
         .map(Arc::clone)
         .ok_or(DriverError::State)
+}
+
+/// Register the HIR owner carrying this definition's complete plan-record fingerprint as a query dependency.
+fn track_definition(tcx: TyCtxt<'_>, def: LocalDefId, plan: &PlanReader) {
+    let direct = tcx.opt_item_name(def.to_def_id()).map(|name| name.as_str().to_owned());
+    let parent = tcx
+        .opt_item_name(tcx.parent(def.to_def_id()))
+        .map(|name| name.as_str().to_owned());
+    let tracked = direct
+        .as_deref()
+        .and_then(|name| plan.function_input(name).or_else(|| plan.alias_input(name)))
+        .or_else(|| parent.as_deref().and_then(|name| plan.function_input(name)));
+    if tracked.is_some() {
+        let owner = tcx.local_def_id_to_hir_id(def).owner;
+        let _ = tcx.hir_attr_map(owner);
+    }
 }
 
 /// Retain a typed adapter error, then abort this rustc invocation through its diagnostic boundary.
@@ -56,6 +72,7 @@ pub(super) fn native_alias_type<'tcx>(
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
+    track_definition(tcx, def, &plan);
     let name = tcx.item_name(def.to_def_id());
     if let Some(carrier) = plan
         .enums
@@ -143,6 +160,7 @@ pub(super) fn native_function_signature<'tcx>(
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
+    track_definition(tcx, def, &plan);
     (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def).map_bound(|signature| {
         let sites = planned_function(tcx, def, &plan).map_or(&[][..], |function| function.generic_loans.as_slice());
         let retained = match crate::generic_loans::signature(tcx, signature, sites) {
@@ -166,7 +184,7 @@ pub(super) fn native_function_signature<'tcx>(
 pub(super) fn planned_function<'plan>(
     tcx: TyCtxt<'_>,
     def: LocalDefId,
-    plan: &'plan ActivePlan,
+    plan: &'plan PlanReader,
 ) -> Option<&'plan crate::plan::Function> {
     if tcx.def_kind(def) != rustc_hir::def::DefKind::Fn || !declared_at_root(tcx, def) {
         return None;
@@ -191,6 +209,7 @@ pub(super) fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
+    track_definition(tcx, def, &plan);
     let function = planned_function(tcx, def, &plan);
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.

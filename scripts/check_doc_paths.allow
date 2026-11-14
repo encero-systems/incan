@@ -19,6 +19,7 @@
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/codegen_snapshots/my_feature.incn	Illustrative example filename in skill template or example project
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap	Illustrative example filename in skill template or example project
 README.md	src/main.incn	Illustrative example filename in skill template or example project
+README.md	tests/test_main.incn	Illustrative example filename in skill template or example project
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.incn	Illustrative example filename in skill template or example project
 
 # A package's or an example project's own source directory, named relative to the document; the workspace root has had no `src/` since the root crate ceased to exist (#1478).

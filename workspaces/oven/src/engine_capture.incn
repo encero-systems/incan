@@ -179,6 +179,8 @@ pub model Declarations:
     pub files: list[InputPath] = []
     # The source root the manifest declares, project-relative; empty when it declares none.
     pub source_root: str = ""
+    # The Rust source-facet root, project-relative; empty selects the conventional `src` directory when it exists.
+    pub rust_source_root: str = ""
     # Editable Incan dependency project roots, made absolute against this manifest.
     pub dependencies: list[str] = []
 
@@ -188,10 +190,17 @@ pub model Declarations:
             [
                 JsonValue.string(self.manifest),
                 JsonValue.array([item.encoded() for item in self.files]),
-                JsonValue.string(self.source_root),
+                JsonValue.array([JsonValue.string(self.source_root), JsonValue.string(self.rust_source_root)]),
                 texts(self.dependencies),
             ],
         )
+
+
+model SourceMembership:
+    """One authored source tree and the language extension capture keeps from it."""
+
+    root: str
+    extension: str
 
 
 @derive(Eq)
@@ -374,12 +383,12 @@ pub def capture_with(
     # 1. Frozen roots come first, so that nothing under them is ever checked.
     state.take_frozen_roots()?
     # 2. The roots and their configuration are always in reach.
-    mut membership: list[str] = []
+    mut membership: list[SourceMembership] = []
     for root in request.roots:
         membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit)?)
     # 3. A package's membership is listed with the compiler's collection rules.
-    for directory in membership:
-        state.members(directory)?
+    for source in membership:
+        state.members(source.root, source.extension)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
     state.lookups(request.witnesses)?
     # 5. The previous epoch is returned unchanged when nothing differs.
@@ -441,7 +450,7 @@ model Capture:
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
-    def root(mut self, path: str, command: str, whole_unit: bool) -> Result[list[str], str]:
+    def root(mut self, path: str, command: str, whole_unit: bool) -> Result[list[SourceMembership], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
@@ -464,17 +473,19 @@ model Capture:
         manifest = Path(path).joinpath("loaf.toml").0
         if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
-        return Ok([self.source_root(path)?])
+        return self.source_memberships(path)
 
-    def unit_membership(mut self, source: Path) -> Result[list[str], str]:
+    def unit_membership(mut self, source: Path) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
         for candidate in manifest_candidates(source):
             if candidate.0 in self.declared:
-                selected = self.source_root(candidate.parent().0)?
-                if source.0.startswith(selected + "/"):
-                    return Ok([selected])
-                return Ok(unique([selected, source.parent().0]))
-        return Ok([source.parent().0])
+                mut selected = self.source_memberships(candidate.parent().0)?
+                for membership in selected:
+                    if membership.extension == ".incn" and source.0.startswith(membership.root + "/"):
+                        return Ok(selected)
+                selected.append(SourceMembership(root=source.parent().0, extension=".incn"))
+                return Ok(selected)
+        return Ok([SourceMembership(root=source.parent().0, extension=".incn")])
 
     def manifest_lookup(mut self, source: Path) -> Result[bool, str]:
         """Look up the manifest of `source` where the unit description does; each miss is an absent lookup."""
@@ -509,7 +520,8 @@ model Capture:
                 _ = self.editable(item.path, item.role)?
         for dependency in self.declared[path].dependencies:
             if self.manifest(Path(dependency).joinpath("loaf.toml").0)?:
-                self.members(self.source_root(dependency)?)?
+                for source in self.source_memberships(dependency)?:
+                    self.members(source.root, source.extension)?
         return Ok(true)
 
     def source_root(mut self, project: str) -> Result[str, str]:
@@ -527,9 +539,22 @@ model Capture:
             None => pass
         return Ok(project)
 
-    def members(mut self, top: str) -> Result[None, str]:
+    def source_memberships(mut self, project: str) -> Result[list[SourceMembership], str]:
+        """Resolve the Incan source root and any explicit or conventional Rust source tree for one project."""
+        root = Path(project)
+        manifest = root.joinpath("loaf.toml").0
+        mut sources = [SourceMembership(root=self.source_root(project)?, extension=".incn")]
+        if manifest in self.declared and self.declared[manifest].rust_source_root != "":
+            sources.append(
+                SourceMembership(root=root.joinpath(self.declared[manifest].rust_source_root).0, extension=".rs"),
+            )
+        elif root.joinpath("src/lib.rs").is_file():
+            sources.append(SourceMembership(root=root.joinpath("src").0, extension=".rs"))
+        return Ok(sources)
+
+    def members(mut self, top: str, extension: str = ".incn") -> Result[None, str]:
         """
-        Capture a package's membership under `top`: every Incan source, with each directory listed only when it changed.
+        Capture a source facet's membership under `top`, with each directory listed only when it changed.
 
         Hidden directories, `target` and `node_modules` are not entered, as the compiler collects a package.
         """
@@ -541,7 +566,7 @@ model Capture:
             if self.is_frozen(directory):
                 self.counters.frozen.inputs += 1
                 continue
-            match self.listing(directory)?:
+            match self.listing(directory, extension)?:
                 None => pass
                 Some(entry) =>
                     for name in entry.files:
@@ -550,7 +575,7 @@ model Capture:
                         pending.append(Path(directory).joinpath(name).0)
         return Ok(None)
 
-    def listing(mut self, directory: str) -> Result[Option[CapturedListing], str]:
+    def listing(mut self, directory: str, extension: str) -> Result[Option[CapturedListing], str]:
         """A membership directory's members: the recorded listing while its metadata is unchanged, else listed now."""
         self.counters.in_reach.stats += 1
         match file_metadata(Path(directory))?:
@@ -563,7 +588,7 @@ model Capture:
                     if recorded.settled and recorded.metadata == observed:
                         self.listed[directory] = recorded
                         return Ok(Some(recorded))
-                entry = children(Path(directory), ".incn")?
+                entry = children(Path(directory), extension)?
                 self.counters.in_reach.listings += 1
                 self.counters.in_reach.stats += entry.checked
                 listing = CapturedListing(
@@ -782,8 +807,17 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             mut source_root = ""
             if let Some(declared_root) = intent.source_root:
                 source_root = declared_root
+            mut rust_source_root = ""
+            if let Some(declared_root) = document.rust_source_root:
+                rust_source_root = declared_root
             dependencies = [dependency_root(root, dependency.path) for dependency in intent.dependencies if not dependency.rust_facet]
-            return Declarations(manifest=manifest, files=files, source_root=source_root, dependencies=dependencies)
+            return Declarations(
+                manifest=manifest,
+                files=files,
+                source_root=source_root,
+                rust_source_root=rust_source_root,
+                dependencies=dependencies,
+            )
 
 
 def read_file(path: Path) -> Result[bytes, str]:
@@ -883,11 +917,20 @@ def decoded_declarations(value: JsonValue) -> Result[Declarations, str]:
     mut files: list[InputPath] = []
     for item in elements(parts[1])?:
         files.append(decoded_path(item)?)
+    mut source_root = ""
+    mut rust_source_root = ""
+    match parts[2].as_str():
+        Some(legacy) => source_root = legacy
+        None =>
+            roots = fields(parts[2], 2)?
+            source_root = string_of(roots[0])?
+            rust_source_root = string_of(roots[1])?
     return Ok(
         Declarations(
             manifest=string_of(parts[0])?,
             files=files,
-            source_root=string_of(parts[2])?,
+            source_root=source_root,
+            rust_source_root=rust_source_root,
             dependencies=strings_of(parts[3])?,
         ),
     )

@@ -71,7 +71,7 @@ pub struct ScopeDiscriminant(pub usize);
 /// identity for the thing they name.
 ///
 /// Two properties are load-bearing. Equality is decidable structurally, without comparing source spellings or emitted
-/// names — no phase may recover what a reference means by parsing generated Rust. And identity is stable across the
+/// names — no phase may recover what a reference means from a native symbol name. And identity is stable across the
 /// stages of *one* compilation, not across edits: [`Self::declaration_span`] moves when the file does, so a consumer
 /// needing cross-edit continuity must re-resolve rather than cache.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

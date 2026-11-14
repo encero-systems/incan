@@ -1,7 +1,7 @@
 //! Backend-neutral semantic type model and unstable ABI v0 hooks.
 //!
 //! This module is intentionally compiler-facing. It gives HIR, semantic facts, diagnostics, and future backends an
-//! Incan-owned type vocabulary without treating emitted Rust spelling as the source of language semantics.
+//! Incan-owned type vocabulary without treating native Rust spelling as the source of language semantics.
 
 use std::fmt;
 

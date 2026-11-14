@@ -560,7 +560,7 @@ fn kind_name_for_serde_value(value: &serde_json::Value) -> &'static str {
     }
 }
 
-/// Compiler-only JSON helpers used by generated Rust.
+/// Compiler-only JSON helpers used by compiled Incan code.
 #[doc(hidden)]
 pub mod __private {
     use super::{Deserialize, Serialize, json_decode_error_string, raise_json_serialization_error};
@@ -568,7 +568,7 @@ pub mod __private {
     /// Serialize a value to JSON or raise Incan's canonical runtime error.
     ///
     /// This is used by compiler-generated code for value-returning JSON paths (`json_stringify`, synthesized
-    /// `to_json`, and trait-backed wrappers) so the emitted Rust does not inline fallback/panic extraction.
+    /// `to_json`, and trait-backed wrappers) so compiled code does not inline fallback/panic extraction.
     #[must_use]
     pub fn stringify_or_raise<T>(value: &T, type_name: &str) -> String
     where

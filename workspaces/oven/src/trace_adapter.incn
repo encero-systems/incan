@@ -20,6 +20,7 @@ pub model WorkCounts:
     pub decodes: int
     pub stats: int
     pub pages: int
+    pub identities: int
 
 
 model ObservationChannels:
@@ -108,6 +109,7 @@ model ObservationChannels:
             decodes=self.counts.get("json_decode", 0),
             stats=self.counts.get("file_stat", 0),
             pages=self.counts.get("installation_page", 0),
+            identities=self.counts.get("artifact_identity", 0),
         )
         self.counting_prefix = ""
         self.counts = {}

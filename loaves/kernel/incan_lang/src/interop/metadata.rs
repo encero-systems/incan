@@ -169,7 +169,7 @@ pub struct RustFunctionSig {
     /// Method or function type parameters in source declaration order.
     ///
     /// Rust permits type arguments on a callable independently from generics on its receiver type. Retaining this
-    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before generated Rust reaches
+    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before the call reaches
     /// rustc.
     #[serde(default)]
     pub type_params: Vec<String>,
@@ -285,7 +285,7 @@ pub struct RustMacroInfo {
     /// Trait implementations observed from the macro expansion on the compiler-owned probe.
     ///
     /// A derive macro may emit more than one implementation, so this remains a collection rather than assuming the
-    /// macro shares a name or canonical path with a single trait. The generated-Rust build remains authoritative for
+    /// macro shares a name or canonical path with a single trait. The native build remains authoritative for
     /// any input-sensitive behavior or predicates attached to those implementations on the real Incan-authored type.
     #[serde(default)]
     pub expanded_traits: Vec<RustExpandedDeriveTrait>,

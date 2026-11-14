@@ -32,37 +32,40 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
-) -> Vec<incan_semantics_core::body_ir::RuntimeCallableBinding> {
-    ["incan_native_runtime", "incan_stdlib_primitives"]
-        .into_iter()
-        .filter_map(|package| {
+) -> Result<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, String> {
+    let mut bindings = Vec::new();
+    for package in ["incan_native_runtime", "incan_stdlib_primitives"] {
+        let projected;
+        let manifest = if let Some(local) = local.filter(|manifest| manifest.name == package) {
             local
-                .filter(|manifest| manifest.name == package)
-                .or_else(|| session.loaves().manifest(package))
-        })
-        .flat_map(|manifest| {
+        } else {
+            projected = session
+                .loaves()
+                .execution_manifest(package)
+                .map_err(|error| error.to_string())?;
+            let Some(projected) = projected.as_deref() else {
+                continue;
+            };
+            projected
+        };
+        bindings.extend(
             manifest
                 .contract_metadata
                 .identity_graph
                 .exports
                 .iter()
                 .filter(|export| export.public_path.len() == 2)
-                .filter(|export| {
-                    manifest
-                        .exports
-                        .functions
-                        .iter()
-                        .any(|function| function.name == export.public_name)
-                })
                 .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
                     path: export.public_path.join("::"),
                     canonical: export.canonical.as_ref()?.hydrate()?,
                 }))
                 .filter(|binding| {
-                    matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
-                })
-        })
-        .collect()
+                    binding.canonical.kind == SemanticSourceTargetKind::Function
+                        && matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
+                }),
+        );
+    }
+    Ok(bindings)
 }
 
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
@@ -86,6 +89,7 @@ pub(super) fn checked_modules(
     receipt: &RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
+    collect_codegraph: bool,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -158,7 +162,7 @@ pub(super) fn checked_modules(
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
     let checked_local = checked_local_identities(manifest.as_ref());
-    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
+    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref())?;
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
     drop(body_ir_inputs_invocation);
 
@@ -181,7 +185,7 @@ pub(super) fn checked_modules(
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
     graph_body_output.publish()?;
     let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
-    let graph = if library {
+    let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
             &session,
@@ -189,9 +193,9 @@ pub(super) fn checked_modules(
             &analysis,
             &mut bodies[loaf_modules..],
         );
-        incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
+        Some(incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?)
     } else {
-        Vec::new()
+        None
     };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;

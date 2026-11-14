@@ -43,13 +43,13 @@ pub enum RustTypeShape {
 pub enum RustTypeShapePathFallback {
     /// Leave unresolved names as unknown. Use this when an extractor has an authoritative name resolver.
     Unknown,
-    /// Preserve unresolved names as Rust paths. Use this for generated Rust surfaces that already canonicalized text.
+    /// Preserve unresolved names as Rust paths. Use this for surfaces that already canonicalized their path text.
     RustPath,
 }
 
 /// Parse a Rust type display into the shared structural shape used by Rust interop consumers.
 ///
-/// Callers own path resolution because HIR extraction can resolve source-relative names, while generated Rust fallback
+/// Callers own path resolution because HIR extraction can resolve source-relative names, while textual fallback
 /// surfaces have already normalized module paths textually. Keeping the parser here prevents those two routes from
 /// reimplementing primitive, wrapper, tuple, reference, and byte-buffer classification independently.
 #[must_use]

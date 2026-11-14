@@ -248,7 +248,7 @@ fn manifest_prefix(provider: &str, include_nested_bridge: bool) -> Result<syn::P
     syn::parse_str(&display).map_err(|error| format!("invalid provider manifest path `{display}`: {error}"))
 }
 
-/// Convert one Incan dependency key into its legal generated Rust crate identifier.
+/// Convert one Incan dependency key into its legal Rust crate identifier.
 fn escaped_crate_name(name: &str) -> String {
     incan_lang::lang::rust_keywords::escape_keyword(&name.replace('-', "_"))
 }

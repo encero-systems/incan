@@ -94,6 +94,7 @@ fn native_input_call(
         declaration_span: span,
     };
     let call = InputCall {
+        site: span,
         kind: InputCallKind::Native,
         owner: Some(owner.clone()),
         callee,

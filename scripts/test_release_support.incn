@@ -43,7 +43,12 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
+from verify_installation import (
+    audit_relocation,
+    census_arguments,
+    require_pristine_relocation_inputs,
+    require_shipped_standard_sources,
+)
 from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -227,8 +232,8 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     return Ok(None)
 
 
-def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree() -> Result[None, str]:
-    """Changing any seed component or the committed contract tree yields a distinct reference cache key."""
+def test_reference_cache_identity_covers_seed_and_reference_source_trees() -> Result[None, str]:
+    """Changing a seed component, contracts tree or selected stdlib tree changes the reference cache key."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     oven = temporary.path().joinpath("incan")
     lsp = temporary.path().joinpath("incan-lsp")
@@ -236,12 +241,13 @@ def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree
     oven.write_bytes(b"oven-a").map_err((error) => error.message())?
     lsp.write_bytes(b"lsp-a").map_err((error) => error.message())?
     manifest.write_bytes(b"manifest-a").map_err((error) => error.message())?
-    original = reference_cache_identity(oven, lsp, manifest, "tree-a")?
+    original = reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")?
     assert reference_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-reference").0
     assert release_rust_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-rust").0
-    assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-b", "stdlib-a")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
-    assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")? != original
     return Ok(None)
 
 
@@ -555,4 +561,19 @@ def make_tree_writable(root: Path) -> Result[None, str]:
     for entry in root.rglob("*").map_err((error) => error.message())?:
         entry.chmod(false).map_err((error) => error.message())?
     root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def test_installed_verification_refuses_a_toolchain_without_standard_sources() -> Result[None, str]:
+    """An installation without shipped standard sources is refused; checkout sources are never substituted."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    primitives = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("stdlib/primitives")
+    primitives.mkdir(true, true).map_err((error) => error.message())?
+    match require_shipped_standard_sources(home):
+        Ok(_accepted) => return Err("an installation without standard sources was accepted")
+        Err(message) =>
+            assert "ships no standard sources" in message
+    primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
     return Ok(None)

@@ -87,7 +87,7 @@ pub fn max_arity() -> usize {
 
 /// Return the generated-provider module that owns the callable traits, relative to the compiler's stdlib namespace.
 ///
-/// `std.traits.callable` is compiled below the `__incan_std` mount, so generated Rust reaches the traits at
+/// `std.traits.callable` is compiled below the `__incan_std` mount, so native code reaches the traits at
 /// `crate::__incan_std::traits::callable::CallableN`; this is the `traits::callable` part of that path.
 #[must_use]
 pub fn generated_module() -> String {

@@ -590,7 +590,7 @@ pub struct CodegraphRegistryRecord {
 /// Compiler-checked C binding declaration.
 ///
 /// A binding record projects the source-level ABI contract admitted by the same typechecking pass as the surrounding
-/// codegraph. It is not an artifact-resolution receipt, a generated Rust ABI, or evidence that a runtime library has
+/// codegraph. It is not an artifact-resolution receipt, a native ABI, or evidence that a runtime library has
 /// been loaded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphCBindingRecord {
@@ -809,7 +809,7 @@ pub struct CodegraphCBindingCallRecord {
     /// Owning Incan callable declaration for this direct native call, when it occurs in a named function.
     ///
     /// This lets tooling traverse a public caller to its private bridge and then the raw declaration without
-    /// inferring the relationship from generated Rust or a naming convention.
+    /// inferring the relationship from a naming convention.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_declaration_id: Option<String>,
     /// Visibility recorded by the typechecker for the owning callable.

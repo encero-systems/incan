@@ -7,8 +7,8 @@
 //! - `IncanJson`: Generates JSON serialization helpers
 //!
 //! This crate is a toolchain-locked implementation companion to the standard library facets (`incan_std_primitives` and
-//! the others) and compiler-generated Rust. Its macros are public only because Rust requires proc macros to be exported
-//! from a proc-macro crate; downstream code should not treat them as an independent stable macro toolkit.
+//! the others) and the compiler's native declarations. Its macros are public only because Rust requires proc macros to
+//! be exported from a proc-macro crate; downstream code should not treat them as an independent stable macro toolkit.
 
 use proc_macro::TokenStream;
 use quote::quote;

@@ -58,7 +58,7 @@ Do not use `/fix` as a substitute for first-pass diagnosis when the problem is s
 - Keep docs and code aligned. If you fix behavior, update user-facing docs that claim the old behavior. If behavior is out of scope, correct the docs instead of inventing implementation.
 - For Rust prose comments, write natural paragraphs and let `make fmt` wrap them. Do not manually chop prose into short lines.
 - For Markdown, keep prose as natural paragraphs. Do not introduce short-prosed or mechanically chopped text.
-- Do not fix boundary bugs with local-only coverage. If a finding involves import, reexport/facade, package consumer, dependency-owned type, test batch, vocab/desugarer, formatter, generated Rust, Rust metadata, or downstream behavior, add the relevant boundary coverage or document why that boundary is impossible for this fix.
+- Do not fix boundary bugs with local-only coverage. If a finding involves import, reexport/facade, package consumer, dependency-owned type, test batch, vocab/desugarer, formatter, Rust metadata, or downstream behavior, add the relevant boundary coverage or document why that boundary is impossible for this fix.
 - Do not add a new split-brain workaround while fixing a split-brain bug. Prefer moving the decision into the canonical planner, metadata surface, registry, or shared helper that all relevant paths already consume.
 
 ## Verification

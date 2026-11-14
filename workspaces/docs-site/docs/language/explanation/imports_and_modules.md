@@ -21,8 +21,7 @@ For details and tasks, use the split pages:
 <!-- TODO: Add a link to the standard library sections once we create them -->
 
 !!! info "Coming from Python?"
-    In Python, packages are driven by directory structure and `__init__.py`. In Incan, directories are recognized automatically; you can use `mod.incn` when you need a directory/module
-    entrypoint.
+    In Python, packages are driven by directory structure and `__init__.py`. In Incan, directories are recognized automatically; you can use `mod.incn` when you need a directory/module entrypoint.
 
 ## How module discovery works (conceptual)
 
@@ -43,7 +42,7 @@ In Python, packages are driven by directory structure and `__init__.py`. In Inca
 
 A `rust::` import and a project module import are different kinds of dependency. `rust::serde_json` declares a dependency on a Rust crate, which `incan lock` resolves and records; `from db.schema import Database` names a module of the same package, so it adds no dependency.
 
-In generated Rust, an import of a project module names the module that source resolution loaded by its path from the crate root, such as `crate::db::schema::Database` for `from db.schema import Database`, whichever module of the project writes the import.
+In the compiled unit, an import of a project module names the module that source resolution loaded by its path from the crate root, such as `crate::db::schema::Database` for `from db.schema import Database`, whichever module of the project writes the import.
 
 ## Source hierarchy and package facades
 
@@ -51,7 +50,7 @@ A library has two complementary public shapes. Its checked source hierarchy give
 
 Directory namespaces expose public declarations from their immediate source units. Deeper directories remain nested. When siblings use the same natural declaration name, the parent spelling is intentionally ambiguous and consumers select the child module. The source tree therefore reduces naming pressure without inventing a separate module registry.
 
-The checked `.incnlib` API graph is the authority for declarations and visibility at the package boundary. Compiler resolution and editor discovery project that graph instead of independently rediscovering the producer's source, while codegraph import records retain the canonical nested package path written by the consumer. Generated Rust uses the checked namespace projection and compiled module set to reproduce the physical module and facade layout.
+The checked `.incnlib` API graph is the authority for declarations and visibility at the package boundary. Compiler resolution and editor discovery project that graph instead of independently rediscovering the producer's source, while codegraph import records retain the canonical nested package path written by the consumer. Native lowering uses the checked namespace projection and compiled module set to reproduce the physical module and facade layout.
 
 ## Where to go next
 

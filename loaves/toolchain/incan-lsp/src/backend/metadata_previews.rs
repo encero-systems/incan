@@ -117,7 +117,7 @@ pub(super) fn registry_preview_at_offset(previews: &[RegistryPreview], offset: u
 
 /// Build editor previews from the checked C descriptor and direct-call artifacts produced by the typechecker.
 ///
-/// This keeps the editor on the declaration-level contract: it does not inspect generated Rust, linker commands, or
+/// This keeps the editor on the declaration-level contract: it does not inspect native output, linker commands, or
 /// a future Oven receipt. A raw-call preview points back to its exact checked declaration so navigation does not have
 /// to infer the binding from source spelling.
 pub(super) fn c_binding_previews(artifacts: &CAbiInteropArtifacts, module_path: &[String]) -> Vec<CBindingPreview> {
@@ -236,7 +236,7 @@ pub(super) fn c_binding_declaration_markdown(
     )
 }
 
-/// Render one checked symbol signature without exposing generated-Rust carrier types.
+/// Render one checked symbol signature without exposing native carrier types.
 pub(super) fn c_binding_symbol_signature(symbol: &incan_frontend::typechecker::CBindingSymbol) -> String {
     let parameters = symbol
         .parameters

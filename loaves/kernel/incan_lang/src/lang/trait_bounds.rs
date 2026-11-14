@@ -38,7 +38,7 @@ pub struct TraitBoundMapping {
     pub id: TraitBoundId,
     /// Incan-side name (as written in `with` clauses).
     pub incan_name: &'static str,
-    /// Rust-side trait path (as emitted in generated Rust code).
+    /// Rust-side trait path (as named in native bounds).
     pub rust_path: &'static str,
     pub description: &'static str,
     pub introduced_in_rfc: RfcId,

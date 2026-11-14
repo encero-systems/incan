@@ -205,7 +205,7 @@ pub(super) fn api_class(
         derives: export.derives.clone(),
         // Class export order is the provider's constructor ABI: inherited fields first, then the class's own fields.
         // Reordering the checked sequence to the child's AST declaration order would make manifest-backed consumers
-        // pass positional bridge arguments in a different order than the generated Rust constructor.
+        // pass positional bridge arguments in a different order than the native constructor.
         fields: export.fields.iter().map(field).collect(),
         properties: properties(&export.properties),
         methods: methods(

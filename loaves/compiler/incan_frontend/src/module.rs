@@ -46,7 +46,7 @@ pub enum SourceModuleImportResolution {
     Local(SourceModuleRef),
     /// Import resolved to the importing source file itself.
     ///
-    /// Source-graph consumers must reject this before typechecking or Rust emission. A bare import is
+    /// Source-graph consumers must reject this before typechecking or lowering. A bare import is
     /// same-directory-relative, so a nested collision that intends the project root must spell `crate::...`.
     SelfImport {
         module_ref: SourceModuleRef,

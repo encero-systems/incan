@@ -138,7 +138,7 @@ impl TypeChecker {
     /// Record one Rust item reached through an already-resolved `rust::` module binding.
     ///
     /// The import collector owns the root's canonical crate path. Appending the syntactically checked suffix yields
-    /// the same target identity as a direct `from rust::... import Item` binding; no generated Rust spelling or local
+    /// the same target identity as a direct `from rust::... import Item` binding; no native Rust spelling or local
     /// alias is consulted.
     pub(super) fn record_qualified_rust_type_reference_identity(&mut self, segments: &[String], span: Span) {
         let Some((root, suffix)) = segments.split_first() else {

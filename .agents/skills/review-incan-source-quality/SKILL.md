@@ -129,7 +129,7 @@ Flag stale source that:
 - uses bare or legacy stdlib/decorator names where the current `std.*` surface is expected;
 - treats async/assert/testing/web/derive/trait behavior as compiler magic when the current surface is import-driven and source-authored;
 - misses `pub::`, `pub static`, `pub from`, call-site generics, first-class function references, or `Callable[...]` when those are the established surface for the shape at hand;
-- uses `.clone()`, `.to_string()`, `str(...)`, `.into()`, or Rust-facing conversion noise only to satisfy generated Rust rather than because the Incan semantics need ownership or conversion;
+- uses `.clone()`, `.to_string()`, `str(...)`, `.into()`, or Rust-facing conversion noise only to satisfy the Rust compiler rather than because the Incan semantics need ownership or conversion;
 - hides substantial implementation depth behind terse one-line docstrings or sparse comments.
 
 Flag Incan source that has:
@@ -185,7 +185,7 @@ Keep findings first. Only list clean surfaces when the clean call is useful beca
 ## Findings
 
 - [ ] warning | source-quality | Rust-shaped sentinel read | loaves/stdlib/data/src/uuid.incn:117
-  The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than generated Rust-shaped control flow.
+  The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than Rust-shaped control flow.
 
 ## Reviewed Clean Surfaces
 - loaves/stdlib/system/src/fs/path.incn — used as style baseline
@@ -217,7 +217,7 @@ Only write this file when findings are present.
 
 ## Findings
 - [ ] warning | source-quality | Rust-shaped sentinel read | loaves/stdlib/data/src/uuid.incn:117
-  The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than generated Rust-shaped control flow.
+  The function initializes a placeholder byte and overwrites it from a match arm. A direct helper returning `Result[u8, UuidError]` would read like authored Incan rather than Rust-shaped control flow.
 
 ## Resolution
 - <optional, only if this snapshot is written after a fix loop>

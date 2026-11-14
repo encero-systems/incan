@@ -560,6 +560,8 @@ pub struct TypeChecker {
     final_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
     callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Scalar-product final values staged until their exact body also passes the physical-scope check.
+    callable_final_record_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Graph-admitted local/final pairs keyed by compiler-owned stable declaration identity. This transport remains
     /// separate from scalar callable-body products and is consulted only at the record-scoped body boundary.
     graph_body_records: crate::checker_records::GraphBodyRecords,
@@ -877,7 +879,7 @@ pub struct TypeChecker {
     body_ir_dependency_pub_reexports: HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>,
     /// True module path segments for a registered dependency, keyed by its flattened cache name.
     ///
-    /// The cache name is the underscore-joined spelling that also names the emitted Rust module, so it is not
+    /// The cache name is the underscore-joined spelling that also names the native Rust module, so it is not
     /// injective: the path `pkg.helpers` and a module literally named `pkg_helpers` flatten to one string. An origin
     /// built from whichever candidate matched would therefore reflect the spelling that asked rather than the module
     /// that answered, and two spellings of one module would yield two identities. Registering the real segments

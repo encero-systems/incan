@@ -1,8 +1,8 @@
 //! Backend-neutral semantic fact identifiers.
 //!
 //! These types are the first shared vocabulary for the v0.5 middle-end foundation. They deliberately live outside the
-//! Rust-source backend so HIR, diagnostics, inspection, and future backends can talk about the same compiler-owned
-//! subjects without using emitted Rust tokens as identity.
+//! native backend so HIR, diagnostics, inspection, and lowering can talk about the same compiler-owned
+//! subjects without using native symbol names as identity.
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
@@ -52,7 +52,7 @@ impl CompilerNodeKind {
 /// Stable compiler-owned identity for a module, declaration, statement, expression, local, or type.
 ///
 /// The `path` is intentionally semantic rather than Rust-shaped. Current bridge code may derive it from spans or
-/// source paths at first, but consumers should treat the rendered form as a compiler identity, not as an emitted Rust
+/// source paths at first, but consumers should treat the rendered form as a compiler identity, not as a native Rust
 /// item path.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CompilerNodeId {

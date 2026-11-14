@@ -183,6 +183,12 @@ The `scoped_reader` offers keyed lookup, `read_many`, bounded field access, payl
 
 Native units take their full RFC 124 identity before claiming. Command names, request ids, view ids and temporary paths never enter it. External identity equals unit identity on the stock rustc route. Codegen-unit membership hashes full identities into a fixed partition count that is part of the profile. Rustc incremental stays off until every overridden query has a tracked per-definition fingerprint; when qualified, incremental state is an immutable seed cloned into private scratch, never semantic authority.
 
+### Apple SDK identity boundary
+
+An Apple SDK is an input only to work that actually reads it. Incan and Rust library compilation uses the pinned compiler identity, deployment selection, source, invocation and linked artifacts, but not the selected SDK. Final Incan program and test links, debug shared-library/carrier links, final Rust binary and test links, dynamically linked Rust libraries (including proc macros), and units that declare C headers additionally include the content identity of `SDKSettings.json`. SDK discovery and hashing therefore do not run for statically linked library-only work. A new Xcode installation can reuse static libraries while it must relink executable, dynamic-library and C-ABI outputs.
+
+This boundary was checked on macOS by compiling the same paths and arguments first with Command Line Tools SDK 27.0 and then with Xcode SDK 27.2. `incan_lang` and the `incan_std_testing` Rust facet produced byte-identical rlibs. The `incan_stdlib_testing` Incan library produced byte-identical `.incnbody`, `.incnlib`, `.native.json`, `.rustabi` and rlib artifacts. A small executable differed only at the expected final-link boundary: its `LC_BUILD_VERSION` SDK field changed from 27.0 to 27.2. The comparison deliberately reused one working directory and output path; an earlier comparison with different working directories demonstrated that rustc embeds that directory in metadata and is not a valid SDK-only experiment.
+
 Interfaces outlive their implementation language. Wire schemas and durable records carry typed identities and scoped handles, never Rust layouts or pointers.
 
 ### Producer-map design
@@ -475,16 +481,9 @@ After a comment above `main`:
 - `position-map(main)` changes, `native-interface(app)` reads it and evaluates, and the native unit is baked again for its line tables.
 - Rendered diagnostics, if any, show `main`'s new lines.
 
-#### Figures
+The figure shows the same three runs on one grid: the stages in rank order from left to right, frozen records in their own band, and one row per owner.
 
-An SVG belongs at `workspaces/docs-site/docs/contributing/explanation/build_engine_producer_map.svg`, drawn with the same skin as `build_engine_record_graph.svg`:
-
-- **Columns** are the producer stages in rank order, from `Discover` to `NativeInterface`, with a separate band for frozen admitted records on the left.
-- **Each column** holds the hello example's records as boxes.
-- **Edges** are typed (P, A, M) and point from reader to target.
-- **Overlays:** for the body edit, evaluated records in the accent color and reused ones outlined; for the comment edit, only `discover`, `position-map(main)` and `native-interface` in the accent color.
-- **Insets:** a joint group (a mutation-effect cycle of two functions) and one absent witness at `helpers.f`.
-
+![Producer map: the records of the hello program, and what a body edit and a comment edit evaluate](build_engine_producer_map.svg)
 
 #### Settled design points
 
@@ -823,17 +822,42 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 
 | Proof | Kind | Baseline | Measured | Commit | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Every override has a tracked input | Correctness | Untracked global `Plan` | Not met: `mir_built`, `type_of` and `fn_sig` read injected answers from the whole process-global plan | `0be358dd8` | Native override audit; diagnostic only |
-| Edited incremental output equals cold output and behavior | Correctness | Not covered | Released and source drivers produced a byte-identical hello binary from one retained input; edited versus cold remains unproved | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
-| CGUs actually regenerated per edit | Efficiency | Whole native unit | Oven one-body edit: 16 of 16 CGUs executed; 1.855 s front end, 0.869 s aggregate codegen and 0.183 s link | `0be358dd8` | One-body native phase trace; diagnostic only |
+| Every override has a tracked input | Correctness | Untracked global `Plan` | Met for injected answers: authenticated function and layout fingerprints are carried by their HIR attribute maps; a two-function body edit changes only the edited function's fingerprint | Native incremental reuse | Lowering-record worked example, including the symlinked signature-edit cold comparison; rustc incremental fingerprint verification |
+| Edited incremental output equals cold output and behavior | Correctness | Not covered | Met for development hello: both builds print the edited value and produce the same executable, with identical `OSO` store paths that exist | Native incremental reuse | Development hello with a fresh cold target and store, and an `nm -ap` debug-map audit |
+| CGUs actually regenerated per edit | Efficiency | Whole native unit | Hello: all five CGU names kept, four of five work products reused; native phase 84.72 ms incremental against 79.88 ms clean. Oven: unmeasured, because its development build stops at the compiled-graph transport limit (210 owner frames, 45,892,428 raw Body IR bytes) before native code generation | Native incremental reuse | Development hello incremental cache and native phase trace |
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
 | Observation overhead | Efficiency | At most 5% | One hello sample showed no regression: 73.37 ms released versus 68.88 ms source native phases; qualification remains unrun | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
+
+#### Native override audit at `c3c2cba07`
+
+The adapter installs three local query providers in `adapter/callbacks.rs`. All three currently enter through the process-global `PLAN` slot; none reads a tracked per-definition compiler input.
+
+| Override | Definitions selected | Plan reads in the answer | Other answer inputs | Tracking consequence |
+| --- | --- | --- | --- | --- |
+| `mir_built` | Root planned functions and their synthesized closure, generator and coroutine definitions | The complete selected `Function`; matching external records for const-generic calls; the plan's source-name index for planned callees | Source spans, resolved Rust types, layouts, callees and language items | The query key is only `LocalDefId`; the selected function record and external witnesses are invisible to rustc's dependency graph. |
+| `type_of` | Root type aliases that represent standard carriers or admitted native model/enum layouts | The matching enum or model declaration, carrier selection, native item path and native type arguments | Resolved native ADT, trait-object and generic-argument metadata | The alias's declaration record has no tracked input; every lookup scans the whole global model/enum inventory. |
+| `fn_sig` | Every local definition, changing only planned root functions | The selected function's generic-loan sites and retained-result source | rustc's declared signature and native-loan rewriting | Even a default answer first reads the global plan; a planned answer has no tracked signature-record input. |
+
+`mir_built` also reaches `active_plan()` from callee and terminator construction. Those reads select exact external signatures and source-local definitions after the provider has started, so tracking only the top-level `Function` would still be incomplete. A safe reader must bind the function product and all runtime requirements authenticated by that product, while alias queries need their own layout records. Until those inputs are carried into the corresponding HIR owner/query dependency, incremental reuse remains disabled for the unit.
+
+#### Tracked native inputs
+
+The decisions that make native incremental reuse sound:
+
+- `PlanReader` replaces the process-global plan index. Given a record report, it authenticates the native-interface record, every scalar-product schema, input key and product digest, and requires a record for every active function, or refuses. A unit without a native-interface record compiles as an ordinary, non-incremental compilation.
+- Each planned function declaration carries its complete producer-input fingerprint, and each injected model or enum alias carries its layout fingerprint, on the corresponding HIR owner. The three providers read the feedable `hir_attr_map` query before answering, including on the callee and terminator paths `mir_built` reaches. Reading the HIR node directly does not register the dependency, and rustc's incremental verifier then rejects a changed answer as an unstable fingerprint.
+- Program functions are placed in one of 16 fixed CGU modules by a deterministic hash of their compiler definition identity. Empty buckets stay empty, so adding, moving or editing an unrelated definition cannot rename another definition's module.
+- An incremental session replaces Oven's content-addressed `-Cmetadata=incan-unit-*` value with a fingerprint of the crate name, verified compiler and target. Otherwise every CGU name would change on every edit.
+- Development executables keep their debug map. Before Darwin's linker runs, each object input is placed in the home's native store under its SHA-256 digest, and the link reads those immutable paths. Incremental and clean builds therefore name the same `OSO` paths, and the named objects stay available to the debugger. Post-link normalization and stripping are not part of the artifact contract.
+- Incremental reuse applies only to development programs whose record inputs cover every active function. Other profiles, and units without complete record inputs, compile without it.
+
+The lowering-record worked example pins the input boundary: editing `greeting`'s body changes only `greeting`'s fingerprint, and both functions keep their CGU module. Development hello pins the output boundary: the edited incremental build and a clean build produce the same executable (SHA-256 `d906309e116f0e4b87b427b728ebc85af1e4f4c7af1a68d04c41902d5ad0834c`) with identical `OSO` records, and four of five work products are reused. At hello's size reuse is correct but not faster (84.72 ms incremental, 79.88 ms clean), so the size above which reuse pays is measured on larger units.
 
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 
 The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
 
-None of the three proposed shortcuts is currently a valid reuse. No CGU is proven unaffected because the injected `mir_built`, `type_of` and `fn_sig` answers have no tracked per-definition input. The linker reads all 16 regenerated objects, so its 183 ms is required by the observed inputs rather than repeated work whose equality has been established. The development executable also carries the profile-selected debug information; stripping or narrowing it would change the selected artifact contract and would contradict §5.5 rather than prove reuse. Rustc incremental therefore stays off.
+The earlier shortcuts were not valid reuse: the injected `mir_built`, `type_of` and `fn_sig` answers lacked tracked per-definition inputs, and stripping development debug information would have changed the artifact contract. The qualified path instead supplies those tracked inputs, stable CGU membership and content-addressed linker inputs while retaining the profile-selected debug map. A missing plan-record report or a non-development profile still bypasses incremental reuse.
 
 Before E2 to E5 land, the adapter can retain the stable phase/CGU evidence, keep a complete override inventory, and build the edited-versus-cold comparison harness. It cannot soundly reuse a native answer. E2 must assign stable definition and instance identities, fixed CGU membership and complete fingerprints to the affected record reach. S3 and ranked E2 must make each overridden query read the exact body, signature, layout, attribute, position/debug and native-interface records it consumes, with witnessed dependencies. E3 must supply exact external native identities and payload compatibility. E4 must clone a qualified immutable incremental seed into private scratch and schedule it with bounded lifecycle ownership. E5 supplies the private-body, signature, test, run, graph and LSP workloads that prove the reuse boundary outside a single executable.
 

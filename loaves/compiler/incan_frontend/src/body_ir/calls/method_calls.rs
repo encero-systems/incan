@@ -330,6 +330,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
                 None => ty,
             };
+        let aggregate_source = self.aggregate_view_temporary_source(
+            span,
+            receiver_argument.as_ref(),
+            call_args.get(1..).unwrap_or_default(),
+        );
         if let Some((access, _, _, component)) = self.type_info.selected_aggregate_view(span) {
             if async_target {
                 return self.unsupported_operand(
@@ -341,7 +346,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ty = super::returned_views::reference_authored_component(ty, access, &component);
         }
-        self.push_call_temp(
+        let result = self.push_call_temp(
             bir::Callee::Method(target),
             call_args,
             ty,
@@ -349,7 +354,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             false,
             out,
-        )
+        );
+        self.record_aggregate_view_temporary_dependencies(&result, aggregate_source);
+        result
     }
 
     /// Select method identity and declaration slots in checked precedence order before evaluating the receiver.

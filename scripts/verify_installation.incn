@@ -1,5 +1,6 @@
 """Verify one installed release toolchain against this checkout's complete contract and native-test surface."""
 
+from rust::std::env import current_exe
 from rust::std::process import Command, exit
 from rust::std::string import String as RustString
 from rust::std::time import Instant
@@ -62,13 +63,12 @@ pub model VerificationPhasePlan:
 
 
 pub model Installation:
-    """Installed commands, source checkout, selected standard sources, and retained evidence."""
+    """Installed commands, source checkout, and retained evidence."""
 
     pub root: Path
     pub home: Path
     pub oven: Path
     pub lsp: Path
-    pub stdlib: str
     pub run: Path
     pub jobs: int
     pub timeout_seconds: int
@@ -147,11 +147,10 @@ def verification_release_trace() -> Result[Option[ReleaseTrace], str]:
 
 
 def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
-    """Run independent installed gates under one host-memory budget and recover their typed results."""
+    """Run independent installed gates through this built verifier and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
-    compiler = installation.home.joinpath("bin/incan")
-    program = installation.root.joinpath("scripts/verify_installation.incn")
+    verifier = current_exe().map_err((error) => error.to_string())?.to_string_lossy().into_owned()
     retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
     for plan in plans:
         name = verification_phase_name(plan.phase)
@@ -160,17 +159,13 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             Path(trace_environment["INCAN_TRACE_DIR"]).mkdir(true, true).map_err((error) => error.message())?
         invocations.append(
             Invocation(
-                arguments=[
-                    "run",
-                    program.0,
-                    "--",
-                    "--phase",
+                arguments=verification_phase_arguments(
                     name,
-                    installation.run.0,
-                    runner.0,
-                    str(installation.jobs),
-                    str(installation.timeout_seconds),
-                ],
+                    installation.run,
+                    runner,
+                    installation.jobs,
+                    installation.timeout_seconds,
+                ),
                 directory=installation.root.0,
                 reservation=plan.reservation,
                 log=installation.run.joinpath(f"phase-{name}.log"),
@@ -179,7 +174,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
+    failed = run_all_failures(verifier, invocations, len(invocations), memory)?
     if len(failed) > 0:
         return Err(
             "installed verification phase failures: " + ", ".join(
@@ -199,6 +194,11 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
+
+
+pub def verification_phase_arguments(name: str, run: Path, runner: Path, jobs: int, timeout: int) -> list[str]:
+    """Address one phase directly through the already-built verifier executable."""
+    return ["--phase", name, run.0, runner.0, str(jobs), str(timeout)]
 
 
 pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> Dict[str, str]:
@@ -322,18 +322,8 @@ def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Ins
     lsp = Path(get_or("INCAN_LSP", home.joinpath("bin/incan-lsp").0))
     if not oven.is_file() or not lsp.is_file():
         return Err("the installed Oven and language server are required")
-    stdlib = run.joinpath("selected-stdlib.txt").read_text("utf-8", "strict").map_err((error) => error.message())?
     return Ok(
-        Installation(
-            root=root,
-            home=home,
-            oven=oven,
-            lsp=lsp,
-            stdlib=stdlib,
-            run=run,
-            jobs=jobs,
-            timeout_seconds=timeout_seconds,
-        ),
+        Installation(root=root, home=home, oven=oven, lsp=lsp, run=run, jobs=jobs, timeout_seconds=timeout_seconds),
     )
 
 
@@ -425,53 +415,19 @@ def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installatio
     output.mkdir(true, true).map_err((error) => error.message())?
     temporary = TemporaryDirectory.try_new_with("run.", "", Some(output)).map_err((error) => error.message())?
     run = temporary.persist().map_err((error) => error.message())?
-    standard = select_standard_sources(root, home, run)?
-    run
-        .joinpath("selected-stdlib.txt")
-        .write_text(standard, "utf-8", "strict", None)
-        .map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
     retain_input_digests(run, oven, lsp)?
     return Ok(
-        Installation(
-            root=root,
-            home=home,
-            oven=oven,
-            lsp=lsp,
-            stdlib=standard,
-            run=run,
-            jobs=jobs,
-            timeout_seconds=timeout_seconds,
-        ),
+        Installation(root=root, home=home, oven=oven, lsp=lsp, run=run, jobs=jobs, timeout_seconds=timeout_seconds),
     )
 
 
-def select_standard_sources(root: Path, home: Path, run: Path) -> Result[str, str]:
-    """Expose checkout sources only for standard packages whose compiled artifacts the archive shipped."""
+pub def require_shipped_standard_sources(home: Path) -> Result[None, str]:
+    """Refuse an installation that ships no standard sources, so no gate can read the checkout's instead."""
     toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
-    if toolchain.joinpath("stdlib/primitives/loaf.toml").is_file():
-        return Ok("")
-    stdlib = run.joinpath("stdlib")
-    stdlib.mkdir(true, true).map_err((error) => error.message())?
-    mut packages: list[str] = []
-    for artifact in toolchain.joinpath("loaves").iterdir().map_err((error) => error.message())?:
-        if not artifact.is_dir():
-            continue
-        name = artifact.name()
-        if not name.startswith("incan_stdlib_"):
-            return Err(f"unknown standard package: {name}")
-        package = name[13:]
-        source = root.joinpath(f"loaves/stdlib/{package}")
-        if not source.joinpath("loaf.toml").is_file():
-            return Err(f"missing standard source: {package}")
-        stdlib.joinpath(package).symlink_to(source).map_err((error) => error.message())?
-        packages.append(package)
-    if "primitives" not in packages:
-        return Err("archive has no primitive standard package")
-    run
-        .joinpath("standard-packages.txt")
-        .write_text("\n".join(sorted(packages)) + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
-    return Ok(stdlib.0)
+    if not toolchain.joinpath("stdlib/primitives/loaf.toml").is_file():
+        return Err("the installed toolchain ships no standard sources: stdlib/primitives/loaf.toml is missing")
+    return Ok(None)
 
 
 def build_runner(installation: Installation) -> Result[Path, str]:
@@ -697,7 +653,7 @@ def describe_unit(installation: Installation, oven: Path, source: Path, output: 
     command
         .current_dir(installation.root.0)
         .env("INCAN_HOME", installation.home.0)
-        .env("INCAN_STDLIB", installation.stdlib)
+        .env("INCAN_STDLIB", "")
         .env("INCAN_NO_BANNER", "1")
         .env("OVEN_OWNER", "off")
         .env("RUSTUP_TOOLCHAIN", "1.98.0")
@@ -849,7 +805,7 @@ def command_step(
 
 def command_environment(installation: Installation) -> Dict[str, str]:
     """Return the explicit environment selected for every installed-verification child."""
-    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": installation.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
+    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": "", "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
 
 
 def owns_rust_facet(manifest: str) -> bool:
