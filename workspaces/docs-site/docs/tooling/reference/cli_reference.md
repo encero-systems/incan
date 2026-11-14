@@ -9,6 +9,7 @@ oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
+oven update [NAME] [--project PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check [PATH] [--format text|json] [UNIT OPTIONS]
@@ -81,6 +82,16 @@ The requirement is `--version REQUIREMENT`, or else the newest version the toolc
 One line, `KEY = { loaf = "NAME", version = "REQUIREMENT" }`, is written after the table's last entry. A manifest without the table gains it at its end. Nothing else in `loaf.toml` changes. Success prints `added NAME, version = "REQUIREMENT"`, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
 
 It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven add`.
+
+## `oven update`
+
+Raises registry requirements in the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. With `NAME`, a full Loaf name, only the entries naming that Loaf are raised; without it, every registry entry is. A name with a capital letter is refused, and a name without a scope is refused with the project's registry dependencies that end in it.
+
+A requirement is raised only when it has exactly one `^`, `~` or `>=` comparator; a bare version is `^`. That comparator's version becomes the newest published version the requirement already admits, so a raise never crosses an incompatible release. The operator stays, and so does the upper bound: a raise that would lower it, such as `~1` to `~1.4.2`, is not made. Only the requirement's quoted value changes. Every other line of `loaf.toml` stays, and the lock keeps every other locked version.
+
+Success prints one `NAME OLD → NEW` line per raised requirement and one `NAME REQUIREMENT: kept, REASON` line per requirement it can't raise, or `nothing to raise`. When `loaf.toml` changed, the lock's report follows. The command then exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven update`.
 
 ## `oven trust`
 

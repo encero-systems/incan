@@ -66,6 +66,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("lint", "oven lint [PATH] [UNIT OPTIONS]"),
             ("lock", "oven lock [--versions lowest|lowest-direct|newest] [PATH]"),
             ("add", "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"),
+            ("update", "oven update [NAME] [--project PATH]"),
             ("trust", "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"),
             ("test", "oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
             ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
