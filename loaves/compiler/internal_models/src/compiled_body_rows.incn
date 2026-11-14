@@ -1,0 +1,473 @@
+"""Independent Crumb rows for compiler-produced checker records and Body IR."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.values import Value, ValueField
+from std.primitives.text import copy_frozen_bytes
+from checker_records import (
+    CHECKER_PROFILE,
+    CheckedFamily,
+    CodecFault,
+    CompiledBodyDependencyRead,
+    CompiledBodyFallback,
+    CompiledBodyOutputs,
+    CompiledBodyValue,
+    CompiledNamespaceValue,
+    decode_owned_record,
+)
+from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
+
+const MAX_ROW_BYTES: int = 67108864
+const MAX_FIELDS: int = 4096
+const MAX_METADATA_BYTES: int = 65536
+const NAMESPACE_SELECTOR: bytes = b"cmpnsp\x00"
+const VALUE_SELECTOR: bytes = b"cmpval\x00"
+const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
+
+
+pub enum CompiledBodyOutput:
+    """One independently bounded compiler output row, never a whole-program transport envelope."""
+
+    Namespace(CompiledNamespaceValue)
+    Value(CompiledBodyValue)
+    Fallback(CompiledBodyFallback)
+
+
+pub def encode_compiled_body_rows(outputs: CompiledBodyOutputs) -> Result[list[bytes], CodecFault]:
+    """
+    Encode a successful compilation as independently bounded Crumb rows.
+
+    The returned list preserves canonical namespace-then-value-then-fallback order, but its aggregate byte length is
+    deliberately unbounded: the compiler writes and Oven reads one row file at a time.
+    """
+    output_count = len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks)
+    if output_count > MAX_FIELDS:
+        return Err(CodecFault.LimitExceeded("compiled-output-row-count", output_count, MAX_FIELDS))
+    mut rows: list[bytes] = []
+    mut previous = ""
+    for namespace in outputs.namespaces:
+        if namespace.module == "" or namespace.module <= previous:
+            return Err(CodecFault.Malformed)
+        rows.append(encode_compiled_namespace_value(namespace)?)
+        previous = namespace.module
+    previous = ""
+    for value in outputs.values:
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        rows.append(encode_compiled_body_value(value)?)
+        previous = order
+    previous = ""
+    for fallback in outputs.fallbacks:
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if order <= previous:
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in outputs.values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        rows.append(encode_compiled_body_fallback(fallback)?)
+        previous = order
+    return Ok(rows)
+
+
+pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, CodecFault]:
+    """Decode one complete Crumb row without consulting or buffering any peer row."""
+    if len(encoded) == 0 or len(encoded) > MAX_ROW_BYTES:
+        return Err(CodecFault.Limit)
+    rows = decode_rows(encoded, [namespace_description(), value_description(), fallback_description()], MAX_ROW_BYTES).map_err(
+        (_) => CodecFault.Malformed,
+    )?
+    if len(rows) != 1:
+        return Err(CodecFault.Malformed)
+    if rows[0].key == copy_frozen_bytes(NAMESPACE_SELECTOR):
+        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(rows[0].value)?))
+    if rows[0].key == copy_frozen_bytes(VALUE_SELECTOR):
+        return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(rows[0].value)?))
+    if rows[0].key == copy_frozen_bytes(FALLBACK_SELECTOR):
+        return Ok(CompiledBodyOutput.Fallback(decode_compiled_body_fallback(rows[0].value)?))
+    return Err(CodecFault.Malformed)
+
+
+def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
+    """Encode one complete namespace Crumb row without interpreting compiler-owned payloads or witnesses."""
+    if (value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.dependencies) > MAX_FIELDS or len(
+        value.lowering_inputs,
+    ) > MAX_FIELDS):
+        return Err(CodecFault.Malformed)
+    mut raw_bytes = len(value.interface) + len(value.body_ir) + len(value.module.encode())
+    for dependency in value.dependencies:
+        raw_bytes += len(dependency.encode())
+    for input in value.lowering_inputs:
+        for field in input:
+            raw_bytes += len(field.encode())
+    require_row_room(raw_bytes)?
+    mut dependencies: list[Value] = []
+    mut previous = ""
+    for dependency in value.dependencies:
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        dependencies.append(Value.Text(dependency))
+        previous = dependency
+    mut lowering_inputs: list[Value] = []
+    previous = ""
+    for input in value.lowering_inputs:
+        if len(input) != 2 or input[0] == "" or input[1] == "" or input[0] <= previous:
+            return Err(CodecFault.Malformed)
+        lowering_inputs += [Value.Text(input[0]), Value.Text(input[1])]
+        previous = input[0]
+    row = RowRecord(
+        key=NAMESPACE_SELECTOR,
+        value=Value.Record(
+            [required_value(b"bodyir", Value.Binary(value.body_ir)), required_value(b"deps__", Value.List(dependencies)), required_value(
+                b"iface_",
+                Value.Binary(value.interface),
+            ), required_value(b"inputs", Value.List(lowering_inputs)), required_value(
+                b"module",
+                Value.Text(value.module),
+            )],
+        ),
+    )
+    return encoded_row(namespace_description(), row)
+
+
+def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
+    """Encode one authenticated producer triple as a Crumb row with opaque checker and Body IR fields."""
+    if value.module == "" or value.name == "" or value.identity == "":
+        return Err(CodecFault.Malformed)
+    validate_compiled_body_value(value)?
+    mut raw_bytes = (len(value.declaration) + len(value.local) + len(value.final) + len(value.body_ir) + len(
+        value.module.encode(),
+    ) + len(value.name.encode()) + len(value.identity.encode()))
+    for read in value.dependency_reads:
+        raw_bytes += (len(optional_identity(read.package).encode()) + len(read.module.encode()) + len(read.name.encode()) + len(
+            read.identity.encode(),
+        ) + len(read.reference_subject.encode()))
+    require_row_room(raw_bytes)?
+    mut dependency_reads: list[Value] = []
+    mut previous = ""
+    for read in value.dependency_reads:
+        package = optional_identity(read.package)
+        order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity + "\n" + read.reference_subject
+        if (
+            read.module == ""
+            or read.name == ""
+            or read.identity == ""
+            or read.reference_subject == ""
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        if package == "":
+            dependency_reads += [Value.Text("none"), Value.Text("")]
+        else:
+            dependency_reads += [Value.Text("some"), Value.Text(package)]
+        dependency_reads += [Value.Text(read.module), Value.Text(read.name), Value.Text(read.identity), Value.Text(
+            read.reference_subject,
+        )]
+        previous = order
+    row = RowRecord(
+        key=VALUE_SELECTOR,
+        value=Value.Record(
+            [required_value(b"bodyir", Value.Binary(value.body_ir)), required_value(
+                b"declar",
+                Value.Binary(value.declaration),
+            ), required_value(b"deps__", Value.List(dependency_reads)), required_value(
+                b"final_",
+                Value.Binary(value.final),
+            ), required_value(b"ident_", Value.Text(value.identity)), required_value(
+                b"local_",
+                Value.Binary(value.local),
+            ), required_value(b"module", Value.Text(value.module)), required_value(b"name__", Value.Text(value.name))],
+        ),
+    )
+    return encoded_row(value_description(), row)
+
+
+def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
+    """Encode one explicit full-source decision as a Crumb row independently of eligible owner payloads."""
+    if (
+        fallback.module == ""
+        or fallback.name == ""
+        or fallback.reason == ""
+        or len(fallback.reason.encode()) > MAX_METADATA_BYTES
+    ):
+        return Err(CodecFault.Malformed)
+    identity = encoded_optional_identity(fallback.identity)?
+
+    row = RowRecord(
+        key=FALLBACK_SELECTOR,
+        value=Value.Record(
+            [required_value(b"ident_", identity), required_value(b"module", Value.Text(fallback.module)), required_value(
+                b"name__",
+                Value.Text(fallback.name),
+            ), required_value(b"reason", Value.Text(fallback.reason))],
+        ),
+    )
+    return encoded_row(fallback_description(), row)
+
+
+def decode_compiled_body_value(value: Value) -> Result[CompiledBodyValue, CodecFault]:
+    """Restore one value row after checking its exact fields and flattened dependency ordering."""
+    fields = record_fields(value, 8)?
+    flattened = text_values(fields[2].value)?
+    if len(flattened) % 6 != 0 or len(flattened) / 6 > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut dependency_reads: list[CompiledBodyDependencyRead] = []
+    mut previous = ""
+    mut offset = 0
+    while offset < len(flattened):
+        package = decoded_package(flattened[offset], flattened[offset + 1])?
+
+        read = CompiledBodyDependencyRead(
+            package=package,
+            module=flattened[offset + 2],
+            name=flattened[offset + 3],
+            identity=flattened[offset + 4],
+            reference_subject=flattened[offset + 5],
+        )
+        order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity + "\n" + read.reference_subject
+        if (
+            read.module == ""
+            or read.name == ""
+            or read.identity == ""
+            or read.reference_subject == ""
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        dependency_reads.append(read)
+        previous = order
+        offset += 6
+    restored = CompiledBodyValue(
+        module=text_value(fields[6].value)?,
+        name=text_value(fields[7].value)?,
+        identity=text_value(fields[4].value)?,
+        declaration=binary_value(fields[1].value)?,
+        local=binary_value(fields[5].value)?,
+        final=binary_value(fields[3].value)?,
+        body_ir=binary_value(fields[0].value)?,
+        dependency_reads=dependency_reads,
+    )
+    if restored.module == "" or restored.name == "" or restored.identity == "":
+        return Err(CodecFault.Malformed)
+    validate_compiled_body_value(restored)?
+    return Ok(restored)
+
+
+def decode_compiled_namespace_value(value: Value) -> Result[CompiledNamespaceValue, CodecFault]:
+    """Restore one bounded namespace value, imported modules and canonical lowering witnesses."""
+    fields = record_fields(value, 5)?
+    dependencies = text_values(fields[1].value)?
+    if len(dependencies) > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut previous = ""
+    for dependency in dependencies:
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        previous = dependency
+    flattened = text_values(fields[3].value)?
+    if len(flattened) % 2 != 0 or len(flattened) / 2 > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut lowering_inputs: list[list[str]] = []
+    previous = ""
+    mut offset = 0
+    while offset < len(flattened):
+        identity = flattened[offset]
+        witness = flattened[offset + 1]
+        if identity == "" or witness == "" or identity <= previous:
+            return Err(CodecFault.Malformed)
+        lowering_inputs.append([identity, witness])
+        previous = identity
+        offset += 2
+    restored = CompiledNamespaceValue(
+        module=text_value(fields[4].value)?,
+        interface=binary_value(fields[2].value)?,
+        body_ir=binary_value(fields[0].value)?,
+        dependencies=dependencies,
+        lowering_inputs=lowering_inputs,
+    )
+    if restored.module == "" or len(restored.interface) == 0 or len(restored.body_ir) == 0:
+        return Err(CodecFault.Malformed)
+    return Ok(restored)
+
+
+def decode_compiled_body_fallback(value: Value) -> Result[CompiledBodyFallback, CodecFault]:
+    """Restore one explicit full-source row and retain identity absence as its own state."""
+    fields = record_fields(value, 4)?
+    fallback = CompiledBodyFallback(
+        module=text_value(fields[1].value)?,
+        name=text_value(fields[2].value)?,
+        identity=optional_text_value(fields[0].value)?,
+        reason=text_value(fields[3].value)?,
+    )
+    if (
+        fallback.module == ""
+        or fallback.name == ""
+        or fallback.reason == ""
+        or len(fallback.reason.encode()) > MAX_METADATA_BYTES
+    ):
+        return Err(CodecFault.Malformed)
+    return Ok(fallback)
+
+
+def encoded_row(description: Description, row: RowRecord) -> Result[bytes, CodecFault]:
+    """Encode one Crumb row whose file boundary lets a reader bound allocation before decoding it."""
+    encoded = encode_rows(description, [row], MAX_ROW_BYTES * 2).map_err((_) => CodecFault.Limit)?
+    if len(encoded) > MAX_ROW_BYTES:
+        return Err(CodecFault.LimitExceeded("compiled-output-row-bytes", len(encoded), MAX_ROW_BYTES))
+    return Ok(encoded)
+
+
+def require_row_room(raw_bytes: int) -> Result[None, CodecFault]:
+    """Refuse raw fields that already exceed the row before Crumb adds its model and row structure."""
+    if raw_bytes > MAX_ROW_BYTES:
+        return Err(CodecFault.LimitExceeded("compiled-output-row-bytes", raw_bytes, MAX_ROW_BYTES))
+    return Ok(None)
+
+
+def record_fields(value: Value, expected: int) -> Result[list[ValueField], CodecFault]:
+    """Require one logical Crumb record with its complete declared field set."""
+    fields = match value:
+        Value.Record(values) => values
+        _ => return Err(CodecFault.Malformed)
+
+    if len(fields) != expected:
+        return Err(CodecFault.Malformed)
+    return Ok(fields)
+
+
+def text_value(value: Value) -> Result[str, CodecFault]:
+    """Require one logical Crumb string value."""
+    match value:
+        Value.Text(text) => return Ok(text)
+        _ => return Err(CodecFault.Malformed)
+
+
+def binary_value(value: Value) -> Result[bytes, CodecFault]:
+    """Require one logical Crumb byte-string value."""
+    match value:
+        Value.Binary(data) => return Ok(data)
+        _ => return Err(CodecFault.Malformed)
+
+
+def text_values(value: Value) -> Result[list[str], CodecFault]:
+    """Require one logical Crumb string list without accepting alternate element values."""
+    match value:
+        Value.List(items) =>
+            mut result: list[str] = []
+            for item in items:
+                result.append(text_value(item)?)
+            return Ok(result)
+        _ => return Err(CodecFault.Malformed)
+
+
+def optional_text_value(value: Value) -> Result[Option[str], CodecFault]:
+    """Decode one exact Crumb option string without an empty-string absence sentinel."""
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(items) =>
+            if len(items) != 1:
+                return Err(CodecFault.Malformed)
+            text = text_value(items[0])?
+            if text == "":
+                return Err(CodecFault.Malformed)
+            return Ok(Some(text))
+        _ => return Err(CodecFault.Malformed)
+
+
+def encoded_optional_identity(identity: Option[str]) -> Result[Value, CodecFault]:
+    """Encode one fallback identity as an exact Crumb option without admitting an empty value."""
+    match identity:
+        Some(value) =>
+            if value == "":
+                return Err(CodecFault.Malformed)
+            return Ok(Value.Some([Value.Text(value)]))
+        None => return Ok(Value.NoneValue)
+
+
+def decoded_package(marker: str, value: str) -> Result[Option[str], CodecFault]:
+    """Restore the explicit package-presence marker used by one flattened dependency read."""
+    if marker == "none" and value == "":
+        return Ok(None)
+    if marker == "some" and value != "":
+        return Ok(Some(value))
+    return Err(CodecFault.Malformed)
+
+
+def optional_identity(identity: Option[str]) -> str:
+    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
+    match identity:
+        Some(value) => return value
+        None => return ""
+
+
+def namespace_description() -> Description:
+    """Describe one compiled namespace while retaining its interface and Body IR as opaque bytes."""
+    return model_description(
+        NAMESPACE_SELECTOR,
+        "incan.checker-compiled-namespace/1",
+        [ModelField(identity=b"bodyir", name="body_ir", storage="binary"), ModelField(
+            identity=b"deps__",
+            name="dependencies",
+            storage="list<string>",
+        ), ModelField(identity=b"iface_", name="interface", storage="binary"), ModelField(
+            identity=b"inputs",
+            name="lowering_inputs",
+            storage="list<string>",
+        ), ModelField(identity=b"module", name="module", storage="string")],
+    )
+
+
+def value_description() -> Description:
+    """Describe one compiled callable owner and its opaque checker and Body IR payloads."""
+    return model_description(
+        VALUE_SELECTOR,
+        "incan.checker-compiled-value/1",
+        [ModelField(identity=b"bodyir", name="body_ir", storage="binary"), ModelField(
+            identity=b"declar",
+            name="declaration",
+            storage="binary",
+        ), ModelField(identity=b"deps__", name="dependency_reads", storage="list<string>"), ModelField(
+            identity=b"final_",
+            name="final",
+            storage="binary",
+        ), ModelField(identity=b"ident_", name="identity", storage="string"), ModelField(
+            identity=b"local_",
+            name="local",
+            storage="binary",
+        ), ModelField(identity=b"module", name="module", storage="string"), ModelField(
+            identity=b"name__",
+            name="name",
+            storage="string",
+        )],
+    )
+
+
+def fallback_description() -> Description:
+    """Describe one explicit full-source fallback without encoding absence as an empty string."""
+    return model_description(
+        FALLBACK_SELECTOR,
+        "incan.checker-compiled-fallback/1",
+        [ModelField(identity=b"ident_", name="identity", storage="option<string>"), ModelField(
+            identity=b"module",
+            name="module",
+            storage="string",
+        ), ModelField(identity=b"name__", name="name", storage="string"), ModelField(
+            identity=b"reason",
+            name="reason",
+            storage="string",
+        )],
+    )
+
+
+def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
+    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
+    # Each checker record is decoded once, through its authenticated semantic root and compiler-owned identity.
+    declaration = decode_owned_record(value.declaration, CHECKER_PROFILE, value.identity)?
+    local = decode_owned_record(value.local, CHECKER_PROFILE, value.identity)?
+    final = decode_owned_record(value.final, CHECKER_PROFILE, value.identity)?
+    if (declaration.family != CheckedFamily.Declaration or local.family != CheckedFamily.Local or final.family != CheckedFamily.Final or local.root != final.root or local.owner != declaration.owner or len(
+        value.body_ir,
+    ) == 0):
+        return Err(CodecFault.Malformed)
+    return Ok(None)
