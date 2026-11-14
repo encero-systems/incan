@@ -12,7 +12,8 @@ from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from rust::std::os::unix::net import UnixListener, UnixStream
 from rust::std::cell import RefCell
 from rust::std::rc import Rc
-from rust::std::time import Duration
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
 
 pub const MAX_FRAME: int = 16777216
 const HEADER_DIGITS: int = 8
@@ -36,6 +37,7 @@ pub class Connection:
     # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied. Closing takes the socket
     # out of the cell, which releases its descriptor at once for every holder of the connection.
     stream: Rc[RefCell[Option[UnixStream]]]
+    read_wait_seconds: u64 = 0
 
     @staticmethod
     pub def from_stream(stream: UnixStream) -> Connection:
@@ -75,13 +77,31 @@ pub class Connection:
             Some(open) => return int(open.as_raw_fd())
 
     pub def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
-        """Read exactly a bounded part, checking its length before allocating the receive buffer."""
+        """Read exactly a bounded part, polling a would-block stream until its configured deadline."""
         if count < 0 or count > bound:
             return Err("transport read exceeds its bound")
-        mut payload = zeros(count)
-        match self.stream.borrow_mut().as_mut():
-            None => return Err(CLOSED)
-            Some(open) => open.read_exact(payload).map_err((error) => f"cannot read frame: {error}")?
+        mut payload = b""
+        started = Instant.now()
+        while len(payload) < count:
+            remaining: u64 = (count - len(payload)).wrapping_resize()
+            match self.stream.borrow_mut().as_mut():
+                None => return Err(CLOSED)
+                Some(open) =>
+                    mut limited = Read.by_ref(open).take(remaining)
+                    match limited.read_to_end(payload):
+                        Ok(0) => return Err("cannot read frame: failed to fill whole buffer")
+                        Ok(_) => pass
+                        Err(error) =>
+                            if error.kind() == ErrorKind.Interrupted:
+                                continue
+                            if error.kind() == ErrorKind.WouldBlock or error.kind() == ErrorKind.TimedOut:
+                                if self.read_wait_seconds != 0:
+                                    elapsed = started.elapsed().as_secs()
+                                    if elapsed >= self.read_wait_seconds:
+                                        return Err(f"cannot read frame: {error}")
+                                sleep(Duration.from_millis(2))
+                                continue
+                            return Err(f"cannot read frame: {error}")
         return Ok(payload)
 
     pub def send(mut self, payload: bytes) -> Result[None, str]:
@@ -125,6 +145,7 @@ pub class Connection:
 
     pub def wait_at_most(mut self, seconds: u64) -> None:
         """Bound each read by `seconds`; 0 removes the bound, which a long build needs."""
+        self.read_wait_seconds = seconds
         mut limit: Option[Duration] = None
         if seconds != 0:
             limit = Some(Duration.from_secs(seconds))
@@ -133,6 +154,12 @@ pub class Connection:
         match self.stream.borrow().as_ref():
             None => pass
             Some(open) => _ = open.set_read_timeout(limit)
+
+    pub def poll_reads(mut self) -> Result[None, str]:
+        """Put reads in nonblocking mode for a caller that polls readiness and resumes partial frames."""
+        match self.stream.borrow().as_ref():
+            None => return Err(CLOSED)
+            Some(open) => return open.set_nonblocking(true).map_err((error) => f"cannot poll socket: {error}")
 
     pub def write_at_most(mut self, seconds: u64) -> None:
         """Bound each write by `seconds`."""

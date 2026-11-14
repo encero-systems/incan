@@ -84,6 +84,26 @@ pub def test_header_round_trip_and_malformed_frames() -> Result[None, str]:
     return Ok(None)
 
 
+pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:
+    """A nonblocking transport resumes one frame after its peer pauses between partial writes."""
+    scratch = scratch_directory()?
+    socket = scratch.path().joinpath("split.sock")
+    source = scratch.path().joinpath("writer.incn")
+    write(
+        source,
+        "from rust::std::io import Write\nfrom rust::std::os::unix::net import UnixStream\nfrom rust::std::thread import sleep\nfrom rust::std::time import Duration\ndef main() -> None:\n    mut peer = UnixStream.connect(\"" + socket.0 + "\").unwrap()\n    peer.write_all([97u8 for _index in range(17)]).unwrap()\n    sleep(Duration.from_millis(20))\n    peer.write_all([98u8 for _index in range(47)]).unwrap()\n",
+    )?
+    mut listener = listen(socket.0, true)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut writer = spawn_detached(binary, ["run", source.0], {})?
+    mut reader = listener.accept()?
+    reader.poll_reads()?
+    frame = reader.read_part(64, 64)?
+    assert len(frame) == 64 and frame[0] == 97u8 and frame[16] == 97u8
+    assert frame[17] == 98u8 and frame[63] == 98u8
+    return await_exit(writer, true)
+
+
 pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
     """The ninth data frame stays with its caller; cancellation and exact acknowledgments still pass."""
     scratch = scratch_directory()?
