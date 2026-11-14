@@ -692,6 +692,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
     // resolution, so release the items rather than carry them through lowering and rustc.
     program.dependencies.loaves.release_resolved_rust_items();
+    // Checking freed its analysis and the session; return those pages before lowering allocates its contexts.
+    crate::heap::release_free_memory();
+    timing.mark("checked_heap_released");
     let mut published_unions = Vec::new();
     let plan = lower_compilation_plan(
         &mut program,
@@ -839,6 +842,7 @@ fn lower_compilation_plan(
     if !layout_requirements.is_empty() {
         prepare_runtime_layouts(program, layout_requirements)?;
     }
+    let mut timing = crate::native_timing::Timing::requested();
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
     loop {
@@ -893,6 +897,10 @@ fn lower_compilation_plan(
         .inspect_err(|_| receipt.deterministic())?;
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
+                // The attempt's worker contexts and temporaries are freed; return their pages before runtime
+                // resolution and the resumed attempt allocate.
+                crate::heap::release_free_memory();
+                timing.mark("lowering_attempt_heap_released");
                 retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
                 continuation = Some(preserved);
             }
