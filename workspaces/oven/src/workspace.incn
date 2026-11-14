@@ -15,7 +15,7 @@ from std.toml import TomlValue
 from cli_help import render
 from files import read
 from intake import read_project, source_root_of
-from workspace_shared import shared_tables
+from workspace_shared import member_tables, shared_tables
 from rust::std::env import current_exe
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
@@ -63,6 +63,8 @@ pub model Workspace:
     pub manifest: Path
     pub members: list[Member]
     pub default_members: list[str]
+    # The declared `exclude` directories, which are never members.
+    pub excluded: list[str] = []
 
 
 pub def selected(selection: Selection) -> bool:
@@ -140,7 +142,7 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     if len(members) == 0:
         return Err(f"{manifest.0}: a virtual workspace must declare at least one member")
     defaults = [normalized(item) for item in strings(document, "workspace.default-members", manifest)]
-    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults))
+    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults, excluded=excluded))
 
 
 def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
@@ -311,13 +313,14 @@ def inspection_document(
     """The versioned JSON form of `oven workspace inspect`."""
     mut declared: list[JsonValue] = []
     for member in workspace.members:
-        declared.append(
-            JsonValue.object(
-                {"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative), "root": JsonValue.string(
-                    member.root.0,
-                ), "is_root_member": JsonValue.bool(member.is_root_member)},
-            ),
-        )
+        # Each member's effective dependencies and workspace environment fragments, in 0.5.1's shape.
+        mut entry = member_tables(workspace.root, member.root)?
+        entry["name"] = JsonValue.string(member.name)
+        entry["path"] = JsonValue.string(member.relative)
+        entry["root"] = JsonValue.string(member.root.0)
+        entry["manifest_path"] = JsonValue.string(member.root.joinpath("loaf.toml").0)
+        entry["is_root_member"] = JsonValue.bool(member.is_root_member)
+        declared.append(JsonValue.object(entry))
     scope = [JsonValue.object({"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative)}) for member in members]
     mut fields: Dict[str, JsonValue] = {
         "schema_version": JsonValue.int(1),
@@ -333,6 +336,9 @@ def inspection_document(
             {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
         ),
     }
+    fields["exclusions"] = JsonValue.array([JsonValue.string(item) for item in workspace.excluded])
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    fields["invocation"] = JsonValue.object({"current_dir": JsonValue.string(working.0)})
     # The root's shared tables, in 0.5.1's shape (`workspace_shared`).
     shared = shared_tables(workspace.root, workspace.manifest)?
     for key in sorted([key for key in shared.keys()]):
