@@ -24,6 +24,10 @@ pub model LockInteropArtifact:
     pub runtime_name: str = ""
     pub placement: str = ""
     pub capability: str = ""
+    # A package-owned artifact's upstream `origin`: its source, revision and license.
+    pub source: str = ""
+    pub revision: str = ""
+    pub license: str = ""
 
 
 @derive(Clone, Eq)
@@ -31,6 +35,8 @@ pub model LockInterop:
     """One target's contract: its requirements, its headers with their digests and its artifacts."""
 
     pub target: str
+    # The local package that declares it, empty for the root project.
+    pub package: str = ""
     pub requirements: str
     # `path sha256:...` for each declared header.
     pub headers: list[str] = []
@@ -55,6 +61,10 @@ pub def locked_interop(root: str, targets: list[CInteropTarget]) -> Result[list[
             if artifact.kind != CArtifactKind.System:
                 locked.path = artifact.path
                 locked.digest = file_digest(root, artifact.path)?
+            if let Some(origin) = artifact.origin:
+                locked.source = origin.source
+                locked.revision = origin.revision
+                locked.license = origin.license
             entry.artifacts.append(locked)
         entries.append(entry)
     return Ok(entries)
@@ -90,10 +100,10 @@ pub def interop_fact(entries: list[LockInterop]) -> str:
     """Every target's contract as one text, by target, for the lock's graph identity."""
     mut lines: list[str] = []
     for entry in entries:
-        lines.append(f"interop={entry.target}|{entry.requirements}|{",".join(entry.headers)}")
+        lines.append(f"interop={scoped(entry)}|{entry.requirements}|{",".join(entry.headers)}")
         for artifact in entry.artifacts:
-            fields = [
-                entry.target,
+            mut fields = [
+                scoped(entry),
                 artifact.name,
                 artifact.kind,
                 artifact.path,
@@ -102,6 +112,9 @@ pub def interop_fact(entries: list[LockInterop]) -> str:
                 artifact.placement,
                 artifact.capability,
             ]
+            if artifact.source != "":
+                # An artifact without an origin keeps the facts it had before origins were locked.
+                fields = fields + [artifact.source, artifact.revision, artifact.license]
             lines.append("artifact=" + "|".join(fields))
     return "\n".join(sorted(lines))
 
@@ -111,16 +124,30 @@ pub def interop_difference(known: list[LockInterop], generated: list[LockInterop
     for entry in generated:
         mut recorded: Option[LockInterop] = None
         for candidate in known:
-            if candidate.target == entry.target:
+            if candidate.target == entry.target and candidate.package == entry.package:
                 recorded = Some(candidate)
         match recorded:
-            None => return f"the C interop contract of `{entry.target}`"
+            None => return f"the C interop contract of `{entry.target}`{declared_in(entry)}"
             Some(previous) =>
                 for artifact in entry.artifacts:
                     if artifact not in previous.artifacts:
-                        return f"{artifact.kind} artifact `{artifact.name}` of `{entry.target}`"
+                        return f"{artifact.kind} artifact `{artifact.name}` of `{entry.target}`{declared_in(entry)}"
                 if previous != entry:
-                    return f"the C interop contract of `{entry.target}`"
+                    return f"the C interop contract of `{entry.target}`{declared_in(entry)}"
     if len(known) != len(generated):
         return "the C interop contracts"
     return ""
+
+
+def declared_in(entry: LockInterop) -> str:
+    """Where a path dependency's contract is declared, as a refusal names it; nothing for the root's."""
+    if entry.package == "":
+        return ""
+    return f" in `{entry.package}`"
+
+
+def scoped(entry: LockInterop) -> str:
+    """A contract's target, after its package for a path dependency's, so a root's facts keep their identity."""
+    if entry.package == "":
+        return entry.target
+    return f"{entry.package}/{entry.target}"
