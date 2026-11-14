@@ -559,6 +559,6 @@ def main() -> None:
 - [Derives and traits (explanation)](../explanation/derives_and_traits.md)
 - [How derives work](../explanation/how_derives_work.md)
 - [Classes: Class methods](../explanation/models_and_classes/classes.md#class-methods-classmethod)
-- [Trait dispatch is not overloading](../explanation/derives_and_traits.md#trait-dispatch-is-not-overloading)
+- [Trait dispatch and overloading](../explanation/derives_and_traits.md#trait-dispatch-and-overloading)
 - [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
 - [Error handling (explanation)](../explanation/error_handling.md)
