@@ -218,7 +218,7 @@ fn lower_component_wave(
     let available = thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
-    let workers = available.min(MAX_BODY_IR_WORKERS).max(1);
+    let workers = available.clamp(1, MAX_BODY_IR_WORKERS);
     let mut lowered = Vec::new();
     for batch in wave.chunks(workers) {
         let mut completed = thread::scope(|scope| -> Result<Vec<Vec<(usize, BodyIrModule)>>, String> {
