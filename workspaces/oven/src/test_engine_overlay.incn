@@ -1,7 +1,7 @@
 """Overlay requests: an editor view per project view, a mirrored overlay root and diagnostics in document coordinates."""
 
 from std.fs import Path
-from engine_overlay import editor_view_name, mirror_overlay, projected_diagnostics
+from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, projected_diagnostics
 from scratch import scratch_directory
 
 
@@ -52,6 +52,25 @@ pub def test_diagnostics_are_projected_into_document_coordinates() -> Result[Non
     assert found[0].line == 4 and found[0].column == 11
     assert found[1].message == "error: Unknown symbol 'missing'"
     assert found[1].path == "/overlay/helper.incn" and found[1].line == 2 and found[1].column == 5
+    return Ok(None)
+
+
+pub def test_a_package_document_is_answered_through_the_package_entry() -> Result[None, str]:
+    """Every document of a package builds the package's entry; a manifest-free document is its own entry."""
+    scratch = scratch_directory()?
+    package = scratch.path().joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    entry = package.joinpath("src").joinpath("main.incn")
+    write(entry, "from helper import value\n\ndef main() -> None:\n    println(f\"{value()}\")\n")?
+    helper = package.joinpath("src").joinpath("helper.incn")
+    write(helper, "pub def value() -> int:\n    return 1\n")?
+    assert overlay_entry(helper)?.0 == entry.0, "a package module was built as its own entry"
+    assert overlay_entry(entry)?.0 == entry.0
+    loose = scratch.path().joinpath("loose.incn")
+    write(loose, "def main() -> None:\n    pass\n")?
+    assert overlay_entry(loose)?.0 == loose.0
     return Ok(None)
 
 
