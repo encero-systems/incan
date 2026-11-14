@@ -82,6 +82,157 @@ pub model NominalRemap:
             return Err("plan product nominal ordinal names another table")
         return Ok(self.references[index])
 
+    pub def remap_types(mut self, types: list[PlanType]) -> Result[list[PlanType], str]:
+        """Translate every nominal position in an ordered type list."""
+        mut translated: list[PlanType] = []
+        for ty in types:
+            translated.append(self.remap_type(ty)?)
+        return Ok(translated)
+
+    pub def remap_type(mut self, ty: PlanType) -> Result[PlanType, str]:
+        """Translate a plan type's nominal positions; every nested type crosses the same translation."""
+        match ty:
+            PlanType.Model(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(PlanType.Model(slot.index, slot.name))
+            PlanType.ModelRef(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(PlanType.ModelRef(slot.index, slot.name))
+            PlanType.ModelMutRef(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(PlanType.ModelMutRef(slot.index, slot.name))
+            PlanType.Enum(index, name) =>
+                slot = self.slot(NominalKind.Enum, index, name)?
+                return Ok(PlanType.Enum(slot.index, slot.name))
+            PlanType.EnumRef(index, name) =>
+                slot = self.slot(NominalKind.Enum, index, name)?
+                return Ok(PlanType.EnumRef(slot.index, slot.name))
+            PlanType.EnumMutRef(index, name) =>
+                slot = self.slot(NominalKind.Enum, index, name)?
+                return Ok(PlanType.EnumMutRef(slot.index, slot.name))
+            PlanType.Tuple(elements) => return Ok(PlanType.Tuple(self.remap_elements(elements)?))
+            PlanType.TupleRef(elements) => return Ok(PlanType.TupleRef(self.remap_elements(elements)?))
+            PlanType.TupleMutRef(elements) => return Ok(PlanType.TupleMutRef(self.remap_elements(elements)?))
+            PlanType.List(leaf, depth) => return Ok(PlanType.List(self.remap_leaf(leaf)?, depth))
+            PlanType.ListRef(leaf, depth) => return Ok(PlanType.ListRef(self.remap_leaf(leaf)?, depth))
+            PlanType.ListMutRef(leaf, depth) => return Ok(PlanType.ListMutRef(self.remap_leaf(leaf)?, depth))
+            PlanType.ListIntoIter(leaf, depth) => return Ok(PlanType.ListIntoIter(self.remap_leaf(leaf)?, depth))
+            PlanType.ListIntoIterMutRef(leaf, depth) =>
+                return Ok(PlanType.ListIntoIterMutRef(self.remap_leaf(leaf)?, depth))
+            PlanType.Set(leaf) => return Ok(PlanType.Set(self.remap_leaf(leaf)?))
+            PlanType.SetRef(leaf) => return Ok(PlanType.SetRef(self.remap_leaf(leaf)?))
+            PlanType.SetMutRef(leaf) => return Ok(PlanType.SetMutRef(self.remap_leaf(leaf)?))
+            PlanType.Dict(key, value) => return Ok(PlanType.Dict(self.remap_leaf(key)?, self.remap_leaf(value)?))
+            PlanType.DictRef(key, value) => return Ok(PlanType.DictRef(self.remap_leaf(key)?, self.remap_leaf(value)?))
+            PlanType.DictMutRef(key, value) =>
+                return Ok(PlanType.DictMutRef(self.remap_leaf(key)?, self.remap_leaf(value)?))
+            PlanType.Generator(leaf, depth) => return Ok(PlanType.Generator(self.remap_leaf(leaf)?, depth))
+            PlanType.GeneratorMutRef(leaf, depth) => return Ok(PlanType.GeneratorMutRef(self.remap_leaf(leaf)?, depth))
+            PlanType.GeneratorYield(leaf, depth) => return Ok(PlanType.GeneratorYield(self.remap_leaf(leaf)?, depth))
+            PlanType.GeneratorYieldRef(leaf, depth) =>
+                return Ok(PlanType.GeneratorYieldRef(self.remap_leaf(leaf)?, depth))
+            _ => return self.remap_composite_type(ty)
+
+    def remap_composite_type(mut self, ty: PlanType) -> Result[PlanType, str]:
+        """Translate the callable, reference, iterator and native storage types that hold nested type lists."""
+        match ty:
+            PlanType.ScalarRef(types) => return Ok(PlanType.ScalarRef(self.remap_types(types)?))
+            PlanType.ScalarMutRef(types) => return Ok(PlanType.ScalarMutRef(self.remap_types(types)?))
+            PlanType.FrozenCollection(name, types) => return Ok(PlanType.FrozenCollection(name, self.remap_types(types)?))
+            PlanType.FrozenCollectionRef(name, types) =>
+                return Ok(PlanType.FrozenCollectionRef(name, self.remap_types(types)?))
+            PlanType.TypeToken(types) => return Ok(PlanType.TypeToken(self.remap_types(types)?))
+            PlanType.ZipIterator(left, right) =>
+                return Ok(PlanType.ZipIterator(self.remap_element(left)?, self.remap_element(right)?))
+            PlanType.ZipIteratorRef(left, right) =>
+                return Ok(PlanType.ZipIteratorRef(self.remap_element(left)?, self.remap_element(right)?))
+            PlanType.ZipIteratorMutRef(left, right) =>
+                return Ok(PlanType.ZipIteratorMutRef(self.remap_element(left)?, self.remap_element(right)?))
+            PlanType.FunctionPointer(types) => return Ok(PlanType.FunctionPointer(self.remap_types(types)?))
+            PlanType.FunctionItem(name, types) => return Ok(PlanType.FunctionItem(name, self.remap_types(types)?))
+            PlanType.Closure(types) => return Ok(PlanType.Closure(self.remap_types(types)?))
+            PlanType.NativeClosure(types, send, sync) =>
+                return Ok(PlanType.NativeClosure(self.remap_types(types)?, send, sync))
+            PlanType.SharedCallable(types) => return Ok(PlanType.SharedCallable(self.remap_types(types)?))
+            PlanType.ClosureOnce(types) => return Ok(PlanType.ClosureOnce(self.remap_types(types)?))
+            PlanType.ClosureRef(types) => return Ok(PlanType.ClosureRef(self.remap_types(types)?))
+            PlanType.BorrowingClosure(types) => return Ok(PlanType.BorrowingClosure(self.remap_types(types)?))
+            PlanType.BorrowingClosureRef(types) => return Ok(PlanType.BorrowingClosureRef(self.remap_types(types)?))
+            PlanType.CallableArguments(types) => return Ok(PlanType.CallableArguments(self.remap_types(types)?))
+            PlanType.Future(types) => return Ok(PlanType.Future(self.remap_types(types)?))
+            PlanType.NativeSlice(types) => return Ok(PlanType.NativeSlice(self.remap_types(types)?))
+            PlanType.SliceRef(types) => return Ok(PlanType.SliceRef(self.remap_types(types)?))
+            PlanType.SliceMutRef(types) => return Ok(PlanType.SliceMutRef(self.remap_types(types)?))
+            PlanType.NativeArray(types, length) => return Ok(PlanType.NativeArray(self.remap_types(types)?, length))
+            PlanType.NativeArrayRef(types, length) => return Ok(PlanType.NativeArrayRef(self.remap_types(types)?, length))
+            PlanType.NativeArrayMutRef(types, length) =>
+                return Ok(PlanType.NativeArrayMutRef(self.remap_types(types)?, length))
+            PlanType.RawPointer(mutable, types) => return Ok(PlanType.RawPointer(mutable, self.remap_types(types)?))
+            PlanType.Boxed(types) => return Ok(PlanType.Boxed(self.remap_types(types)?))
+            PlanType.Trait(_identity) => return Err("plan products refuse a canonical source-trait type")
+            # Every remaining alternative names no nested type and no nominal position.
+            _ => return Ok(ty)
+
+    def remap_leaves(mut self, leaves: list[ListLeaf]) -> Result[list[ListLeaf], str]:
+        """Translate an ordered list of collection leaves."""
+        mut translated: list[ListLeaf] = []
+        for leaf in leaves:
+            translated.append(self.remap_leaf(leaf)?)
+        return Ok(translated)
+
+    pub def remap_leaf(mut self, leaf: ListLeaf) -> Result[ListLeaf, str]:
+        """Translate one collection leaf's nominal positions."""
+        match leaf:
+            ListLeaf.Model(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(ListLeaf.Model(slot.index, slot.name))
+            ListLeaf.Enum(index, name) =>
+                slot = self.slot(NominalKind.Enum, index, name)?
+                return Ok(ListLeaf.Enum(slot.index, slot.name))
+            ListLeaf.Tuple(elements) => return Ok(ListLeaf.Tuple(self.remap_elements(elements)?))
+            ListLeaf.FrozenCollection(name, types) => return Ok(ListLeaf.FrozenCollection(name, self.remap_types(types)?))
+            ListLeaf.FunctionPointer(types) => return Ok(ListLeaf.FunctionPointer(self.remap_types(types)?))
+            ListLeaf.TypeToken(types) => return Ok(ListLeaf.TypeToken(self.remap_types(types)?))
+            ListLeaf.List(leaves, depth) => return Ok(ListLeaf.List(self.remap_leaves(leaves)?, depth))
+            ListLeaf.Dict(leaves) => return Ok(ListLeaf.Dict(self.remap_leaves(leaves)?))
+            ListLeaf.Set(leaves) => return Ok(ListLeaf.Set(self.remap_leaves(leaves)?))
+            ListLeaf.Reference(types) => return Ok(ListLeaf.Reference(self.remap_types(types)?))
+            _ => return Ok(leaf)
+
+    def remap_elements(mut self, elements: list[TupleElement]) -> Result[list[TupleElement], str]:
+        """Translate an ordered tuple layout."""
+        mut translated: list[TupleElement] = []
+        for element in elements:
+            translated.append(self.remap_element(element)?)
+        return Ok(translated)
+
+    pub def remap_element(mut self, element: TupleElement) -> Result[TupleElement, str]:
+        """Translate one tuple element's nominal positions."""
+        match element:
+            TupleElement.Model(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(TupleElement.Model(slot.index, slot.name))
+            TupleElement.Enum(index, name) =>
+                slot = self.slot(NominalKind.Enum, index, name)?
+                return Ok(TupleElement.Enum(slot.index, slot.name))
+            TupleElement.ModelRef(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(TupleElement.ModelRef(slot.index, slot.name))
+            TupleElement.ModelMutRef(index, name) =>
+                slot = self.slot(NominalKind.Model, index, name)?
+                return Ok(TupleElement.ModelMutRef(slot.index, slot.name))
+            TupleElement.List(leaf, depth) => return Ok(TupleElement.List(self.remap_leaf(leaf)?, depth))
+            TupleElement.Dict(key, value) => return Ok(TupleElement.Dict(self.remap_leaf(key)?, self.remap_leaf(value)?))
+            TupleElement.Set(leaf) => return Ok(TupleElement.Set(self.remap_leaf(leaf)?))
+            TupleElement.Tuple(elements) => return Ok(TupleElement.Tuple(self.remap_elements(elements)?))
+            TupleElement.FunctionPointer(types) => return Ok(TupleElement.FunctionPointer(self.remap_types(types)?))
+            TupleElement.Reference(mutable, types) => return Ok(TupleElement.Reference(mutable, self.remap_types(types)?))
+            TupleElement.SliceRef(types) => return Ok(TupleElement.SliceRef(self.remap_types(types)?))
+            TupleElement.SliceMutRef(types) => return Ok(TupleElement.SliceMutRef(self.remap_types(types)?))
+            TupleElement.FrozenCollection(name, types) =>
+                return Ok(TupleElement.FrozenCollection(name, self.remap_types(types)?))
+            _ => return Ok(element)
+
 
 pub def capture_remap() -> NominalRemap:
     """Start a capture that assigns product-local ordinals in first-seen order."""
@@ -123,164 +274,6 @@ pub def is_carrier_index(index: int) -> bool:
 pub def carrier_position(index: int) -> int:
     """The position among the admitted carriers that a carrier's lowering position names."""
     return index - CARRIER_BASE
-
-
-pub def remap_types(types: list[PlanType], mut remap: NominalRemap) -> Result[list[PlanType], str]:
-    """Translate every nominal position in an ordered type list."""
-    mut translated: list[PlanType] = []
-    for ty in types:
-        translated.append(remap_type(ty, remap)?)
-    return Ok(translated)
-
-
-pub def remap_type(ty: PlanType, mut remap: NominalRemap) -> Result[PlanType, str]:
-    """Translate a plan type's nominal positions; every nested type crosses the same translation."""
-    match ty:
-        PlanType.Model(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(PlanType.Model(slot.index, slot.name))
-        PlanType.ModelRef(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(PlanType.ModelRef(slot.index, slot.name))
-        PlanType.ModelMutRef(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(PlanType.ModelMutRef(slot.index, slot.name))
-        PlanType.Enum(index, name) =>
-            slot = remap.slot(NominalKind.Enum, index, name)?
-            return Ok(PlanType.Enum(slot.index, slot.name))
-        PlanType.EnumRef(index, name) =>
-            slot = remap.slot(NominalKind.Enum, index, name)?
-            return Ok(PlanType.EnumRef(slot.index, slot.name))
-        PlanType.EnumMutRef(index, name) =>
-            slot = remap.slot(NominalKind.Enum, index, name)?
-            return Ok(PlanType.EnumMutRef(slot.index, slot.name))
-        PlanType.Tuple(elements) => return Ok(PlanType.Tuple(remap_elements(elements, remap)?))
-        PlanType.TupleRef(elements) => return Ok(PlanType.TupleRef(remap_elements(elements, remap)?))
-        PlanType.TupleMutRef(elements) => return Ok(PlanType.TupleMutRef(remap_elements(elements, remap)?))
-        PlanType.List(leaf, depth) => return Ok(PlanType.List(remap_leaf(leaf, remap)?, depth))
-        PlanType.ListRef(leaf, depth) => return Ok(PlanType.ListRef(remap_leaf(leaf, remap)?, depth))
-        PlanType.ListMutRef(leaf, depth) => return Ok(PlanType.ListMutRef(remap_leaf(leaf, remap)?, depth))
-        PlanType.ListIntoIter(leaf, depth) => return Ok(PlanType.ListIntoIter(remap_leaf(leaf, remap)?, depth))
-        PlanType.ListIntoIterMutRef(leaf, depth) =>
-            return Ok(PlanType.ListIntoIterMutRef(remap_leaf(leaf, remap)?, depth))
-        PlanType.Set(leaf) => return Ok(PlanType.Set(remap_leaf(leaf, remap)?))
-        PlanType.SetRef(leaf) => return Ok(PlanType.SetRef(remap_leaf(leaf, remap)?))
-        PlanType.SetMutRef(leaf) => return Ok(PlanType.SetMutRef(remap_leaf(leaf, remap)?))
-        PlanType.Dict(key, value) => return Ok(PlanType.Dict(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
-        PlanType.DictRef(key, value) => return Ok(PlanType.DictRef(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
-        PlanType.DictMutRef(key, value) =>
-            return Ok(PlanType.DictMutRef(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
-        PlanType.Generator(leaf, depth) => return Ok(PlanType.Generator(remap_leaf(leaf, remap)?, depth))
-        PlanType.GeneratorMutRef(leaf, depth) => return Ok(PlanType.GeneratorMutRef(remap_leaf(leaf, remap)?, depth))
-        PlanType.GeneratorYield(leaf, depth) => return Ok(PlanType.GeneratorYield(remap_leaf(leaf, remap)?, depth))
-        PlanType.GeneratorYieldRef(leaf, depth) =>
-            return Ok(PlanType.GeneratorYieldRef(remap_leaf(leaf, remap)?, depth))
-        _ => return remap_composite_type(ty, remap)
-
-
-def remap_composite_type(ty: PlanType, mut remap: NominalRemap) -> Result[PlanType, str]:
-    """Translate the callable, reference, iterator and native storage types that hold nested type lists."""
-    match ty:
-        PlanType.ScalarRef(types) => return Ok(PlanType.ScalarRef(remap_types(types, remap)?))
-        PlanType.ScalarMutRef(types) => return Ok(PlanType.ScalarMutRef(remap_types(types, remap)?))
-        PlanType.FrozenCollection(name, types) => return Ok(PlanType.FrozenCollection(name, remap_types(types, remap)?))
-        PlanType.FrozenCollectionRef(name, types) =>
-            return Ok(PlanType.FrozenCollectionRef(name, remap_types(types, remap)?))
-        PlanType.TypeToken(types) => return Ok(PlanType.TypeToken(remap_types(types, remap)?))
-        PlanType.ZipIterator(left, right) =>
-            return Ok(PlanType.ZipIterator(remap_element(left, remap)?, remap_element(right, remap)?))
-        PlanType.ZipIteratorRef(left, right) =>
-            return Ok(PlanType.ZipIteratorRef(remap_element(left, remap)?, remap_element(right, remap)?))
-        PlanType.ZipIteratorMutRef(left, right) =>
-            return Ok(PlanType.ZipIteratorMutRef(remap_element(left, remap)?, remap_element(right, remap)?))
-        PlanType.FunctionPointer(types) => return Ok(PlanType.FunctionPointer(remap_types(types, remap)?))
-        PlanType.FunctionItem(name, types) => return Ok(PlanType.FunctionItem(name, remap_types(types, remap)?))
-        PlanType.Closure(types) => return Ok(PlanType.Closure(remap_types(types, remap)?))
-        PlanType.NativeClosure(types, send, sync) =>
-            return Ok(PlanType.NativeClosure(remap_types(types, remap)?, send, sync))
-        PlanType.SharedCallable(types) => return Ok(PlanType.SharedCallable(remap_types(types, remap)?))
-        PlanType.ClosureOnce(types) => return Ok(PlanType.ClosureOnce(remap_types(types, remap)?))
-        PlanType.ClosureRef(types) => return Ok(PlanType.ClosureRef(remap_types(types, remap)?))
-        PlanType.BorrowingClosure(types) => return Ok(PlanType.BorrowingClosure(remap_types(types, remap)?))
-        PlanType.BorrowingClosureRef(types) => return Ok(PlanType.BorrowingClosureRef(remap_types(types, remap)?))
-        PlanType.CallableArguments(types) => return Ok(PlanType.CallableArguments(remap_types(types, remap)?))
-        PlanType.Future(types) => return Ok(PlanType.Future(remap_types(types, remap)?))
-        PlanType.NativeSlice(types) => return Ok(PlanType.NativeSlice(remap_types(types, remap)?))
-        PlanType.SliceRef(types) => return Ok(PlanType.SliceRef(remap_types(types, remap)?))
-        PlanType.SliceMutRef(types) => return Ok(PlanType.SliceMutRef(remap_types(types, remap)?))
-        PlanType.NativeArray(types, length) => return Ok(PlanType.NativeArray(remap_types(types, remap)?, length))
-        PlanType.NativeArrayRef(types, length) => return Ok(PlanType.NativeArrayRef(remap_types(types, remap)?, length))
-        PlanType.NativeArrayMutRef(types, length) =>
-            return Ok(PlanType.NativeArrayMutRef(remap_types(types, remap)?, length))
-        PlanType.RawPointer(mutable, types) => return Ok(PlanType.RawPointer(mutable, remap_types(types, remap)?))
-        PlanType.Boxed(types) => return Ok(PlanType.Boxed(remap_types(types, remap)?))
-        PlanType.Trait(_identity) => return Err("plan products refuse a canonical source-trait type")
-        # Every remaining alternative names no nested type and no nominal position.
-        _ => return Ok(ty)
-
-
-def remap_leaves(leaves: list[ListLeaf], mut remap: NominalRemap) -> Result[list[ListLeaf], str]:
-    """Translate an ordered list of collection leaves."""
-    mut translated: list[ListLeaf] = []
-    for leaf in leaves:
-        translated.append(remap_leaf(leaf, remap)?)
-    return Ok(translated)
-
-
-pub def remap_leaf(leaf: ListLeaf, mut remap: NominalRemap) -> Result[ListLeaf, str]:
-    """Translate one collection leaf's nominal positions."""
-    match leaf:
-        ListLeaf.Model(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(ListLeaf.Model(slot.index, slot.name))
-        ListLeaf.Enum(index, name) =>
-            slot = remap.slot(NominalKind.Enum, index, name)?
-            return Ok(ListLeaf.Enum(slot.index, slot.name))
-        ListLeaf.Tuple(elements) => return Ok(ListLeaf.Tuple(remap_elements(elements, remap)?))
-        ListLeaf.FrozenCollection(name, types) => return Ok(ListLeaf.FrozenCollection(name, remap_types(types, remap)?))
-        ListLeaf.FunctionPointer(types) => return Ok(ListLeaf.FunctionPointer(remap_types(types, remap)?))
-        ListLeaf.TypeToken(types) => return Ok(ListLeaf.TypeToken(remap_types(types, remap)?))
-        ListLeaf.List(leaves, depth) => return Ok(ListLeaf.List(remap_leaves(leaves, remap)?, depth))
-        ListLeaf.Dict(leaves) => return Ok(ListLeaf.Dict(remap_leaves(leaves, remap)?))
-        ListLeaf.Set(leaves) => return Ok(ListLeaf.Set(remap_leaves(leaves, remap)?))
-        ListLeaf.Reference(types) => return Ok(ListLeaf.Reference(remap_types(types, remap)?))
-        _ => return Ok(leaf)
-
-
-def remap_elements(elements: list[TupleElement], mut remap: NominalRemap) -> Result[list[TupleElement], str]:
-    """Translate an ordered tuple layout."""
-    mut translated: list[TupleElement] = []
-    for element in elements:
-        translated.append(remap_element(element, remap)?)
-    return Ok(translated)
-
-
-pub def remap_element(element: TupleElement, mut remap: NominalRemap) -> Result[TupleElement, str]:
-    """Translate one tuple element's nominal positions."""
-    match element:
-        TupleElement.Model(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(TupleElement.Model(slot.index, slot.name))
-        TupleElement.Enum(index, name) =>
-            slot = remap.slot(NominalKind.Enum, index, name)?
-            return Ok(TupleElement.Enum(slot.index, slot.name))
-        TupleElement.ModelRef(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(TupleElement.ModelRef(slot.index, slot.name))
-        TupleElement.ModelMutRef(index, name) =>
-            slot = remap.slot(NominalKind.Model, index, name)?
-            return Ok(TupleElement.ModelMutRef(slot.index, slot.name))
-        TupleElement.List(leaf, depth) => return Ok(TupleElement.List(remap_leaf(leaf, remap)?, depth))
-        TupleElement.Dict(key, value) => return Ok(TupleElement.Dict(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
-        TupleElement.Set(leaf) => return Ok(TupleElement.Set(remap_leaf(leaf, remap)?))
-        TupleElement.Tuple(elements) => return Ok(TupleElement.Tuple(remap_elements(elements, remap)?))
-        TupleElement.FunctionPointer(types) => return Ok(TupleElement.FunctionPointer(remap_types(types, remap)?))
-        TupleElement.Reference(mutable, types) => return Ok(TupleElement.Reference(mutable, remap_types(types, remap)?))
-        TupleElement.SliceRef(types) => return Ok(TupleElement.SliceRef(remap_types(types, remap)?))
-        TupleElement.SliceMutRef(types) => return Ok(TupleElement.SliceMutRef(remap_types(types, remap)?))
-        TupleElement.FrozenCollection(name, types) =>
-            return Ok(TupleElement.FrozenCollection(name, remap_types(types, remap)?))
-        _ => return Ok(element)
 
 
 pub model UnitNominals:
