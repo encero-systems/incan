@@ -21,7 +21,7 @@ const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format tex
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
-const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [PATH]"
+const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -118,6 +118,7 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                     "  --target TRIPLE        A target the project declares in [[interop.c.targets]].",
                     "  --adapter android|ios  The fixed layout: jniLibs/arm64-v8a or Frameworks.",
                     "  --output PATH          A new directory; an existing one is never replaced.",
+                    "  --locked               Refuse a missing or stale oven.lock instead of refreshing it.",
                 ],
                 "oven interop stage --target aarch64-linux-android --adapter android --output staged",
             ),
