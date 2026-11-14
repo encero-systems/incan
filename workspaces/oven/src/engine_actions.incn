@@ -168,6 +168,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
         pending.format,
         Some(pending.capture.epoch),
         Some(pending.capture.selected),
+        pending.view,
     )?
     record(Operation.EngineUnit, pending.capture.revision, checking)
     captured = after_projection(pending.capture)?
@@ -177,10 +178,15 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     mut status = CompletionStatus.Success
     if outcome.code != 0:
         status = CompletionStatus.Failed
-    # A requested report shows that a check produced no unit: no bodies, plans or native bake.
+    # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
     mut observation = ""
     if pending.proofs:
-        observation = retain(store, hexlify(pending.request), pending.capture.counters, ProgramOutcome(code=outcome.code))?
+        checked = ProgramOutcome(
+            code=outcome.code,
+            body_evaluations=outcome.body_evaluations,
+            body_reuses=outcome.body_reuses,
+        )
+        observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
     return Ok(
         Ready(
             message=Complete(
