@@ -1,0 +1,10 @@
+# behavior: `oven interop stage --target TRIPLE --adapter android --output PATH` copies the target's bundled runtime libraries into 0.5's fixed Android layout, `jniLibs/arm64-v8a/<runtime-name>`, each digest-verified, beside an `incan-interop-adapter.json` manifest, without starting Gradle (#3134)
+# cli-commands:
+#   oven interop stage --target aarch64-linux-android --adapter android --output staged/android
+# expect-stdout:
+#   staged aarch64-linux-android for the android adapter in staged/android
+#     jniLibs/arm64-v8a/libbridge_runtime.so sha256:cc13027a0ffd0d5a6d5a0d193fe970ae3c253391d97231bfb05dac3dfdd5818a
+#     incan-interop-adapter.json
+
+def main() -> None:
+    println("not run")
