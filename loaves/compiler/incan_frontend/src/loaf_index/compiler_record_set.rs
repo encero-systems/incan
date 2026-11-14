@@ -941,6 +941,7 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod namespace_records;
     mod typechecker_reads;
 
     use std::collections::BTreeSet;

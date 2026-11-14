@@ -16,7 +16,7 @@ use crate::loaf_index::LoafIndex;
 const OTHER_FUNCTIONS: usize = 60;
 
 /// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, and many other public functions.
-fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+pub(super) fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut source = "pub def price(cents: int, rounded: bool = true) -> int:\n    return cents\n".to_owned();
     for index in 0..OTHER_FUNCTIONS {
         source.push_str(&format!(
