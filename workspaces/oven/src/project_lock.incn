@@ -222,7 +222,7 @@ def reconcile(
     Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
 
     1. Read and authenticate an existing lock before it can constrain selection.
-    2. Choose the explicit, sticky or default mode, resetting to the default after a toolchain change.
+    2. Choose the explicit mode, else the one the existing lock records under any toolchain, else the default.
     3. Resolve with valid existing producer pins and construct the complete format-1 graph.
     4. Refuse a locked change, or publish a changed lock without changing command output.
     """
@@ -240,7 +240,7 @@ def reconcile(
                 return Err(
                     f"{path.0} records toolchain {known.toolchain.version} ({known.toolchain.identity}), not {TOOLCHAIN} ({identity}); run `oven lock`",
                 )
-    mode = selected_mode(existing, requested_mode, identity)
+    mode = selected_mode(existing, requested_mode)
     rustc = rust_compiler(toolchain)
     configuration = target_configuration(rustc)?
     demand = LocalDemand(
@@ -315,13 +315,15 @@ def project_interop(root: Path, reader: ManifestReader) -> Result[list[LockInter
     return locked_interop(root.0, targets)
 
 
-def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
-    """Use an explicit mode, otherwise keep a same-toolchain lock's mode or take the default."""
+pub def selected_mode(existing: Option[OvenLock], requested: str) -> str:
+    """
+    Use an explicit mode, otherwise keep the mode an existing lock records, under any toolchain, so nothing switches
+    it back quietly (RFC 125); a project without a lock takes the default.
+    """
     if requested != "":
         return requested
     if let Some(known) = existing:
-        if known.toolchain.version == TOOLCHAIN and known.toolchain.identity == identity:
-            return known.mode
+        return known.mode
     return DEFAULT_MODE
 
 
