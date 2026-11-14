@@ -21,8 +21,8 @@ Example:
 from rust::std::env import args_os
 pub from std.primitives.environ import EnvironErrorKind
 from std.primitives.environ import read as _get_raw
-pub from std.traits.error import Error
-pub from std.traits.convert import TryFrom
+from std.traits.error import Error
+from std.traits.convert import TryFrom
 
 
 @derive(Clone)

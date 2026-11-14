@@ -1,8 +1,0 @@
-from std.fs.metadata import IoError, Path
-
-
-pub def metadata_line(root: Path) -> Result[str, IoError]:
-    """Stat a Path through the names std.fs.metadata publishes."""
-    target = root / "metadata.txt"
-    target.write_text("abc", encoding="utf-8", errors="strict", newline=None)?
-    return Ok(f"metadata {target.stat()?.size()?}")

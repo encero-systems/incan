@@ -5,8 +5,7 @@ from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
 from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
 pub from std.primitives.io import Endian, IoError
-pub from std.derives.collection import FallibleIterator
-pub from std.traits.error import Error
+from std.derives.collection import FallibleIterator
 
 pub trait BinaryRead[T]:
     """
