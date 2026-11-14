@@ -20,7 +20,7 @@ pub model Invocation:
     pub selector: Option[str]
     # A speculative attempt may shorten the user deadline; zero leaves an ordinary command's policy intact.
     pub deadline_seconds: int = 0
-    # A selected entry starts only after this request compiled quietly and successfully in the same pool.
+    # A selected entry starts only after this request compiled successfully in the same pool.
     pub after: Option[int] = None
     # Commands that run in one project at the same time capture their streams under distinct names.
     pub capture: str = ""
@@ -146,21 +146,24 @@ def retain_followup(parent: int, index: int) -> None:
 
 
 def release_followups(index: int) -> None:
-    """Admit selected entries only after a quiet successful compilation; failures never execute dependents."""
+    """
+    Admit selected entries once their compilation succeeded, even one that printed output: its program is valid, and
+    the requester decides which case owns the output. A failed compilation never executes its dependents.
+    """
     if index not in pool_followups:
         return
     for child in pool_followups[index]:
-        if quiet_success(pool_outcomes[index]):
+        if succeeded(pool_outcomes[index]):
             pool_ready.append(child)
         else:
-            record_failure(child, "prerequisite compilation did not succeed quietly")
+            record_failure(child, "prerequisite compilation did not succeed")
 
 
-def quiet_success(result: Result[Outcome, str]) -> bool:
-    """Use the shared-build acceptance rule before any selected program can execute."""
+def succeeded(result: Result[Outcome, str]) -> bool:
+    """Whether a prerequisite compilation exited successfully, so the program it built may execute."""
     match result:
         Err(_) => return false
-        Ok(outcome) => return outcome.code == Some(0) and outcome.stdout == "" and outcome.stderr == ""
+        Ok(outcome) => return outcome.code == Some(0)
 
 
 def invocation_order(requests: list[Invocation]) -> list[int]:
