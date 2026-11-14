@@ -31,6 +31,8 @@ use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 mod declaration_records;
 mod runtime_bindings;
+#[cfg(test)]
+mod thread_selection;
 pub(super) use declaration_records::read_declaration;
 pub(super) use runtime_bindings::read_runtime_bindings;
 
@@ -54,6 +56,10 @@ static INSTALLED: OnceLock<Result<Option<RecordSet>, String>> = OnceLock::new();
 
 /// Whether this compiler activation selected records mode, including a malformed partial selection that must refuse.
 pub(super) fn configured() -> bool {
+    #[cfg(test)]
+    if thread_selection::selected().is_some() {
+        return true;
+    }
     std::env::var_os(ROOT_ENV).is_some() || std::env::var_os(DIGEST_ENV).is_some()
 }
 
@@ -175,10 +181,14 @@ impl RecordSet {
         }
     }
 
-    /// Count one payload read from the payload directory.
-    fn count_read(&self, bytes: usize) {
+    /// Count one payload read from the payload directory, the value of the record `key`.
+    fn count_read(&self, key: &str, bytes: usize) {
         self.records_read.fetch_add(1, Ordering::Relaxed);
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
+        #[cfg(test)]
+        thread_selection::note_read(key);
+        #[cfg(not(test))]
+        let _ = key;
     }
 }
 
@@ -249,7 +259,7 @@ fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summar
     }
     let value = read_value(&set.root, &entry.value)
         .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
-    set.count_read(value.len());
+    set.count_read(&entry.key, value.len());
     let metadata: Metadata = LibraryManifest::decode_compiler_record_value(&value)
         .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
     if metadata.name != name {
@@ -357,7 +367,7 @@ fn read_surface_in(
         }
         let bytes = open_value(&set.root, &entry.value)
             .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
-        set.count_read(bytes.len());
+        set.count_read(&entry.key, bytes.len());
         let invalid = |error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}"));
         match family {
             "metadata" => metadata = Some(LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?),
@@ -459,7 +469,7 @@ fn read_group(
             .map(|(family, index, entry)| {
                 open_value(&set.root, &entry.value)
                     .map(|bytes| {
-                        set.count_read(bytes.len());
+                        set.count_read(&entry.key, bytes.len());
                         (family, index, entry, bytes)
                     })
                     .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))
@@ -667,6 +677,10 @@ fn decode_manifest(
 
 /// Return the process's one immutable installed set; the worker cannot select another root between requests.
 fn installed() -> Result<Option<&'static RecordSet>, String> {
+    #[cfg(test)]
+    if let Some(set) = thread_selection::selected() {
+        return Ok(Some(set));
+    }
     match INSTALLED.get_or_init(load_installed) {
         Ok(Some(set)) => Ok(Some(set)),
         Ok(None) => Ok(None),
@@ -927,6 +941,8 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod typechecker_reads;
+
     use std::collections::BTreeSet;
     use std::fs;
     use std::path::Path;

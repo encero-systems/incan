@@ -76,7 +76,7 @@ pub(super) fn read_declaration_in(
         }
         let value = open_value(&set.root, &entry.value)
             .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
-        set.count_read(value.len());
+        set.count_read(&entry.key, value.len());
         bytes += value.len();
         values.push(
             LibraryManifest::decode_compiler_record_value(&value).map_err(|error| {
