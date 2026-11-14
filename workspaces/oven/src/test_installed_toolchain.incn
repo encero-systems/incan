@@ -1,12 +1,26 @@
-"""An installed toolchain: a home without one names the install command, and a zstd archive needs no `zstd`."""
+"""
+A home without this Oven's toolchain refuses by naming what is missing and how to install it, an installation whose
+standard Loaf is incomplete is refused at admission, and a zstd archive needs no `zstd`.
+"""
 
 from rust::std::process import Command
+from std.fs import Path
 from archive_decompression import plain_archive
-from files import make_directory, write
+from files import make_directory, write as write_file
+from freshness_fixtures import make_executable, write
 from home_paths import TOOLCHAIN
 from rust_target import decoded
 from scratch import scratch_directory
-from toolchain import load_toolchain_at
+from toolchain import load_toolchain_at, prepare_installation
+from unit_publication import record_path, record_payload
+
+
+
+const PROVIDER: str = "loaves/fixture/debug"
+
+def executable_set() -> list[str]:
+    """The members a standard Loaf is admitted with."""
+    return ["libfixture.rlib", "fixture.incnlib", "fixture.incnbody", "fixture.native.json"]
 
 
 pub def test_a_home_without_the_toolchain_names_it_and_the_install_command() -> Result[None, str]:
@@ -42,7 +56,7 @@ pub def test_a_zstd_toolchain_archive_is_read_without_a_zstd_program() -> Result
     # 1. The macOS `tar` compresses through the `zstd` program, which this machine has.
     stage = scratch.path().joinpath("stage")
     make_directory(stage)?
-    write(stage.joinpath("toolchain.json"), "{}\n")?
+    write_file(stage.joinpath("toolchain.json"), "{}\n")?
     archive = scratch.path().joinpath("toolchain.tar.zst")
     mut pack = Command.new("/usr/bin/tar")
     packed = pack.arg("--zstd").arg("-cf").arg(archive.0).arg("-C").arg(stage.0).arg(".").status()
@@ -56,3 +70,59 @@ pub def test_a_zstd_toolchain_archive_is_read_without_a_zstd_program() -> Result
     # 3. An uncompressed archive is its own readable form.
     assert plain_archive(readable, scratch.path().joinpath("again.tar"))?.0 == readable.0
     return Ok(None)
+
+
+pub def test_an_installation_with_an_incomplete_standard_loaf_is_refused_at_admission() -> Result[None, str]:
+    """
+    A standard Loaf is admitted whole or not at all: its native library, interface, bodies and native description,
+    each with its producer record. A native library alone never stands for the Loaf.
+
+    1. The complete Loaf is admitted, every member under its producer record.
+    2. A member without its producer record refuses the installation, and names the member.
+    3. A missing semantic member refuses it even though the native library and its record are present.
+    """
+    scratch = scratch_directory()?
+    # 1. Four members, four admitted payloads.
+    complete = staged_installation(scratch.path().joinpath("complete"))?
+    _, admission = prepare_installation(complete)?
+    assert len(admission.payloads) == len(executable_set()), f"{len(admission.payloads)} payloads were admitted"
+    # 2. The library is there, but nothing says who produced it.
+    unrecorded = staged_installation(scratch.path().joinpath("unrecorded"))?
+    library = unrecorded.joinpath(PROVIDER).joinpath("libfixture.rlib")
+    record_path(library).unlink().map_err((error) => error.message())?
+    match prepare_installation(unrecorded):
+        Ok(_) => return Err("an installation was admitted with a native library that has no producer record")
+        Err(reason) =>
+            assert "incomplete standard Loaf" in reason and library.0 in reason, reason
+    # 3. The bodies and their record are gone together, so no remaining record points at a missing file.
+    bodiless = staged_installation(scratch.path().joinpath("bodiless"))?
+    bodies = bodiless.joinpath(PROVIDER).joinpath("fixture.incnbody")
+    bodies.unlink().map_err((error) => error.message())?
+    record_path(bodies).unlink().map_err((error) => error.message())?
+    match prepare_installation(bodiless):
+        Ok(_) => return Err("an installation was admitted with a native library and no bodies")
+        Err(reason) =>
+            assert "incomplete standard Loaf" in reason and bodies.0 in reason, reason
+    return Ok(None)
+
+
+def staged_installation(stage: Path) -> Result[Path, str]:
+    """A staged toolchain with one complete standard Loaf, `fixture`, and nothing else to admit."""
+    write(stage.joinpath("driver"), "fixture compiler")?
+    rustc = stage.joinpath("sysroot/bin/rustc")
+    write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
+    make_executable(rustc)?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    for name in executable_set():
+        member = stage.joinpath(PROVIDER).joinpath(name)
+        mut content = f"fixture {name}"
+        if name.endswith(".native.json"):
+            content = "{\"search\":[],\"externs\":[],\"macro_externs\":[]}"
+        write(member, content)?
+        record_payload(member, f"fixture producer of {name}")?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true}",
+    )?
+    return Ok(stage)
