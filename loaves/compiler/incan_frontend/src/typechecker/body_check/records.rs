@@ -296,6 +296,7 @@ impl TypeChecker {
 /// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
 struct Positions {
     nodes: SemanticNodeBindings,
+    owner: Span,
     identities: BTreeMap<String, CanonicalSymbolId>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
@@ -432,6 +433,7 @@ impl Positions {
         });
         Ok(Self {
             nodes,
+            owner,
             identities,
             caller,
             type_identities,
@@ -543,6 +545,11 @@ impl Positions {
             root: self.nodes.root().to_owned(),
             path: path.to_owned(),
         })
+    }
+
+    /// Return the selected owner's canonical structural path for owner-wide artifact rows.
+    fn owner_path(&self) -> Result<String, NodeBindingError> {
+        Ok(self.nodes.anchor(self.owner)?.path)
     }
 }
 

@@ -1,10 +1,12 @@
 //! Handwritten semantic admission for structural artifact leaves that are not blind container serialization.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
+use crate::symbols::{ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo};
 use crate::typechecker::type_info::{
-    BodyIrReexportCallInfo, ConstructorFieldBinding, FixedUnpackPlan, IsInstanceTargetInfo, ResolvedOperatorKind,
+    BodyIrReexportCallInfo, ConstructorFieldBinding, ErrorMessageDisplay, FixedUnpackPlan, IsInstanceTargetInfo,
+    ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorKind,
 };
 
 pub(super) fn operator_kind(kind: ResolvedOperatorKind) -> &'static str {
@@ -240,84 +242,347 @@ pub(super) fn restore_isinstance_targets<'a>(
     Ok(())
 }
 
-macro_rules! refused_manual_codec {
-    ($project:ident, $restore:ident, $ty:ty, $message:literal) => {
-        pub(super) fn $project(
-            _positions: &Positions,
-            values: &HashMap<Span, $ty>,
-            _fields: &mut Fields,
-        ) -> Result<(), NodeBindingError> {
-            if values.is_empty() {
-                Ok(())
-            } else {
-                Err(NodeBindingError::Unsupported($message))
-            }
+/// Encode one checker-selected trait dispatch without source-spelling inference.
+pub(super) fn project_method_dispatch(
+    value: &ResolvedMethodDispatch,
+    row: &mut Vec<String>,
+) -> Result<(), NodeBindingError> {
+    let ResolvedMethodDispatch::Trait {
+        trait_name,
+        module_path,
+        type_args,
+        implementation_type_params,
+        receiver_is_mutable,
+    } = value;
+    row.extend(["trait".into(), trait_name.clone()]);
+    match module_path {
+        Some(path) => {
+            row.extend(["some".into(), path.len().to_string()]);
+            row.extend(path.iter().cloned());
         }
-
-        pub(super) fn $restore<'a>(
-            _positions: &Positions,
-            _target: &mut HashMap<Span, $ty>,
-            _span: Span,
-            _values: &mut std::slice::Iter<'a, String>,
-        ) -> Result<(), NodeBindingError> {
-            Err(NodeBindingError::Unsupported($message))
-        }
-    };
+        None => row.push("none".into()),
+    }
+    row.push(type_args.len().to_string());
+    for ty in type_args {
+        type_fields(ty, row)?;
+    }
+    project_implementation_params(implementation_type_params, row)?;
+    row.push(receiver_is_mutable.to_string());
+    Ok(())
 }
 
-refused_manual_codec!(
-    project_resolved_method_calls,
-    restore_resolved_method_calls,
-    crate::typechecker::type_info::ResolvedMethodCall,
-    "CallArtifacts.resolved_method_calls"
-);
+/// Decode one structurally complete trait dispatch.
+pub(super) fn read_method_dispatch<'a>(
+    values: &mut std::slice::Iter<'a, String>,
+) -> Result<ResolvedMethodDispatch, NodeBindingError> {
+    if next(values)? != "trait" {
+        return Err(NodeBindingError::MissingNode);
+    }
+    let trait_name = next(values)?.to_owned();
+    let module_path = match next(values)? {
+        "some" => {
+            let count = read_number(values)?;
+            Some(
+                (0..count)
+                    .map(|_| Ok(next(values)?.to_owned()))
+                    .collect::<Result<Vec<_>, NodeBindingError>>()?,
+            )
+        }
+        "none" => None,
+        _ => return Err(NodeBindingError::MissingNode),
+    };
+    let type_count = read_number(values)?;
+    let type_args = (0..type_count)
+        .map(|_| read_type(values))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ResolvedMethodDispatch::Trait {
+        trait_name,
+        module_path,
+        type_args,
+        implementation_type_params: read_implementation_params(values)?,
+        receiver_is_mutable: read_bool(values)?,
+    })
+}
+
+/// Encode implementation-only generic bounds carried by dispatch metadata.
+fn project_implementation_params(
+    params: &[ImplementationTypeParamInfo],
+    row: &mut Vec<String>,
+) -> Result<(), NodeBindingError> {
+    row.push(params.len().to_string());
+    for param in params {
+        row.extend([param.name.clone(), param.bounds.len().to_string()]);
+        for bound in &param.bounds {
+            row.extend([bound.trait_path.clone(), bound.type_args.len().to_string()]);
+            for ty in &bound.type_args {
+                type_fields(ty, row)?;
+            }
+            row.push(bound.associated_types.len().to_string());
+            for (name, ty) in &bound.associated_types {
+                row.push(name.clone());
+                type_fields(ty, row)?;
+            }
+            row.push(
+                match bound.origin {
+                    ImplementationTraitBoundOriginInfo::Standard => "standard",
+                    ImplementationTraitBoundOriginInfo::RustCapability => "rust-capability",
+                    ImplementationTraitBoundOriginInfo::SourceCallable => "source-callable",
+                }
+                .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Decode implementation-only generic bounds carried by dispatch metadata.
+fn read_implementation_params<'a>(
+    values: &mut std::slice::Iter<'a, String>,
+) -> Result<Vec<ImplementationTypeParamInfo>, NodeBindingError> {
+    let count = read_number(values)?;
+    (0..count)
+        .map(|_| {
+            let name = next(values)?.to_owned();
+            let bound_count = read_number(values)?;
+            let bounds = (0..bound_count)
+                .map(|_| read_implementation_bound(values))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ImplementationTypeParamInfo { name, bounds })
+        })
+        .collect()
+}
+
+/// Decode one exact implementation trait requirement.
+fn read_implementation_bound<'a>(
+    values: &mut std::slice::Iter<'a, String>,
+) -> Result<ImplementationTraitBoundInfo, NodeBindingError> {
+    let trait_path = next(values)?.to_owned();
+    let type_count = read_number(values)?;
+    let type_args = (0..type_count)
+        .map(|_| read_type(values))
+        .collect::<Result<Vec<_>, _>>()?;
+    let associated_count = read_number(values)?;
+    let associated_types = (0..associated_count)
+        .map(|_| Ok((next(values)?.to_owned(), read_type(values)?)))
+        .collect::<Result<Vec<_>, NodeBindingError>>()?;
+    let origin = match next(values)? {
+        "standard" => ImplementationTraitBoundOriginInfo::Standard,
+        "rust-capability" => ImplementationTraitBoundOriginInfo::RustCapability,
+        "source-callable" => ImplementationTraitBoundOriginInfo::SourceCallable,
+        _ => return Err(NodeBindingError::MissingNode),
+    };
+    Ok(ImplementationTraitBoundInfo {
+        trait_path,
+        type_args,
+        associated_types,
+        origin,
+    })
+}
+
+/// Decode a canonical lowercase boolean.
+fn read_bool(values: &mut std::slice::Iter<'_, String>) -> Result<bool, NodeBindingError> {
+    match next(values)? {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(NodeBindingError::MissingNode),
+    }
+}
+
+/// Project all resolved method calls through their selected trait dispatch.
+pub(super) fn project_resolved_method_calls(
+    positions: &Positions,
+    values: &HashMap<Span, ResolvedMethodCall>,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
+    for (span, value) in values {
+        let mut row = vec![
+            "artifact-call".into(),
+            positions.nodes.anchor(*span)?.path,
+            "resolved_method_calls".into(),
+            value.method.clone(),
+        ];
+        project_method_dispatch(&value.dispatch, &mut row)?;
+        fields.push(row);
+    }
+    Ok(())
+}
+
+/// Restore one resolved method call from its exact structural dispatch.
+pub(super) fn restore_resolved_method_calls<'a>(
+    _positions: &Positions,
+    target: &mut HashMap<Span, ResolvedMethodCall>,
+    span: Span,
+    values: &mut std::slice::Iter<'a, String>,
+) -> Result<(), NodeBindingError> {
+    let value = ResolvedMethodCall {
+        method: next(values)?.to_owned(),
+        dispatch: read_method_dispatch(values)?,
+    };
+    if target.insert(span, value).is_some() {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(())
+}
 
 pub(super) fn project_compiler_generated_member_identities(
-    _positions: &Positions,
+    positions: &Positions,
     values: &HashMap<CanonicalSymbolId, CanonicalSymbolId>,
-    _fields: &mut Fields,
+    fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
     if values.is_empty() {
-        Ok(())
-    } else {
-        Err(NodeBindingError::Unsupported(
-            "CallArtifacts.compiler_generated_member_identities",
-        ))
+        return Ok(());
     }
+    let mut entries = values
+        .iter()
+        .map(|(member, owner)| {
+            Ok((
+                stable_member_identity(member, owner, 0)?,
+                positions.type_identity(owner)?,
+                member.kind.as_str().to_owned(),
+                member.declaration_name.clone(),
+            ))
+        })
+        .collect::<Result<Vec<_>, NodeBindingError>>()?;
+    entries.sort();
+    let mut row = vec![
+        "artifact-call".into(),
+        positions.owner_path()?,
+        "compiler_generated_member_identities".into(),
+        entries.len().to_string(),
+    ];
+    for (identity, owner, kind, name) in entries {
+        row.extend([identity, owner, kind, name]);
+    }
+    fields.push(row);
+    Ok(())
 }
 
 pub(super) fn restore_compiler_generated_member_identities<'a>(
-    _positions: &Positions,
-    _target: &mut HashMap<CanonicalSymbolId, CanonicalSymbolId>,
-    _span: Span,
-    _values: &mut std::slice::Iter<'a, String>,
+    positions: &Positions,
+    target: &mut HashMap<CanonicalSymbolId, CanonicalSymbolId>,
+    span: Span,
+    values: &mut std::slice::Iter<'a, String>,
 ) -> Result<(), NodeBindingError> {
-    Err(NodeBindingError::Unsupported(
-        "CallArtifacts.compiler_generated_member_identities",
-    ))
+    if span != positions.owner {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let count = read_number(values)?;
+    let mut previous: Option<String> = None;
+    for _ in 0..count {
+        let identity = next(values)?.to_owned();
+        if previous.as_ref().is_some_and(|value| value >= &identity) {
+            return Err(NodeBindingError::MissingNode);
+        }
+        previous = Some(identity.clone());
+        let owner = positions.canonical_type(next(values)?)?;
+        let kind_text = next(values)?;
+        let kind = SemanticSourceTargetKind::from_kind_str(kind_text);
+        if kind.as_str() != kind_text
+            || !matches!(
+                kind,
+                SemanticSourceTargetKind::Field
+                    | SemanticSourceTargetKind::Method
+                    | SemanticSourceTargetKind::Property
+                    | SemanticSourceTargetKind::Variant
+            )
+        {
+            return Err(NodeBindingError::MissingNode);
+        }
+        let name = next(values)?;
+        let member = owner.generated_member(name, kind);
+        if stable_member_identity(&member, &owner, 0)? != identity || target.insert(member, owner).is_some() {
+            return Err(NodeBindingError::MissingNode);
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn project_error_message_display_types(
-    _positions: &Positions,
-    values: &HashMap<String, crate::typechecker::type_info::ErrorMessageDisplay>,
-    _fields: &mut Fields,
+    positions: &Positions,
+    values: &HashMap<String, ErrorMessageDisplay>,
+    fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
     if values.is_empty() {
-        Ok(())
-    } else {
-        Err(NodeBindingError::Unsupported(
-            "CallArtifacts.error_message_display_types",
-        ))
+        return Ok(());
     }
+    let mut entries = values.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|(name, _)| *name);
+    let mut row = vec![
+        "artifact-call".into(),
+        positions.owner_path()?,
+        "error_message_display_types".into(),
+        entries.len().to_string(),
+    ];
+    for (name, display) in entries {
+        row.push(name.clone());
+        match &display.identity {
+            Some(identity) => row.extend(["some".into(), positions.identity(identity)?]),
+            None => row.push("none".into()),
+        }
+        match &display.dispatch {
+            Some(dispatch) => {
+                row.push("some".into());
+                project_method_dispatch(dispatch, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
+        row.extend([
+            display.receiver_is_trait_self.to_string(),
+            display.self_displaying_adopters.len().to_string(),
+        ]);
+        row.extend(display.self_displaying_adopters.iter().cloned());
+    }
+    fields.push(row);
+    Ok(())
 }
 
 pub(super) fn restore_error_message_display_types<'a>(
-    _positions: &Positions,
-    _target: &mut HashMap<String, crate::typechecker::type_info::ErrorMessageDisplay>,
-    _span: Span,
-    _values: &mut std::slice::Iter<'a, String>,
+    positions: &Positions,
+    target: &mut HashMap<String, ErrorMessageDisplay>,
+    span: Span,
+    values: &mut std::slice::Iter<'a, String>,
 ) -> Result<(), NodeBindingError> {
-    Err(NodeBindingError::Unsupported(
-        "CallArtifacts.error_message_display_types",
-    ))
+    if span != positions.owner {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let count = read_number(values)?;
+    let mut previous: Option<String> = None;
+    for _ in 0..count {
+        let name = next(values)?.to_owned();
+        if previous.as_ref().is_some_and(|value| value >= &name) {
+            return Err(NodeBindingError::MissingNode);
+        }
+        previous = Some(name.clone());
+        let identity = match next(values)? {
+            "some" => Some(positions.canonical(next(values)?)?),
+            "none" => None,
+            _ => return Err(NodeBindingError::MissingNode),
+        };
+        let dispatch = match next(values)? {
+            "some" => Some(read_method_dispatch(values)?),
+            "none" => None,
+            _ => return Err(NodeBindingError::MissingNode),
+        };
+        let receiver_is_trait_self = read_bool(values)?;
+        let adopter_count = read_number(values)?;
+        let self_displaying_adopters = (0..adopter_count)
+            .map(|_| Ok(next(values)?.to_owned()))
+            .collect::<Result<BTreeSet<_>, NodeBindingError>>()?;
+        if self_displaying_adopters.len() != adopter_count
+            || target
+                .insert(
+                    name,
+                    ErrorMessageDisplay {
+                        identity,
+                        dispatch,
+                        receiver_is_trait_self,
+                        self_displaying_adopters,
+                    },
+                )
+                .is_some()
+        {
+            return Err(NodeBindingError::MissingNode);
+        }
+    }
+    Ok(())
 }

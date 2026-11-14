@@ -93,7 +93,11 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         source_display_methods,
         error_message_display_types,
     } = value;
-    require_empty!("CallArtifacts"; resolved_method_calls, compiler_generated_member_identities, error_message_display_types);
+    let _ = (
+        resolved_method_calls,
+        compiler_generated_member_identities,
+        error_message_display_types,
+    );
     Ok(())
 }
 
