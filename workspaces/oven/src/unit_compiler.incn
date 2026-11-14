@@ -33,6 +33,15 @@ pub model PlanRecordCounts:
     pub native_interface_evaluations: int = 0
 
 
+pub model CheckerRecordCounts:
+    """Permanent checker-record admission counts emitted by one compiler activation."""
+
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub summary: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
+
+
 pub def compile_prepared_unit(
     unit: UnitDescription,
     toolchain: Toolchain,
@@ -87,6 +96,7 @@ pub def compile_prepared_unit(
         native += ["--plan-record-products", records_path.0]
         output_path = Path(f"{path.0}.graph-body-output")
         discard_file(output_path)
+        discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
         report = Path(f"{path.0}.graph-plan-report")
         if report.exists():
@@ -106,6 +116,50 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
+
+
+pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[CheckerRecordCounts, str]:
+    """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
+    report = checker_record_report_path(graph_body_output_path(unit, key))
+    if not report.is_file():
+        return Ok(CheckerRecordCounts())
+    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => f"cannot decode checker record report {report.0}: {error.message()}",
+    )?
+    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    if schema != "incan.checker-reuse/1":
+        return Err("unsupported checker record report")
+    fields = value
+        .require("artifact_refusals")
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
+    mut refusals: Dict[str, int] = {}
+    for name in fields.keys():
+        refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
+    counts = CheckerRecordCounts(
+        reusable_declarations=value
+            .require("reusable_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
+        all_declarations=value
+            .require("all_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
+        summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )?,
+        artifact_refusals=refusals,
+    )
+    discard_file(report)
+    return Ok(counts)
+
+
+def checker_record_report_path(output: Path) -> Path:
+    """Name the compiler-owned report paired with one graph-body output generation."""
+    return Path(f"{output.0}.checker-report.json")
 
 
 pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:

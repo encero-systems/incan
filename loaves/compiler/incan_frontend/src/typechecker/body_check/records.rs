@@ -136,6 +136,20 @@ impl TypeChecker {
         self.local_record_refusals.get(&owner).cloned()
     }
 
+    /// Name every nonempty artifact field that prevents this checked owner from crossing the reusable-record boundary.
+    pub(crate) fn body_artifact_refusals(&self, owner: Span) -> Vec<&'static str> {
+        let mut refusals = Vec::new();
+        if let Some(view) = self.checked_declaration(owner) {
+            refusals.extend(unsupported::artifact_refusals(view));
+        }
+        if let Some(view) = self.checked_body(owner) {
+            refusals.extend(unsupported::artifact_refusals(view));
+        }
+        refusals.sort_unstable();
+        refusals.dedup();
+        refusals
+    }
+
     /// Retain one selected local value for republishing without treating selection as producer execution.
     pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
         self.selected_local_records.insert(owner, fields);
