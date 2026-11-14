@@ -45,6 +45,7 @@ pub from compiler_captured_sources import (
 )
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons, retained_namespace_event
+from compiler_body_keys import body_key, eligibility_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
 from compiler_source_projection import (
@@ -53,6 +54,7 @@ from compiler_source_projection import (
     compiled_owner_source,
     declaration_index_key,
     import_declaration_indexes,
+    owner_census_key,
     owner_source_key,
     project_source,
     signature_record,
@@ -66,8 +68,6 @@ from compiler_projection_cache import (
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
-
-const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
 
 model LoweringBody:
@@ -134,7 +134,6 @@ model StagedCompiledBodySources:
     source: PreparedBodyRecordSource
     scope: ReadScope
     projections: Dict[str, SourceProjection]
-    declarations: Dict[str, list[RecordKey]]
     editable_packages: list[str]
     rechecked: list[str]
 
@@ -233,7 +232,6 @@ pub def prepare_compiled_bodies(
     mut source = staged.source
     scope = staged.scope
     projections = staged.projections
-    declarations = staged.declarations
     editable_packages = staged.editable_packages
     rechecked = staged.rechecked
 
@@ -244,7 +242,6 @@ pub def prepare_compiled_bodies(
         source,
         scope,
         projections,
-        declarations,
         outputs.values,
         unit,
         origin,
@@ -259,7 +256,6 @@ pub def prepare_compiled_bodies(
         selected,
         unit,
         origin,
-        declarations,
         rechecked,
         plan_output,
     )?
@@ -281,7 +277,6 @@ def stage_compiled_body_values(
     mut source: PreparedBodyRecordSource,
     scope: ReadScope,
     projections: &Dict[str, SourceProjection],
-    declarations: &Dict[str, list[RecordKey]],
     values: list[CompiledBodyValue],
     unit: UnitDescription,
     origin: str,
@@ -292,12 +287,14 @@ def stage_compiled_body_values(
     for value in values:
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
+        declaration_key = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
-        mut local_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        )]
-        for declaration in declarations[value.module]:
-            local_reads.append(prepared_product_request(declaration))
+        mut local_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.census.key),
+            prepared_product_request(declaration_key),
+        ]
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
@@ -318,11 +315,13 @@ def stage_compiled_body_values(
         )?
         source.add(encode_record_key(local_key)?, value.local)
         final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
-        mut final_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        ), prepared_product_request(local_key)]
-        for declaration in declarations[value.module]:
-            final_reads.append(prepared_product_request(declaration))
+        mut final_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.census.key),
+            prepared_product_request(declaration_key),
+            prepared_product_request(local_key),
+        ]
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
@@ -368,13 +367,14 @@ def stage_compiled_namespaces(
     for namespace in namespaces:
         projection = projections[namespace.module]
         key = namespace_key(origin, namespace.module)
-        mut reads = [prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        )]
-        for owner in projection.owners:
-            reads.append(prepared_product_request(owner.key))
+        mut reads = [
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+            prepared_product_request(projection.census.key),
+        ]
         for dependency in namespace.dependencies:
             reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
+            reads.append(prepared_product_request(owner_census_key(origin, dependency)))
         value = encode_graph_namespace_value(
             GraphNamespaceValue(
                 module=namespace.module,
@@ -403,22 +403,12 @@ def prepare_optional_lowering_records(
     selected: Option[Snapshot],
     unit: UnitDescription,
     origin: str,
-    declarations: Dict[str, list[RecordKey]],
     rechecked: list[str],
     plan_output: Option[Path],
 ) -> Result[Transaction, str]:
     """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
-        witnesses = lowering_witnesses(
-            projections,
-            outputs.values,
-            retained,
-            source,
-            selected,
-            unit,
-            origin,
-            declarations,
-        )?
+        witnesses = lowering_witnesses(projections, outputs.values, retained, source, selected, unit, origin)?
         return prepare_lowering_records(
             prepared,
             source,
@@ -467,7 +457,6 @@ def stage_compiled_body_sources(
             source=source,
             scope=scope,
             projections=projections,
-            declarations=module_declarations(outputs.values, origin)?,
             editable_packages=editable_packages,
             rechecked=rechecked,
         ),
@@ -490,10 +479,8 @@ def stage_compiled_projection_sources(
             modules.add(namespace.module)
         for dependency in namespace.dependencies:
             projection = projections[dependency]
-            key = encode_record_key(projection.declarations.key)?
-            value = projection.declarations.text.encode("utf-8")
-            stage_put(prepared, key, value)
-            source.add(key, value)
+            stage_source_record(prepared, source, projection.declarations)?
+            stage_source_record(prepared, source, projection.census)?
     for value in outputs.values:
         if value.module not in modules:
             stage_source_projection(prepared, source, projections[value.module], true)?
@@ -518,7 +505,7 @@ def stage_source_projection(
     signatures: bool,
 ) -> Result[None, str]:
     """Stage one module header, declaration index and owner records through the prepared request authority."""
-    for record in [projection.header, projection.declarations]:
+    for record in [projection.header, projection.declarations, projection.census]:
         key = encode_record_key(record.key)?
         value = record.text.encode("utf-8")
         stage_put(prepared, key, value)
@@ -586,6 +573,7 @@ def stage_project_dependency_source(
     source.add(encode_record_key(slot)?, slot_value)
     projection = projections[project_dependency_module(unit, dependency.module)?]
     stage_source_record(prepared, source, projection.declarations)?
+    stage_source_record(prepared, source, projection.census)?
     signature = cached_project_signature_record(
         projections,
         unit,
@@ -701,14 +689,15 @@ def lowering_witnesses(
     selected: Option[Snapshot],
     unit: UnitDescription,
     origin: str,
-    declarations: Dict[str, list[RecordKey]],
 ) -> Result[list[LoweringBody], str]:
     """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
     mut witnesses: list[LoweringBody] = []
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in fresh:
-        mut signatures = [projections[value.module].declarations.key]
-        signatures.extend(declarations[value.module])
+        mut signatures = [
+            projections[value.module].census.key,
+            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
+        ]
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
@@ -771,7 +760,13 @@ def lowering_witnesses(
             match witness:
                 ReadWitness.Found(found, _) =>
                     input = found.request.key
-                    if input.family in ["declaration", "declaration-slot", "declaration-signature", "declaration-index"]:
+                    if input.family in [
+                        "declaration",
+                        "declaration-slot",
+                        "declaration-signature",
+                        "declaration-index",
+                        "owner-census",
+                    ]:
                         encoded = encode_record_key(input)?
                         value = match get(prior, encoded).map_err((error) => error.message())?:
                             None => return Err("retained lowering signature input is absent")
@@ -1101,18 +1096,6 @@ def dependency_owner_record(
     return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
-def module_declarations(values: list[CompiledBodyValue], origin: str) -> Result[Dict[str, list[RecordKey]], str]:
-    """Index each cold-checked module's complete immutable declaration environment once."""
-    mut declarations: Dict[str, list[RecordKey]] = {}
-    for value in values:
-        if value.module not in declarations:
-            declarations[value.module] = []
-        declarations[value.module].append(
-            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
-        )
-    return Ok(declarations)
-
-
 def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
     """Decode one fresh Body IR owner once and index its canonical lowering identity."""
     decoded = decode_owner(body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
@@ -1201,58 +1184,10 @@ def dependency_invalidation_key(
     origin: str,
     dependency: CompiledBodyDependencyRead,
 ) -> Result[Option[RecordKey], str]:
-    """Select the captured project declaration surface that makes signature and removal edits visible before checking."""
+    """Select the captured project owner census that makes removal edits visible without sibling signature fan-out."""
     if dependency.package is not None:
         return Ok(None)
-    return Ok(Some(declaration_index_key(origin, project_dependency_module(unit, dependency.module)?)))
-
-
-def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
-    """Name one project declaration slot whose value is the producer's checked stable identity."""
-    return RecordKey(
-        family="declaration-slot",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=module,
-        facet=name,
-        context="checked-signature",
-    )
-
-
-def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
-    """Name one canonical checker value under its stable owner and semantic root."""
-    return RecordKey(
-        family=family,
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=identity,
-        facet=facet,
-        context=context,
-    )
-
-
-def namespace_key(origin: str, module: str) -> RecordKey:
-    """Name one composite editable namespace under its logical source projection."""
-    return RecordKey(
-        family="namespace",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=module,
-        facet="checked",
-        context="interface-body-ir-plan",
-    )
-
-
-def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
-    """Name the explicit record-fast-path decision for one successfully checked owner."""
-    return RecordKey(
-        family="eligibility",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=identity,
-        facet=name,
-        context="checker-record",
-    )
+    return Ok(Some(owner_census_key(origin, project_dependency_module(unit, dependency.module)?)))
 
 
 def root(encoded: bytes) -> Result[str, str]:
