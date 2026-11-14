@@ -31,6 +31,7 @@ use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 mod declaration_records;
 mod runtime_bindings;
+pub(super) use declaration_records::read_declaration;
 pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
@@ -40,6 +41,8 @@ const DOCUMENTATION: &str = "documentation";
 const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
 const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
+/// The record families of a declaration's own facts; a manifest projection never selects them either.
+const DECLARATION_FAMILIES: [&str; 3] = ["declaration-signature", "layout", "default"];
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -107,7 +110,8 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
-        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS);
+        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS)
+            || DECLARATION_FAMILIES.contains(&family);
         match self {
             Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
@@ -1248,7 +1252,11 @@ mod tests {
     #[test]
     fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let manifest = surfaced_library()?;
+        // One copy of the checked API module, so `prices::price` names one declaration.
+        let mut manifest = surfaced_library()?;
+        if let Some(api) = manifest.contract_metadata.api.as_mut() {
+            api.modules.truncate(1);
+        }
         let set = installed_library(root.path(), &manifest)?;
         let dir = root.path().join("debug");
         // The index admits an installed Loaf by its inventory summary before anything demands its records.
