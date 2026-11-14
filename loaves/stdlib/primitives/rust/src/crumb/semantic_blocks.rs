@@ -73,12 +73,7 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
 fn block_context(document: &Json) -> Option<(CellType, char, Option<Vec<Value>>)> {
     let name = document.get("type")?.as_str()?;
     let node = cell_type(name)?;
-    let absent = match document.get("absent").and_then(Json::as_str).unwrap_or("required") {
-        "required" => 'r',
-        "none" => 'n',
-        "empty" => 'e',
-        _ => return None,
-    };
+    let absent = absence(document)?;
     let stored = stored_type(&node, absent)?;
     let mut key_type = key_type_of(&stored);
     let supplied = if let Some(values) = document.get("dictionary_values") {
@@ -753,4 +748,164 @@ fn write_cell(node: &CellType, value: &Value) -> Option<Vec<u8>> {
         (CellType::Boolean, Value::Boolean(flag)) => Some(vec![u8::from(*flag)]),
         _ => columns::key_cell(key_type_of(node)?, value),
     }
+}
+
+/// Decode a complete column case: the shared dictionary, block directory and every block, then membership.
+pub(super) fn decode_column(document: &Json) -> Option<Vec<u8>> {
+    let node = cell_type(document.get("type")?.as_str()?)?;
+    let absent = absence(document)?;
+    let data = columns::hex(document.get("input_hex")?.as_str()?)?;
+    let rows = usize::try_from(document.get("logical_count")?.as_u64()?).ok()?;
+    let mut budget = columns::case_budget(document)?;
+    let mut output = Vec::new();
+    match read_column(&node, absent, rows, &data, &mut budget) {
+        Ok(Some((encodings, values))) => {
+            output.push(0);
+            hash::unsigned(&mut output, encodings.len() as u128);
+            for encoding in encodings {
+                hash::unsigned(&mut output, u128::from(encoding));
+            }
+            hash::frame(
+                &mut output,
+                &hash::value_preimage(&Value::List(values), Projection::Object)?,
+            );
+        }
+        Ok(None) => return None,
+        Err(category) => {
+            output.push(1);
+            hash::frame(&mut output, category.as_bytes());
+        }
+    }
+    Some(output)
+}
+
+/// Encode a complete column case's authored values with its authored block encodings.
+pub(super) fn encode_column(document: &Json) -> Option<Vec<u8>> {
+    let node = cell_type(document.get("type")?.as_str()?)?;
+    let absent = absence(document)?;
+    let expected = document.get("expected")?;
+    let Some(values) = expected.get("values") else {
+        return Some(Vec::new());
+    };
+    let values = hash::logical_items(values)?;
+    let encodings: Vec<u8> = expected
+        .get("encodings")?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_u64().and_then(|value| u8::try_from(value).ok()))
+        .collect::<Option<_>>()?;
+    if encodings.len() != values.len().div_ceil(256) || values.is_empty() {
+        return None;
+    }
+    let stored_node = stored_type(&node, absent)?;
+    let mut output = Vec::new();
+    let mut keys: Option<Vec<Value>> = None;
+    if encodings.iter().any(|encoding| matches!(encoding, 4 | 5)) {
+        let mut stored = Vec::new();
+        for value in &values {
+            if let Some(item) = present(value.clone(), absent)? {
+                stored.push(item);
+            }
+        }
+        let key_type = key_type_of(&stored_node)?;
+        let sorted = columns::sorted_keys(key_type, stored)?;
+        let written = columns::encode_keys(key_type, sorted.iter().map(|(_, value)| value.clone()).collect())?;
+        output.push(1);
+        hash::frame(&mut output, &written);
+        keys = Some(sorted.into_iter().map(|(_, value)| value).collect());
+    } else {
+        output.push(0);
+    }
+    let mut blocks = Vec::with_capacity(encodings.len());
+    for (index, chunk) in values.chunks(256).enumerate() {
+        blocks.push(write_block(
+            &node,
+            absent,
+            chunk.to_vec(),
+            encodings[index],
+            keys.as_deref(),
+        )?);
+    }
+    output.extend(columns::indexed(&blocks));
+    Some(output)
+}
+
+/// The declared absence policy, required when the case names none.
+fn absence(document: &Json) -> Option<char> {
+    match document.get("absent").and_then(Json::as_str).unwrap_or("required") {
+        "required" => Some('r'),
+        "none" => Some('n'),
+        "empty" => Some('e'),
+        _ => None,
+    }
+}
+
+/// Admit a complete column and require its dictionary to be used by codes and fully referenced.
+fn read_column(
+    node: &CellType,
+    absent: char,
+    rows: usize,
+    data: &[u8],
+    budget: &mut Budget,
+) -> Result<Option<(Vec<u8>, Vec<Value>)>, Refused> {
+    if rows < 1 {
+        return Err("invalid_cell");
+    }
+    let count = rows.div_ceil(256);
+    let Some(stored) = stored_type(node, absent) else {
+        return Ok(None);
+    };
+    let mut cursor = Cursor::new(data);
+    let mode = cursor.byte(budget)?;
+    if mode > 1 {
+        return Err("unsupported_encoding");
+    }
+    let key_type = key_type_of(&stored);
+    let keys = if mode == 1 {
+        Some(columns::read_keys(key_type, cursor.frame(budget)?, budget)?)
+    } else {
+        None
+    };
+    let (table, width, directory) = columns::read_index(&mut cursor, count, budget)?;
+    let (mut encodings, mut values, mut used) = (Vec::with_capacity(count), Vec::with_capacity(rows), Vec::new());
+    for index in 0..count {
+        budget.elements(1)?;
+        let raw = selected(table, width, directory, index, budget)?;
+        if raw.is_empty() {
+            return Err("invalid_offsets");
+        }
+        let length = (rows - index * 256).min(256) as i64;
+        let Some((encoding, block)) = read_block(node, absent, length, raw, keys.as_deref(), budget)? else {
+            return Ok(None);
+        };
+        if mode == 1 {
+            for value in &block {
+                budget.elements(1)?;
+                if let Some(item) = present(value.clone(), absent).ok_or("invalid_cell")? {
+                    let identity = columns::key_cell(key_type.ok_or("encoding_type")?, &item).ok_or("invalid_cell")?;
+                    if !used.contains(&identity) {
+                        used.push(identity);
+                    }
+                }
+            }
+        }
+        budget.bytes(128)?;
+        encodings.push(encoding);
+        values.extend(block);
+    }
+    if let Some(keys) = keys {
+        if !encodings.iter().any(|encoding| matches!(encoding, 4 | 5)) {
+            return Err("unused_dictionary");
+        }
+        if used.len() != keys.len() {
+            return Err("dictionary_membership");
+        }
+        for key in &keys {
+            let identity = columns::key_cell(key_type.ok_or("encoding_type")?, key).ok_or("invalid_cell")?;
+            if !used.contains(&identity) {
+                return Err("dictionary_membership");
+            }
+        }
+    }
+    Ok(Some((encodings, values)))
 }
