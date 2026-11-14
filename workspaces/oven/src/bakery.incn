@@ -70,6 +70,7 @@ from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact,
 from bakery_roots import collect, preview_collection
 
 const VIEW_RECORD: str = "fact.json"
+const VIEW_CLAIM: str = "incan.bakery.view"
 const VERIFY: int = -2
 const OPEN_FILE: u32 = 420
 const OPEN_PROGRAM: u32 = 493
@@ -413,35 +414,79 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     A new view is assembled beside the destination and swapped in, so it is never half written. A whole-unit view also
     holds `fact.json`, which names the unit it was viewed from.
     """
-    mut files = fact.files
-    if prefix != "":
-        files = [file for file in fact.files if file.path.startswith(prefix + "/")]
-    mut same_identity = prefix != ""
-    if prefix == "" and destination.joinpath(VIEW_RECORD).is_file():
-        marker = read_json(destination.joinpath(VIEW_RECORD))?
-        same_identity = required_text(marker, "identity")? == fact.identity
-    if (
-        same_identity
-        and not destination.is_symlink()
-        and destination.is_dir()
-        and all_same(store, files, destination, prefix)
-    ):
+    if current_view(store, fact, destination, prefix):
         return Ok(None)
+    staged = stage_view(store, fact, destination, prefix)?
+    return place_view(store, fact, staged, destination, prefix)
+
+
+def view_files(fact: Fact, prefix: str) -> list[FactFile]:
+    """The files a view holds: the whole unit's, or those below `prefix`."""
+    if prefix == "":
+        return fact.files
+    return [file for file in fact.files if file.path.startswith(prefix + "/")]
+
+
+def current_view(store: Path, fact: Fact, destination: Path, prefix: str) -> bool:
+    """
+    Whether `destination` already is an unchanged view of this unit.
+
+    A whole-unit view must name this unit in `fact.json`. A marker that cannot be read, such as one a concurrent
+    command is replacing, is not a current view.
+    """
+    if destination.is_symlink() or not destination.is_dir():
+        return false
+    if prefix == "":
+        record = destination.joinpath(VIEW_RECORD)
+        if not record.is_file():
+            return false
+        match read_json(record):
+            Err(_) => return false
+            Ok(marker) =>
+                match required_text(marker, "identity"):
+                    Err(_) => return false
+                    Ok(identity) =>
+                        if identity != fact.identity:
+                            return false
+    return all_same(store, view_files(fact, prefix), destination, prefix)
+
+
+pub def stage_view(store: Path, fact: Fact, destination: Path, prefix: str = "") -> Result[Path, str]:
+    """Assemble a complete view of the unit beside `destination`, in this process's own directory."""
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
     if staged.is_dir():
         staged.remove_tree().map_err((error) => f"{staged.0}: {error.message()}")?
     make_directory(staged)?
-    for file in files:
+    for file in view_files(fact, prefix):
         target = staged.joinpath(relative_to(file.path, prefix))
         make_directory(target.parent())?
         clone(payload_path(store, file.digest), target, file.program)?
     if prefix == "":
         marker = JsonValue.object({"identity": JsonValue.string(fact.identity)})
         publish(staged.joinpath(VIEW_RECORD), json_text(marker)?)?
-    swap_in(staged, destination, store, files, prefix)?
-    admit_views(files, destination, prefix)?
-    return Ok(None)
+    return Ok(staged)
+
+
+pub def place_view(store: Path, fact: Fact, staged: Path, destination: Path, prefix: str = "") -> Result[None, str]:
+    """
+    Swap an assembled view in at `destination`, one command at a time.
+
+    1. Commands that view into one destination take turns, each holding the destination's claim until its view is
+       admitted.
+    2. A current view of the same unit that another command placed meanwhile is kept, and this one is discarded.
+       Replacing it would take the directory from under a command that is already reading it.
+    3. Otherwise the earlier directory is retired and this view takes its place.
+    """
+    # 1. The claim is keyed by the destination, so views of other directories never wait on this one.
+    _held = claim_key(store, f"{VIEW_CLAIM}\t{destination.0}").map_err(store_failure)?
+    # 2. Whoever held the claim before may have placed the same view.
+    if current_view(store, fact, destination, prefix):
+        _ = staged.remove_tree()
+        return Ok(None)
+    # 3. Nobody else replaces this destination until the claim is released.
+    swap_in(staged, destination)?
+    return admit_views(view_files(fact, prefix), destination, prefix)
 
 
 def relative_to(path: str, prefix: str) -> str:
@@ -451,25 +496,15 @@ def relative_to(path: str, prefix: str) -> str:
     return path[len(prefix) + 1:]
 
 
-def swap_in(staged: Path, destination: Path, store: Path, files: list[FactFile], prefix: str) -> Result[None, str]:
-    """
-    Replace `destination` with the assembled view. A concurrent command may swap in its own view of the same unit
-    meanwhile; a destination that already holds a current view is kept and this one discarded.
-    """
+def swap_in(staged: Path, destination: Path) -> Result[None, str]:
+    """Replace `destination` with the assembled view; the caller holds the destination's claim."""
     if destination.is_symlink():
         _ = destination.unlink()
     elif destination.is_dir():
         retired = Path(f"{destination.0}.retired-{id()}")
-        match rename(destination.0, retired.0):
-            Ok(_) => _ = retired.remove_tree()
-            Err(_) => pass
-    match rename(staged.0, destination.0):
-        Ok(_) => return Ok(None)
-        Err(error) =>
-            if destination.is_dir() and all_same(store, files, destination, prefix):
-                _ = staged.remove_tree()
-                return Ok(None)
-            return Err(f"{destination.0}: {error}")
+        rename(destination.0, retired.0).map_err((error) => f"{destination.0}: {error}")?
+        _ = retired.remove_tree()
+    rename(staged.0, destination.0).map_err((error) => f"{destination.0}: {error}")
 
 
 def same_file(source: Path, view: Path) -> bool:

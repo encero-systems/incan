@@ -18,6 +18,8 @@ from bakery import (
     prepare_seal,
     staging,
     view_directory,
+    stage_view,
+    place_view,
     verify_all,
     repair_derived,
 )
@@ -645,4 +647,38 @@ def prove_superseded_payloads_are_collected(store: Path, root: Path) -> Result[N
     println(
         f"payload collection: 20 superseded generations, {payloads} payloads and {payload_bytes} payload bytes reclaimed, {bytes} total immutable bytes before release, live old payload retained",
     )
+    return Ok(None)
+
+
+pub def test_a_view_another_command_placed_meanwhile_is_kept() -> Result[None, str]:
+    """
+    Two commands that view one unit into one directory at once leave the first view in place.
+
+    1. Neither command finds a view, so each assembles one; the first places its view and works in the directory.
+    2. The second arrives late: the directory in use stays as it is, and the late view is discarded.
+    3. A view of another unit still replaces the directory.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    target = scratch.path().joinpath("target/loaves/dep/debug")
+    identity = digest_of("e5")
+    assert bake(store, identity, "library")?
+    fact = baked(store, identity)?
+    # 1. The first command's view is in place, and that command has started using it.
+    first = stage_view(store, fact, target)?
+    place_view(store, fact, first, target)?
+    write(target.joinpath("in-use"), "the first command's work")?
+    # 2. The second command staged before the first placed, and places only now.
+    late = stage_view(store, fact, target)?
+    place_view(store, fact, late, target)?
+    assert target.joinpath("in-use").is_file(), "a late view of the same unit replaced the directory in use"
+    assert read(target.joinpath("payload"))? == "library"
+    assert not late.exists(), "the discarded view was left beside the directory"
+    # 3. Another unit is another view.
+    other = digest_of("e6")
+    assert bake(store, other, "another library")?
+    view_directory(store, baked(store, other)?, target)?
+    assert other in read(target.joinpath("fact.json"))?
+    assert read(target.joinpath("payload"))? == "another library"
+    assert not target.joinpath("in-use").exists()
     return Ok(None)
