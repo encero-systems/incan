@@ -18,11 +18,17 @@ const OTHER_FUNCTIONS: usize = 60;
 /// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, `unit`, without parameters, the
 /// constant `RATE`, the static `LIMIT`, the generic function `first` and many other public functions.
 pub(super) fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+    catalog_with("")
+}
+
+/// The Loaf `prices` of [`catalog`], whose module `money` also declares `extra`.
+pub(super) fn catalog_with(extra: &str) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut source = "pub def price(cents: int, rounded: bool = true) -> int:\n    return cents\n".to_owned();
     source.push_str("\npub def unit() -> int:\n    return 100\n");
     source.push_str("\npub const RATE: int = 7\n");
     source.push_str("\npub static LIMIT: int = 500\n");
     source.push_str("\npub def first[T](items: list[T]) -> T:\n    return items[0]\n");
+    source.push_str(extra);
     for index in 0..OTHER_FUNCTIONS {
         source.push_str(&format!(
             "\npub def discount_{index}(cents: int, percent: int = 10) -> int:\n    return cents - percent\n"
@@ -231,8 +237,17 @@ fn importing_a_child_namespace_reads_no_record_of_its_parent() -> Result<(), Box
 
 /// Check `source`, a program importing from the installed Loaf `prices`, and return the keys of the records it read.
 fn prices_import_reads(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    manifest_import_reads(&catalog()?, source)
+}
+
+/// Check `source`, a program importing from `manifest` installed as the Loaf `prices`, and return the keys of the
+/// records it read.
+pub(super) fn manifest_import_reads(
+    manifest: &LibraryManifest,
+    source: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let _selection = thread_selection::select(installed_library(root.path(), &catalog()?)?);
+    let _selection = thread_selection::select(installed_library(root.path(), manifest)?);
     let index = LoafIndex::deferred([(
         "prices".to_owned(),
         "prices".to_owned(),
