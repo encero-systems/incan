@@ -12,6 +12,18 @@ mod semantic;
 pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
 pub use scalar_records::{ScalarRecordBatch, encode_scalar_records};
 pub use semantic::{SemanticCase, evaluate_semantic_case};
+/// How many envelopes the retained Incan twin's row reader has admitted in this process.
+static TWIN_ROW_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count one envelope the retained Incan twin's row reader admits, so a test can prove which reader a path ran.
+pub fn count_twin_row_read() {
+    TWIN_ROW_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The envelopes the retained Incan twin's row reader has admitted in this process.
+pub fn twin_row_reads() -> u64 {
+    TWIN_ROW_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Encoded bytes and the exact logical work charged by the Incan codec contract.
 pub struct Encoded {

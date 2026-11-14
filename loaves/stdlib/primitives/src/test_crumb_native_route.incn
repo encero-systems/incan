@@ -1,0 +1,66 @@
+"""The public Crumb row API runs the Rust codec; the Incan codec is its measured twin, never a second route."""
+
+from rust::incan_std_primitives::crumb import twin_row_reads
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.descriptions import Description, DescriptionMode
+from crate.primitives.crumb.records import RowRecord
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.row_reader import read_rows
+from crate.primitives.crumb.row_writer import write_rows
+from crate.primitives.crumb.types import AbsentPolicy
+from crate.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from crate.primitives.views import MappedFile
+
+
+def stored() -> Description:
+    """One record description with a single required `i8` field."""
+    member = Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(b"field1")),
+            MetadataEntry(key="name", value=Metadata.Text("stored")),
+            MetadataEntry(key="type", value=Metadata.Text("i8")),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+    return Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Record")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(b"record\x00")),
+                MetadataEntry(key="path", value=Metadata.Text("example.Stored")),
+                MetadataEntry(key="fields", value=Metadata.List([member])),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+            ],
+        ),
+        mode=DescriptionMode.Inline,
+    )
+
+
+def test_the_public_read_path_does_not_run_the_incan_twin() -> Result[None, str]:
+    """Reading an envelope and one of its records through the public API admits nothing in the Incan twin."""
+    values = [
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
+    ]
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    records = [RowRecord(key=b"record\x00", value=Value.Record(values))]
+    envelope = write_rows([stored()], records, registry, true, budget).map_err((e) => e.message())?
+    owner = MappedFile.owned(envelope)?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            before = twin_row_reads()
+            rows = read_rows(view, [], registry, true, budget).map_err((e) => e.message())?
+            record = rows.read_record(0, budget).map_err((e) => e.message())?
+            assert record.key == b"record\x00"
+            assert rows.is_sealed()
+            ran = twin_row_reads() - before
+            assert ran == 0u64, f"the public read path admitted {ran} envelope(s) in the Incan twin"
+    return Ok(None)
