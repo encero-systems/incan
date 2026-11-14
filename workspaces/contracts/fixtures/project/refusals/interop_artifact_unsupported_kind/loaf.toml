@@ -12,5 +12,5 @@ target = "aarch64-apple-darwin"
 
 [[interop.c.targets.artifacts]]
 name = "bridge"
-kind = "bundled"
+kind = "dynamic"
 path = "interop/lib/libbridge.dylib"
