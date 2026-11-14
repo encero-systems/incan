@@ -162,6 +162,15 @@ pub def parse_c_targets(root: Dict[str, TomlValue], manifest: str) -> Result[lis
 def target_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CInteropTarget, IntakeError]:
     """One target: its triple, requirements, headers, artifacts and binding relations."""
     entry = as_table(value, manifest, field)?
+    if "shims" in entry:
+        return Err(
+            refused(
+                manifest,
+                field + ["shims"],
+                IntakeErrorKind.Unsupported,
+                "a shim is a Clove now: declare its sources in a [c] facet (`library` is the shim's output, `public-headers` its headers, [[c.compile]] its C or C++ sources) and link it with c.loaf_library",
+            ),
+        )
     known_keys(entry, list(TARGET_KEYS), manifest, field)?
     if "target" not in entry:
         return Err(refused(manifest, field + ["target"], IntakeErrorKind.Missing, "required field target"))
