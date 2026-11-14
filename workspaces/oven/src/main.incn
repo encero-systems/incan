@@ -16,6 +16,8 @@ from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader, entry_source
+from files import read
+from manifest_intent import unknown_tool_keys
 from unit import describe, project_root_of, retired_refusal, with_c_abi_target
 from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
@@ -694,7 +696,29 @@ def prepared_lock(command: str, options: Options) -> None:
         options.locked,
     ):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-        Ok(_) => return
+        Ok(_) => warn_unknown_tool_keys(command, Path(options.path))
+
+
+def warn_unknown_tool_keys(command: str, path: Path) -> None:
+    """
+    Warn once for each `[tool.incan]` key of the selected project's manifest that this toolchain does not read. 0.5.1
+    tolerated such keys, and so does 0.6, but never silently.
+    """
+    mut root = project_root_of(path)
+    if path.is_dir() and path.joinpath("loaf.toml").is_file():
+        root = Some(path)
+    match root:
+        None => return
+        Some(directory) =>
+            manifest = directory.joinpath("loaf.toml")
+            match read(manifest):
+                Err(_) => return
+                Ok(source) =>
+                    mut err = stderr()
+                    for key in unknown_tool_keys(source):
+                        text = f"{invoked()} {command}: warning: {manifest.0}: [tool.incan] key `{key}` is not read by this toolchain and is ignored\n"
+                        # A closed standard error cannot be told about, so a failed write is ignored.
+                        _ = err.write_all(RustString.from(text).into_bytes())
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
@@ -941,7 +965,10 @@ def check(arguments: list[str]) -> None:
         fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
     match parse_options(own, "."):
         Err(reason) => syntax_error("check", reason)
-        Ok(options) => finish("check", checked(validated("check", located("check", options)), format), format)
+        Ok(options) =>
+            selected = validated("check", located("check", options))
+            warn_unknown_tool_keys("check", Path(selected.path))
+            finish("check", checked(selected, format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
