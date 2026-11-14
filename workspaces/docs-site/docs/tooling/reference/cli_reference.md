@@ -263,7 +263,7 @@ Graph options, schemas, queries, context packs and snapshot checks are specified
 
 ## `incan inspect bindings`
 
-`incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
+`incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [--features A,B] [--no-default-features] [--all-features] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The feature options select the root package features the export is checked with, as for [`incan inspect codegraph`](agent_context_cli.md). The text report is:
 
 ```text
 binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
