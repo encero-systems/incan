@@ -2,7 +2,7 @@
 
 from std.json import JsonValue
 from std.primitives.crumb import Budget
-from std.primitives.crumb.admission import check_written
+from std.primitives.crumb.admission import RecordShape, check_written, plan_adaptation
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import Reader, frame
 from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
@@ -13,9 +13,10 @@ from std.primitives.crumb.types import NominalKind, TypeNode
 from std.primitives.crumb.values import Projection
 from std.primitives.hash import sha256
 from std.primitives.text import encode_utf8
+from adaptation_cases import absent_value, convert
 from case_data import CaseOperation, HashKind, array, field, fields as fixture_fields, hex_bytes, node, nodes, text
 from corpus import CorpusCase
-from fixture_adapter import logical, logical_items, metadata
+from fixture_adapter import logical, logical_items, metadata, record
 
 
 pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
@@ -30,6 +31,7 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.ShapeAdmission => return Ok(Some(admission_twin(item.document)?))
         CaseOperation.ValueRelation => return Ok(Some(relation_twin(item.document)?))
         CaseOperation.HashPreimage => return Ok(Some(hash_twin(item.document)?))
+        CaseOperation.Adaptation => return Ok(Some(adaptation_twin(item.document)?))
         _ => return Ok(None)
 
 
@@ -166,3 +168,60 @@ def hash_decode(encoded: bytes) -> Result[bytes, str]:
     output.append(frame(preimage, budget).map_err((error) => error.message())?, budget).map_err((e) => e.message())?
     output.append(digest, budget).map_err((error) => error.message())?
     return output.finish(budget).map_err((error) => error.message())
+
+
+def adaptation_twin(document: JsonValue) -> Result[bytes, str]:
+    """Plan and apply one adaptation, then encode the adapted object preimage and three digest relations."""
+    mut budget = twin_budget()?
+    written = field(document, "written")?
+    requested = field(document, "requested")?
+    source = RecordShape(nominal=encode_utf8(text(written, "nominal")?), fields=fixture_fields(written)?)
+    target = RecordShape(nominal=encode_utf8(text(requested, "nominal")?), fields=fixture_fields(requested)?)
+    match plan_adaptation(source, target, budget):
+        Err(error) =>
+            mut refused = EncodingBuffer.create()
+            refused.octet(1, budget).map_err((failure) => failure.message())?
+            refused
+                .append(frame(encode_utf8(error.kind.value()), budget).map_err((failure) => failure.message())?, budget)
+                .map_err((failure) => failure.message())?
+            refused
+                .append(frame(encode_utf8(error.path), budget).map_err((failure) => failure.message())?, budget)
+                .map_err((failure) => failure.message())?
+            return refused.finish(budget).map_err((failure) => failure.message())
+        Ok(plan) =>
+            values = array(document, "values")?
+            mut adapted: list[JsonValue] = []
+            for item in plan:
+                match item.source:
+                    Some(index) => adapted.append(convert(values[index], item.conversion)?)
+                    None => adapted.append(absent_value(item)?)
+            before = record(written, values)?
+            after = record(requested, adapted)?
+            after_object = value_hash(after, Projection.Object, budget, true).map_err((e) => e.message())?
+            preimage = match after_object.preimage:
+                Some(captured) => captured
+                None => return Err("adaptation twin did not capture its object preimage")
+
+            before_object = value_hash(before, Projection.Object, budget).map_err((e) => e.message())?
+            before_canonical = value_hash(before, Projection.Canonical, budget).map_err((e) => e.message())?
+            after_canonical = value_hash(after, Projection.Canonical, budget).map_err((e) => e.message())?
+            source_model = model_hash(TypeNode.Record("source", fixture_fields(written)?), budget).map_err(
+                (e) => e.message(),
+            )?
+            target_model = model_hash(TypeNode.Record("target", fixture_fields(requested)?), budget).map_err(
+                (e) => e.message(),
+            )?
+            mut output = EncodingBuffer.create()
+            output.octet(0, budget).map_err((e) => e.message())?
+            output.append(frame(preimage, budget).map_err((e) => e.message())?, budget).map_err((e) => e.message())?
+            output.octet(changed(before_object, after_object), budget).map_err((e) => e.message())?
+            output.octet(changed(before_canonical, after_canonical), budget).map_err((e) => e.message())?
+            output.octet(changed(source_model, target_model), budget).map_err((e) => e.message())?
+            return output.finish(budget).map_err((e) => e.message())
+
+
+def changed(left: HashResult, right: HashResult) -> int:
+    """One when two digests differ, zero when they are the same."""
+    if left.digest == right.digest:
+        return 0
+    return 1
