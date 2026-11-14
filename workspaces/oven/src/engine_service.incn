@@ -2,7 +2,9 @@
 
 from rust::std::fs import symlink_metadata
 from rust::std::os::unix::fs import FileTypeExt
-from rust::std::thread import sleep
+from rust::std::mem import drop
+from rust::std::sync import Arc, Mutex
+from rust::std::thread import sleep, spawn
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
 from std.fs import Path
@@ -23,17 +25,16 @@ from engine_messages import (
     EffectDisposition,
 )
 from engine_state import Identity, ServiceState
-from engine_epochs import prepare_submit
-from engine_actions import Pending, ExecutionLease, finish_request
-from engine_programs import read_program, program_handle
+from engine_actions import Pending, Ready, WorkerEvent, ExecutionLease, finish_request
+from engine_programs import read_program
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
 from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind, zero_id
 from bakery import forget_verified, verification_entries
 from observation import trace
 from files import discard_file
-from jec import begin as begin_work, record as record_work
-from pub::incan_platform.trace import Operation, flush as flush_trace
+from pub::incan_platform.trace import flush as flush_trace
+from rust_scheduler import LOWERING_RESERVATION_BYTES, scheduler_jobs, scheduler_memory
 
 const MAX_CLIENTS: int = 16
 
@@ -43,8 +44,17 @@ pub class Client:
 
     pub channel: Channel
     pub pending: list[Pending] = []
+    pub active: list[ActiveRequest] = []
+    pub completed: Arc[Mutex[list[WorkerEvent]]]
     pub pins: list[ExecutionLease] = []
     pub closed: bool = false
+
+
+pub model ActiveRequest:
+    """The identity retained on the event loop while one background request settles."""
+
+    pub request: bytes
+    pub token: str
 
 
 class Greeting:
@@ -109,6 +119,7 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
     """Poll bounded client state and release it after use; no decoded compilation closure enters this process."""
     mut clients: list[Client] = []
     mut greetings: list[Greeting] = []
+    worker_limit = request_pool_size()
     clock = Instant.now()
     while true:
         now = int(clock.elapsed().as_millis())
@@ -121,11 +132,11 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
         if len(clients) > 0:
             for index in range(len(clients)):
                 mut client = clients[index]
-                service_client(client, state)
+                service_client(client, state, worker_limit)
                 clients[index] = client
-            clients = [client for client in clients if not client.closed]
+            clients = [client for client in clients if not client.closed or len(client.active) > 0]
         state.clients = len(clients) + len(greetings)
-        if state.stopping or state.exits(now, idle * 1000):
+        if state.exits(now, idle * 1000):
             return Ok(None)
         sleep(Duration.from_millis(2))
 
@@ -167,22 +178,26 @@ def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
                     channel.session = session_id().map_err(transport)?
                     send(channel, zero_id(), Message.Welcome(welcome))?
                     channel.acknowledge(first)?
-                    return Ok(Client(channel=channel))
+                    completed: Arc[Mutex[list[WorkerEvent]]] = Arc.new(Mutex.new([]))
+                    return Ok(Client(channel=channel, completed=completed))
         _ => return Err(Refusal(kind=RefusalKind.Schema, detail="Hello must be the first engine message"))
 
 
-def service_client(mut client: Client, mut state: ServiceState) -> None:
+def service_client(mut client: Client, mut state: ServiceState, worker_limit: int) -> None:
     """One invalid connection retires only its own interests; other clients retain their requests."""
-    match poll_client(client, state):
+    mut outcome = settle(client, state, worker_limit)
+    if not client.closed:
+        outcome = poll_client(client, state, worker_limit)
+    match outcome:
         Ok(_) => pass
         Err(_) => close_client(client, state)
-    if len(client.pending) == 0 and verification_entries() > 0:
+    if len(client.pending) == 0 and len(client.active) == 0 and verification_entries() > 0:
         released = verification_entries()
         forget_verified()
         trace(f"engine request released: captures=0 verification={verification_entries()} released={released}")
 
 
-def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+def poll_client(mut client: Client, mut state: ServiceState, worker_limit: int) -> Result[None, Refusal]:
     """Consume at most eight ready frames, then settle accepted requests within available credits."""
     for _turn in range(8):
         if not client.channel.transport.readable().map_err(transport)?:
@@ -194,7 +209,7 @@ def poll_client(mut client: Client, mut state: ServiceState) -> Result[None, Ref
         client.channel.acknowledge(frame)?
         if state.stopping:
             return Ok(None)
-    return settle(client, state)
+    return settle(client, state, worker_limit)
 
 
 def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
@@ -262,49 +277,70 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
     token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
     state.accept(request, submit.requested_roots, token)?
     send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
-    capturing = begin_work()
-    captured_request = prepare_submit(state.store, submit)
-    record_work(Operation.EngineCapture, submit.requested_roots, capturing)
-    match captured_request:
-        Err(reason) =>
-            state.detach(request, token)?
-            return Err(transport(reason))
-        Ok(captured) =>
-            selected = f"snapshot:{captured.snapshot.generation}:{captured.snapshot.digest}"
-            client.pending.append(
-                Pending(
-                    request=request,
-                    token=token,
-                    capture=captured,
-                    producer=state.identity.compiler_generation,
-                    view=submit.view,
-                    proofs=submit.observation_policy == "proofs",
-                    command=submit.command,
-                    format=submit.options,
-                    directory=submit.directory,
-                    handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
-                        transport,
-                    )?,
-                ),
-            )
-            return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
+    client.pending.append(
+        Pending(request=request, token=token, submit=submit, producer=state.identity.compiler_generation),
+    )
+    return Ok(None)
 
 
-def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
-    """Settle available requests, then replace the interest list after its iteration has ended."""
+def settle(mut client: Client, mut state: ServiceState, worker_limit: int) -> Result[None, Refusal]:
+    """Deliver completed requests, then admit captured work while the host-sized pool has capacity."""
+    collect_settled(client, state)?
     mut waiting: list[Pending] = []
     for pending in client.pending:
-        if client.channel.pending.exhausted():
+        if client.channel.pending.exhausted() or state.workers >= worker_limit:
             waiting.append(pending)
             continue
-        match finish_request(state.store, pending):
+        completed = client.completed.clone()
+        request = pending.request
+        token = pending.token
+        store = state.store
+        _ = spawn(() => finish_in_background(completed, store, pending))
+        client.active.append(ActiveRequest(request=request, token=token))
+        state.workers += 1
+    client.pending = waiting
+    return Ok(None)
+
+
+def collect_settled(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]:
+    """Move finished outcomes back onto the event loop, preserving replies while client credit is exhausted."""
+    if not client.closed and client.channel.pending.exhausted():
+        return Ok(None)
+    mut completed = match client.completed.lock():
+        Err(_) => return Err(transport("engine completion queue is poisoned"))
+        Ok(value) => value
+    mut settled: list[WorkerEvent] = []
+    while true:
+        match completed.pop():
+            Some(value) => settled.append(value)
+            None => break
+    drop(completed)
+    while len(settled) > 0:
+        match settled.pop():
+            WorkerEvent.Captured(request, captured) =>
+                if not client.closed:
+                    send(client.channel, request, Message.Captured(captured))?
+            WorkerEvent.Settled(request, token, result) => deliver_settled(client, state, request, token, result)?
+    return Ok(None)
+
+
+def deliver_settled(
+    mut client: Client,
+    mut state: ServiceState,
+    request: bytes,
+    token: str,
+    result: Result[Ready, str],
+) -> Result[None, Refusal]:
+    """Publish one worker outcome on its owning client, or only release it after that client disconnected."""
+    if not client.closed:
+        match result:
             Err(reason) =>
-                send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
+                send_request_refusal(client.channel, state.store, request, transport(reason), "unit-record")?
             Ok(ready) =>
                 if ready.console != "":
                     send(
                         client.channel,
-                        pending.request,
+                        request,
                         Message.Event(Event(status="Console", trace_handle=ready.console)),
                     )?
                 match ready.pin:
@@ -312,14 +348,31 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
                         state.pin(pin.token)?
                         client.pins.append(pin)
                     None => pass
-                send(client.channel, pending.request, Message.Complete(ready.message))?
-        state.detach(pending.request, pending.token)?
-    client.pending = waiting
+                send(client.channel, request, Message.Complete(ready.message))?
+    state.detach(request, token)?
+    client.active = [active for active in client.active if active.token != token]
+    state.workers -= 1
     return Ok(None)
 
 
+def finish_in_background(completed: Arc[Mutex[list[WorkerEvent]]], store: Path, pending: Pending) -> None:
+    """Settle one captured request away from socket polling and return its typed outcome to the event loop."""
+    finish_request(store, pending, completed)
+
+
+def request_pool_size() -> int:
+    """Bound concurrent request lowering by host CPUs, configured jobs and the 6 GiB lowering reservation."""
+    mut size = scheduler_jobs()
+    memory = scheduler_memory() // LOWERING_RESERVATION_BYTES
+    if memory < size:
+        size = memory
+    if size < 1:
+        return 1
+    return size
+
+
 def close_client(mut client: Client, mut state: ServiceState) -> None:
-    """Drop only the disconnected client's volatile requests and scoped reader interests."""
+    """Drop queued interests and pins; active work remains until its background outcome releases the interest."""
     for pending in client.pending:
         state.detach(pending.request, pending.token)
     for held in client.pins:
