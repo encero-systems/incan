@@ -1,6 +1,9 @@
 """Select local debug linkage and bind its loader generations at link time."""
 
 from std.fs import Path
+from std.json import parse
+from bakery import fact_file
+from bakery_records import Fact
 from home_paths import bakery
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
@@ -52,3 +55,22 @@ pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[
 pub def library_witness(binary: Path) -> Path:
     """The native compiler's exact dynamic-library generations beside a completed development executable."""
     return Path(f"{binary.0}.native-shared.json")
+
+
+pub def carriers_present(store: Path, fact: Fact, binary: Path) -> Result[bool, str]:
+    """
+    Whether every library the development executable `binary` of `fact` loads is still in place. The executable loads
+    them by path when it starts, so a carrier removed from the shared native store since the link means linking it
+    again. An executable without a loader witness was linked statically and loads none.
+    """
+    match fact_file(store, fact, library_witness(Path(binary.name())).0):
+        None => return Ok(true)
+        Some(witness) =>
+            text = witness.read_text("utf-8", "strict").map_err((error) => f"{witness.0}: {error.message()}")?
+            document = parse(text).map_err((error) => f"{witness.0}: {error.message()}")?
+            listed = document.require("libraries").map_err((error) => f"{witness.0}: {error.message()}")?
+            for library in listed.expect_array().map_err((error) => f"{witness.0}: {error.message()}")?:
+                loaded = library.require("path").map_err((error) => f"{witness.0}: {error.message()}")?
+                if not Path(loaded.expect_str().map_err((error) => f"{witness.0}: {error.message()}")?).is_file():
+                    return Ok(false)
+            return Ok(true)
