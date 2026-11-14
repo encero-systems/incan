@@ -11,7 +11,6 @@ from crate.store import (
     read_frame,
     read_manifest,
     snapshot,
-    switch,
     sync_durable,
 )
 from crate.store.files import StoreError, ensure_directory, failure, index_failure, io_failure, natural, place_synced
@@ -35,7 +34,6 @@ model Marked:
     roots: set[str] = set()
     files: set[str] = set()
     pages: set[str] = set()
-    segments: set[str] = set()
     payloads: set[str] = set()
 
 
@@ -72,15 +70,10 @@ pub def collect_records(
     # 1. Writers keep computing; canonical publication waits for this explicit maintenance operation.
     ensure_directory(root.joinpath("locks"))?
     writer = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-    mut latest = snapshot(root)?
+    latest = snapshot(root)?
     mut marked = Marked()
     for entry in latest.views:
         mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
-    selected_segments = sorted([name for name in marked.segments])
-    if latest.generation > 0 and selected_segments != sorted(latest.segments):
-        latest = switch(root, latest, selected_segments, latest.views, "collection")?
-        for entry in latest.views:
-            mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
     # 2. New pins can register during traversal; readers themselves never take publication's lock.
     for _attempt in range(8):
         pending = collect_handshake(root, latest, marked)?
@@ -192,7 +185,6 @@ def mark_snapshot(
                                         return Err(failure("integrity", entry.key, "malformed payload reference"))
                                     marked.payloads.add(digest)
                             _ => pass
-                        marked.segments.add(location.segment)
                         marked.files.add(view.root.joinpath(f"segments/{location.segment}.seg").value)
     return Ok(None)
 

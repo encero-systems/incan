@@ -24,7 +24,7 @@ from bakery import (
 from bakery_records import Fact, claim_file, staging_root
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
-from pub::incan_platform.store import begin, commit, delete, fork, get, keys, put
+from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
@@ -239,6 +239,15 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     return Ok(None)
 
 
+def added_segment(before: Snapshot, after: Snapshot) -> Result[str, str]:
+    """The one segment `after` reaches that `before` does not: the segment its commit wrote."""
+    earlier = segments(before).map_err((error) => error.message())?
+    added = [name for name in segments(after).map_err((error) => error.message())? if name not in earlier]
+    if len(added) != 1:
+        return Err(f"a commit reached {len(added)} new segments")
+    return Ok(added[0])
+
+
 pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:
     """Verification reads segments retained by another live view, not only records selected in the home view."""
     scratch = scratch_directory()?
@@ -247,7 +256,7 @@ pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[No
         .map_err((error) => error.message())?
     written = commit(put(begin(other), "other-only", b"one damaged frame"))
         .map_err((error) => error.message())?
-    digest = written.segments[len(written.segments) - 1]
+    digest = added_segment(other, written)?
     segment = store.joinpath("segments").joinpath(f"{digest}.seg")
     data = segment.read_bytes().map_err((error) => error.message())?
     segment.chmod(false).map_err((error) => error.message())?
