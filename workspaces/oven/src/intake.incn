@@ -19,6 +19,7 @@ from manifest_intent import (
     refusal,
     table,
 )
+from manifest_tolerance import library_scripts, without_scripts
 
 
 pub model LocalProject:
@@ -29,6 +30,8 @@ pub model LocalProject:
     pub intent: ProjectIntent
     # The same parse used for intent, retained for dependency and Rust-facet views.
     pub parsed: TomlValue
+    # The `[project.scripts]` entries that name the conventional library, ignored, with their authored paths.
+    pub library_scripts: Dict[str, str] = {}
 
 
 pub model DependencyEdge:
@@ -117,8 +120,18 @@ def project_in(
         previous = store.projects[root.0]
         if previous.evidence.sha256_digest == snapshot.evidence.sha256_digest:
             return Ok(previous)
-    intent = intent_from_snapshot(snapshot)?
-    project = LocalProject(root=root.0, intent=intent, evidence=snapshot.evidence, parsed=snapshot.parsed)
+    mut intent = intent_from_snapshot(snapshot)?
+    # A script that names the conventional library is ignored; the library is built as one (`manifest_tolerance`).
+    library = Path(source_root_for(root, intent)).joinpath("lib.incn")
+    ignored = library_scripts(root, intent.scripts, library)
+    intent.scripts = without_scripts(intent.scripts, ignored)
+    project = LocalProject(
+        root=root.0,
+        intent=intent,
+        evidence=snapshot.evidence,
+        parsed=snapshot.parsed,
+        library_scripts=ignored,
+    )
     store.projects[root.0] = project
     return Ok(project)
 
@@ -170,32 +183,11 @@ pub def load_project(root: Path, reader: ManifestReader = ManifestReader()) -> R
             return Err(
                 refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Missing, path.0).with_source(source),
             )
-        resolved = path
+        _ = path
             .resolve()
             .map_err(
                 (error) => refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Invalid, error.message()),
             )?
-        library = Path(source_root_for(root, intent)).joinpath("lib.incn")
-        if library.is_file():
-            canonical = library
-                .resolve()
-                .map_err(
-                    (error) => refusal(
-                        manifest.0,
-                        ["project", "scripts", script],
-                        IntakeErrorKind.Invalid,
-                        error.message(),
-                    ),
-                )?
-            if resolved.0 == canonical.0:
-                return Err(
-                    refusal(
-                        manifest.0,
-                        ["project", "scripts", script],
-                        IntakeErrorKind.Invalid,
-                        "script resolves to conventional library",
-                    ).with_source(source),
-                )
     if declares_no_entry(root, intent):
         return Err(
             refusal(
