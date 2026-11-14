@@ -183,3 +183,20 @@ fn a_program_checks_a_standard_module_import_from_its_records() -> Result<(), Bo
     );
     Ok(())
 }
+
+/// Checking a program and sealing its interface read each record they use once: the index keeps every namespace and
+/// declaration record it has read for the rest of the check.
+#[test]
+fn a_program_reads_each_record_it_checks_with_once() -> Result<(), Box<dyn std::error::Error>> {
+    let read = standard_import_reads()?;
+    let mut again = read
+        .iter()
+        .filter(|key| read.iter().filter(|other| other == key).count() > 1)
+        .collect::<Vec<_>>();
+    again.dedup();
+    assert!(
+        again.is_empty(),
+        "checking read these records more than once: {again:?}; all reads: {read:?}"
+    );
+    Ok(())
+}
