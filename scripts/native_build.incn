@@ -551,7 +551,7 @@ def producer_reference(reference: str, directory: Path) -> str:
     return absolute(reference, directory).0
 
 
-def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
+pub def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
     """Replace the direct runtime binding and its search directory in `toolchain.json`."""
     path = toolchain.joinpath("toolchain.json")
     mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
