@@ -376,6 +376,7 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     initial_records = compiler_records_read(observations)?
+    initial_digests = link_input_digests(observations)?
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -409,6 +410,17 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
     if processes != 1:
         return Err(f"initial build and one-body edit used {processes} unit compiler processes")
+    # The edited link names the same archives; each was hashed once at its file identity, so none is hashed again.
+    mut hashed: list[str] = []
+    edited_digests = link_input_digests(observations)?
+    for input in sorted([path for path in edited_digests.keys()]):
+        earlier = initial_digests.get(input, 0)
+        if earlier > 0 and edited_digests[input] > earlier and not input.endswith(".o"):
+            hashed.append(input)
+    if len(edited_digests) == 0:
+        return Err("the development links recorded no input digests")
+    if len(hashed) > 0:
+        return Err(f"one-body edit's link hashed {len(hashed)} unchanged archives again: {hashed}")
     return Ok(None)
 
 
@@ -459,6 +471,30 @@ def compiler_records_read(directory: Path) -> Result[int, str]:
             )?
             count += fields["records"].expect_int().map_err((error) => error.message())?
     return Ok(count)
+
+
+def link_input_digests(directory: Path) -> Result[Dict[str, int], str]:
+    """How often the development linker hashed each input path, from its invocation spans."""
+    mut counts: Dict[str, int] = {}
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_rustc_driver::link_input_digest")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            input = fields["input"].expect_str().map_err((error) => error.message())?
+            counts[input] = counts.get(input, 0) + 1
+    return Ok(counts)
 
 
 def invocation_processes(directory: Path, function: str) -> Result[int, str]:
