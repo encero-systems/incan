@@ -2,6 +2,14 @@
 name = "incan_mir_plan"
 version = "0.6.0-dev.8"
 
+[rust]
+name = "incan_mir_plan_files"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }

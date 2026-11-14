@@ -1,9 +1,10 @@
 """Native body nodes: locals, places, operands, rvalues, statements, calls, terminators and blocks, with builders."""
 
+from rust::serde import Serialize, Deserialize
 from _types import SourceSpan, ListLeaf, PlanType
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Parameter:
     """A named function parameter; its local index follows declaration order."""
 
@@ -12,7 +13,7 @@ pub model Parameter:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Local:
     """A typed body local; parameters and the return place are included."""
 
@@ -20,7 +21,7 @@ pub model Local:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model FieldProjection:
     """One typed projection step. A negative slot is a dereference-only step; ordinary slots select a field."""
 
@@ -31,7 +32,7 @@ pub model FieldProjection:
     pub dereferences: int = 0
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum Projection:
     """Whole local, checked component, typed reference dereference, canonical field path, or downcast enum payload."""
 
@@ -47,7 +48,7 @@ pub enum Projection:
     DerefFields(list[FieldProjection])
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Place:
     """An indexed local with a checked arithmetic, nominal field, or typed reference projection."""
 
@@ -56,7 +57,7 @@ pub model Place:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum Constant:
     """A scalar, zero-sized type token, or borrowed static text literal. Numeric retains exact integer digits or IEEE bit digits with its carrier, never a host-width approximation."""
 
@@ -70,7 +71,7 @@ pub enum Constant:
     Text(str)
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum OperandKind:
     """Explicit copy, move, or constant; ownership intent is never inferred."""
 
@@ -79,7 +80,7 @@ pub enum OperandKind:
     Literal(Constant)
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Operand:
     """A source-located value read by a statement or terminator."""
 
@@ -87,7 +88,7 @@ pub model Operand:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum BinaryOp:
     """
     Checked integer arithmetic, scalar comparisons, floating arithmetic, and integer bit operations.
@@ -115,7 +116,7 @@ pub enum BinaryOp:
     ShiftRight
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum UnaryOp:
     """Boolean inversion, numeric negation, or the bitwise complement of an integer that keeps its type."""
 
@@ -124,7 +125,7 @@ pub enum UnaryOp:
     Invert
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum RvalueKind:
     """
     An explicit native expression assigned to a checked place.
@@ -187,7 +188,7 @@ pub enum RvalueKind:
     PointerAddress(Operand)
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum FrozenValue:
     """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
 
@@ -196,7 +197,7 @@ pub enum FrozenValue:
     Collection(PlanType, list[FrozenValue])
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Rvalue:
     """A source-located scalar expression."""
 
@@ -204,7 +205,7 @@ pub model Rvalue:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum StatementKind:
     """Assignment and explicit local storage lifetime boundaries."""
 
@@ -213,7 +214,7 @@ pub enum StatementKind:
     StorageDead(int)
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Statement:
     """One source-located operation before a block's terminator."""
 
@@ -221,7 +222,7 @@ pub model Statement:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum CalleeKind:
     """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
 
@@ -275,7 +276,7 @@ pub enum CalleeKind:
     Foreign(ForeignFunction)
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model ForeignFunction:
     """One target-verified C function with its exact symbol, explicit library, and native signature."""
 
@@ -291,7 +292,7 @@ pub model ForeignFunction:
     pub framework: bool = false
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Callee:
     """A function reference, resolved by source name or canonical module path."""
 
@@ -299,7 +300,7 @@ pub model Callee:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum Unwind:
     """Propagate unwinding, enter cleanup, or abort a second panic during cleanup."""
 
@@ -308,7 +309,7 @@ pub enum Unwind:
     Terminate
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum TerminatorKind:
     """
     Control flow, calls, drops, overflow checks, and unwinding exits.
@@ -331,7 +332,7 @@ pub enum TerminatorKind:
     UnwindResume
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Terminator:
     """The source-located exit of a basic block."""
 
@@ -339,7 +340,7 @@ pub model Terminator:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model BasicBlock:
     """An indexed block; cleanup blocks may only run on the unwind path."""
 
@@ -349,7 +350,7 @@ pub model BasicBlock:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model FieldLifecycle:
     """Inert checked rename labels, copied into the public Incan lifecycle carrier at emission."""
 
@@ -360,7 +361,7 @@ pub model FieldLifecycle:
     pub issue: Option[str]
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model FieldMetadata:
     """Immutable source field presentation values selected by the checked reflection visibility policy."""
 
