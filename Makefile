@@ -9,8 +9,9 @@ CONTRACT_JOBS ?= 4
 
 # Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
 RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'
-# Every Loaf with a Rust library facet; `make lint` checks each with clippy through `incan lint`.
-RUST_FACETS = git ls-files 'loaves/**/loaf.toml' ':!:loaves/**/fixtures/**' | sed 's|/loaf.toml$$||' | while read -r loaf; do if [ -f "$$loaf/src/lib.rs" ]; then echo "$$loaf"; fi; done
+# Every Loaf whose `[rust]` table declares a library or procedural macro, wherever `[rust.source]` roots it;
+# `make lint` checks each with clippy through `incan lint`.
+RUST_FACETS = git ls-files 'loaves/**/loaf.toml' ':!:loaves/**/fixtures/**' | xargs awk 'FNR == 1 { rust = 0 } /^\[/ { rust = ($$0 == "[rust]") } rust && /^type *= *"(lib|proc-macro)"/ { name = FILENAME; sub(/\/loaf\.toml$$/, "", name); print name }'
 
 .PHONY: help
 help:
