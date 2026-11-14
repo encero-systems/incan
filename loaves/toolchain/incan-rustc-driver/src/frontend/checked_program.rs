@@ -195,15 +195,19 @@ pub(super) fn runtime_declarations(
 }
 
 /// Collect a test unit's modules again with the test file read from `source`: the file with its generated case
-/// entries (`crate::test_cases`). The test module keeps its logical identity, as ordinary collection gives it.
+/// entries (`crate::test_cases`), and the `conftest.incn` beside it read from its exported text when the entries
+/// import its fixtures (`crate::test_conftest`). The test module keeps its logical identity, as ordinary collection
+/// gives it.
 fn collect_test_entries(
     path: &Path,
     source: String,
+    conftest: Option<(PathBuf, String)>,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let segments = incan_frontend::module::logical_module_segments_from_file(&session.source_root, path)
         .unwrap_or_else(|| vec!["main".to_string()]);
-    let overlay = std::collections::HashMap::from([(path.to_path_buf(), source)]);
+    let mut overlay = std::collections::HashMap::from([(path.to_path_buf(), source)]);
+    overlay.extend(conftest);
     incan_driver::modules::collect_document_modules(path.to_path_buf(), session, segments, &overlay)
 }
 
@@ -260,8 +264,12 @@ pub(super) fn checked_modules(
     // A test file whose tests take fixtures or parameters is checked with its generated case entries, and rustc reads
     // their spans from the same text.
     crate::spans::retain_checked_source(&path, collected.source.as_deref())?;
+    if let Some((conftest, exported)) = &collected.conftest {
+        crate::spans::retain_checked_source(conftest, Some(exported.as_str()))?;
+    }
     if let Some(source) = collected.source {
-        modules = collect_test_entries(&path, source, &session).map_err(|failure| receipt.diagnostic(failure))?;
+        modules = collect_test_entries(&path, source, collected.conftest, &session)
+            .map_err(|failure| receipt.diagnostic(failure))?;
         session
             .resolve_rust_facts(&modules)
             .map_err(|error| error.to_string())?;

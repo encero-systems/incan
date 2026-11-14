@@ -14,8 +14,9 @@
 //! declaration is blanked line for line: its stages replace it, and every later line keeps its number.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::test_conftest::Conftest;
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned, Statement};
@@ -47,10 +48,12 @@ pub(crate) struct NativeCase {
     pub(crate) markers: Vec<TestMarker>,
 }
 
-/// Every case of a test unit, and the test file's source with its generated entries when any case needs one.
+/// Every case of a test unit, and the test file's source with its generated entries when any case needs one, with
+/// the `conftest.incn` text that exports the shared fixtures those entries import.
 pub(crate) struct NativeCases {
     pub(crate) cases: Vec<NativeCase>,
     pub(crate) source: Option<String>,
+    pub(crate) conftest: Option<(PathBuf, String)>,
 }
 
 /// One parameter set of a parametrized test: its case id, each argument's source text by parameter name, its display
@@ -73,10 +76,13 @@ pub(crate) fn plan(
     source_path: &Path,
     session: &CompilationSession,
     discovery: &DiscoveryResult,
+    conftest: Option<&Conftest>,
 ) -> Result<NativeCases, String> {
     // 1. Plain tests register themselves.
-    let needs_entries =
-        !discovery.fixtures.is_empty() || discovery.tests.iter().any(|test| !test.parameter_names.is_empty());
+    let inherited = conftest.map_or_else(Vec::new, |conftest| conftest.inherited(&discovery.fixtures));
+    let needs_entries = !discovery.fixtures.is_empty()
+        || !inherited.is_empty()
+        || discovery.tests.iter().any(|test| !test.parameter_names.is_empty());
     if !needs_entries {
         let cases = discovery
             .tests
@@ -84,7 +90,11 @@ pub(crate) fn plan(
             .enumerate()
             .map(|(index, test)| plain_case(index, test))
             .collect();
-        return Ok(NativeCases { cases, source: None });
+        return Ok(NativeCases {
+            cases,
+            source: None,
+            conftest: None,
+        });
     }
 
     // 2. Entries are appended to a test file's top level.
@@ -108,12 +118,13 @@ pub(crate) fn plan(
         .require_testing_marker_semantics()
         .map_err(|error| error.message)?;
     let aliases = incan_frontend::decorator_resolution::collect_import_aliases(&program);
+    // A shared fixture first, then the file's own: the file's autouse fixtures run after the shared ones.
+    let fixtures: Vec<&FixtureInfo> = inherited.iter().copied().chain(discovery.fixtures.iter()).collect();
     let writer = EntryWriter {
         source: &source,
-        fixtures: discovery
-            .fixtures
+        fixtures: fixtures
             .iter()
-            .map(|fixture| (fixture.name.clone(), fixture))
+            .map(|fixture| (fixture.name.clone(), *fixture))
             .collect(),
         functions: functions
             .iter()
@@ -121,12 +132,15 @@ pub(crate) fn plan(
             .collect(),
     };
     writer.refuse_unsupported_fixtures(discovery)?;
+    if let Some(conftest) = conftest {
+        conftest.refuse_unsupported(&inherited, &discovery.tests)?;
+    }
 
     // 3. One entry per parameter row.
     let mut cases = Vec::new();
     let mut generated = String::new();
     for (index, test) in discovery.tests.iter().enumerate() {
-        let autouse = autouse_fixtures(discovery, test);
+        let autouse = autouse_fixtures(&fixtures, test);
         if test.parameter_names.is_empty() && autouse.is_empty() {
             cases.push(plain_case(index, test));
             continue;
@@ -168,9 +182,24 @@ pub(crate) fn plan(
         checked.push_str("\n\n");
         checked.push_str(PANIC_BOUNDARY_IMPORT);
     }
+    let mut exported = None;
+    if let Some(conftest) = conftest
+        && !inherited.is_empty()
+    {
+        let names: Vec<&str> = inherited
+            .iter()
+            .filter(|fixture| !fixture.has_teardown && !fixture.is_async)
+            .map(|fixture| fixture.name.as_str())
+            .collect();
+        if !names.is_empty() {
+            checked.push_str(&format!("\n\nfrom conftest import {}\n", names.join(", ")));
+            exported = Some((conftest.path.clone(), conftest.exported_source(&names, session)?));
+        }
+    }
     Ok(NativeCases {
         cases,
         source: Some(checked),
+        conftest: exported,
     })
 }
 
@@ -191,11 +220,11 @@ fn is_named_test_file(path: &Path) -> bool {
     name.ends_with(".incn") && (name.starts_with("test_") || name.ends_with("_test.incn"))
 }
 
-/// The file's autouse fixtures a test does not already request, in declaration order.
-fn autouse_fixtures<'a>(discovery: &'a DiscoveryResult, test: &TestInfo) -> Vec<&'a str> {
-    discovery
-        .fixtures
+/// The autouse fixtures a test does not already request: the shared ones, then the file's, in declaration order.
+fn autouse_fixtures<'a>(fixtures: &[&'a FixtureInfo], test: &TestInfo) -> Vec<&'a str> {
+    fixtures
         .iter()
+        .copied()
         .filter(|fixture| fixture.autouse && !test.parameter_names.contains(&fixture.name))
         .map(|fixture| fixture.name.as_str())
         .collect()
