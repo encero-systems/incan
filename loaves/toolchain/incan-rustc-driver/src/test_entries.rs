@@ -495,6 +495,7 @@ impl<'a> EntryWriter<'a> {
             imports.push(format!("from rust::std::process import id as {PREFIX}_process_id"));
         }
         if uses.group {
+            imports.push(format!("from rust::std::time import Instant as {PREFIX}_clock"));
             imports.push(format!("from std.environ import get_or as {PREFIX}_get_or"));
         }
         if !imports.is_empty() {

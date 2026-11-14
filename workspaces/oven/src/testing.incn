@@ -19,7 +19,7 @@ from incan_units import compile_unit, stored_executable, test_report, test_sourc
 from intake import read_project, source_root_of
 from json_fields import array, text_field
 from observation import trace_launch
-from runner_options import ReportFormat, RunnerOptions
+from runner_options import ReportFormat, RunnerOptions, count
 from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
 from runner_selection import keyword_matches, markers_match, shuffle_seed, shuffled
 from rust_target import decoded
@@ -666,10 +666,15 @@ pub model GroupCase:
     pub finished: bool = false
     pub passed: bool = false
     pub message: str = ""
+    # The case's own duration, as the group measured it.
+    pub duration_ms: int = 0
 
 
 pub def group_case(printed: str, entry: str) -> GroupCase:
-    """One case's lines between the group's `incan-case-start` and `incan-case-end` markers, and its end marker."""
+    """
+    One case's lines between the group's `incan-case-start` and `incan-case-end` markers, and its end marker's verdict,
+    duration and message.
+    """
     start = f"incan-case-start {entry}"
     end = f"incan-case-end {entry} "
     mut found = GroupCase()
@@ -679,11 +684,15 @@ pub def group_case(printed: str, entry: str) -> GroupCase:
         if line == start:
             inside = true
         elif inside and line.startswith(end):
-            verdict = line[len(end):]
+            parts = line[len(end):].split(" ")
             found.finished = true
-            found.passed = verdict == "passed"
-            if verdict.startswith("failed "):
-                found.message = verdict[len("failed "):]
+            found.passed = parts[0] == "passed"
+            if len(parts) > 1:
+                match count("duration", parts[1]):
+                    Ok(milliseconds) => found.duration_ms = milliseconds
+                    Err(_) => pass
+            if len(parts) > 2:
+                found.message = " ".join(parts[2:])
             inside = false
         elif inside:
             lines.append(line)
@@ -709,7 +718,7 @@ def group_finished(
     printed = decoded(item.output.read_bytes().map_err((error) => error.message())?)
     found = group_case(printed, test_case.member)
     mut finished = Finished(
-        outcome=outcome_of(test_case, Status.Passed, "", elapsed),
+        outcome=outcome_of(test_case, Status.Passed, "", group_duration(found, elapsed)),
         output=RustString.from(edges[0] + found.output + edges[1]).into_bytes(),
     )
     # 1. The group ended before this case finished.
@@ -814,3 +823,10 @@ def settle_group(
             edges = (edges[0], after)
         settled[member] = Some(group_finished(selected[member], item, edges, elapsed, runner)?)
     return Ok(None)
+
+
+def group_duration(found: GroupCase, elapsed: int) -> int:
+    """A grouped case's own duration as its group measured it, or the group's when the case never finished."""
+    if found.finished:
+        return found.duration_ms
+    return elapsed

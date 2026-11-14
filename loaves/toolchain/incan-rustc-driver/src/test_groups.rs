@@ -4,8 +4,9 @@
 //!
 //! The group sets every shared fixture up once, a `yield` one as a stage around the rest, stores each value in a
 //! static the cases read, then runs each case the environment selects inside the native panic boundary and prints
-//! one marker line before and after it. The runner launches the group once per file and reads each case's outcome
-//! and output from those markers. Session scope is once per file process, which RFC 019 allows for a worker.
+//! one marker line before it and one after it that carries its outcome and its own duration. The runner launches the
+//! group once per file and reads each case's outcome, output and duration from those markers. Session scope is once
+//! per file process, which RFC 019 allows for a worker.
 
 use std::collections::HashSet;
 
@@ -162,7 +163,8 @@ fn visit<'a>(
     Ok(())
 }
 
-/// The lines that run one selected case between its markers, its failure caught and reported in the end marker.
+/// The lines that run one selected case between its markers, its failure caught and its own duration measured, both
+/// reported in the end marker.
 fn member_block(member: &Member, position: usize) -> Vec<String> {
     let (_, _, some, none) = constructor_spellings();
     let entry = &member.entry;
@@ -174,10 +176,14 @@ fn member_block(member: &Member, position: usize) -> Vec<String> {
     vec![
         format!("if {PREFIX}_selected(\"{entry}\"):"),
         format!("    println(\"incan-case-start {entry}\")"),
+        format!("    {PREFIX}_started = {PREFIX}_clock.now()"),
         format!("    {PREFIX}_panic = {PREFIX}_panic_text(() => {call})"),
+        format!("    {PREFIX}_elapsed = {PREFIX}_started.elapsed().as_millis()"),
         format!("    match {PREFIX}_panic:"),
-        format!("        {some}({PREFIX}_message) => println(f\"incan-case-end {entry} failed {{{PREFIX}_message}}\")"),
-        format!("        {none} => println(\"incan-case-end {entry} passed\")"),
+        format!(
+            "        {some}({PREFIX}_message) => println(f\"incan-case-end {entry} failed {{{PREFIX}_elapsed}} {{{PREFIX}_message}}\")"
+        ),
+        format!("        {none} => println(f\"incan-case-end {entry} passed {{{PREFIX}_elapsed}}\")"),
     ]
 }
 
