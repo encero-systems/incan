@@ -1,0 +1,12 @@
+"""Parametrized cases the runner lists and selects by name."""
+
+from std.testing import parametrize
+
+
+@parametrize("a, b, expected", [(1, 2, 3), (2, 3, 5)])
+def test_add(a: int, b: int, expected: int) -> None:
+    assert a + b == expected
+
+
+def test_other() -> None:
+    assert true
