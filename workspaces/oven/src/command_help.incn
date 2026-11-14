@@ -13,6 +13,7 @@ from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 from environments import ENV_USAGE, env_help
 from doctor import DOCTOR_USAGE, doctor_help
+from checked_metadata import API_USAGE, MetadataView, metadata_help
 from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
@@ -75,6 +76,7 @@ pub def usage(surface: str) -> str:
             PACK_USAGE,
             INSTALL_USAGE,
             DOCTOR_USAGE,
+            API_USAGE,
         ],
     )
 
@@ -130,6 +132,9 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(mcp_help())
     elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
         return Some(scaffold_help(command))
+    elif command == "tools" and len(arguments) > 1 and arguments[0] == "metadata":
+        if nested_help(arguments[1:], "api", ["--format"]):
+            return Some(metadata_help(MetadataView.Api))
     elif command == "tools" and nested_help(arguments, "doctor", ["--format"]):
         return Some(doctor_help())
     elif command == "env" and env_help_requested(arguments):
