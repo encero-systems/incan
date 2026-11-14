@@ -186,3 +186,50 @@ fn moved_governed_bodies_keep_the_semantic_facts_digest() -> Result<(), String> 
     );
     Ok(())
 }
+
+const PRICED: &str = "pub model Price:\n    \"\"\"A price.\"\"\"\n    pub cents: int = 0\n\npub def total(price: Price, count: int = 1) -> int:\n    \"\"\"The total.\"\"\"\n    return price.cents * count\n";
+// A longer docstring on each declaration moves every later span.
+const PRICED_LONGER_DOCUMENTATION: &str = "pub model Price:\n    \"\"\"A price, in cents.\"\"\"\n    pub cents: int = 0\n\npub def total(price: Price, count: int = 1) -> int:\n    \"\"\"The total of `count` prices.\"\"\"\n    return price.cents * count\n";
+
+/// The records of `source` whose family is spelled `family` and whose name is `name`.
+fn named_records(source: &str, family: &str, name: &str) -> Result<Vec<super::CompilerRecord>, String> {
+    let set = manifest(source, "0.1.0")?
+        .compiler_records(FIRST_FILE)
+        .map_err(|error| error.to_string())?;
+    Ok(set
+        .records
+        .into_iter()
+        .filter(|record| record.family.as_str() == family && record.name == name)
+        .collect())
+}
+
+#[test]
+fn signatures_layouts_and_defaults_are_their_own_records() -> Result<(), String> {
+    for (family, name) in [
+        ("declaration-signature", "prices::total"),
+        ("declaration-signature", "prices::Price"),
+        ("layout", "prices::Price"),
+        ("default", "prices::total"),
+        ("default", "prices::Price"),
+    ] {
+        let before = named_records(PRICED, family, name)?;
+        assert_eq!(before.len(), 1, "one `{family}` record for `{name}`");
+        let after = named_records(PRICED_LONGER_DOCUMENTATION, family, name)?;
+        assert_eq!(after.len(), 1, "one `{family}` record for `{name}` after the edit");
+        let canonical = |record: &super::CompilerRecord| super::canonical_value(record.family, &record.value);
+        assert_eq!(
+            canonical(&before[0]).map_err(|error| error.to_string())?,
+            canonical(&after[0]).map_err(|error| error.to_string())?,
+            "the `{family}` record of `{name}` is digested without documentation or positions"
+        );
+    }
+    let signature = named_records(PRICED, "declaration-signature", "prices::total")?;
+    let value: serde_json::Value =
+        LibraryManifest::decode_compiler_record_value(&signature[0].value).map_err(|error| error.to_string())?;
+    let text = value.to_string();
+    assert!(
+        !text.contains("has_default") && !text.contains("docstring"),
+        "a signature carries neither defaults nor documentation: {text}"
+    );
+    Ok(())
+}
