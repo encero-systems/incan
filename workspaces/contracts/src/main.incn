@@ -21,7 +21,7 @@ from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
-from families import AdmittedProgram, FAMILIES, command, read_program
+from families import AdmittedProgram, FAMILIES, command, read_program, work_order
 from fixture import Fixture, discover_family, materialize
 from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
 from formatting import compare_format
@@ -324,13 +324,13 @@ def report_total(total: Tally, units: Units, refused: int) -> None:
 def family_work_order(settings: Settings, families: list[str]) -> list[str]:
     """Schedule independent graph cases separately; each case's edit/query protocol stays sequential in its worker."""
     if "graph" not in families:
-        return families
+        return work_order(families, [])
     match discover_family(settings.root, "graph"):
         # Discovery refusal belongs to a supervised worker, just like the other families' refusals.
-        Err(_) => return ["graph"] + [family for family in families if family != "graph"]
+        Err(_) => return ["graph"] + work_order(families, [])
         Ok(fixtures) =>
             cases = [fixture.case_name() for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
-            return cases[:1] + [family for family in families if family != "graph"] + cases[1:]
+            return work_order(families, cases)
 
 
 def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
