@@ -4,9 +4,8 @@
 use super::*;
 
 use incan_driver::diagnostics::CliDiagnostic;
-use incan_driver::modules::collect_document_modules;
+use incan_driver::modules::{collect_document_modules, entry_module_segments};
 use incan_driver::unit::UnitDescription;
-use incan_frontend::module::logical_module_segments_from_file;
 
 impl IncanLanguageServer {
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
@@ -209,8 +208,7 @@ fn analyze(
     };
 
     // ---- One collection and one checking pass, as `incan check` runs them ----
-    let segments =
-        logical_module_segments_from_file(&session.source_root, path).unwrap_or_else(|| vec!["main".to_string()]);
+    let segments = entry_module_segments(&session.source_root, path);
     let modules = match collect_document_modules(path.to_path_buf(), &session, segments.clone(), open_sources) {
         Ok(modules) => modules,
         Err(failure) => {

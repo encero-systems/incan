@@ -1,5 +1,7 @@
-"""A test module under the Loaf's tests directory."""
+"""A test module under the Loaf's tests directory that imports the Loaf's `main` module, as `incan new` projects do."""
+
+from main import total
 
 
 def test_adds() -> None:
-    assert 1 + 2 == 3
+    assert total([1, 2]) == 3
