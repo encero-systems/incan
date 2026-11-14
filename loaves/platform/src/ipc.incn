@@ -10,8 +10,7 @@ from rust::std::net import Shutdown
 from rust::std::os::fd import AsRawFd
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from rust::std::os::unix::net import UnixListener, UnixStream
-from rust::std::cell import RefCell
-from rust::std::rc import Rc
+from rust::std::sync import Arc, Mutex
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 
@@ -36,17 +35,17 @@ pub class Connection:
 
     # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied. Closing takes the socket
     # out of the cell, which releases its descriptor at once for every holder of the connection.
-    stream: Rc[RefCell[Option[UnixStream]]]
+    stream: Arc[Mutex[Option[UnixStream]]]
     read_wait_seconds: u64 = 0
 
     @staticmethod
     pub def from_stream(stream: UnixStream) -> Connection:
         """Own a connected Unix stream without exposing the connection's stored handle."""
-        return Connection(stream=Rc.new(RefCell.new(Some(stream))))
+        return Connection(stream=Arc.new(Mutex.new(Some(stream))))
 
     pub def peer(self) -> Result[PeerIdentity, str]:
         """Read OS peer credentials; the standard wrapper uses getpeereid or SO_PEERCRED."""
-        match self.stream.borrow().as_ref():
+        match self.stream.lock().map_err((_) => "the connection lock is poisoned")?.as_ref():
             None => return Err(CLOSED)
             Some(open) =>
                 match open.peer_cred():
@@ -62,7 +61,8 @@ pub class Connection:
         A shutdown alone does not reliably end the peer's stream: on macOS, a peer whose write races the shutdown can
         miss the end of the stream and wait for it forever. Releasing the descriptor always ends it.
         """
-        match self.stream.replace(None):
+        mut held = self.stream.lock().map_err((_) => "the connection lock is poisoned")?
+        match held.take():
             None => return Ok(None)
             # The descriptor is released when `open` goes out of scope, whether or not the shutdown succeeds.
             Some(open) => return open.shutdown(Shutdown.Both).map_err((error) => f"cannot close socket: {error}")
@@ -72,9 +72,12 @@ pub class Connection:
         The OS descriptor number of this socket while the connection is open, and -1 once it is closed. It lends the
         socket to native code that only observes it; ownership stays with this connection.
         """
-        match self.stream.borrow().as_ref():
-            None => return -1
-            Some(open) => return int(open.as_raw_fd())
+        match self.stream.lock():
+            Err(_) => return -1
+            Ok(held) =>
+                match held.as_ref():
+                    None => return -1
+                    Some(open) => return int(open.as_raw_fd())
 
     pub def read_part(mut self, count: int, bound: int) -> Result[bytes, str]:
         """Read exactly a bounded part, polling a would-block stream until its configured deadline."""
@@ -84,7 +87,7 @@ pub class Connection:
         started = Instant.now()
         while len(payload) < count:
             remaining: u64 = (count - len(payload)).wrapping_resize()
-            match self.stream.borrow_mut().as_mut():
+            match self.stream.lock().map_err((_) => "the connection lock is poisoned")?.as_mut():
                 None => return Err(CLOSED)
                 Some(open) =>
                     mut limited = Read.by_ref(open).take(remaining)
@@ -122,7 +125,7 @@ pub class Connection:
 
     pub def write_part(mut self, part: bytes, what: str) -> Result[None, str]:
         """Write all of one part of a frame; a failure names the part."""
-        match self.stream.borrow_mut().as_mut():
+        match self.stream.lock().map_err((_) => "the connection lock is poisoned")?.as_mut():
             None => return Err(CLOSED)
             Some(open) =>
                 match open.write_all(part):
@@ -151,13 +154,16 @@ pub class Connection:
             limit = Some(Duration.from_secs(seconds))
         # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal. A closed
         # connection has no reads left to bound.
-        match self.stream.borrow().as_ref():
-            None => pass
-            Some(open) => _ = open.set_read_timeout(limit)
+        match self.stream.lock():
+            Err(_) => pass
+            Ok(held) =>
+                match held.as_ref():
+                    None => pass
+                    Some(open) => _ = open.set_read_timeout(limit)
 
     pub def poll_reads(mut self) -> Result[None, str]:
         """Put reads in nonblocking mode for a caller that polls readiness and resumes partial frames."""
-        match self.stream.borrow().as_ref():
+        match self.stream.lock().map_err((_) => "the connection lock is poisoned")?.as_ref():
             None => return Err(CLOSED)
             Some(open) => return open.set_nonblocking(true).map_err((error) => f"cannot poll socket: {error}")
 
@@ -165,13 +171,16 @@ pub class Connection:
         """Bound each write by `seconds`."""
         # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal. A closed
         # connection has no writes left to bound.
-        match self.stream.borrow().as_ref():
-            None => pass
-            Some(open) => _ = open.set_write_timeout(Some(Duration.from_secs(seconds)))
+        match self.stream.lock():
+            Err(_) => pass
+            Ok(held) =>
+                match held.as_ref():
+                    None => pass
+                    Some(open) => _ = open.set_write_timeout(Some(Duration.from_secs(seconds)))
 
     pub def readable(self) -> Result[bool, str]:
         """Ask the OS whether a byte or EOF is waiting, without consuming or retaining protocol data."""
-        match self.stream.borrow().as_ref():
+        match self.stream.lock().map_err((_) => "the connection lock is poisoned")?.as_ref():
             None => return Err(CLOSED)
             Some(open) =>
                 open.set_nonblocking(true).map_err((error) => f"cannot poll socket: {error}")?
@@ -236,11 +245,11 @@ def connection(stream: UnixStream) -> Connection:
 pub class Listener:
     """A listening Unix socket."""
 
-    pub socket: Rc[RefCell[UnixListener]]
+    pub socket: Arc[Mutex[UnixListener]]
 
     pub def accept(mut self) -> Result[Connection, str]:
         """Take the next client."""
-        match self.socket.borrow_mut().accept():
+        match self.socket.lock().map_err((_) => "the listener lock is poisoned")?.accept():
             Ok(accepted) =>
                 stream, peer = accepted
                 return Ok(connection(stream))
@@ -252,7 +261,7 @@ pub class Listener:
         connection blocks, with the bounds its caller sets, as an accepted one does: some systems, macOS among them,
         hand it the listener's non-blocking mode, so a frame still on its way would read as an error.
         """
-        match self.socket.borrow_mut().accept():
+        match self.socket.lock().map_err((_) => "the listener lock is poisoned")?.accept():
             Ok(accepted) =>
                 stream, peer = accepted
                 match stream.set_nonblocking(false):
@@ -265,7 +274,7 @@ pub class Listener:
 
     pub def stop_blocking(mut self, path: str) -> Result[None, str]:
         """Make `accept` return at once when no client waits, which `poll` relies on."""
-        match self.socket.borrow_mut().set_nonblocking(true):
+        match self.socket.lock().map_err((_) => "the listener lock is poisoned")?.set_nonblocking(true):
             Ok(_) => return Ok(None)
             Err(error) => return Err(f"cannot poll {path}: {error}")
 
@@ -280,7 +289,7 @@ pub def listen(path: str, blocking: bool) -> Result[Listener, str]:
     """
     # 1. A socket listens at `path`, or the error says why it cannot.
     socket = bind(path)?
-    mut listener = Listener(socket=Rc.new(RefCell.new(socket)))
+    mut listener = Listener(socket=Arc.new(Mutex.new(socket)))
     # 2. No other user can connect to the listener or read what it is sent.
     match set_permissions(path, Permissions.from_mode(OWNER_ONLY)):
         Ok(_) => pass
