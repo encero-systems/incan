@@ -596,11 +596,11 @@ pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_it
     return Ok(None)
 
 
-pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
+pub def test_a_footprint_that_grows_past_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
     """
-    A footprint more than the margin above the baseline after two compiling activations in a row retires the worker,
-    whatever light activation came between them: its second reply is marked retired, its socket is withdrawn, and the
-    request already queued is still answered, also retired.
+    A footprint that grows by more than the margin over two compiling activations in a row retires the worker, whatever
+    light activation came between them: its second reply is marked retired, its socket is withdrawn, and the request
+    already queued is still answered, also retired.
     """
     socket = socket_path("footprint")
     mut host = host_for(settings(socket, 10000, 100, None))?
@@ -616,45 +616,63 @@ pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker(
     mut second = caller(socket, check_text(GENERATION))?
     mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
     assert is_check(served(host)?)
-    complete(host, ActivationOutcome.Exited(0), 1200)
+    complete(host, ActivationOutcome.Exited(0), 1202)
     second_reply = reply(second)?
     assert exit_of(second_reply) == 0 and retired(second_reply)
     assert withdrawn(socket)
     assert is_format(served(host)?)
-    complete(host, ActivationOutcome.Exited(0), 1200)
+    complete(host, ActivationOutcome.Exited(0), 1202)
     assert retired(reply(queued)?)
     assert ended(host)
     return Ok(None)
 
 
-pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[None, str]:
-    """Excess footprint must persist across consecutive activations; one back within the margin resets it."""
+pub def test_a_footprint_that_stops_growing_keeps_the_worker() -> Result[None, str]:
+    """
+    Growth must persist across consecutive activations: a compile that adds no more than the margin to what the one
+    before it left, or whose footprint is unknown, ends the run.
+    """
     mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=FOOTPRINT_CEILING))
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
-    assert stays(policy.settle(ActivationOutcome.Exited(0), 1050).retirement)
-    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1150).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1251).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), -1).retirement)
-    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
-    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1352).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1453).retirement:
         Some(reason) =>
             assert reason == Retirement.Footprint
-        None => return Err("two consecutive activations over the margin did not retire the worker")
+        None => return Err("two consecutive activations that each grew past the margin did not retire the worker")
+    return Ok(None)
+
+
+pub def test_a_warm_worker_that_holds_its_heap_steady_keeps_serving() -> Result[None, str]:
+    """
+    A warm worker holds what its compiles loaded and decoded, far more than the margin above its start. While that
+    stays level from one compile to the next, it serves every one of them, measured by its live heap or its footprint.
+    """
+    mut live = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000), 500)
+    for _round in range(6):
+        assert stays(live.settle(ActivationOutcome.Exited(0), 1500, false, 900).retirement)
+    mut resident = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    for _round in range(6):
+        assert stays(resident.settle(ActivationOutcome.Exited(0), 1500).retirement)
     return Ok(None)
 
 
 pub def test_freed_heap_an_allocator_keeps_does_not_retire_the_worker() -> Result[None, str]:
     """
-    With its live heap known, a worker whose footprint stays over the margin while its live heap does not keeps
-    serving; a live heap over the margin for two compiles retires it, and the ceiling still judges the footprint.
+    With its live heap known, a worker whose footprint grows past the margin while its live heap does not keeps
+    serving; a live heap that grows past the margin for two compiles retires it, and the ceiling still judges the
+    footprint.
     """
     mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000), 500)
-    for _round in range(4):
-        assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 550).retirement)
-    assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement)
-    match policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement:
+    for round in range(4):
+        assert stays(policy.settle(ActivationOutcome.Exited(0), 1500 + round * 200, false, 550).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 2100, false, 700).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 2100, false, 851).retirement:
         Some(reason) =>
             assert reason == Retirement.Footprint
-        None => return Err("a live heap over the margin for two compiles kept the worker")
+        None => return Err("a live heap that grew past the margin for two compiles kept the worker")
     mut ceiling = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000), 500)
     match ceiling.settle(ActivationOutcome.Exited(0), 5001, false, 550).retirement:
         Some(reason) =>
@@ -663,20 +681,20 @@ pub def test_freed_heap_an_allocator_keeps_does_not_retire_the_worker() -> Resul
     return Ok(None)
 
 
-pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() -> Result[None, str]:
+pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_growth() -> Result[None, str]:
     """
-    Formatting, a source listing or an import collection is held only to the ceiling: over the margin, within it or
-    unmeasured, it leaves the compiles' run of excess as it was, and over the ceiling it retires the worker at once.
+    Formatting, a source listing or an import collection is held only to the ceiling: grown past the margin, within it
+    or unmeasured, it leaves the compiles' run of growth as it was, and over the ceiling it retires the worker at once.
     """
     mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000))
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
-    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101, true).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1300, true).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1050, true).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), -1, true).retirement)
-    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+    match policy.settle(ActivationOutcome.Exited(0), 1202).retirement:
         Some(reason) =>
             assert reason == Retirement.Footprint
-        None => return Err("two compiles over the margin with light activations between kept the worker")
+        None => return Err("two compiles that each grew past the margin, with light activations between, kept the worker")
     mut ceiling = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000))
     match ceiling.settle(ActivationOutcome.Exited(0), 5001, true).retirement:
         Some(reason) =>
