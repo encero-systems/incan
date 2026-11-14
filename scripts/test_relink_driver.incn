@@ -1,0 +1,73 @@
+"""A relink re-admits every home whose installation it rewrites, so relinking into one home works any number of times."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from relink_driver import prepare_compiler_home, readmit
+from release_support import TOOLCHAIN_DIRECTORY
+
+
+def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
+    """
+    The compiler home's manifest is rewritten exactly when the installation selects another driver.
+
+    1. The first preparation writes the manifest.
+    2. Preparing again for the same installation changes nothing.
+    3. A relink that installs another driver changes it again, so its admitted page must be replaced.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    manifest = toolchain.joinpath("toolchain.json")
+    manifest
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    # 1. A new compiler home has no manifest yet.
+    assert prepare_compiler_home(installed, compiler)?
+    # 2. The same installation leaves it as it is.
+    assert not prepare_compiler_home(installed, compiler)?
+    # 3. Another driver is another manifest.
+    manifest
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    assert prepare_compiler_home(installed, compiler)?
+    return Ok(None)
+
+
+def test_readmission_asks_the_builder_for_the_rewritten_home() -> Result[None, str]:
+    """
+    Re-admission runs the builder's explicit entry with the rewritten home selected, and reports its refusal.
+
+    1. A builder that accepts the request is run once, with `--internal-readmit`, that home and the removed files.
+    2. A builder that refuses fails the relink with its message.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    record = temporary.path().joinpath("requests")
+    # 1. The stub records what it was asked and for which home.
+    accepting = temporary.path().joinpath("accepting")
+    script = "#!/bin/sh\nprintf '%s %s\\n' \"$INCAN_HOME\" \"$*\" >> " + record.0 + "\necho re-admitted\n"
+    executable(accepting, script)?
+    readmit(accepting.0, home, ["/old/bin/incan-rustc-driver-a"])?
+    requests = record.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert requests == f"{home.0} --internal-readmit /old/bin/incan-rustc-driver-a\n", requests
+    # 2. A refusal names the home and keeps the builder's reason.
+    refusing = temporary.path().joinpath("refusing")
+    executable(refusing, "#!/bin/sh\necho 'unknown command' >&2\nexit 1\n")?
+    match readmit(refusing.0, home, []):
+        Ok(_) =>
+            assert false, "a refused re-admission must fail the relink"
+        Err(reason) =>
+            assert home.0 in reason and "unknown command" in reason, reason
+    return Ok(None)
+
+
+def executable(path: Path, text: str) -> Result[None, str]:
+    """Write a stub program the test runs in place of an Oven."""
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    status = Command.new("chmod").arg("755").arg(path.0).status().map_err((error) => error.to_string())?
+    if not status.success():
+        return Err(f"cannot make {path.0} executable")
+    return Ok(None)
