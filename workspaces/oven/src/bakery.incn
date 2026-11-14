@@ -769,6 +769,8 @@ pub def bakery_command(request: int) -> Result[i32, str]:
             return Ok(1)
         return Ok(0)
     collected = collect(store, request)?
+    if retire_export_views()?:
+        trace("bakery: removed the retired export views under cache/codegraph-exports")
     println(
         f"kept {collected.kept} units, removed {collected.removed}, dropped {collected.roots_dropped} roots, " + f"cleared {collected.staging_cleared} staging directories, reclaimed {collected.layouts_removed} layouts and {collected.payloads_removed} payloads ({collected.bytes_reclaimed} bytes)",
     )
@@ -890,3 +892,15 @@ def preserve_unit_damage(store: Path, identity: str, view: Snapshot) -> Result[b
                             return Ok(damaged)
                 Lookup.Deleted => return Ok(false)
                 Lookup.Absent => return Ok(false)
+
+
+def retire_export_views() -> Result[bool, str]:
+    """
+    Remove the export views earlier Ovens kept under `cache/codegraph-exports` in the home: graph exports are read
+    where the bakery binds them now. `true` when there were views to remove.
+    """
+    directory = home()?.joinpath("cache").joinpath("codegraph-exports")
+    if not directory.is_dir():
+        return Ok(false)
+    directory.remove_tree().map_err((error) => f"cannot remove directory tree {error.message()}")?
+    return Ok(true)
