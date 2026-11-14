@@ -7,6 +7,11 @@
 # expect-stdout-contains:
 #   workspace member alpha: alpha
 # expect-exit: 0
+# expect-files:
+#   oven.lock
+# expect-no-files:
+#   alpha/oven.lock
+#   beta/oven.lock
 
 def main() -> None:
     """The workspace root's own program, which these selections leave out."""

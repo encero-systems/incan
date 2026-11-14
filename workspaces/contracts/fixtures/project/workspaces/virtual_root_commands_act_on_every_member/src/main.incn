@@ -9,6 +9,11 @@
 #   workspace member alpha: alpha
 #   workspace member beta: beta
 # expect-exit: 0
+# expect-files:
+#   oven.lock
+# expect-no-files:
+#   alpha/oven.lock
+#   beta/oven.lock
 
 def main() -> None:
     """No project owns this program; the virtual workspace root only lists its members."""
