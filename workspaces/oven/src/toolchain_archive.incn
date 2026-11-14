@@ -41,7 +41,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
-from compiler_record_admission import convert, installed_records, shipped_pin
+from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -136,8 +136,12 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
     # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
-    # archive converts and copies nothing.
-    records = convert(toolchain.driver, directory, stage)?
+    # archive converts and copies nothing. The set holds the records of the Loaves the stage ships and no others.
+    manifests = stage.parent().joinpath(f"{stage.name()}-manifests")
+    sealed = sealed_records(toolchain.driver, stage, manifests)
+    if manifests.is_dir():
+        remove_dir_all(manifests.0).map_err((error) => f"cannot remove staged manifests {manifests.0}: {error}")?
+    records = sealed?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
     description = replaced(description, "compiler_records", records.to_json())?
@@ -154,6 +158,37 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
+
+
+def sealed_records(driver: str, stage: Path, manifests: Path) -> Result[CompilerRecordPin, str]:
+    """Seal the compiler records of the staged Loaves into the stage, exporting them from a view of their manifests."""
+    shipped_manifests(stage, manifests)?
+    return convert(driver, manifests, stage)
+
+
+pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
+    """
+    Copy every Loaf manifest the stage ships to the same place under `view`, as a plain file.
+
+    The compiler exports the records of each manifest below one directory and follows no link. The packing home may
+    hold Loaves the archive leaves behind, such as a runtime an earlier compiler built, so the sealed set is exported
+    from what the stage ships, never from the home.
+    """
+    mut pending = [stage]
+    mut index = 0
+    while index < len(pending):
+        directory = pending[index]
+        index += 1
+        for entry in directory.iterdir().map_err((error) => f"staged toolchain: cannot {error.message()}")?:
+            if entry.is_dir():
+                if not entry.is_symlink():
+                    pending.append(entry)
+            elif entry.name().endswith(".incnlib"):
+                copy = view.joinpath(entry.0[len(stage.0) + 1:])
+                make_directory(copy.parent())?
+                contents = entry.read_bytes().map_err((error) => f"staged manifest: cannot {error.message()}")?
+                copy.write_bytes(contents).map_err((error) => f"staged manifest: cannot {error.message()}")?
+    return Ok(None)
 
 
 pub def stage_driver(driver: Path, stage: Path) -> Result[str, str]:
