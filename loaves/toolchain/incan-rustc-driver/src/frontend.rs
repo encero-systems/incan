@@ -690,6 +690,7 @@ fn compile_unit(
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
     )?;
+    timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
         incan_mir_lowering::publish_plan_records(
@@ -729,6 +730,7 @@ fn compile_unit(
     } else {
         None
     };
+    timing.mark("native_inputs_prepared");
     drop(program);
     drop(dependencies.graph_body_records);
     // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
