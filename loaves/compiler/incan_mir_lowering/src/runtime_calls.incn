@@ -93,7 +93,14 @@ pub def selected_runtime_requirements(
 
 
 pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> list[RuntimeRequirement]:
-    """Load generic-callable state layouts before any frame publishes combined enum indices."""
+    """
+    Load generic-callable state layouts before any frame publishes combined enum indices.
+
+    Only a decorated binding's frames call `initialize_binding`, and runtime facades declare none, so a program
+    whose held modules retain no decorated binding never reads that state or its native layouts.
+    """
+    if not retains_decorated_binding(modules):
+        return []
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
         for binding_position in range(len(module.runtime_callable_bindings)):
@@ -110,6 +117,14 @@ pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> 
                 ),
             ]
     return []
+
+
+def retains_decorated_binding(modules: &list[BodyIrModule]) -> bool:
+    """Whether any held module retains a decorated binding, the only caller of the runtime's binding state."""
+    for module_position in range(len(modules)):
+        if len(borrowed_at(modules, module_position).decorated_bindings) != 0:
+            return true
+    return false
 
 
 def runtime_declaration_loaded(modules: &list[BodyIrModule], canonical: &RustCanonicalSymbolId) -> bool:
