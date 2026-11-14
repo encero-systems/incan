@@ -228,6 +228,7 @@ pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[
 
     Args:
         root: Existing project directory whose loaf.toml starts the local dependency closure.
+        reader: Shared source readings for this preparation; every manifest the closure visits is read through it.
 
     Returns:
         Local projects, alias-bearing edges and dependency order, or a refusal for unsupported or missing intent.
