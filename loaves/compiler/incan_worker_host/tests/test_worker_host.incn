@@ -19,6 +19,7 @@ from host import (
     WorkerHost,
     complete,
     complete_record,
+    hands_rustc_off,
     host_for,
     next_activation,
     next_request,
@@ -34,6 +35,7 @@ from protocol import (
     completion,
     encode_ready,
     encode_reply,
+    handoff,
     ready,
     request_document,
     retired,
@@ -706,6 +708,61 @@ def check_one_activation_retirement() -> Result[None, str]:
     assert exit_of(completed) == 0 and retired(completed)
     assert withdrawn(socket)
     assert ended(host)
+    return Ok(None)
+
+
+def unit_text(generation: str) -> str:
+    """A request document compiling a unit against its sysroot, as Oven sends it."""
+    arguments = "[\"--unit\",\"/p/unit.json\",\"unit\",\"/p/out/libunit.rlib\",\"/p/sysroot\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
+
+
+pub def test_a_footprint_over_the_ceiling_hands_rustc_to_the_host_and_retires() -> Result[None, str]:
+    """
+    A compile whose footprint after lowering is above the ceiling hands native compilation to its caller: the worker
+    answers with the handoff it wrote and retires, so rustc runs in a fresh process once this heap is gone.
+    """
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert policy.hands_rustc_off(5001)
+    settled = policy.settle(ActivationOutcome.HandedOff("/p/out/libunit.rustc-handoff"), 5001)
+    match settled.retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a worker that handed rustc to its caller kept serving")
+    socket = socket_path("handoff")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, unit_text(GENERATION))?
+    _ = served(host)?
+    assert hands_rustc_off(host, FOOTPRINT_CEILING + 1)
+    complete(host, ActivationOutcome.HandedOff("/p/out/libunit.rustc-handoff"), FOOTPRINT_CEILING + 1)
+    answered = reply(client)?
+    match handoff(answered):
+        Some(path) =>
+            assert path == "/p/out/libunit.rustc-handoff"
+        None => return Err("the reply did not carry the rustc handoff")
+    assert retired(answered)
+    assert withdrawn(socket)
+    assert ended(host)
+    return Ok(None)
+
+
+pub def test_a_footprint_within_the_ceiling_keeps_rustc_in_the_warm_worker() -> Result[None, str]:
+    """A compile whose footprint after lowering is within the ceiling runs rustc in the worker, which stays warm."""
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert not policy.hands_rustc_off(5000)
+    assert not policy.hands_rustc_off(-1)
+    socket = socket_path("in-worker")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, unit_text(GENERATION))?
+    _ = served(host)?
+    assert not hands_rustc_off(host, FOOTPRINT_CEILING)
+    complete(host, ActivationOutcome.Exited(0), FOOTPRINT_CEILING)
+    answered = reply(client)?
+    assert exit_of(answered) == 0 and not retired(answered)
+    assert handoff(answered) is None
+    assert not withdrawn(socket)
+    discard(socket)
     return Ok(None)
 
 
