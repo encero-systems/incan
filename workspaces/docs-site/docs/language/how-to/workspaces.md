@@ -65,6 +65,17 @@ json = { workspace = true, features = ["preserve_order"] }
 
 The root's `path = "."` reaches the member as `path = ".."`: a local path is spelled from the root and rebased onto each member. See [`[workspace]`](../../tooling/reference/project_configuration.md#workspace).
 
+## Select members
+
+Name the members a command acts on with `--workspace`, `--member NAME_OR_PATH` (or `-p`) and `--exclude NAME_OR_PATH`:
+
+```bash
+oven check --workspace
+oven test --member consumer
+```
+
+Without them, a command in a member's directory acts on that member. At the root it acts on `default-members` when the root declares them, otherwise on the root project, or on every member of a virtual workspace. `oven workspace inspect` shows which members a command would act on. See [Member selection](../../tooling/reference/cli_reference.md#member-selection).
+
 ## Share environments across members
 
 A workspace root can declare environment fragments under `[workspace.envs.NAME]`:
