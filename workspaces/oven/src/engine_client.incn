@@ -37,6 +37,7 @@ pub def execute(
     profile: str,
     arguments: list[str],
     argv0: Option[str],
+    format: str,
     proofs: bool,
 ) -> Result[i32, str]:
     """
@@ -49,6 +50,8 @@ pub def execute(
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     mut view_identity = [home()?.0, absolute.0, profile]
+    if command == "check":
+        view_identity.append("check")
     match get_optional("OVEN_BODY_REFUSALS"):
         Some(mode) => view_identity.append("body-refusals:" + mode)
         None => pass
@@ -60,7 +63,7 @@ pub def execute(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     compiler = installed_compiler()?
-    if not proofs:
+    if not proofs and command != "check":
         if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
@@ -79,7 +82,7 @@ pub def execute(
                 view=view,
                 input_selection=profile,
                 requested_roots=absolute.0,
-                options="",
+                options=format,
                 observation_policy=policy,
             ),
         ),
@@ -91,6 +94,9 @@ pub def execute(
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
         return Ok(1)
+    if command == "check":
+        _ = channel.transport.close()
+        return Ok(0)
     mut binary = ""
     match read_program(store, complete.result_handles)?:
         None => return Err("engine completed without a native descriptor")

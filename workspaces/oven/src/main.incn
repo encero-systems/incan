@@ -457,9 +457,19 @@ def records_command(command: str, arguments: list[str]) -> None:
             Ok(text) => println(text)
             Err(reason) => fail(f"oven inspect: {reason}", 1)
         return
-    if command not in ["run", "build"]:
+    if command not in ["run", "build", "check"]:
         fail(f"{invoked()} {command}: records engine does not implement `{command}`", 1)
-    own, passed = program_arguments(arguments)
+    mut own: list[str] = []
+    mut passed: list[str] = []
+    mut format = ""
+    if command == "check":
+        match records_check_arguments(arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(selected) =>
+                own = selected[0]
+                format = selected[1]
+    else:
+        own, passed = program_arguments(arguments)
     match parse_options(own, "."):
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
@@ -476,11 +486,33 @@ def records_command(command: str, arguments: list[str]) -> None:
                 Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
                 Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
                 Ok(Some(selected)) => source = selected
-            prepared_lock(command, options)
+            # Check observes one source reach like the legacy checker; it does not mutate a project lock.
+            if command != "check":
+                prepared_lock(command, options)
             finish(
                 command,
-                execute_records(command, source, options.profile, passed, options.argv0, options.engine_report),
+                execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
+                format,
             )
+
+
+def records_check_arguments(arguments: list[str]) -> Result[tuple[list[str], str], str]:
+    """Separate check's report format before the shared unit-option parser sees its source arguments."""
+    mut format = "text"
+    mut own: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] == "--format":
+            if index + 1 >= len(arguments):
+                return Err("`--format` requires text or json")
+            format = arguments[index + 1]
+            index += 2
+            continue
+        own.append(arguments[index])
+        index += 1
+    if format not in ["text", "json"]:
+        return Err(f"`--format` is text or json, got `{format}`")
+    return Ok((own, format))
 
 
 def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:

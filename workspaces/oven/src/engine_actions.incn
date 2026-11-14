@@ -5,10 +5,10 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import obtain, prepare_selection
+from engine_programs import check_program, obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit_pinned
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -28,6 +28,8 @@ pub model Pending:
     pub proofs: bool
     pub producer: str
     pub handle: str
+    pub command: str
+    pub format: str
 
 
 pub model ExecutionLease:
@@ -67,6 +69,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    if pending.command == "check":
+        return settled_check(store, pending, directory.joinpath(run).0)
     producing = begin()
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
@@ -150,6 +154,40 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                     pin=Some(pin),
                 ),
             )
+
+
+def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
+    """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
+    checking = begin()
+    outcome = check_program(
+        store,
+        pending.capture.revision,
+        console,
+        pending.format,
+        Some(pending.capture.epoch),
+        Some(pending.capture.selected),
+    )?
+    record(Operation.EngineUnit, pending.capture.revision, checking)
+    captured = after_projection(pending.capture)?
+    mut snapshot = captured.snapshot.digest
+    if let Some(transaction) = captured.transaction:
+        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut status = CompletionStatus.Success
+    if outcome.code != 0:
+        status = CompletionStatus.Failed
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=status,
+                observation_handle="",
+            ),
+            console=outcome.console,
+        ),
+    )
 
 
 def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:

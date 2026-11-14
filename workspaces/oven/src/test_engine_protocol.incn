@@ -104,6 +104,65 @@ pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Res
     return await_exit(writer, true)
 
 
+pub def test_records_engine_check_uses_the_build_route_without_codegen() -> Result[None, str]:
+    """An accepted and refused census check use records capture but produce no native binary."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("main.incn")
+    write(
+        source,
+        "# behavior: a model with typed fields, one with a default, checks beside a function\n# expect-accepted:\n\nmodel User:\n    name: str\n    age: int = 0\n    email: str\n\ndef greet(name: str) -> str:\n    return \"Hello\"\n",
+    )?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    checked = exercise_records_check(binary, source, store, project)
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    return checked
+
+
+def exercise_records_check(binary: str, source: Path, store: Path, project: Path) -> Result[None, str]:
+    """Run one accepted and one refused census check while the caller owns engine cleanup."""
+    accepted = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    expected = b"{\x0a  \"schema_version\": 2,\x0a  \"ok\": true,\x0a  \"diagnostics\": []\x0a}\x0a"
+    assert accepted.status.success() and accepted.stdout == expected and accepted.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "records check generated a native binary directory"
+    write(
+        source,
+        "# behavior: returning a str from a function declared to return int is refused\n# expect-diagnostic: INCAN-T0001\n\ndef foo() -> int:\n    return \"not an int\"\n",
+    )?
+    refused = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    report = RustString.from_utf8(refused.stdout).map_err((error) => str(error))?
+    assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
+    return Ok(None)
+
+
 pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
     """The ninth data frame stays with its caller; cancellation and exact acknowledgments still pass."""
     scratch = scratch_directory()?
