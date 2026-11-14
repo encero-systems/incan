@@ -61,7 +61,9 @@ impl BodyBuilder<'_, '_> {
                 .ok_or("checked C call lost its binding descriptor")?;
             // A Clove binding links the archive of the configuration it names, under the library's link name that
             // verification resolved from the unit's description.
-            if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary {
+            // An Apple framework links by its framework name, as 0.5.1's `c.framework` did.
+            let framework = descriptor.link_capability == c_abi::LinkCapabilityId::Framework;
+            if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary && !framework {
                 return Err(format!(
                     "unsupported checked C native link capability {}",
                     c_abi::link_capability_as_str(descriptor.link_capability)
@@ -119,6 +121,7 @@ impl BodyBuilder<'_, '_> {
                     library,
                     clove,
                     configuration,
+                    framework,
                     header: descriptor.header.clone(),
                     parameters,
                     return_type,

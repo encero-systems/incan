@@ -51,6 +51,7 @@ pub def lower_foreign_call(
         library=str(target.library),
         clove=str(target.clove),
         configuration=str(target.configuration),
+        framework=target.framework,
         parameters=parameters,
         return_type=output,
     )
