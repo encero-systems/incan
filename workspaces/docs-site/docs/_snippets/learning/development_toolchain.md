@@ -1,4 +1,4 @@
-Development uses the same installed dev.8 toolchain as project builds. Select its Oven executable on `PATH`, install its matching archive, and set `INCAN_STDLIB` to the standard-package source directory.
+Development uses the same installed toolchain as project builds. Put its `INCAN_HOME/bin` on `PATH`, and set `INCAN_STDLIB` to the standard-package source directory.
 
 ```bash
 incan --version

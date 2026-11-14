@@ -34,7 +34,7 @@ Use an installed dev.8 toolchain; Oven prepares dependencies automatically. Tune
 ## Package a toolchain
 
 ```bash
-incan toolchain pack incan-0.6.0-dev.8.tar.zst
+incan toolchain pack toolchain.tar.zst
 ```
 
 Install the resulting archive into a separate home on a compatible host before testing relocation. Local Rust 1.98.0 with `rustc-dev` must match the packed driver's identity. See [Install and run](../../tooling/how-to/install_and_run.md).

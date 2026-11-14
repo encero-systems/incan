@@ -47,7 +47,7 @@ There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build`
 
 `oven --help`, `oven -h` and `oven help` print the `oven` synopses above and the CLI reference location, then exit `0`; `incan --help`, `incan -h` and `incan help` do the same for `incan`. `COMMAND --help` or `COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `oven owner stop --help`, `oven bakery status --help`, `oven inspect dependencies --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
 
-`oven --version` prints `oven 0.6.0-dev.8` and `incan --version` prints `incan 0.6.0-dev.8`, then exit `0`. `--version --help` prints its usage and example.
+`oven --version` prints `oven 0.6.0-dev.9` and `incan --version` prints `incan 0.6.0-dev.9`, then exit `0`. `--version --help` prints its usage and example.
 
 ## Unit options
 
@@ -411,7 +411,7 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
 
-`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.8/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
+`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.9/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
 
 ## Environment variables
 

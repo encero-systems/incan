@@ -1,6 +1,6 @@
 # Run project checks in CI
 
-Install the matching dev.8 toolchain archive on a compatible runner before checking a project. Select its Oven executable on `PATH` and set `INCAN_HOME` and `INCAN_STDLIB` for that installation. See [Install and run](install_and_run.md).
+Install the toolchain on a compatible runner before checking a project, and put its `INCAN_HOME/bin` on `PATH`. See [Install and run](install_and_run.md).
 
 ## Check a project
 

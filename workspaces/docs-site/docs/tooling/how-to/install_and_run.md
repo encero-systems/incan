@@ -1,12 +1,34 @@
 # Install and run Incan
 
-Use the `0.6.0-dev.8` Oven executable with a matching toolchain archive for your host. These instructions require the archive and executable to be available; they do not imply that the development release has been published.
+Install a release for your host with its installer, or install a toolchain archive with its matching Oven executable. A development line is installed by its tag; a tag whose release files are not published reports the file it could not download.
 
-## Install a toolchain archive
+## Install a release
 
 --8<-- "_snippets/learning/install_toolchain.md"
 
-Installation first checks Rust 1.98.0 and `rustc-dev`, then verifies the driver's identity against the local sysroot before replacing an existing toolchain. A missing prerequisite reports the exact `rustup` command to run. A failed installation preserves the existing toolchain. Use a separate `INCAN_HOME` to test an archive without replacing your normal installation.
+Installation first checks Rust 1.98.0 and `rustc-dev`, then verifies the driver's identity against the local sysroot before replacing an existing toolchain. A missing prerequisite reports the exact `rustup` command to run. A failed installation preserves the existing toolchain. Use a separate `INCAN_HOME` to test a release without replacing your normal installation.
+
+## Release files
+
+A release is one directory of files. The installer reads these from it, with the host's target triple as `TARGET`:
+
+| File | Contents |
+| --- | --- |
+| `SHA256SUMS` | One `SHA256  NAME` line for each file below. |
+| `incan-TARGET` | The Oven executable, which answers to `incan` and `oven`. |
+| `incan-lsp-TARGET` | The language server. |
+| `toolchain-TARGET.tar.zst` | The toolchain archive. |
+
+## Install an archive without the installer
+
+Run a release's Oven executable on its archive:
+
+```bash
+chmod +x incan-aarch64-apple-darwin
+./incan-aarch64-apple-darwin toolchain install toolchain-aarch64-apple-darwin.tar.zst
+```
+
+This copies the executable to `INCAN_HOME/bin/incan` and links `INCAN_HOME/bin/oven` to it. Put `INCAN_HOME/bin` on `PATH`. The language server is not part of the archive; copy `incan-lsp-TARGET` to `INCAN_HOME/bin/incan-lsp` yourself.
 
 ## Create and exercise a project
 
@@ -21,7 +43,7 @@ Create `loaf.toml`, `src/main.incn` and `tests/test_main.incn` as shown in [Gett
 ## Pack an installed toolchain
 
 ```bash
-incan toolchain pack incan-0.6.0-dev.8.tar.zst
+incan toolchain pack toolchain.tar.zst
 ```
 
 Packing includes the installed driver, Rust ABI caches, native dependencies, standard Loaves and registry closure. It rewrites paths for relocation and excludes the local sysroot. The destination extension selects tar, gzip or zstd compression.
