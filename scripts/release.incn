@@ -66,6 +66,7 @@ from release_support import (
     verification_program,
     write_json,
 )
+from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
 
@@ -438,7 +439,8 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
     apply_release_trust(run.paths.source, run.paths.toolchain)?
     share_seed_tree(seed, run.paths.toolchain, "loaves")?
     share_seed_tree(seed, run.paths.toolchain, "native")?
-    share_seed_tree(seed, run.paths.toolchain, "registry")?
+    # The candidate ships its own registry closure, each unit with the source checksum the release pins.
+    write_checksummed_registry(run.paths.toolchain, run.paths.source.joinpath(REGISTRY_CHECKSUMS))?
     sysroot = manifest_string(read_json(run.paths.toolchain.joinpath("toolchain.json"))?, "sysroot")?
     run.paths.toolchain.joinpath("sysroot").symlink_to(Path(sysroot)).map_err((error) => error.message())?
     preserve_registry_lock(run.paths.toolchain)?
