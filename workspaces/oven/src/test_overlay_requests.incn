@@ -173,6 +173,42 @@ pub def test_a_keystroke_decodes_no_page_an_earlier_keystroke_decoded() -> Resul
     return Ok(None)
 
 
+pub def test_a_keystroke_after_a_save_writes_only_the_pages_the_save_changed() -> Result[None, str]:
+    """
+    After a build and a first keystroke, a save that edits one function in place, moving no other declaration, changes
+    the checked values of that function alone. The next keystroke, which edits another function, writes the saved
+    function's page again and keeps every other one.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 3", "value + value + value"))?
+    saved = original.replace("value * 2", "2 * value")
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, saved.replace("value * 3", "3 * value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    wrote = write(helper, saved)
+    built = overlay_with(binary, helper, helper, store, ["--build"])
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    _ = wrote?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    built_text = built?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_writes")? == 1, f"first: {first_text}\nsave: {built_text}\nsecond: {text}"
+    return Ok(None)
+
+
 def keystroke_package(scratch: Path) -> Result[tuple[Path, Path, str], str]:
     """A package whose `main` calls `twice` and `thrice` from `helper`: its entry, its helper and the helper's text."""
     package = scratch.joinpath("package")
