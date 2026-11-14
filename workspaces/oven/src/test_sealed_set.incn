@@ -5,7 +5,7 @@ from std.fs import Path
 from std.hash import file_digest, sha256
 from std.io import BytesIO, Endian, IoError
 from scratch import scratch_directory
-from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts
+from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, begin, commit, get, put, read_counts, segments
 from store_path_conversion import oven_path, payload_path, put_payload, snapshot
 from sealed_set import (
     ExternalReference,
@@ -236,8 +236,9 @@ def prove_overlap(base: Path, source: Path, spec: SetSpec, original: Path, root:
     first = admit(home, original, root, spec.profile).map_err((error) => error.message())?
     objects_before = len(inventory(home.joinpath("payloads"))?)
     second = admit(home, directory, digest, spec.profile).map_err((error) => error.message())?
-    assert len(second.segments) == len(first.segments) + 1
-    assert segment_count(second, second.segments[len(second.segments) - 1])? == 2
+    reached_first = segments(first).map_err((error) => error.message())?
+    assert len(segments(second).map_err((error) => error.message())?) == len(reached_first) + 1
+    assert segment_count(second, added_segment(first, second)?)? == 2
     assert len(inventory(home.joinpath("payloads"))?) == objects_before + 1
     before = inventory(home)?
     repeated = admit(home, directory, digest, spec.profile).map_err((error) => error.message())?
@@ -324,6 +325,15 @@ def inventory(directory: Path, prefix: str = "") -> Result[list[str], str]:
     return Ok(sorted(entries))
 
 
+def added_segment(before: Snapshot, after: Snapshot) -> Result[str, str]:
+    """The one segment `after` reaches that `before` does not: the segment its commit wrote."""
+    earlier = segments(before).map_err((error) => error.message())?
+    added = [name for name in segments(after).map_err((error) => error.message())? if name not in earlier]
+    if len(added) != 1:
+        return Err(f"a commit reached {len(added)} new segments")
+    return Ok(added[0])
+
+
 def segment_count(view: Snapshot, digest: str) -> Result[int, str]:
     """Count retained frames from the segment header, independently of the snapshot's descriptor representation."""
     path = oven_path(view.root).joinpath("segments").joinpath(f"{digest}.seg")
@@ -377,7 +387,7 @@ def prove_external_membership(
     alternate.receipt = "other receipt"
     alternate_directory = base.joinpath("alternate-dependency")
     alternate_root = export_set(view, alternate, alternate_directory).map_err((error) => error.message())?
-    admit(home, alternate_directory, alternate_root, profile).map_err((error) => error.message())?
+    alternate_admitted = admit(home, alternate_directory, alternate_root, profile).map_err((error) => error.message())?
     mut transported = consumer
     transported.dependencies = [alternate_root]
     transported.records[0].external = [
@@ -386,7 +396,7 @@ def prove_external_membership(
     transport_directory = base.joinpath("alternate-consumer")
     transport_root = export_set(view, transported, transport_directory).map_err((error) => error.message())?
     overlap = admit(home, transport_directory, transport_root, profile).map_err((error) => error.message())?
-    assert segment_count(overlap, overlap.segments[len(overlap.segments) - 1])? == 1
+    assert segment_count(overlap, added_segment(alternate_admitted, overlap)?)? == 1
     # An unrelated set cannot vouch for an available record, even with the same key spelling and value.
     mut unrelated = dependency
     unrelated.origin = "unrelated-owner"
@@ -455,7 +465,9 @@ def prove_frozen_readmission(
         Err(error) =>
             assert error.kind == "integrity", error.message()
     readmit(home, directory, root, profile).map_err((error) => error.message())?
-    segment = home.joinpath("segments").joinpath(f"{restored.segments[len(restored.segments) - 1]}.seg")
+    reached = segments(restored).map_err((error) => error.message())?
+    assert len(reached) == 1, f"the restored set reached {len(reached)} segments"
+    segment = home.joinpath("segments").joinpath(f"{reached[0]}.seg")
     bytes = segment.read_bytes().map_err((error) => error.message())?
     segment.write_bytes(bytes[:len(bytes) - 1]).map_err((error) => error.message())?
     match admit(home, directory, root, profile):
