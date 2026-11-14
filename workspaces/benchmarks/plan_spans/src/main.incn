@@ -1,7 +1,6 @@
 """Retain many source locations while proving their file text shares one allocation beyond its creating scope."""
 
 from pub::incan_mir_plan import SourceSpan, source_span
-from rust::std::sync import Arc
 
 
 def retained_span() -> SourceSpan:
@@ -22,7 +21,7 @@ def main() -> None:
 
     # 2. A copied span retains the same file allocation rather than another owned string.
     retained = copies[len(copies) - 1]
-    assert Arc.ptr_eq(original.file, retained.file), "copied source spans must share their file storage"
+    assert original.file.shares(retained.file), "copied source spans must share their file storage"
 
     # 3. Diagnostic text and coordinates remain exact after their creating scope returns.
     assert retained.line == 17 and retained.column == 9

@@ -31,8 +31,7 @@ from pub::internal_models.checked_types import (
     CheckedType,
     valid_checked_type,
 )
-from pub::incan_mir_plan import SourceSpan as PlanSourceSpan
-from rust::std::sync import Arc
+from pub::incan_mir_plan import SourceSpan as PlanSourceSpan, source_span as plan_source_span
 from rust::std::array import from_fn as rust_array_from_fn
 from rust::std::collections import BTreeMap
 from rust::incan_semantics_core import (
@@ -113,7 +112,7 @@ pub def authored_plan_source_span(span: &PlanSourceSpan) -> PlanSourceSpanRecord
 
 pub def native_plan_source_span(span: &PlanSourceSpanRecord) -> PlanSourceSpan:
     """Allocate one shared Plan filename when restoring the authored record projection for native lowering."""
-    return PlanSourceSpan(file=Arc.new(str(span.file)), line=span.line, column=span.column)
+    return plan_source_span(str(span.file), span.line, span.column)
 
 
 pub def native_canonical_symbol_id(identity: &CanonicalSymbolId) -> Result[RustCanonicalSymbolId, str]:

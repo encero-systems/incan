@@ -1,6 +1,7 @@
 """Native crate, callable, nominal, export, and entry declarations shared by lowering and the plan codec."""
 
 
+from rust::serde import Serialize, Deserialize
 from pub::internal_models.checked_types import CheckedType as SemanticType
 from _types import (
     TupleElement,
@@ -47,7 +48,7 @@ from _body import (
 )
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum AttributeValue:
     """A literal an attribute macro receives as a Rust literal; a list keeps its elements in written order."""
 
@@ -58,7 +59,7 @@ pub enum AttributeValue:
     List(list[AttributeValue])
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model AttributeArgument:
     """One attribute argument; an empty name marks a positional one."""
 
@@ -66,7 +67,7 @@ pub model AttributeArgument:
     pub value: AttributeValue
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model NativeAttribute:
     """One exported attribute macro applied to a declaration: its canonical Rust path and written arguments."""
 
@@ -74,7 +75,7 @@ pub model NativeAttribute:
     pub arguments: list[AttributeArgument]
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model GenericLoan:
     """One source type parameter's occurrence in a concrete signature, preserving its nested native loans."""
 
@@ -84,7 +85,7 @@ pub model GenericLoan:
     pub ty: PlanType
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Function:
     """A declaration and its body, with locals zero through parameter count reserved."""
 
@@ -109,7 +110,7 @@ pub model Function:
     pub retained_result_source: int = -1
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model Plan:
     """
     A native crate with scalar functions, plain nominal layouts and normal enums; external functions are admitted by canonical path.
@@ -138,7 +139,7 @@ pub model Plan:
     pub generic_enums: list[GenericEnumDeclaration] = []
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum GenericLayoutType:
     """A generic ADT field's checked type; function-pointer signatures retain inputs followed by one result entry."""
 
@@ -150,7 +151,7 @@ pub enum GenericLayoutType:
     FunctionPointer(list[GenericLayoutType])
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model GenericLayoutField:
     """One source field in a generic ADT, in declaration order and with its checked visibility."""
 
@@ -159,7 +160,7 @@ pub model GenericLayoutField:
     pub public: bool
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model GenericModelDeclaration:
     """A provider-owned generic ADT whose parameters, fields, and derive authority come from its checked declaration."""
 
@@ -171,7 +172,7 @@ pub model GenericModelDeclaration:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model GenericEnumVariant:
     """One authored variant with generic payload types in declaration order."""
 
@@ -179,7 +180,7 @@ pub model GenericEnumVariant:
     pub fields: list[GenericLayoutType]
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model GenericEnumDeclaration:
     """One provider-owned generic enum template; closed plans alias it with exact type arguments."""
 
@@ -190,7 +191,7 @@ pub model GenericEnumDeclaration:
     pub span: SourceSpan
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model ZipCarrier:
     """Associate a builtin zip's checked element layouts with the published runtime result's closed source carrier."""
 
@@ -199,7 +200,7 @@ pub model ZipCarrier:
     pub target: PlanType
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model PlanExport:
     """
     One public name a library plan publishes, emitted as `pub use <path> as <name>;` at the crate root.
@@ -211,7 +212,7 @@ pub model PlanExport:
     pub path: str
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model StaticCell:
     """
     One computed module static's native storage: a lazily initialized cell holding a value of `ty`.
@@ -228,7 +229,7 @@ pub model StaticCell:
     pub module_completion: bool = false
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model IteratorMethods:
     """Checked source poll and item carrier authorizing an ordinary native SDK iterator implementation."""
 
@@ -236,7 +237,7 @@ pub model IteratorMethods:
     pub next: str
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model FallibleIteratorMethods:
     """Complete standard default selection and the source poll body authorizing one concrete native implementation."""
 
@@ -245,7 +246,7 @@ pub model FallibleIteratorMethods:
     pub next: str
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model NativeTraitMethod:
     """A Rust trait method filled by a planned source method; rustc checks the implementation's signature."""
 
@@ -253,7 +254,7 @@ pub model NativeTraitMethod:
     pub function: str
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model NativeTraitAdoption:
     """A class's request to implement a concrete Rust trait; rustc proves the implementation, not this record."""
 
@@ -261,7 +262,7 @@ pub model NativeTraitAdoption:
     pub methods: list[NativeTraitMethod]
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model ModelDeclaration:
     """
     Checked field layout and implicit derives for one concrete source nominal layout.
@@ -315,7 +316,7 @@ pub model ModelDeclaration:
     pub unavailable_native_fields: list[int] = []
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model ExternalFunction:
     """The signature of a canonical dependency function used by this plan."""
 
@@ -333,7 +334,7 @@ pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) 
         None => return false
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub enum Carrier:
     """
     Which standard enum a retained layout instantiates. `Option` lays out `None` then `Some`, and `Result` lays out `Ok`
@@ -345,7 +346,7 @@ pub enum Carrier:
     Result
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model EnumDeclaration:
     """Checked normal enum layout; variant indices follow source declaration order."""
 
@@ -378,7 +379,7 @@ pub model EnumDeclaration:
     pub closure_items: list[str] = []
 
 
-@derive(Clone, PartialEq)
+@derive(Clone, PartialEq, Serialize, Deserialize)
 pub model EnumVariant:
     """One unit or positional payload variant; its field types are checker facts."""
 
