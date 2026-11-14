@@ -12,7 +12,7 @@ remains `Ok(None)`.
 """
 
 from rust::incan_std_primitives::errors import raise_value_error
-pub from std.traits.callable import Callable1, Callable2
+from std.traits.callable import Callable1, Callable2
 pub from crate.derives.collection._protocols import Contains, Bool, Len
 
 

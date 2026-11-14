@@ -3,13 +3,13 @@ Incan Prelude - Foundational traits automatically available in every program
 To view the implementation of any trait, Cmd+click on the import
 """
 
-pub from std.derives.string import Debug, Display
-pub from std.derives.comparison import Eq, Ord, Hash
-pub from std.derives.copying import Clone, Copy, Default
-pub from std.derives.collection import Contains, Bool, Len, Iterable, Iterator, Sum
-pub from std.traits.convert import From, Into, TryFrom, TryInto
-pub from std.traits.ops import Add, Sub, Mul, Div, Neg, Mod
-pub from std.traits.error import Error
-pub from std.traits.indexing import Index, IndexMut, Sliceable
-pub from std.traits.callable import Callable0, Callable1, Callable2
+from std.derives.string import Debug, Display
+from std.derives.comparison import Eq, Ord, Hash
+from std.derives.copying import Clone, Copy, Default
+from std.derives.collection import Contains, Bool, Len, Iterable, Iterator, Sum
+from std.traits.convert import From, Into, TryFrom, TryInto
+from std.traits.ops import Add, Sub, Mul, Div, Neg, Mod
+from std.traits.error import Error
+from std.traits.indexing import Index, IndexMut, Sliceable
+from std.traits.callable import Callable0, Callable1, Callable2
 pub from std.primitives import log
