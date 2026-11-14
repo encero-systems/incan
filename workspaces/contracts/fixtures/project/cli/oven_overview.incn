@@ -16,7 +16,7 @@
 #   oven owner stop
 #   oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 #   oven inspect dependencies PATH [UNIT OPTIONS]
-#   oven interop stage --target TRIPLE --adapter android|ios --output PATH [PATH]
+#   oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 
