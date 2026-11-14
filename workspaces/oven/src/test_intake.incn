@@ -176,13 +176,15 @@ pub def test_cycle_refuses() -> None:
             assert error.kind == IntakeErrorKind.Cycle
 
 
-pub def test_conventional_library_cannot_be_a_script() -> None:
-    """Reject a script that selects the conventional library source."""
+pub def test_conventional_library_script_is_ignored() -> None:
+    """Accept a script that names the conventional library, as 0.5.1 did, and ignore it: the library stays a library."""
     match intake(Path("tests/fixtures/collision")):
-        Ok(_) => fail("script-library collision was accepted")
-        Err(error) =>
-            assert error.kind == IntakeErrorKind.Invalid
-            assert error.field == ["project", "scripts", "main"]
+        Err(error) => fail(f"a script naming the conventional library was refused: {error.message()}")
+        Ok(found) =>
+            project = found.projects[0]
+            assert "main" not in project.intent.scripts
+            assert "main" in project.library_scripts
+            assert project.library_scripts["main"] == "src/lib.incn"
 
 
 pub def test_missing_root_refuses() -> None:
