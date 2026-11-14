@@ -322,9 +322,13 @@ impl TypeChecker {
                 .and_then(|name| self.lookup_semantic_type_info(name)),
             _ => None,
         };
-        if let Some(TypeInfo::Model(model)) = source_model {
-            return model
-                .fields
+        let source_fields = match source_model {
+            Some(TypeInfo::Model(model)) => Some(&model.fields),
+            Some(TypeInfo::Class(class)) => Some(&class.fields),
+            _ => None,
+        };
+        if let Some(fields) = source_fields {
+            return fields
                 .values()
                 .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
         }
