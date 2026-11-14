@@ -7,6 +7,9 @@ from header import Header
 from run import Outcome, invoke, surface, trace_file, trace_lines, traced_setting
 from workers import Invocation, invoke_many
 
+# What an expected stdout line writes for the case's own project directory, which differs from run to run.
+pub const PROJECT: str = "<project>"
+
 
 pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[str], str]:
     """
@@ -42,7 +45,7 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
             for failure in trace_invariance(seen, outcome, channel)?:
                 failures.append(f"{shown(command)}: {failure}")
         # 2. A successful sibling cannot hide another command's failure.
-        for failure in compare("cli", header, outcome):
+        for failure in compare("cli", header, located(outcome, project)):
             failures.append(f"{shown(command)}: {failure}")
         # 3. Only the lines this command traced can satisfy its trace expectations.
         added = since(before, trace_lines(trace_file(project)))
@@ -83,9 +86,32 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
     mut failures: list[str] = []
     for index in range(len(commands)):
         outcome = outcomes[index]?
-        for failure in compare("cli", header, outcome):
+        for failure in compare("cli", header, located(outcome, project)):
             failures.append(f"{shown(commands[index])} (concurrent): {failure}")
     return Ok(failures)
+
+
+pub def located(outcome: Outcome, project: Path) -> Outcome:
+    """
+    `outcome` with the case's project directory written `<project>` in stdout, so a case can expect a path Oven
+    prints. The directory is replaced as resolved and as given made absolute, the longer spelling first; stderr, whose
+    expectations are substrings, and the status stay as they were.
+    """
+    mut spellings: list[str] = []
+    match project.resolve():
+        Ok(resolved) => spellings.append(resolved.0)
+        Err(_) => pass
+    match project.absolute():
+        Ok(absolute) =>
+            if absolute.0 not in spellings:
+                spellings.append(absolute.0)
+        Err(_) => pass
+    if len(spellings) == 2 and len(spellings[1]) > len(spellings[0]):
+        spellings = [spellings[1], spellings[0]]
+    mut stdout = outcome.stdout
+    for spelling in spellings:
+        stdout = stdout.replace(spelling, PROJECT)
+    return Outcome(stdout=stdout, stderr=outcome.stderr, code=outcome.code)
 
 
 def settings(project: Path, header: Header) -> Result[list[str], str]:
@@ -123,8 +149,6 @@ def since(before: list[str], after: list[str]) -> str:
         else:
             added.append(line)
     return "\n".join(added)
-
-
 
 
 def trace_invariance(traced: Outcome, plain: Outcome, channel: Path) -> Result[list[str], str]:
