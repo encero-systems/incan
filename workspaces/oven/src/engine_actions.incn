@@ -5,6 +5,7 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
+from request_directory import serve_from, served
 from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
@@ -30,6 +31,8 @@ pub model Pending:
     pub handle: str
     pub command: str
     pub format: str
+    # The directory the client's command ran in; its compilations are for that directory.
+    pub directory: str = ""
 
 
 pub model ExecutionLease:
@@ -52,7 +55,9 @@ pub model Ready:
 pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     """Capture installed facts once for this activation and resume reconciliation before the next request."""
     begin_command()
+    serve_from(pending.directory)
     ready = settled_request(store, pending)
+    served()
     end_command()
     return ready
 

@@ -3,7 +3,7 @@ Submit unit compilations, checks and formatting runs to one serial compiler work
 inherited environment.
 """
 
-from rust::std::env import current_dir, vars_os
+from rust::std::env import vars_os
 from rust::std::ffi import OsString
 from rust::std::io import Error as IoError, Write, stderr, stdout
 from rust::std::os::unix::process import CommandExt
@@ -31,6 +31,7 @@ from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket
 from decimal_text import digits_only
 from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
+from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
 from pub::incan_platform.trace import Operation
@@ -230,11 +231,11 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
-            directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
+            directory = working_directory()?
             document = request_document(
                 generation,
                 arguments,
-                directory.to_string_lossy().into_owned(),
+                directory,
                 f"{toolchain.console}.out",
                 f"{toolchain.console}.err",
                 toolchain.retire_worker,
