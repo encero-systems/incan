@@ -37,6 +37,7 @@ from testing import (
     collected_cases,
     compile_tests,
     directory_test_sources,
+    may_select,
     run_session,
     rust_cases,
     test_sources,
@@ -861,9 +862,10 @@ def project_cases(options: Options, runner: RunnerOptions) -> Result[Collected, 
 
 def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], root: Path) -> Result[Collected, str]:
     """
-    Compile each test module and collect its tests: listings name a module below `root`, and reports below the working
-    directory. A failed module keeps its compilation status. Under one job, the modules that share a plain session
-    conftest fixture run from one batch unit instead, its cases in place of theirs (`test_batches`).
+    Compile each test module the selection may select and collect its tests: listings name a module below `root`, and
+    reports below the working directory. A module the selection cannot select is never compiled. A failed module keeps
+    its compilation status. Under one job, the modules that share a plain session conftest fixture run from one batch
+    unit instead, its cases in place of theirs (`test_batches`).
     """
     mut here = root
     match Path.cwd():
@@ -872,6 +874,9 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
     mut collected = Collected()
     mut found: list[list[TestCase]] = []
     for source in sources:
+        if not may_select(runner, source, relative_name(source, root))?:
+            found.append([])
+            continue
         mut selected = options
         selected.path = source.0
         code, binary = compiled_tests(selected, runner)?

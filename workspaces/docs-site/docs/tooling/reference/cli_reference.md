@@ -102,7 +102,7 @@ Runner options select, order and report the collected tests. Each option that ta
 | Option | Value and default | Contract |
 | --- | --- | --- |
 | `--list` | Boolean, false | Prints each selected test as `MODULE::TEST`, `MODULE` relative to the selected directory, and runs none. |
-| `-k EXPR` | Expression, empty | Selects tests for which the expression holds; a term holds when `MODULE::TEST` contains it, ignoring case. |
+| `-k EXPR` | Expression, empty | Selects tests for which the expression holds; a term holds when `MODULE::TEST` contains it, ignoring case. A test module whose top-level functions give no test the expression can select is not compiled, so its compilation errors are not reported. |
 | `-m`, `--markers EXPR` | Expression, empty | Selects tests whose markers satisfy the expression: `skip`, `xfail`, `slow` and each `@mark` name. |
 | `--strict-markers` | Boolean, false | Refuses a run in which a test carries a `@mark` name its module does not register in `TEST_MARKERS`. |
 | `--slow` | Boolean, false | Includes tests marked `@slow`, which are otherwise not selected. |
