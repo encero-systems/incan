@@ -1,0 +1,7 @@
+"""The sides of a square from the project's shapes module."""
+
+from shapes import Square, sides
+
+
+def test_a_square_has_four_equal_sides() -> None:
+    assert sides(Square(side=5)) == [5, 5, 5, 5]
