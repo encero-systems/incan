@@ -37,7 +37,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN8 | `== true` / `== false` comparisons | 0 | 0 | 0 |
 | IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | — | 26 |
 | IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 407 |
-| IN11 | Stale Python script names in Incan programs | 13 | 13 | 13 |
+| IN11 | Stale Python script names in Incan programs | 13 | 13 | 0 |
 | IN12 | Declarations without a docstring | 529 | 529 | 529 |
 | IN13 | Helpers nested inside function bodies | 0 | 0 | 0 |
 | IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 257 |
@@ -191,7 +191,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `AGENTS.md`, "No Python in production logic" (the checks are Incan programs, so a `.py` name in their usage text is a stale fact).
 - Search: `rg -n -P '\b[a-z_]+\.py\b' scripts -g '*.incn'`
-- Hits: the usage text of `scripts/check_doc_paths.incn`, `scripts/check_us_english.incn` and `scripts/check_reference_contract.incn`, each spelled twice (once in `HELP` and once at the refusal).
+- Hits: the usage text of `scripts/check_doc_paths.incn`, `scripts/check_changed_rustdocs.incn`, `scripts/check_reference_contract.incn` and `scripts/check_us_english.incn`, spelled once in `HELP` and again at the option refusal, and two retired `.py` paths in the spelling check's skip list.
 
 ### IN12 Declarations without a docstring
 

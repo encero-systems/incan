@@ -6,7 +6,7 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]
+const HELP: str = """usage: check_reference_contract.incn [-h] [--base BASE] [--all] [paths ...]
 
 Fail when a docs-site reference page states more than its contract.
 
@@ -86,8 +86,8 @@ def command_options(arguments: list[str]) -> Options:
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = "usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]"
-            write_stderr(f"{usage}\ncheck_reference_contract.py: error: {message}\n")
+            usage = HELP.split("\n\n")[0]
+            write_stderr(f"{usage}\ncheck_reference_contract.incn: error: {message}\n")
             exit(2)
 
 

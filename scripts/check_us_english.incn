@@ -8,8 +8,8 @@ from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 from english_spellings import spellings
 
-const HELP: str = """usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]
-                           [paths ...]
+const HELP: str = """usage: check_us_english.incn [-h] [--root ROOT] [--allow ALLOW] [--fix]
+                             [paths ...]
 
 Check tracked text for UK spellings; US English is the repository's standard
 (#1561).
@@ -121,11 +121,8 @@ def command_options(arguments: list[str]) -> Options:
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = (
-                "usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]\n"
-                + "                           [paths ...]"
-            )
-            write_stderr(f"{usage}\ncheck_us_english.py: error: {message}\n")
+            usage = HELP.split("\n\n")[0]
+            write_stderr(f"{usage}\ncheck_us_english.incn: error: {message}\n")
             exit(2)
 
 
@@ -203,8 +200,8 @@ def skipped(name: str) -> bool:
     if name == "" or name.startswith("workspaces/docs-site/docs/shared/"):
         return true
     if name in [
-        "scripts/check_us_english.py", "scripts/test_check_us_english.py", "scripts/check_us_english.allow",
-        "scripts/check_us_english.incn", "scripts/test_check_us_english.incn", "scripts/english_spellings.incn",
+        "scripts/check_us_english.allow", "scripts/check_us_english.incn", "scripts/test_check_us_english.incn",
+        "scripts/english_spellings.incn",
     ]:
         return true
     for suffix in [".lock", ".jsonl", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".woff", ".woff2", ".pdf"]:

@@ -6,7 +6,7 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import git, read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_changed_rustdocs.py [-h] [--base BASE]
+const HELP: str = """usage: check_changed_rustdocs.incn [-h] [--base BASE]
 
 Fail when changed Rust source files contain undocumented non-test functions or
 methods. By default, this checks both staged and unstaged `.rs` changes. Pass
@@ -65,8 +65,8 @@ def command_base(arguments: list[str]) -> str:
     match comparison_base(arguments):
         Ok(base) => return base
         Err(message) =>
-            usage = "usage: check_changed_rustdocs.py [-h] [--base BASE]"
-            write_stderr(f"{usage}\ncheck_changed_rustdocs.py: error: {message}\n")
+            usage = HELP.split("\n\n")[0]
+            write_stderr(f"{usage}\ncheck_changed_rustdocs.incn: error: {message}\n")
             exit(2)
 
 

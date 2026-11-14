@@ -7,7 +7,7 @@ from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, source_lines, write_stderr
 
-const HELP: str = """usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]
+const HELP: str = """usage: check_doc_paths.incn [-h] [--root ROOT] [--allow ALLOW] [--list]
 
 Check concrete repository paths in contributor Markdown against the current
 tree.
@@ -107,8 +107,8 @@ def command_options(arguments: list[str]) -> Options:
     match parse_options(arguments):
         Ok(options) => return options
         Err(message) =>
-            usage = "usage: check_doc_paths.py [-h] [--root ROOT] [--allow ALLOW] [--list]"
-            write_stderr(f"{usage}\ncheck_doc_paths.py: error: {message}\n")
+            usage = HELP.split("\n\n")[0]
+            write_stderr(f"{usage}\ncheck_doc_paths.incn: error: {message}\n")
             exit(2)
 
 
