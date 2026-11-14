@@ -11,6 +11,10 @@ from workers import Invocation, Pool, close_pool, invoke_many, open_pool, pool_o
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
+# The most cases a first group holds. A group's build takes longer per case the more cases it holds, so larger groups
+# cost more compilation in all; much smaller ones add more builds than they save. Of first groups of 8, 11, 17, 22, 33
+# and 65 cases, the behavior family built its shared cases fastest from groups of 17.
+const FIRST_GROUP_CASES: int = 17
 # Oven's refusal of entry selection by an engine that cannot compile several programs into one unit: one line that
 # names the engine's refusal and the entry option among the options it refuses. Oven gives the refusal no code, and the
 # list of other options it names grows, so only these two parts are matched.
@@ -162,9 +166,13 @@ def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[l
 
 
 def initial_groups(entries: list[Entry], jobs: int) -> list[list[Entry]]:
-    """Start discovery with balanced optimistic groups so one refused giant compilation cannot serialize workers."""
+    """
+    Start discovery with balanced optimistic groups, at least one per job and none above `FIRST_GROUP_CASES` cases, so
+    one refused giant compilation cannot serialize workers and no first build outlasts the rest of the family.
+    """
     mut groups: list[list[Entry]] = []
-    width = max([1, (len(entries) + max([1, jobs]) - 1) // max([1, jobs])])
+    count = max([1, jobs, (len(entries) + FIRST_GROUP_CASES - 1) // FIRST_GROUP_CASES])
+    width = max([1, (len(entries) + count - 1) // count])
     mut offset = 0
     while offset < len(entries):
         groups.append(entries[offset:min([offset + width, len(entries)])])
