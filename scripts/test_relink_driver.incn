@@ -6,6 +6,7 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from native_build import NativeContext, build_support_tool
 from relink_driver import install_driver, prepare_compiler_home, readmit
 from release_support import TOOLCHAIN_DIRECTORY
 
@@ -181,6 +182,48 @@ def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
     text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
     manifest = JsonValue.parse(text).map_err((error) => error.message())?
     assert manifest.get("compiler_records") == None, text
+    return Ok(None)
+
+
+def test_a_standard_relink_builds_its_helper_again_in_the_same_lane() -> Result[None, str]:
+    """
+    A lane relinks into one home many times, and each standard relink builds the support helper first, so preparing
+    the helper's private project again over the previous one must succeed.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    repo = temporary.path().joinpath("repo")
+    sources = repo.joinpath("workspaces/oven/src")
+    sources.mkdir(true, true).map_err((error) => error.message())?
+    repo.joinpath("loaves").mkdir(true, true).map_err((error) => error.message())?
+    repo
+        .joinpath("workspaces/oven/loaf.toml")
+        .write_text("[project]\nname = \"oven\"\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    sources
+        .joinpath("toolchain_native.incn")
+        .write_text("def main() -> None:\n    pass\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    # The stub builder writes the helper where a release build of the private project puts it.
+    builder = temporary.path().joinpath("builder")
+    executable(builder, "#!/bin/sh\nmkdir -p target/incan/release/bin\necho helper > target/incan/release/bin/oven\n")?
+    lane = temporary.path().joinpath("lane")
+    evidence = lane.joinpath("evidence")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    context = NativeContext(
+        repo=repo,
+        lane=lane,
+        home=temporary.path().joinpath("home"),
+        builder=builder.0,
+        stdlib="",
+        evidence=evidence,
+        timings=evidence.joinpath("timings.tsv"),
+        jobs=1,
+        memory=4294967296,
+        timeout_seconds=60,
+    )
+    first = build_support_tool(context, context.home)?
+    second = build_support_tool(context, context.home)?
+    assert first.0 == second.0, f"{first.0} != {second.0}"
     return Ok(None)
 
 

@@ -25,6 +25,8 @@ DEV8_LANE=/path/to/workspace SELFBUILD_HOME=/path/to/home SELFBUILD_OVEN=/path/t
 
 Add `--lowering` when the lowering source must be rebuilt. Set `INCAN_DRIVER_INSTALL=0` for a build-only measurement. `INCAN_RELINK_TRACE=1` prints phase durations; `INCAN_RELINK_LOG` selects the retained build log.
 
+Add `--standard` to rebuild the runtime and the standard Loaves with the relinked compiler, as a release does, so the home builds programs that use the standard library. The support helper is built first, before the driver changes, by `SELFBUILD_HELPER_HOME` (default `SELFBUILD_HOME`). The phase logs and timings go to `relink-standard/` beside `INCAN_RELINK_LOG`. Relink with `--standard` every time: a home relinked without it keeps standard Loaves from another compiler, so it can no longer build the relink script or the driver; relink a fresh copy of the bundle home instead.
+
 ## Repository checks
 
 - `run_examples.incn` discovers and runs repository examples in their declared mode. `make examples` invokes it; `incan test scripts/test_run_examples.incn` proves discovery and failure propagation.
