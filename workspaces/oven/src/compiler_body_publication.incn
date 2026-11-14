@@ -51,7 +51,12 @@ from compiler_source_projection import (
     project_source,
     signature_record,
 )
-from compiler_projection_cache import cached_project_signature_record, project_dependency_module, projection_cache
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    cached_project_signature_record,
+    project_dependency_module,
+    projection_cache,
+)
 from engine_capture import CapturedInput, InputRole
 from files import discard_file
 from jec import begin as begin_work, record as record_work
@@ -439,23 +444,21 @@ pub def prepare_compiled_bodies(
             match dependency.package:
                 Some(package) =>
                     if package in editable_packages:
-                        owner = signature_record(
-                            dependency_owner_record(
-                                unit,
-                                package,
-                                dependency.module,
-                                dependency.name,
-                                dependency.identity,
-                            ).map_err(
-                                (error) => dependency_projection_refusal(
-                                    error,
-                                    value.module,
-                                    value.name,
-                                    value.identity,
-                                    dependency,
-                                ),
-                            )?,
-                        )
+                        owner = cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ).map_err(
+                            (error) => dependency_projection_refusal(
+                                error,
+                                value.module,
+                                value.name,
+                                value.identity,
+                                dependency,
+                            ),
+                        )?
                         stage_put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                         source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                 None =>
@@ -548,7 +551,7 @@ pub def prepare_compiled_bodies(
         for declaration in declarations[value.module]:
             local_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -576,7 +579,7 @@ pub def prepare_compiled_bodies(
         for declaration in declarations[value.module]:
             final_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -739,7 +742,7 @@ def lowering_witnesses(
         mut signatures = [projections[value.module].declarations.key]
         signatures.extend(declarations[value.module])
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
                 None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
@@ -1145,6 +1148,7 @@ def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
 
 
 def dependency_read_key(
+    projections: &Dict[str, SourceProjection],
     unit: UnitDescription,
     origin: str,
     dependency: CompiledBodyDependencyRead,
@@ -1156,15 +1160,13 @@ def dependency_read_key(
             if package in editable_packages:
                 return Ok(
                     Some(
-                        signature_record(
-                            dependency_owner_record(
-                                unit,
-                                package,
-                                dependency.module,
-                                dependency.name,
-                                dependency.identity,
-                            )?,
-                        ).key,
+                        cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?.key,
                     ),
                 )
             return Ok(None)
