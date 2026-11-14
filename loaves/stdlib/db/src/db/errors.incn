@@ -1,0 +1,86 @@
+"""The typed failures of `std.db` operations, mapped once from the platform store's failures."""
+
+from pub::incan_platform.store.files import StoreError
+
+
+pub enum DbErrorKind(str):
+    """What an operation met; callers match on the kind, never on the detail text."""
+
+    # The store's bytes or metadata are damaged. Damage is never read as absence or as an older value.
+    Corruption = "corruption"
+    # The view moved on since the transaction began, so publishing its decision would lose another publication.
+    Conflict = "conflict"
+    # Coordination the operation needs is held elsewhere, such as collection while new leases keep arriving.
+    Busy = "busy"
+    # The selected revision is no longer retained, so it cannot be read.
+    UnavailableSnapshot = "unavailable-snapshot"
+    # The store is in a format, or needs a capability, that this release does not support.
+    Unsupported = "unsupported"
+    # Reading or writing the store's placement failed, and nothing was published.
+    Io = "io"
+    # A commit failed after its publication may have become visible: it may or may not have committed.
+    Indeterminate = "indeterminate"
+    # The handle was closed: a closed store, or a transaction after its commit or abort.
+    Closed = "closed"
+    # A view, family or record name is not one the store accepts.
+    InvalidName = "invalid-name"
+    # The operation must create a name that already exists.
+    Exists = "exists"
+    # A handle of another store, or a directory that is not a store, was given to this store.
+    Scope = "scope"
+
+
+pub enum DbOperation(str):
+    """The operation a failure belongs to, so a caller never parses it out of the detail text."""
+
+    Open = "open"
+    Close = "close"
+    View = "view"
+    Fork = "fork"
+    Snapshot = "snapshot"
+    Read = "read"
+    Begin = "begin"
+    Write = "write"
+    Delete = "delete"
+    Commit = "commit"
+    Abort = "abort"
+
+
+pub model DbError:
+    """One failed operation: its kind, the operation, the object it concerned, and what was found."""
+
+    pub kind: DbErrorKind
+    pub operation: DbOperation
+    pub object: str
+    pub detail: str
+
+    @staticmethod
+    pub def refused(kind: DbErrorKind, operation: DbOperation, object: str, detail: str) -> DbError:
+        """A refusal `std.db` decides itself, before or instead of reaching the substrate."""
+        return DbError(kind=kind, operation=operation, object=object, detail=detail)
+
+    pub def message(self) -> str:
+        """One line naming the operation, the kind, the object and what was found."""
+        return f"{self.operation.value()} {self.kind.value()} in {self.object}: {self.detail}"
+
+
+pub def store_failure(operation: DbOperation, error: StoreError) -> DbError:
+    """The substrate's failure as the typed failure of the operation that met it, keeping its object and detail."""
+    return DbError(kind=store_kind(error.kind), operation=operation, object=error.object, detail=error.detail)
+
+
+def store_kind(kind: str) -> DbErrorKind:
+    """
+    The typed kind of one substrate failure kind.
+
+    The substrate names its failures with a closed set of words. A word outside that set is a failure this release
+    cannot classify, so it is unsupported: it is never read as absence, and never claimed as damage.
+    """
+    match kind:
+        "integrity" => return DbErrorKind.Corruption
+        "conflict" => return DbErrorKind.Conflict
+        "busy" => return DbErrorKind.Busy
+        "expired" => return DbErrorKind.UnavailableSnapshot
+        "format" => return DbErrorKind.Unsupported
+        "io" => return DbErrorKind.Io
+        _ => return DbErrorKind.Unsupported

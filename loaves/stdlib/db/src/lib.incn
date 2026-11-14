@@ -1,0 +1,4 @@
+"""Compiled provider entrypoint for `std.db`, typed embedded storage over the platform's store substrate (RFC 165)."""
+
+import db.errors
+import db.prelude

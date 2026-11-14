@@ -1,0 +1,37 @@
+"""`std.db` reports each substrate failure as its typed kind, keeping the operation and object it concerned."""
+
+from pub::incan_platform.store.files import StoreError
+from db.errors import DbError, DbErrorKind, DbOperation, store_failure
+
+
+pub def test_each_store_failure_keeps_its_kind_operation_and_object() -> Result[None, str]:
+    """Every substrate failure kind maps to one typed kind, and the operation, object and detail survive."""
+    mapped: list[tuple[str, DbErrorKind]] = [
+        ("integrity", DbErrorKind.Corruption),
+        ("conflict", DbErrorKind.Conflict),
+        ("busy", DbErrorKind.Busy),
+        ("expired", DbErrorKind.UnavailableSnapshot),
+        ("format", DbErrorKind.Unsupported),
+        ("io", DbErrorKind.Io),
+    ]
+    for kind, expected in mapped:
+        error = store_failure(DbOperation.Read, StoreError(kind=kind, object="segments/a.seg", detail="found"))
+        assert error.kind == expected, f"{kind} became {error.kind.value()}"
+        assert error.operation == DbOperation.Read, kind
+        assert error.object == "segments/a.seg" and error.detail == "found", kind
+    return Ok(None)
+
+
+pub def test_an_unclassified_store_failure_is_unsupported() -> Result[None, str]:
+    """A failure word outside the substrate's set is neither damage nor absence: it is unsupported."""
+    error = store_failure(DbOperation.Commit, StoreError(kind="unheard-of", object="CURRENT", detail="new"))
+    assert error.kind == DbErrorKind.Unsupported, error.kind.value()
+    assert error.operation == DbOperation.Commit
+    return Ok(None)
+
+
+pub def test_a_message_names_operation_kind_object_and_detail() -> Result[None, str]:
+    """A refusal's one-line message carries every typed part, so a log line needs no second lookup."""
+    error = DbError.refused(DbErrorKind.Closed, DbOperation.Begin, "store", "the store was closed")
+    assert error.message() == "begin closed in store: the store was closed", error.message()
+    return Ok(None)
