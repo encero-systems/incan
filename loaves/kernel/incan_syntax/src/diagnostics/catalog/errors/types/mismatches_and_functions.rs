@@ -312,6 +312,15 @@ pub fn duplicate_type_token_overload(name: &str, span: Span) -> CompileError {
     .with_hint("Use a newtype when two type tokens need distinct overload identity")
 }
 
+/// Type error for an overload whose type-parameter bounds name the same types as an earlier overload (#1033).
+pub fn duplicate_type_keyed_overload(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Overload '{name}' is keyed on the same type as an existing overload"),
+        span,
+    )
+    .with_hint("A type alias names its target type; use a newtype when two overloads need distinct types")
+}
+
 pub fn missing_return_type(span: Span) -> CompileError {
     CompileError::type_error("Function is missing a return type".to_string(), span)
         .with_hint("Add a return type annotation: def name(...) -> Type:")

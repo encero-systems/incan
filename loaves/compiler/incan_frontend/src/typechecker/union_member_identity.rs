@@ -196,7 +196,7 @@ impl TypeChecker {
     /// A name the module being collected declares is its own declaration; any other name is the model, class, enum or
     /// newtype its binding's proven identity names, which for an import under another name (`from first import
     /// Product as FirstProduct`) is the declaration's own name. `None` when the name binds no such declaration.
-    fn nominal_declaration_in_scope(&self, name: &str) -> Option<(Vec<String>, String)> {
+    pub(in crate::typechecker) fn nominal_declaration_in_scope(&self, name: &str) -> Option<(Vec<String>, String)> {
         if self.nominal_declarations.current_module_declared.contains(name) {
             let module_path =
                 canonicalize_source_module_segments(&self.current_module_path.clone().unwrap_or_default());
@@ -439,7 +439,12 @@ impl TypeChecker {
     }
 
     /// Return whether a bare nominal spelling names the declaration `declaration_name` of `module_path`.
-    fn bare_name_names_declaration(&self, bare: &str, module_path: &[String], declaration_name: &str) -> bool {
+    pub(in crate::typechecker) fn bare_name_names_declaration(
+        &self,
+        bare: &str,
+        module_path: &[String],
+        declaration_name: &str,
+    ) -> bool {
         match self.nominal_declaration_in_scope(bare) {
             Some((module, declaration)) => module == module_path && declaration == declaration_name,
             None => bare == declaration_name,

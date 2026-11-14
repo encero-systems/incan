@@ -82,6 +82,14 @@ impl TypeChecker {
         if Self::function_value_misses_future_bound(ty, &bound.name) {
             return false;
         }
+        // A bound that names a type is satisfied by the type its declaring module recorded and by no other (#1033).
+        // The caller's own type parameter satisfies it by carrying the same bound.
+        if let Some(bound_type) = Self::declared_bound_type(bound) {
+            return self
+                .active_type_param_name(ty)
+                .is_some_and(|placeholder| self.active_type_param_satisfies_bound_info(placeholder, bound, bindings))
+                || self.type_is_bound_type(ty, &bound_type);
+        }
         if let Some(satisfies) = self.ownership_view_satisfies_explicit_bound_info(ty, bound, bindings) {
             return satisfies;
         }

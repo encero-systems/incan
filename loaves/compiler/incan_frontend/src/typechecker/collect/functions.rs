@@ -1,6 +1,7 @@
 //! Collection of functions and their type parameter bounds.
 
 use super::*;
+use crate::typechecker::trait_bound_relations::type_keyed_overload_signatures_identical;
 
 impl TypeChecker {
     /// Register a top-level function declaration.
@@ -43,19 +44,7 @@ impl TypeChecker {
             emitted_name: None,
         };
 
-        let duplicates_type_token_signature = existing_module_function_id
-            .and_then(|existing_id| self.symbols.get(existing_id))
-            .is_some_and(|existing_symbol| match &existing_symbol.kind {
-                SymbolKind::Function(existing) => type_token_overload_signatures_identical(existing, &info),
-                SymbolKind::FunctionOverloads(overloads) => overloads
-                    .iter()
-                    .any(|overload| type_token_overload_signatures_identical(&overload.info, &info)),
-                _ => false,
-            });
-        if duplicates_type_token_signature {
-            self.errors
-                .push(errors::duplicate_type_token_overload(&func.name, span));
-        }
+        self.refuse_duplicate_overload_signature(existing_module_function_id, &info, &func.name, span);
 
         let existing_identity = existing_module_function_id
             .and_then(|existing_id| self.symbols.identity_of(existing_id))
@@ -134,6 +123,38 @@ impl TypeChecker {
             .insert(func.name.clone(), symbol_id);
     }
 
+    /// Refuse an overload that dispatches exactly as an earlier overload of its name does: the same type-token
+    /// parameters, or the same types in its type parameters' bounds (#1033). Aliases are already expanded on both
+    /// sides, so two aliases of one type are one key.
+    fn refuse_duplicate_overload_signature(
+        &mut self,
+        existing: Option<crate::symbols::SymbolId>,
+        info: &FunctionInfo,
+        name: &str,
+        span: Span,
+    ) {
+        let Some(existing_symbol) = existing.and_then(|existing_id| self.symbols.get(existing_id)) else {
+            return;
+        };
+        let earlier: Vec<&FunctionInfo> = match &existing_symbol.kind {
+            SymbolKind::Function(existing) => vec![existing],
+            SymbolKind::FunctionOverloads(overloads) => overloads.iter().map(|overload| &overload.info).collect(),
+            _ => Vec::new(),
+        };
+        let duplicates_tokens = earlier
+            .iter()
+            .any(|existing| type_token_overload_signatures_identical(existing, info));
+        let duplicates_keys = earlier
+            .iter()
+            .any(|existing| type_keyed_overload_signatures_identical(existing, info));
+        if duplicates_tokens {
+            self.errors.push(errors::duplicate_type_token_overload(name, span));
+        }
+        if duplicates_keys {
+            self.errors.push(errors::duplicate_type_keyed_overload(name, span));
+        }
+    }
+
     /// Collect the name and structured views of a function's declared bounds in their existing two-pass order.
     /// The structured view retains source/module provenance and checked type arguments for later call validation.
     pub(super) fn collect_function_type_param_bounds(
@@ -159,17 +180,32 @@ impl TypeChecker {
                     tp.name.clone(),
                     tp.bounds
                         .iter()
-                        .map(|bound| TypeBoundInfo {
-                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
-                            source_name: self.trait_bound_source_name(&bound.name),
-                            type_args: bound
-                                .type_args
-                                .iter()
-                                .map(|type_arg| self.resolve_type_checked(type_arg))
-                                .collect(),
-                            module_path: self.trait_bound_module_path(&bound.name),
-                            implementation_type_params: Vec::new(),
-                            inferred: false,
+                        .map(|bound| {
+                            let name = self.resolve_generic_bound_name(&bound.name, Span::default());
+                            // A bound that names a type records that type's declaration for its callers (#1033).
+                            let named_type = match bound.type_args.is_empty() {
+                                true => self.type_bound_declaration(&bound.name),
+                                false => None,
+                            };
+                            let (source_name, module_path) = match named_type {
+                                Some((source_name, module_path)) => (Some(source_name), module_path),
+                                None => (
+                                    self.trait_bound_source_name(&bound.name),
+                                    self.trait_bound_module_path(&bound.name),
+                                ),
+                            };
+                            TypeBoundInfo {
+                                name,
+                                source_name,
+                                type_args: bound
+                                    .type_args
+                                    .iter()
+                                    .map(|type_arg| self.resolve_type_checked(type_arg))
+                                    .collect(),
+                                module_path,
+                                implementation_type_params: Vec::new(),
+                                inferred: false,
+                            }
                         })
                         .collect(),
                 )

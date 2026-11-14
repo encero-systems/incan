@@ -496,7 +496,7 @@ impl TypeChecker {
                     type_name,
                     type_param,
                     &self.type_bound_display(bound, bindings),
-                    self.generic_bound_target(&bound.name),
+                    self.checked_bound_target(bound),
                     &argument.to_string(),
                     origin,
                     span,

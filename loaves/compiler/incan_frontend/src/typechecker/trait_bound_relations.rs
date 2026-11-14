@@ -26,7 +26,10 @@ use incan_semantics_core::canonical_module_identity;
 
 mod explicit_bounds;
 mod temporary_capabilities;
+mod type_named_bounds;
 mod type_param_and_nominal_bounds;
+
+pub(in crate::typechecker) use type_named_bounds::type_keyed_overload_signatures_identical;
 
 /// Which declaration's type parameters [`TypeChecker::refuse_unsupported_callable_markers`] is reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
