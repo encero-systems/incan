@@ -4,7 +4,7 @@ from std.fs import Path
 from std.json import parse
 from compare import compare
 from header import Header
-from run import Outcome, invoke, surface, trace_file, trace_lines
+from run import Outcome, invoke, surface, trace_file, trace_lines, traced_setting
 from workers import Invocation, invoke_many
 
 
@@ -34,7 +34,7 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
             traced = Some(invoke(incan, arguments, project, environment, name)?)
         before = trace_lines(trace_file(project))
         # Under `trace-invariant:` the comparison run has tracing off.
-        mut plain = header.items("environment")
+        mut plain = settings(project, header)?
         if header.trace_invariant:
             plain.append("INCAN_ENGINE_TRACE=")
         outcome = invoke(incan, arguments, project, plain, name)?
@@ -74,7 +74,7 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
                 arguments=arguments,
                 project=project,
                 selector=None,
-                environment=header.items("environment"),
+                environment=settings(project, header)?,
                 capture=f"-concurrent-{index}",
                 arg0=name,
             ),
@@ -86,6 +86,16 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
         for failure in compare("cli", header, outcome):
             failures.append(f"{shown(commands[index])} (concurrent): {failure}")
     return Ok(failures)
+
+
+def settings(project: Path, header: Header) -> Result[list[str], str]:
+    """
+    A command's declared settings, after the case's channel when the case reads Oven's trace; a case's own
+    `INCAN_ENGINE_TRACE` setting still wins.
+    """
+    if header.declares("expect-trace-contains") or header.declares("expect-trace-at-most-once"):
+        return Ok(traced_setting(project)? + header.items("environment"))
+    return Ok(header.items("environment"))
 
 
 def words(command: str) -> list[str]:

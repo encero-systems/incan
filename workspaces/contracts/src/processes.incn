@@ -89,6 +89,16 @@ def text_of(record: JsonValue, key: str) -> str:
         None => return ""
 
 
+pub def traced_setting(project: Path) -> Result[list[str], str]:
+    """
+    The setting that traces a command of a case that reads its trace into the case's channel, created first, so a
+    command that removed `target/` still has one.
+    """
+    trace = trace_file(project)
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    return Ok([f"INCAN_ENGINE_TRACE={trace.0}"])
+
+
 pub def unit_notes(trace: Path) -> list[str]:
     """The units Oven prepared for this invocation, preserving their reported order and reasons."""
     return [line for line in trace_lines(trace) if line.startswith("oven: unit ")]
@@ -110,14 +120,15 @@ pub def launch(
     Disposable case projects never retain resident owners. `environment` holds `NAME=value` settings added to the
     inherited environment, as a case's `environment:` block declares them, and may explicitly override that default.
     When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
-    The runner prepares its trace channel before requesting early observations, including after target removal.
+    A command runs with the tracing channel off unless its settings name one: a case that reads its trace asks for
+    its channel with `traced_setting`, so tracing costs no other case its time.
     `arg0` is the program name the child is started under: `oven` selects the same installed program's project
     surface (RFC 118).
     """
     mut command = Command.new(incan)
-    trace = trace_file(project)
-    trace.mkdir(true, true).map_err((error) => error.message())?
-    command.env("INCAN_ENGINE_TRACE", trace.0)
+    # Every command starts with the case's `target/incan` in place, as cases that write below `target/` expect.
+    trace_file(project).parent().mkdir(true, true).map_err((error) => error.message())?
+    command.env("INCAN_ENGINE_TRACE", "")
     command.env("OVEN_OWNER", "off")
     for setting in environment:
         name, value = environment_setting(setting)?
