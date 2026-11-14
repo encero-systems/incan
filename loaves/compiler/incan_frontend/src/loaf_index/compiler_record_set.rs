@@ -715,14 +715,20 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
 /// Compare a payload with its canonical SHA-256 spelling without allocating another hexadecimal string.
 fn digest_matches(bytes: &[u8], expected: &str) -> bool {
     let actual = Sha256::digest(bytes);
-    expected.as_bytes().chunks_exact(2).zip(actual).all(|(encoded, byte)| {
-        let decode = |digit: u8| match digit {
-            b'0'..=b'9' => digit - b'0',
-            b'a'..=b'f' => digit - b'a' + 10,
-            _ => u8::MAX,
-        };
-        decode(encoded[0]) << 4 | decode(encoded[1]) == byte
-    })
+    expected
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(actual)
+        .all(|(encoded, byte)| {
+            let decode = |digit: u8| match digit {
+                b'0'..=b'9' => digit - b'0',
+                b'a'..=b'f' => digit - b'a' + 10,
+                _ => u8::MAX,
+            };
+            decode(encoded[0]) << 4 | decode(encoded[1]) == byte
+        })
 }
 
 /// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.

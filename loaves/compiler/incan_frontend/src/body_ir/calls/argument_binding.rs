@@ -450,7 +450,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let selected_span = local_declarations.iter().find(|candidate_span| {
                 declarations
                     .function_bindings_by_span
-                    .get(&candidate_span)
+                    .get(candidate_span)
                     .and_then(|binding| binding.identity.as_ref())
                     .is_some_and(|identity| identity == selected)
             });
@@ -459,7 +459,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     "call to overloaded function `{name}` whose canonical declaration is not present in this module"
                 ));
             };
-            let Some(binding) = declarations.function_bindings_by_span.get(&selected_span) else {
+            let Some(binding) = declarations.function_bindings_by_span.get(selected_span) else {
                 return Err(format!(
                     "call to overloaded function `{name}` whose selected declaration has no checked signature"
                 ));
@@ -482,7 +482,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 "direct call to `{name}` has no unambiguous same-module declaration identity"
             ));
         };
-        let Some(binding) = declarations.function_bindings_by_span.get(&declaration_span) else {
+        let Some(binding) = declarations.function_bindings_by_span.get(declaration_span) else {
             return Err(format!(
                 "same-module declaration `{name}` has no checked callable signature"
             ));

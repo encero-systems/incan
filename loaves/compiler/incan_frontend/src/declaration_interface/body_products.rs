@@ -627,9 +627,7 @@ fn admitted_functions(program: &Program) -> Result<(), LibraryManifestError> {
 /// Reassignment targets must already be bound; ordinary checking owns mutation acceptance before publication.
 /// No admitted statement creates a nested scope, so skipped functions preserve physical scope numbering.
 fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<BTreeSet<String>> {
-    let Some((statement, prefix)) = function.body.split_last() else {
-        return None;
-    };
+    let (statement, prefix) = function.body.split_last()?;
     if !scalar_signature(function) || is_synthetic_span(statement.span) {
         return None;
     }

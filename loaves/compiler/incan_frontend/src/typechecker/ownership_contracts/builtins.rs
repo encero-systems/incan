@@ -8,7 +8,7 @@ use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
 use incan_lang::lang::surface::option_methods::OptionMethodId;
 use incan_lang::lang::surface::set_methods::SetMethodId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use incan_semantics_core::SymbolOrigin;
 
 use crate::ast::{CallArg, Expr, Pattern, PatternArg, Span, Spanned, SurfaceExpr, SurfaceExprPayload};
 use crate::symbols::ResolvedType;

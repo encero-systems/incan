@@ -405,9 +405,7 @@ impl TypeChecker {
                     .body_ir_checked_value_type(base.span)
                     .filter(|result| matches!(result, ResolvedType::Named(_) | ResolvedType::Generic(_, _)))
                     .cloned();
-                let result = qualified
-                    .or(retained)
-                    .unwrap_or_else(|| ResolvedType::Named(info.enum_name));
+                let result = qualified.or(retained).unwrap_or(ResolvedType::Named(info.enum_name));
                 if info.fields.is_empty() {
                     Some(result)
                 } else {
@@ -572,7 +570,7 @@ impl TypeChecker {
                                 return ResolvedType::Unknown;
                             };
                             self.type_info.rust.checked_constants.insert(span, selected);
-                            self.native_rust_signature_type(&type_display, path)
+                            self.native_rust_signature_type(type_display, path)
                         }
                     };
                 }
@@ -612,7 +610,7 @@ impl TypeChecker {
                                 .rust
                                 .checked_constants
                                 .insert(span, metadata.canonical_path.clone());
-                            return self.native_rust_signature_type(&type_display, path);
+                            return self.native_rust_signature_type(type_display, path);
                         }
                         self.retain_rust_variant_construction(path, field, &[], &params, span);
                         return ResolvedType::RustPath(path.to_string());

@@ -189,10 +189,10 @@ impl TypeChecker {
     pub(in crate::typechecker) fn settle_body_open_values(&mut self) {
         let destinations = self.type_info.expressions.value_destination_types.clone();
         for (span, actual) in destinations {
-            if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned() {
-                if !self.type_info.expressions.body_ir_open_calls[value.group].settled {
-                    self.constrain_open_value(value.group, &value.ty, &actual, span);
-                }
+            if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned()
+                && !self.type_info.expressions.body_ir_open_calls[value.group].settled
+            {
+                self.constrain_open_value(value.group, &value.ty, &actual, span);
             }
         }
         for group in 0..self.type_info.expressions.body_ir_open_calls.len() {

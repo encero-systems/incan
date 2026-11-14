@@ -419,7 +419,7 @@ impl Positions {
                     .find(|canonical| {
                         canonical.kind == SemanticSourceTargetKind::Parameter
                             && canonical.origin == checker.symbols.declaration_origin()
-                            && canonical.declaration_span == parameter.span.into()
+                            && canonical.declaration_span == parameter.span
                     })
                     .cloned()
                     .unwrap_or_else(|| CanonicalSymbolId {
@@ -428,7 +428,7 @@ impl Positions {
                         declaration_name: parameter.node.name.clone(),
                         kind: SemanticSourceTargetKind::Parameter,
                         scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
-                        declaration_span: parameter.span.into(),
+                        declaration_span: parameter.span,
                     })
             })
             .collect::<Vec<_>>();
@@ -493,7 +493,7 @@ impl Positions {
                 declaration_name: row[3].clone(),
                 kind: SemanticSourceTargetKind::Local,
                 scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
-                declaration_span: span.into(),
+                declaration_span: span,
             };
             if positions.identities.insert(row[3].clone(), canonical).is_some() {
                 return Err(NodeBindingError::InvalidField(

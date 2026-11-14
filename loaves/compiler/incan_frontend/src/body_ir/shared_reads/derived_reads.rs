@@ -17,12 +17,13 @@ pub(super) fn derived_temporaries_are_read_only(statements: &[bir::Statement], c
         let Some(source_type) = operand_type(source, context.locals, context.field_types) else {
             return;
         };
-        if uses(source, context.local) && borrowed_temporary(source, place, &source_type, context.locals) {
-            if let Some(local) = place.local_id() {
-                let provisional_move = matches!(source,
-                    bir::Operand::Place(read) if read.fact == bir::OwnershipFact::Move);
-                temporaries.push((local, provisional_move));
-            }
+        if uses(source, context.local)
+            && borrowed_temporary(source, place, &source_type, context.locals)
+            && let Some(local) = place.local_id()
+        {
+            let provisional_move = matches!(source,
+                bir::Operand::Place(read) if read.fact == bir::OwnershipFact::Move);
+            temporaries.push((local, provisional_move));
         }
     });
     temporaries.into_iter().all(|(temporary, provisional_move)| {

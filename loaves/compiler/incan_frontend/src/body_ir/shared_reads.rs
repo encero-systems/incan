@@ -1165,15 +1165,14 @@ fn retain_call_loans(
         }
     }
     for (index, argument) in args.iter_mut().enumerate() {
-        if let bir::ArgumentElement::One(bir::Operand::Place(read)) = argument {
-            if read.fact == bir::OwnershipFact::Move
-                && lent
-                    .iter()
-                    .any(|(slot, place)| *slot != index && overlapping(place, &read.place))
-            {
-                read.fact = bir::OwnershipFact::Clone;
-                read.last_use = false;
-            }
+        if let bir::ArgumentElement::One(bir::Operand::Place(read)) = argument
+            && read.fact == bir::OwnershipFact::Move
+            && lent
+                .iter()
+                .any(|(slot, place)| *slot != index && overlapping(place, &read.place))
+        {
+            read.fact = bir::OwnershipFact::Clone;
+            read.last_use = false;
         }
     }
 }

@@ -5,7 +5,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api_metadata::{ApiDeclaration, ApiFunction};
 use crate::ast::*;
 use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
@@ -23,10 +22,7 @@ use incan_lang::lang::c_abi::{
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives;
 use incan_semantics_core::body_ir::{NativeAttribute, NativeAttributeArgument, NativeAttributeValue};
-use incan_semantics_core::{
-    CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
-    SymbolOrigin,
-};
+use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 mod c_binding_classes;
 mod c_binding_symbols;

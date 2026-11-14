@@ -90,9 +90,7 @@ impl TypeChecker {
         let ResolvedType::Generic(name, arguments) = ty else {
             return None;
         };
-        if self.explicit_ownership_mode(name).is_none() {
-            return None;
-        }
+        self.explicit_ownership_mode(name)?;
         let [underlying] = arguments.as_slice() else {
             return None;
         };

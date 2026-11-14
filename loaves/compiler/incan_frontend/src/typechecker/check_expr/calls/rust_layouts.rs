@@ -94,7 +94,7 @@ impl TypeChecker {
         let incan_lang::interop::RustItemKind::Type(info) = &metadata.kind else {
             return;
         };
-        let Some(layout) = self.checked_rust_enum_layout(path, &info) else {
+        let Some(layout) = self.checked_rust_enum_layout(path, info) else {
             return;
         };
 
@@ -273,7 +273,7 @@ impl TypeChecker {
             CallArg::Positional(end.as_ref().clone()),
         ];
         let fields = ["start".to_owned(), "end".to_owned()];
-        self.retain_rust_construction(path, &info, &arguments, &fields, expression.span)
+        self.retain_rust_construction(path, info, &arguments, &fields, expression.span)
             .is_some()
     }
 
