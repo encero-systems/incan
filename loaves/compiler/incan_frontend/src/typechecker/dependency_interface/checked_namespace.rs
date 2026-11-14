@@ -116,6 +116,26 @@ impl CheckedNamespaceInterface {
         self.validate()?;
         let mut converter = TypeChecker::new();
         let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
+        let identities = self
+            .identities
+            .iter()
+            .map(|(name, identity)| (name.clone(), identity.clone()))
+            .collect::<HashMap<_, _>>();
+        let nominal_scope = Arc::new(
+            identities
+                .iter()
+                .filter(|(_, identity)| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::Newtype
+                    )
+                })
+                .map(|(name, identity)| (name.clone(), identity.clone()))
+                .collect(),
+        );
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
@@ -145,6 +165,9 @@ impl CheckedNamespaceInterface {
                 );
                 continue;
             };
+            if let Some(identity) = identities.get(name) {
+                converter.retain_declaration_nominal_scope(identity, &kind, &nominal_scope);
+            }
             converter.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
             symbols.insert(name.to_owned(), kind.clone());
             symbol_rows.push((
@@ -163,31 +186,6 @@ impl CheckedNamespaceInterface {
             .iter()
             .flat_map(namespace_exports)
             .collect::<Vec<_>>();
-        let identities = self
-            .identities
-            .iter()
-            .map(|(name, identity)| (name.clone(), identity.clone()))
-            .collect::<HashMap<_, _>>();
-        let nominal_scope = Arc::new(
-            identities
-                .iter()
-                .filter(|(_, identity)| {
-                    matches!(
-                        identity.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::Newtype
-                    )
-                })
-                .map(|(name, identity)| (name.clone(), identity.clone()))
-                .collect(),
-        );
-        for (name, kind) in &symbols {
-            if let Some(identity) = identities.get(name) {
-                converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
-            }
-        }
         converter.retain_nominal_scope_carriers(&nominal_scope);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
@@ -350,7 +348,7 @@ mod tests {
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
-        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
+        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["domain".to_string()];
@@ -382,6 +380,12 @@ mod tests {
         };
         assert!(model.fields.contains_key("quantity"));
         assert!(model.fields.contains_key("unit_price"));
+        let identity_function = retained.identities.get("identity").ok_or("missing identity function")?;
+        let callable = installed
+            .declaration_callables
+            .get(identity_function)
+            .ok_or("missing identity callable templates")?;
+        assert_eq!(callable.return_type, ResolvedType::Named("Order".into()));
         Ok(())
     }
 }
