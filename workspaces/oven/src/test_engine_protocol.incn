@@ -369,7 +369,7 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
         Ok(_) => pass
     check_frozen_installation_reads(root.joinpath("jec"))?
     # Stop acknowledges that the resident service drained its buffered observations.
-    lines = root.joinpath("worker.trace").read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    lines = observed_lines(root.joinpath("observations"))?
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
@@ -403,7 +403,6 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
     write(source, "def main() -> None:\n    println(\"hello\")\n")?
-    trace = root.joinpath("worker.trace")
     observations = root.joinpath("observations")
     observations.mkdir(true, true).map_err((error) => error.message())?
     _ = load_toolchain()?
@@ -416,7 +415,6 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
-        .env("OVEN_TRACE", trace.0)
         .env("INCAN_ENGINE_TRACE", observations.0)
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
@@ -442,7 +440,6 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
-        .env("OVEN_TRACE", trace.0)
         .env("INCAN_ENGINE_TRACE", observations.0)
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
@@ -482,6 +479,18 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
         if not Path(linker).name().startswith("incan-link"):
             return Err(f"a development link ran {linker} instead of the dedicated linker")
     return Ok(None)
+
+
+def observed_lines(directory: Path) -> Result[list[str], str]:
+    """Every line of every engine trace file in `directory`, the files in name order."""
+    mut names: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_file():
+            names.append(entry.0)
+    mut lines: list[str] = []
+    for name in sorted(names):
+        lines.extend(Path(name).read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"))
+    return Ok(lines)
 
 
 def invocation_count(directory: Path, function: str) -> int:
