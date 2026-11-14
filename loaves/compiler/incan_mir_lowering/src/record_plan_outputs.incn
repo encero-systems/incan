@@ -2,7 +2,16 @@
 
 from std.fs import Path
 from std.json import JsonValue, parse
-from pub::incan_mir_plan import Function, NominalReference, Plan, PlanType, product_frame_names
+from pub::incan_mir_plan import (
+    Function,
+    NominalKind,
+    NominalReference,
+    Plan,
+    PlanType,
+    carrier_position,
+    is_carrier_index,
+    product_frame_names,
+)
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products, encode_entry_binding
 from record_positions import place_positions, relocate_product
@@ -110,7 +119,7 @@ def keyed_plan_products(
         key = text(event, "key")?
         reused = event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?
         reported = event.to_json().map_err((error) => error.message())?
-        resolved = event_references(reported)?
+        resolved = plan_positions(plan, event_references(reported)?)?
         nodes = event_positions(reported)?
         frames = carried_frames(plan, text(event, "product")?, carried)?
         record, positions = finalize_scalar(products, key, function, reused, resolved, nodes, frames)?
@@ -199,3 +208,27 @@ def carried_frames(plan: &Plan, record: str, mut carried: list[str]) -> Result[l
             return Err(f"plan-function frame {name} is missing from the whole-program plan")
         carried.append(name)
     return Ok(frames)
+
+
+def plan_positions(plan: &Plan, references: list[NominalReference]) -> Result[list[NominalReference], str]:
+    """
+    Name each carrier a product reported at its lowering position by its place in the published plan.
+
+    Publication appended the carriers, in their lowering order, after the source enums; only a carrier records the
+    checked type it lays out, so the first enum that does is the first carrier.
+    """
+    mut base = len(plan.enums)
+    for index in range(len(plan.enums)):
+        if plan.enums[index].semantic_key is not None:
+            base = index
+            break
+    mut placed: list[NominalReference] = []
+    for reference in references:
+        if reference.kind != NominalKind.Enum or not is_carrier_index(reference.index):
+            placed.append(reference)
+            continue
+        index = base + carrier_position(reference.index)
+        if index >= len(plan.enums) or (reference.name != "" and plan.enums[index].name != reference.name):
+            return Err(f"plan names no carrier {reference.name} at the place a product reported")
+        placed.append(NominalReference(kind=reference.kind, index=index, name=reference.name))
+    return Ok(placed)
