@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use incan_driver::testing::types::{FixtureInfo, TestInfo};
 use incan_frontend::ast::{Declaration, Expr, FunctionDecl, Spanned, Statement};
+use incan_lang::lang::conventions::NONE_TYPE_NAME;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
 /// The prefix of every generated entry and local. Source names may not start with `__incan_`, which the checker
 /// reserves for names it generates itself, so the source-level entries use this one.
@@ -328,6 +330,7 @@ impl<'a> EntryWriter<'a> {
     ) -> Result<String, String> {
         let function = self.function(&fixture.name)?;
         let (yielded, value) = yielded_value(function, &fixture.name)?;
+        let (ok, err, some, none) = constructor_spellings();
         let (Some(first), Some(last)) = (function.body.first(), function.body.last()) else {
             return Err(format!("fixture `{}` has no body", fixture.name));
         };
@@ -396,10 +399,10 @@ impl<'a> EntryWriter<'a> {
         if guarded {
             let reraise = if stage.returns_value { "return " } else { "" };
             written.push_str(&format!(
-                "\n{indent}match {PREFIX}_panic:\n{indent}    Some({PREFIX}_message) => {reraise}{PREFIX}_fail({PREFIX}_message)\n{indent}    None => pass"
+                "\n{indent}match {PREFIX}_panic:\n{indent}    {some}({PREFIX}_message) => {reraise}{PREFIX}_fail({PREFIX}_message)\n{indent}    {none} => pass"
             ));
             if stage.returns_value {
-                written.push_str(&format!("\n{indent}return Ok(None)"));
+                written.push_str(&format!("\n{indent}return {ok}({none})"));
             }
         } else if stage.returns_value {
             written.push_str(&format!("\n{indent}return {PREFIX}_outcome"));
@@ -407,7 +410,7 @@ impl<'a> EntryWriter<'a> {
         written.push('\n');
         if guarded && stage.returns_value {
             written.push_str(&format!(
-                "\n\ndef {raise}(outcome: {}) -> None:\n    match outcome:\n        Ok(_) => pass\n        Err(error) => {PREFIX}_fail(f\"Error: {{error:?}}\")\n",
+                "\n\ndef {raise}(outcome: {}) -> {NONE_TYPE_NAME}:\n    match outcome:\n        {ok}(_) => pass\n        {err}(error) => {PREFIX}_fail(f\"Error: {{error:?}}\")\n",
                 stage.returns
             ));
         }
@@ -487,17 +490,18 @@ impl<'a> EntryWriter<'a> {
 /// A directory built-in fixture's helper: a fresh directory under the temporary directory, named for its process and
 /// use as 0.5.1 names it, and for `tmp_workdir` the process's working directory.
 fn directory_helper(builtin: Builtin, ty: &str, helper: &str) -> String {
+    let (ok, err, _, _) = constructor_spellings();
     let (kind, enter) = match builtin {
         Builtin::TmpWorkdir => (
             "tmp_workdir",
             format!(
-                "    match {PREFIX}_set_current_dir(path.clone()):\n        Ok(_) => pass\n        Err(error) => {PREFIX}_fail(f\"failed to enter tmp_workdir fixture: {{error}}\")\n"
+                "    match {PREFIX}_set_current_dir(path.clone()):\n        {ok}(_) => pass\n        {err}(error) => {PREFIX}_fail(f\"failed to enter tmp_workdir fixture: {{error}}\")\n"
             ),
         ),
         _ => ("tmp_path", String::new()),
     };
     format!(
-        "\n\ndef {helper}(label: str) -> {ty}:\n    path = {PREFIX}_temp_dir().join(f\"incan-test-{{{PREFIX}_process_id()}}-{{label}}\")\n    match {PREFIX}_create_dir_all(path.clone()):\n        Ok(_) => pass\n        Err(error) => {PREFIX}_fail(f\"failed to create {kind} fixture: {{error}}\")\n{enter}    return path\n"
+        "\n\ndef {helper}(label: str) -> {ty}:\n    path = {PREFIX}_temp_dir().join(f\"incan-test-{{{PREFIX}_process_id()}}-{{label}}\")\n    match {PREFIX}_create_dir_all(path.clone()):\n        {ok}(_) => pass\n        {err}(error) => {PREFIX}_fail(f\"failed to create {kind} fixture: {{error}}\")\n{enter}    return path\n"
     )
 }
 
@@ -546,4 +550,14 @@ fn yielded_value<'f>(
         }
     }
     Err(format!("fixture `{name}` has no top-level `yield`"))
+}
+
+/// The language's spellings of `Ok`, `Err`, `Some` and `None`, which the generated text writes.
+pub(crate) fn constructor_spellings() -> (&'static str, &'static str, &'static str, &'static str) {
+    (
+        constructors::as_str(ConstructorId::Ok),
+        constructors::as_str(ConstructorId::Err),
+        constructors::as_str(ConstructorId::Some),
+        constructors::as_str(ConstructorId::None),
+    )
 }

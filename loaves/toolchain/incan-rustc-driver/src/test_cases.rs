@@ -25,6 +25,7 @@ use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned};
 use incan_frontend::decorator_resolution::collect_import_aliases;
 use incan_frontend::testing_markers::{TestingMarkerKind, resolve_testing_marker_kind};
+use incan_lang::lang::conventions::NONE_TYPE_NAME;
 
 /// The crate path 0.5.1's documentation imports `TestEnv` from, and the standard testing crate that provides it now.
 const LEGACY_TESTING_CRATE: (&str, &str) = ("rust::incan_stdlib::testing", "rust::incan_std_testing");
@@ -225,7 +226,7 @@ fn write_entry(
     autouse: &[&str],
 ) -> Result<String, String> {
     let returns = return_type(writer, function);
-    let returns_value = returns != "None";
+    let returns_value = returns != NONE_TYPE_NAME;
     let mut roots: Vec<&str> = test
         .parameter_names
         .iter()
@@ -272,7 +273,7 @@ fn return_type(writer: &EntryWriter<'_>, function: &FunctionDecl) -> String {
         .text(function.return_type.span.start, function.return_type.span.end)
         .trim();
     if matches!(function.return_type.node, incan_frontend::ast::Type::Unit) || written.is_empty() {
-        "None".to_string()
+        NONE_TYPE_NAME.to_string()
     } else {
         written.to_string()
     }
