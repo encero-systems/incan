@@ -1,0 +1,52 @@
+"""The one shared record of an opened store: its substrate root, identity, placement and whether it is still open."""
+
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from pub::incan_platform.store.path import StorePath
+from crate.db.errors import DbError, DbErrorKind, DbOperation
+
+
+pub enum Placement(str):
+    """Where a store keeps its contents; the placement never changes what a record or a transaction means."""
+
+    # Records and indexes live in a directory on disk and survive the process.
+    Disk = "disk"
+    # Contents stay in this process's memory and never reach a file.
+    Memory = "memory"
+
+
+@derive(Clone)
+pub model StoreHandle:
+    """
+    One opened store, shared by the store and every view taken from it.
+
+    Closing it stops new work through all of them at once. A snapshot already taken keeps its own lease on what it
+    reads, so closing the store never leaves a snapshot reading released contents.
+    """
+
+    pub root: StorePath
+    pub identity: str
+    pub placement: Placement
+    # Shared by every clone, so a close through one handle is seen through all of them.
+    open: Rc[RefCell[bool]]
+
+    @staticmethod
+    pub def opened(root: StorePath, identity: str, placement: Placement) -> StoreHandle:
+        """A handle that accepts work until it is closed."""
+        return StoreHandle(root=root, identity=identity, placement=placement, open=Rc.new(RefCell.new(true)))
+
+    pub def is_open(self) -> bool:
+        """Whether the store still accepts new work."""
+        current = self.open.replace(false)
+        _ = self.open.replace(current)
+        return current
+
+    pub def close(self) -> None:
+        """Stop new work through every holder of this handle; closing a closed handle does nothing."""
+        _ = self.open.replace(false)
+
+    pub def require_open(self, operation: DbOperation) -> Result[None, DbError]:
+        """Refuse `operation` once the store is closed."""
+        if self.is_open():
+            return Ok(None)
+        return Err(DbError.refused(DbErrorKind.Closed, operation, self.identity, "the store was closed"))

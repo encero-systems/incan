@@ -1,0 +1,61 @@
+"""Opening and closing a store: memory and disk placements, a stable identity, and no adopted foreign files."""
+
+from std.tempfile import TemporaryDirectory
+from db.errors import DbError, DbErrorKind, DbOperation
+from db.handle import Placement
+from db.store import memory, open
+
+
+pub def test_a_memory_store_opens_isolated_and_closes_once() -> Result[None, str]:
+    """A memory store has its own identity and placement, and closing it twice is one close."""
+    first = checked(memory())?
+    second = checked(memory())?
+    assert first.placement() == Placement.Memory
+    assert len(first.identity()) == 32, first.identity()
+    assert first.identity() != second.identity(), "two memory stores share an identity"
+    assert first.is_open()
+    checked(first.close())?
+    assert not first.is_open()
+    checked(first.close())?
+    assert second.is_open(), "closing one store closed another"
+    return Ok(None)
+
+
+pub def test_a_disk_store_keeps_its_identity_across_opens() -> Result[None, str]:
+    """A missing path or an empty directory becomes a store, and reopening a store keeps its identity."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("site.db")
+    created = checked(open(path))?
+    assert created.placement() == Placement.Disk
+    checked(created.close())?
+    reopened = checked(open(path))?
+    assert reopened.identity() == created.identity(), "reopening changed the store's identity"
+    empty = scratch.path().joinpath("empty")
+    empty.mkdir(true, true).map_err((error) => error.message())?
+    provisioned = checked(open(empty))?
+    assert len(provisioned.identity()) == 32, provisioned.identity()
+    return Ok(None)
+
+
+pub def test_a_path_that_is_not_a_store_is_refused_untouched() -> Result[None, str]:
+    """A file, or a directory of foreign files, is refused as out of scope and left exactly as it was."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    foreign = scratch.path().joinpath("notes")
+    foreign.mkdir(true, true).map_err((error) => error.message())?
+    note = foreign.joinpath("todo.txt")
+    note.write_text("keep me\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    for path in [foreign, note]:
+        match open(path):
+            Ok(_) =>
+                assert false, f"adopted {path.0}"
+            Err(error) =>
+                assert error.kind == DbErrorKind.Scope, error.message()
+                assert error.operation == DbOperation.Open, error.message()
+    assert note.read_text("utf-8", "strict").map_err((error) => error.message())? == "keep me\n"
+    assert len(foreign.iterdir().map_err((error) => error.message())?) == 1, "a refused open wrote into the directory"
+    return Ok(None)
+
+
+def checked[T](result: Result[T, DbError]) -> Result[T, str]:
+    """A `std.db` result with its failure as the test's message."""
+    return result.map_err((error) => error.message())

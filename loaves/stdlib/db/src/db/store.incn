@@ -1,0 +1,91 @@
+"""Opening and closing a store: an isolated memory store, or a disk store that is never adopted from foreign files."""
+
+from std.fs import Path
+from pub::incan_platform.store import check_format, read_store_identity, store_identity
+from pub::incan_platform.store.disk import root as disk_root
+from pub::incan_platform.store.memory import root as memory_root
+from pub::incan_platform.store.path import StorePath
+from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
+from crate.db.handle import Placement, StoreHandle
+
+
+pub class Store:
+    """An opened store, accepting work until `close`."""
+
+    handle: StoreHandle
+
+    pub def placement(self) -> Placement:
+        """Where the store keeps its contents."""
+        return self.handle.placement
+
+    pub def identity(self) -> str:
+        """The store's persistent identity; moving a disk store's directory does not change it."""
+        return self.handle.identity
+
+    pub def is_open(self) -> bool:
+        """Whether the store still accepts new work."""
+        return self.handle.is_open()
+
+    pub def close(self) -> Result[None, DbError]:
+        """
+        Stop new work through this store and every view taken from it.
+
+        A snapshot already taken stays readable until it is released, because it holds its own lease. Closing a
+        closed store does nothing.
+        """
+        self.handle.close()
+        return Ok(None)
+
+
+pub def memory() -> Result[Store, DbError]:
+    """
+    Open an isolated memory store.
+
+    Its contents stay in this process's memory and never reach a file; they last while the store or a snapshot of
+    it is held. Another memory store never sees them.
+    """
+    root = memory_root()
+    identity = store_identity(root).map_err((error) => store_failure(DbOperation.Open, error))?
+    return Ok(Store(handle=StoreHandle.opened(root, identity, Placement.Memory)))
+
+
+pub def open(path: Path) -> Result[Store, DbError]:
+    """
+    Open the disk store at `path`, creating it when `path` is missing or an empty directory.
+
+    1. Refuse a path that holds anything but a store, so foreign contents are never adopted or overwritten.
+    2. Provision the store's persistent identity once, or read the one it has.
+    3. Refuse a store written in a format this release does not read.
+    """
+    root = disk_root(path.0)
+
+    # 1. A file, or a directory with contents and no store identity, is not a store.
+    refuse_foreign(root)?
+
+    # 2. Provisioning holds the store's own lock, so two processes opening one new store agree on its identity.
+    identity = store_identity(root).map_err((error) => store_failure(DbOperation.Open, error))?
+
+    # 3. An unknown format is refused, never read as an empty store.
+    check_format(root).map_err((error) => store_failure(DbOperation.Open, error))?
+    return Ok(Store(handle=StoreHandle.opened(root, identity, Placement.Disk)))
+
+
+def refuse_foreign(root: StorePath) -> Result[None, DbError]:
+    """Refuse a path that exists but is not a store: a file, or a directory with contents and no store identity."""
+    if not root.exists():
+        return Ok(None)
+    if not root.is_dir():
+        return Err(not_a_store(root, "the path is not a directory"))
+    if read_store_identity(root).is_ok():
+        return Ok(None)
+    children = root.store_children().map_err(
+        (error) => DbError.refused(DbErrorKind.Io, DbOperation.Open, root.value, error.message()),
+    )?
+    if len(children) > 0:
+        return Err(not_a_store(root, "the directory holds files and has no store identity"))
+    return Ok(None)
+
+
+def not_a_store(root: StorePath, detail: str) -> DbError:
+    """The refusal to open a path that holds something other than a store."""
+    return DbError.refused(DbErrorKind.Scope, DbOperation.Open, root.value, detail)
