@@ -259,3 +259,21 @@ def test_a_module_case_whose_nested_import_only_its_root_resolves_keeps_its_own_
     assert commands == ["build 3"], ", ".join(commands)
     assert stdout_of(batch.outcomes, "a") == "case 0\n"
     assert stdout_of(batch.outcomes, "m") == "own command\n"
+
+
+def test_a_large_family_starts_from_groups_of_at_most_seventeen_cases() -> None:
+    """
+    A group's build takes longer per case the more cases it holds, and the longest first build bounds the family, so a
+    family with more cases than its jobs' groups of seventeen can hold starts from balanced groups of at most seventeen.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    # The fake refuses only a build holding case `e`, which these names leave out: every build succeeds quietly.
+    fixtures = [behavior_case(root, f"c{index}") for index in range(30)]
+    incan = unnamed_refusal_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 1)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["build 15", "build 15"], ", ".join(commands)
+    assert stdout_of(batch.outcomes, "c0") == "case 0\n"
+    assert stdout_of(batch.outcomes, "c29") == "case 14\n"
