@@ -7,6 +7,7 @@ from std.primitives.crumb.hashes import description_hash, value_hash
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.values import Projection, Value
 from std.primitives.text import copy_frozen_bytes
+from call_artifact_codecs import CallArtifactCodec, call_artifact_codec
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
@@ -779,6 +780,21 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         ]:
             return Err(CodecFault.Unsupported(field.selector))
         end = 1
+    # Generated call artifact rows follow their field's codec: a type, a flag or an identity at a source node.
+    elif field.family == "artifact-call":
+        if field.node == "":
+            return Err(CodecFault.Malformed)
+        match call_artifact_codec(field.selector):
+            Some(CallArtifactCodec.SpanType) => end = type_end(values, 0, 0)?
+            Some(CallArtifactCodec.SpanSet) =>
+                if values != ["true"]:
+                    return Err(CodecFault.Malformed)
+                end = 1
+            Some(CallArtifactCodec.SpanIdentity) =>
+                if len(values) != 1 or values[0] == "":
+                    return Err(CodecFault.Malformed)
+                end = 1
+            None => return Err(CodecFault.Unsupported(field.selector))
     # A target's source: at least two values, all kept.
     elif field.family == "target":
         if field.selector != "source" or len(values) < 2:
