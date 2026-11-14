@@ -15,7 +15,7 @@ from crate.store import (
 )
 from crate.store.files import StoreError, ensure_directory, failure, index_failure, io_failure, natural, place_synced
 from crate.store.files import sync_directory
-from crate.store.index import page_path, read_page
+from crate.store.index import page_file, read_page
 from crate.store.path import StorePath as Path
 
 
@@ -169,7 +169,7 @@ def mark_snapshot(
             continue
         page = read_page(view.root, name).map_err(index_failure)?
         marked.pages.add(name)
-        marked.files.add(page_path(view.root, name).value)
+        marked.files.add(page_file(view.root, name).map_err(index_failure)?.value)
         for entry in page.entries:
             if page.level > 0:
                 pending.append(entry.child)
@@ -204,7 +204,9 @@ def sweep_layouts(root: Path, marked: Marked) -> Result[Reclaimed, StoreError]:
                 suffix = ".page"
             elif name == "snapshots":
                 suffix = ".manifest"
-            if not path.name().endswith(suffix) or path.is_symlink():
+            # An index directory holds packs, and page files from a store written before packs.
+            layout_file = path.name().endswith(suffix) or (name == "indexes" and path.name().endswith(".pack"))
+            if not layout_file or path.is_symlink():
                 continue
             info = path.store_stat().map_err((error) => io_failure(path, error))?
             size = info.store_size().map_err((error) => io_failure(path, error))?
