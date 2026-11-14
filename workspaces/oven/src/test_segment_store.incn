@@ -207,7 +207,8 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     for key in ["a", "b", "c", "d"]:
         batch = put(batch, key, b"value")
     _ = commit(batch).map_err((error) => error.message())?
-    assert durable_syncs() - barriers == 2, "a request did not use exactly the graph and acknowledgment barriers"
+    # The graph needs only ordering before CURRENT names it; the acknowledgment is the request's one drive flush.
+    assert durable_syncs() - barriers == 1, "a request flushed the drive more than once"
     assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
     # One request updates independent views under one CURRENT switch; a conflict changes neither view.
     other = snapshot(root, "project").map_err((error) => error.message())?
