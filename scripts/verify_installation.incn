@@ -350,7 +350,8 @@ pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, s
             .parse(document.read_text("utf-8", "strict").map_err((error) => error.message())?)
             .map_err((error) => f"{document.0}: {error.message()}")?
         for observed in strings_and_keys(value)?:
-            if observed.startswith("/") and observed != installation.0 and not observed.startswith(installation.0 + "/"):
+            path = audited_path(observed)
+            if path.startswith("/") and path != installation.0 and not path.startswith(installation.0 + "/"):
                 return Err(f"nonportable toolchain JSON {document.0}: {observed}")
     for builder in builder_paths:
         if builder == "":
@@ -815,6 +816,17 @@ def owns_rust_facet(manifest: str) -> bool:
         if selected == "[rust]" or selected == "[[rust.bin]]":
             return true
     return false
+
+
+def audited_path(observed: str) -> str:
+    """
+    The path one JSON string names for the relocation audit. An `absolute:` native-closure reference names the path
+    after its anchor; `sibling:`, `toolchain:` and `bakery:` references resolve inside a home and stay as written.
+    """
+    parts = observed.split(":")
+    if len(parts) > 1 and parts[0] == "absolute":
+        return ":".join(parts[1:])
+    return observed
 
 
 def strings_and_keys(value: JsonValue) -> Result[list[str], str]:
