@@ -33,6 +33,7 @@ mod declaration_records;
 mod runtime_bindings;
 #[cfg(test)]
 mod thread_selection;
+use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
 pub(super) use runtime_bindings::read_runtime_bindings;
 
@@ -43,9 +44,6 @@ const DOCUMENTATION: &str = "documentation";
 const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
 const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
-/// The record families a consumer reads by name: a declaration's own facts and a public namespace. A manifest
-/// projection never selects them either.
-const NAMED_FAMILIES: [&str; 4] = ["declaration-signature", "layout", "default", "public-namespace"];
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";

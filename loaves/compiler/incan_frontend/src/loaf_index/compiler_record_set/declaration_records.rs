@@ -7,10 +7,20 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    LoafIndexError, NAMED_FAMILIES, RecordSet, installed, open_value, read_summary, record_failure, unreadable,
+    LoafIndexError, RecordSet, installed, open_value, read_summary, record_failure, unreadable,
     validate_payload_directory,
 };
 use crate::library_manifest::LibraryManifest;
+
+/// The record families a consumer reads by name: a declaration's own facts, a public namespace and the names an enum
+/// publishes at the package root. A manifest projection never selects them.
+pub(super) const NAMED_FAMILIES: [&str; 5] = [
+    "declaration-signature",
+    "layout",
+    "default",
+    "public-namespace",
+    "enum-variant",
+];
 
 /// Read the `family` records named `declaration` (a declaration, or a public namespace by its path) in one installed
 /// Loaf.
