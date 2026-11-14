@@ -151,7 +151,7 @@ pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
 
 
 pub def compiled_owner_source(
-    projection: SourceProjection,
+    projection: &SourceProjection,
     module: str,
     name: str,
     identity: str = "",
