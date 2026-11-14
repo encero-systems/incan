@@ -110,7 +110,7 @@ fn run(
 }
 
 /// The process's physical footprint in bytes, or -1 when it cannot be read.
-fn footprint() -> i64 {
+pub(crate) fn footprint() -> i64 {
     incan_platform::current_process_footprint()
         .ok()
         .and_then(|bytes| i64::try_from(bytes).ok())
@@ -137,7 +137,7 @@ unsafe extern "C" {
 /// The bytes in live allocations, which the worker host judges retention by: the allocator keeps blocks a compile
 /// freed resident, so the physical footprint overstates what the worker holds. -1 when it cannot be read.
 #[cfg(target_os = "macos")]
-fn live_heap() -> i64 {
+pub(crate) fn live_heap() -> i64 {
     let mut stats = MallocStatistics::default();
     // SAFETY: a null zone asks libmalloc to sum every zone into `stats`, a valid exclusive out-parameter.
     unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
@@ -146,7 +146,7 @@ fn live_heap() -> i64 {
 
 /// Other systems judge retention by the physical footprint.
 #[cfg(not(target_os = "macos"))]
-fn live_heap() -> i64 {
+pub(crate) fn live_heap() -> i64 {
     -1
 }
 
