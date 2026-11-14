@@ -376,6 +376,12 @@ pub def prepare_compiled_bodies(
                 stage_put(prepared, owner_key, owner_value)
                 source.add(owner_key, owner_value)
             modules.append(namespace.module)
+        for dependency in namespace.dependencies:
+            dependency_projection = source_projection(unit, origin, dependency)?
+            declaration_key = encode_record_key(dependency_projection.declarations.key)?
+            declaration_value = dependency_projection.declarations.text.encode("utf-8")
+            stage_put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
     for value in outputs.values:
         if value.module not in modules:
             projection = source_projection(unit, origin, value.module)?
