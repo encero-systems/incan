@@ -169,7 +169,7 @@ def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[st
         compiler_path = Path(toolchain.c_compiler)
         compiler = compiler_path
             .resolve()
-            .map_err((error) => f"cannot resolve C compiler {compiler_path.0}: {error.message()}")?
+            .map_err((error) => f"C compiler: cannot {error.message()}")?
         link_file(compiler, stage.joinpath("c/clang/bin/clang"))?
         resources = compiler.parent().parent().joinpath("lib").joinpath("clang")
         link_file(resources, stage.joinpath("c/clang/lib/clang"))?
@@ -232,7 +232,7 @@ def archive(stage: Path, output: Path) -> Result[None, str]:
     parent = output.parent()
     absolute = parent
         .resolve()
-        .map_err((error) => f"cannot resolve toolchain archive directory {parent.0}: {error.message()}")?.joinpath(
+        .map_err((error) => f"toolchain archive directory: cannot {error.message()}")?.joinpath(
         output.name(),
     )
     # 2. Nothing is written at `output` until the archive is complete, and its name chooses the compression.
@@ -422,11 +422,11 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
     """
     if not source.is_dir():
         return Err(f"no standard Loaves at {source.0}")
-    for package in source.iterdir().map_err((error) => f"cannot list standard Loaves at {source.0}: {error.message()}")?:
+    for package in source.iterdir().map_err((error) => f"standard Loaves: cannot {error.message()}")?:
         for profile in (
             package
                 .iterdir()
-                .map_err((error) => f"cannot list standard Loaf profiles at {package.0}: {error.message()}")?
+                .map_err((error) => f"standard Loaf profiles: cannot {error.message()}")?
         ):
             if ".previous." in profile.name():
                 return Err(f"stale standard generation cannot be packed: {profile.0}")
@@ -435,7 +435,7 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
             for artifact in (
                 profile
                     .iterdir()
-                    .map_err((error) => f"cannot list standard Loaf artifacts at {profile.0}: {error.message()}")?
+                    .map_err((error) => f"standard Loaf artifacts: cannot {error.message()}")?
             ):
                 name = artifact.name()
                 if (
@@ -463,7 +463,7 @@ def stage_standard_sources(stage: Path) -> Result[None, str]:
 def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
     """Link a package's authored files into the stage, leaving out build output and hidden entries."""
     for entry in (
-        source.iterdir().map_err((error) => f"cannot list standard source directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"standard source directory: cannot {error.message()}")?
     ):
         name = entry.name()
         if name.startswith(".") or name == "target":
@@ -574,7 +574,7 @@ def stage_directory(source: Path, stage: Path) -> Result[str, str]:
     """
     canonical = source
         .resolve()
-        .map_err((error) => f"cannot resolve toolchain artifact directory {source.0}: {error.message()}")?
+        .map_err((error) => f"toolchain artifact directory: cannot {error.message()}")?
     if canonical.parent().parent().name() == "loaves":
         return stage_profile(canonical, stage)
     mut relative = "native/" + canonical.name()
@@ -593,7 +593,7 @@ def stage_native_directory(source: Path, destination: Path, stage: Path, prefix:
     """
     make_directory(destination)?
     for entry in (
-        source.iterdir().map_err((error) => f"cannot list native artifact directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"native artifact directory: cannot {error.message()}")?
     ):
         name = entry.name()
         if name in OBSERVATION_CACHES or name.endswith(RESTATED_RECORD_SUFFIX):
@@ -615,7 +615,7 @@ def stage_profile(source: Path, stage: Path) -> Result[str, str]:
     """
     mut names: list[str] = []
     for file in (
-        source.iterdir().map_err((error) => f"cannot list standard profile directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"standard profile directory: cannot {error.message()}")?
     ):
         if file.is_file() and is_native_library(file.name()):
             names.append(file.name())
@@ -650,7 +650,7 @@ def link_file(source: Path, destination: Path) -> Result[None, str]:
         return stage_publication(source, destination)
     absolute = source
         .resolve()
-        .map_err((error) => f"cannot resolve staged toolchain input {source.0}: {error.message()}")?
+        .map_err((error) => f"staged toolchain input: cannot {error.message()}")?
     if destination.is_file():
         if file_digest(absolute)? != file_digest(destination)?:
             return Err(f"conflicting toolchain artifacts at {destination.0}")
@@ -861,7 +861,7 @@ def local_sysroot() -> Result[Path, str]:
     if configured != "":
         sysroot = Path(configured)
             .resolve()
-            .map_err((error) => f"cannot resolve INCAN_SYSROOT {configured}: {error.message()}")?
+            .map_err((error) => f"INCAN_SYSROOT: cannot {error.message()}")?
         require_rust_components(sysroot)?
         return Ok(sysroot)
     output = command_text("rustup", ["run", RUST_TOOLCHAIN, "rustc", "--print", "sysroot"]).map_err(
@@ -869,7 +869,7 @@ def local_sysroot() -> Result[Path, str]:
     )?
     sysroot = Path(output.strip())
         .resolve()
-        .map_err((error) => f"cannot resolve the Rust {RUST_TOOLCHAIN} sysroot {output.strip()}: {error.message()}")?
+        .map_err((error) => f"the Rust {RUST_TOOLCHAIN} sysroot: cannot {error.message()}")?
     require_rust_components(sysroot)?
     return Ok(sysroot)
 

@@ -195,7 +195,7 @@ def fresh_certificate(store: Path, identity: str) -> Result[Path, str]:
     receipts.mkdir(true, true).map_err((error) => f"{receipts.0}: {error.message()}")?
     certificate = receipts.joinpath(f"{identity}.{id()}.certificate")
     if certificate.is_file():
-        certificate.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+        certificate.unlink().map_err((error) => f"cannot {error.message()}")?
     return Ok(certificate)
 
 
@@ -374,7 +374,7 @@ def load_outcome(store: Path, identity: str, root: str) -> Result[Option[Complet
 
 def read_outcome(path: Path, identity: str) -> Result[Option[Completion], str]:
     """Validate the bounded header, the status and both byte lengths before releasing either stream to the caller."""
-    content = path.read_bytes().map_err((error) => f"cannot read {error.message()}")?
+    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
     prefix = f"{RECORD_SCHEMA}\n{identity}\n".encode("utf-8")
     if content[:len(prefix)] != prefix:
         return Ok(None)

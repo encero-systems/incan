@@ -54,10 +54,10 @@ pub def inline_source(code: str) -> Result[Path, str]:
     """The source file that holds inline CODE, named by its digest so an unchanged command reuses its program."""
     digest = hexlify(sha256.digest(code.encode("utf-8")))
     directory = Path(str(temp_dir().display())).joinpath(f"incan_inline_command_{digest[:16]}")
-    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     source = directory.joinpath("main.incn")
     if not source.is_file():
         source
             .write_bytes(RustString.from(code + "\n").into_bytes())
-            .map_err((error) => f"cannot write {source.0}: {error.message()}")?
+            .map_err((error) => f"cannot {error.message()}")?
     return Ok(source)

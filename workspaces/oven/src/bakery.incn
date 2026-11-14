@@ -298,7 +298,7 @@ def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, st
 def staged_files(directory: Path, prefix: str) -> Result[list[str], str]:
     """Every regular file under `directory`, as sorted paths relative to the staging root."""
     mut files: list[str] = []
-    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for entry in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
         mut relative = entry.name()
         if prefix != "":
             relative = f"{prefix}/{entry.name()}"
@@ -516,7 +516,7 @@ pub def forget_view(directory: Path) -> Result[None, str]:
     """Remove only a directory's fact selection before an unbaked producer replaces its local outputs."""
     marker = directory.joinpath(VIEW_RECORD)
     if marker.is_file():
-        marker.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+        marker.unlink().map_err((error) => f"cannot {error.message()}")?
     return Ok(None)
 
 
@@ -537,7 +537,7 @@ pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
     marker = directory.joinpath(VIEW_RECORD)
     if not marker.is_file():
         return Ok(directory)
-    canonical = store.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    canonical = store.resolve().map_err((error) => f"cannot {error.message()}")?
     fact = library_fact(canonical, read_json(marker)?)?
     return bind_library(canonical, fact)
 
@@ -588,7 +588,7 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
         elif file.program:
             # A worker's resolved executable must remain inside the library's verified artifact root.
             if target.is_symlink():
-                target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+                target.unlink().map_err((error) => f"cannot {error.message()}")?
             view_file(store, file, target)?
         elif target.is_symlink():
             match target.resolve():
@@ -598,7 +598,7 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
                 # A link whose payload is gone was written for another location of this bakery. The fact names the
                 # payload by digest, so the binding is made again.
                 Err(_) =>
-                    target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+                    target.unlink().map_err((error) => f"cannot {error.message()}")?
                     link_payload(store, source, target)?
         elif target.exists():
             return Err(f"{target.0}: library binding is not a payload link")
@@ -626,7 +626,7 @@ def link_payload(store: Path, source: Path, target: Path) -> Result[None, str]:
     mut text = source.0[len(prefix):]
     for _ in range(len(target.0[len(prefix):].split("/")) - 1):
         text = "../" + text
-    return target.symlink_to(Path(text)).map_err((error) => f"cannot create symbolic link {error.message()}")
+    return target.symlink_to(Path(text)).map_err((error) => f"cannot {error.message()}")
 
 
 pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
@@ -922,5 +922,5 @@ def retire_export_views() -> Result[bool, str]:
     directory = home()?.joinpath("cache").joinpath("codegraph-exports")
     if not directory.is_dir():
         return Ok(false)
-    directory.remove_tree().map_err((error) => f"cannot remove directory tree {error.message()}")?
+    directory.remove_tree().map_err((error) => f"cannot {error.message()}")?
     return Ok(true)

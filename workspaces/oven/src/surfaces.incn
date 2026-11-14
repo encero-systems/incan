@@ -118,13 +118,13 @@ pub def expose_entry_points() -> Result[Path, str]:
     directory = home()?.joinpath("bin")
     directory
         .mkdir(true, true)
-        .map_err((error) => f"cannot create entry-point directory {directory.0}: {error.message()}")?
+        .map_err((error) => f"entry-point directory: cannot {error.message()}")?
     installed = directory.joinpath(INCAN)
     if not installed.exists() and not installed.is_symlink():
         executable
             .copy(installed, true, true)
             .map_err(
-                (error) => f"cannot copy running Oven {executable.0} to entry point {installed.0}: {error.message()}",
+                (error) => f"entry point {installed.0}: cannot {error.message()}",
             )?
     elif not same_program(installed, executable):
         return Err(f"{installed.0} exists and is not this Oven; remove it to expose the `{INCAN}` entry point")

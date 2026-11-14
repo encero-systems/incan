@@ -534,7 +534,7 @@ pub def linked_archives(root: str, targets: list[CInteropTarget]) -> Result[list
             path = Path(root).joinpath(artifact.path)
             if not path.is_file():
                 return Err(f"static artifact `{artifact.name}`: `{artifact.path}` is not a file in {root}")
-            raw = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+            raw = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
             archives.append(
                 LinkedArchive(
                     name=artifact.name,

@@ -185,12 +185,12 @@ def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
     """
     mut locations = LoafLocations()
     for loaf in unit.loaves:
-        directory = Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+        directory = Path(loaf.dir).resolve().map_err((error) => f"cannot {error.message()}")?.0
         if directory not in locations.directories:
             locations.directories[directory] = loaf.name
         expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
         if frozen_observation(expected).is_some() or expected.is_file():
-            rlib = expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+            rlib = expected.resolve().map_err((error) => f"cannot {error.message()}")?.0
             if rlib not in locations.rlibs:
                 locations.rlibs[rlib] = loaf.name
     return Ok(locations)
@@ -204,7 +204,7 @@ def binding_identity(
     anchors: NativeAnchors,
 ) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain anchored native identity."""
-    path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    path = Path(native.path).resolve().map_err((error) => f"cannot {error.message()}")?
     if native.name not in unit.rust_crates and path.0 in locations.rlibs:
         return Ok(f"loaf:{native.name}:{locations.rlibs[path.0]}")
     return fingerprint([native.name, anchored_reference(path.0, anchors), identities.identity(path)?])
@@ -212,7 +212,7 @@ def binding_identity(
 
 def search_identity(path: Path, locations: LoafLocations, anchors: NativeAnchors) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
-    selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    selected = path.resolve().map_err((error) => f"cannot {error.message()}")?
     if selected.0 in locations.directories:
         return Ok(f"loaf:{locations.directories[selected.0]}")
     return Ok(anchored_reference(selected.0, anchors))
@@ -221,7 +221,7 @@ def search_identity(path: Path, locations: LoafLocations, anchors: NativeAnchors
 def located(directory: Path, path: str, anchors: NativeAnchors) -> Result[Path, str]:
     """Resolve a published native-closure reference against the current home, then to its physical path."""
     selected = Path(closure_reference(directory, path, anchors)?)
-    return selected.resolve().map_err((error) => f"cannot resolve {error.message()}")
+    return selected.resolve().map_err((error) => f"cannot {error.message()}")
 
 
 def native_search_inputs(
@@ -231,11 +231,11 @@ def native_search_inputs(
 ) -> Result[list[str], str]:
     """Witness project-selected native search artifacts outside the already-admitted frozen toolchain generation."""
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-native"), SETTLE_SECONDS, "")
-    providers = [Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for loaf in unit.loaves]
+    providers = [Path(loaf.dir).resolve().map_err((error) => f"cannot {error.message()}")?.0 for loaf in unit.loaves]
     installed = installed_toolchain_root(toolchain)?
     mut inputs: list[str] = []
     directories = unique(
-        [Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for path in unit.search],
+        [Path(path).resolve().map_err((error) => f"cannot {error.message()}")?.0 for path in unit.search],
     )
     for path in directories:
         directory = Path(path)
@@ -253,7 +253,7 @@ def installed_toolchain_root(toolchain: Toolchain) -> Result[Path, str]:
     mut root = Path(toolchain.driver).parent()
     if root.name() == "bin":
         root = root.parent()
-    return root.resolve().map_err((error) => f"cannot resolve {error.message()}")
+    return root.resolve().map_err((error) => f"cannot {error.message()}")
 
 
 def within(path: Path, root: Path) -> bool:

@@ -207,7 +207,7 @@ def displayed(file: str) -> str:
 
 def changes(file: str, toolchain: Toolchain) -> Result[list[str], str]:
     """The numbered lines formatting removes from and adds to `file`, or none when it is already formatted."""
-    original = Path(file).read_text("utf-8", "strict").map_err((error) => f"cannot read: {error.message()}")?
+    original = Path(file).read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
     formatted = formatted_text(file, original, toolchain)?
     if formatted == original:
         return Ok([])
@@ -218,7 +218,7 @@ def formatted_text(file: str, original: str, toolchain: Toolchain) -> Result[str
     """What the compiler formats `file` to, read from a private copy so the file itself never changes."""
     unit = describe_formatting(file, toolchain)?
     directory = Path(str(temp_dir().display())).joinpath(f"incan-fmt-diff-{process_id()}")
-    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     copy = directory.joinpath(Path(file).name())
     copy.write_bytes(RustString.from(original).into_bytes()).map_err((error) => error.message())?
     arguments = ["--fmt", write_unit(unit, crate_name(unit))?.0, copy.0]

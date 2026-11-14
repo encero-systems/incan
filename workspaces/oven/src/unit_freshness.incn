@@ -634,7 +634,7 @@ pub def record(stamp: Path, key: Key, outputs: list[Path], borrowed: list[Path] 
     borrowed_paths = [artifact.0 for artifact in borrowed]
     if key.refusal != "":
         if stamp.is_file():
-            stamp.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+            stamp.unlink().map_err((error) => f"cannot {error.message()}")?
         for output in outputs:
             if output.0 not in borrowed_paths:
                 record_payload(output, "", key.provenance, key.refusal)?

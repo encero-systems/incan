@@ -105,7 +105,7 @@ def fingerprint(inputs: list[str]) -> Result[str, str]:
 
 def content_digest(path: Path) -> Result[str, str]:
     """A file's content digest."""
-    raw = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+    raw = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
     return Ok(hexlify(sha256.digest(raw)))
 
 

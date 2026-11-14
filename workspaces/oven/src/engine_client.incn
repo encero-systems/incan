@@ -119,9 +119,9 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     4. Place each diagnostic on the editor's document path.
     """
     # 1. The overlay has the program's logical names, so its unit key is the one a build of these bytes has.
-    absolute = Path(request.source).absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    absolute = Path(request.source).absolute().map_err((error) => f"cannot {error.message()}")?
     buffer = Path(request.buffer)
-    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
+    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
     entry = overlay_entry(absolute, Some(text))?
     bound = selected_home_view()?
     project = project_view_name(view_scope(bound)?, entry.0, request.profile, get_optional("OVEN_BODY_REFUSALS"))?
@@ -245,7 +245,7 @@ def submit_check(
 
 def engine_channel(store: Path) -> Result[Channel, str]:
     """Connect to the store's records engine, starting it when none runs; a check may outlive any read deadline."""
-    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     identity = identity_for(store, installed_compiler()?)?
     mut channel = connect(store, identity).map_err(detail)?
     channel.transport.wait_at_most(0)
@@ -301,7 +301,7 @@ pub def execute(
     2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
     3. Hold the selected execution pin until the program exits, then release it.
     """
-    absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    absolute = source.absolute().map_err((error) => f"cannot {error.message()}")?
     # A check is a view of its own, apart from the program's builds.
     mut view_profile = profile
     if command == "check":
@@ -340,7 +340,7 @@ def execute_in(
         policy = "proofs"
     connecting = begin_work()
     store = bakery()?
-    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
     selected = snapshot(store, view).map_err((error) => error.message())?
     if selected.index == "":

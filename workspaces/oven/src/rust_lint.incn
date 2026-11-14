@@ -46,7 +46,7 @@ pub def lint_rust(request: RustBuild) -> Result[i32, str]:
     # 1. Every library a lint links must exist first.
     _ = build_rust(request)?
     prepared = prepared_build(request)?
-    root = Path(prepared.project).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    root = Path(prepared.project).resolve().map_err((error) => f"cannot {error.message()}")?
     output = rust_output(root, prepared.profile)
     clippy = Path(prepared.rustc).parent().joinpath("clippy-driver")
     if not clippy.is_file():
@@ -120,7 +120,7 @@ def lint_library(
     """
     # 1. The build's own framing of this unit, aimed at a directory nothing links from.
     directory = output.joinpath("lint").joinpath(declared.crate_name)
-    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiled = library_compile_arguments(facet, declared, directory, request, built, search)?
     # 2. Metadata is all a check needs; the lint levels come last so they override the crate's defaults.
     mut arguments: list[str] = []

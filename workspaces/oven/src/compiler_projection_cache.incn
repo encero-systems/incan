@@ -58,7 +58,7 @@ pub def project_dependency_module(unit: UnitDescription, module: str) -> Result[
     if "/" in module:
         candidates.append(base.joinpath("prelude.incn"))
     # Candidates resolve through symlinks (macOS `/var` is `/private/var`), so the root they're compared with must too.
-    root = Path(unit.project_root).resolve().map_err((error) => f"cannot resolve project root {error.message()}")?
+    root = Path(unit.project_root).resolve().map_err((error) => f"cannot {error.message()}")?
     prefix = root.0 + "/"
     for candidate in candidates:
         match candidate.resolve():

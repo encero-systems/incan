@@ -697,7 +697,7 @@ def located(command: str, options: Options) -> Options:
 
 def enclosing_loaf(directory: Path) -> Result[Path, str]:
     """The nearest directory at or above `directory` that holds a `loaf.toml`."""
-    mut current = directory.absolute().map_err((error) => f"cannot resolve {directory.0}: {error.message()}")?
+    mut current = directory.absolute().map_err((error) => f"cannot {error.message()}")?
     while true:
         if current.joinpath("loaf.toml").is_file():
             return Ok(current)
@@ -825,7 +825,7 @@ def test(arguments: list[str]) -> None:
                         # A directory's project is found from the directory itself, so it is named absolutely.
                         match Path(selected.path).absolute():
                             Ok(absolute) => selected.path = absolute.0
-                            Err(error) => fail(f"{invoked()} test: cannot resolve {error.message()}", 1)
+                            Err(error) => fail(f"{invoked()} test: cannot {error.message()}", 1)
                     prepared_lock("test", selected)
                     finish("test", tested(selected, runner))
 
@@ -1272,12 +1272,12 @@ def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
     if code != 0 or options.output == "":
         return Ok(code)
     directory = Path(options.output)
-    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     destination = directory.joinpath(binary.name())
     # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
     if destination.exists():
-        destination.unlink().map_err((error) => f"cannot replace {destination.0}: {error.message()}")?
-    _ = binary.copy(destination, true, true).map_err((error) => f"cannot copy {binary.0}: {error.message()}")?
+        destination.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
     return Ok(0)
 
 

@@ -53,7 +53,7 @@ pub def directory_test_sources(directory: Path) -> Result[list[Path], str]:
     if not directory.is_dir():
         return Ok([])
     mut found: list[str] = []
-    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for entry in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
         if name.startswith(".") or name == "target":
             continue
@@ -631,14 +631,14 @@ def report_session(
     if runner.junit != "":
         Path(runner.junit)
             .write_bytes(RustString.from(junit(outcomes, elapsed)).into_bytes())
-            .map_err((error) => f"cannot write JUnit report {runner.junit}: {error.message()}")?
+            .map_err((error) => f"JUnit report: cannot {error.message()}")?
     return Ok(None)
 
 
 def scratch_directory() -> Result[Path, str]:
     """A directory of this process's own for its tests' output files."""
     directory = Path(str(temp_dir().display())).joinpath(f"incan-test-{process_id()}")
-    directory.mkdir(true, true).map_err((error) => f"cannot create test output directory: {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"test output directory: cannot {error.message()}")?
     return Ok(directory)
 
 

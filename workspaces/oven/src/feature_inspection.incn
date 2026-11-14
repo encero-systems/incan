@@ -91,7 +91,7 @@ pub def inspect_features(selected: FeatureInspection) -> Result[i32, str]:
 
 def selected_root(path: str) -> Result[Path, str]:
     """The project PATH names: a project directory, or the project a source file belongs to."""
-    absolute = Path(path).absolute().map_err((error) => f"cannot resolve {path}: {error.message()}")?
+    absolute = Path(path).absolute().map_err((error) => f"cannot {error.message()}")?
     mut probe = absolute.joinpath("loaf.toml")
     if not absolute.is_dir():
         probe = absolute

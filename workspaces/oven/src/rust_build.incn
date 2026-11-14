@@ -167,7 +167,7 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
 
 pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
     """Identify the actual pinned compiler by content after resolving the installation's sysroot alias."""
-    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot {error.message()}")?
     libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
     return fingerprint(
@@ -194,7 +194,7 @@ pub def rust_library_compiler_identity(kind: str, compiler: str, sdk: str) -> Re
 
 pub def native_linker_fingerprint(rustc: str) -> Result[str, str]:
     """Identify the compiler and SDK inputs of a final Rust executable or test link."""
-    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot {error.message()}")?
     native = native_compiler_fingerprint(compiler.0)?
     return linker_compiler_identity(native, sdk_content_identity(compiler.parent().parent().0)?)
 
@@ -203,7 +203,7 @@ pub def native_library_compiler_fingerprint(kind: str, rustc: str, compiler: str
     """Read SDK identity only when a Rust library unit emits a linked dynamic library."""
     if kind in ["lib", "rlib"]:
         return Ok(compiler)
-    selected = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    selected = Path(rustc).resolve().map_err((error) => f"cannot {error.message()}")?
     return rust_library_compiler_identity(kind, compiler, sdk_content_identity(selected.parent().parent().0)?)
 
 
