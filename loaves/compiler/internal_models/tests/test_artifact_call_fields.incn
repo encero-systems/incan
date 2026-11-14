@@ -1,0 +1,45 @@
+"""Generated call-artifact rows validate by the grammar of the codec that wrote them."""
+
+from checker_records import CHECKER_PROFILE, CodecFault, from_native_final_fields
+
+
+pub def test_call_artifact_rows_validate_by_their_codec() -> None:
+    """A span type, a span flag and a span identity each validate; a malformed value of each is refused."""
+    assert accepted("inferred_call_result_types", ["int"])
+    assert accepted("inferred_constructor_types", ["str"])
+    assert accepted("mutable_receiver_method_calls", ["true"])
+    assert accepted("body_ir_self_result_methods", ["function:main::value"])
+    assert refused("inferred_call_result_types", ["int", "extra"]) == "malformed"
+    assert refused("mutable_receiver_method_calls", ["false"]) == "malformed"
+    assert refused("body_ir_self_result_methods", [""]) == "malformed"
+
+
+pub def test_call_artifact_rows_without_a_grammar_stay_unsupported() -> None:
+    """A row this schema has no grammar for, or on no node, is refused rather than accepted unchecked."""
+    assert refused("resolved_method_calls", ["function:main::value"]) == "resolved_method_calls"
+    assert refused_on_node("", "inferred_call_result_types", ["int"]) == "malformed"
+
+
+def accepted(selector: str, values: list[str]) -> bool:
+    """Whether one call-artifact row on a body node validates."""
+    return refused(selector, values) == ""
+
+
+def refused(selector: str, values: list[str]) -> str:
+    """Name why one call-artifact row on a body node is refused, or return empty when it validates."""
+    return refused_on_node("node/Function/body/0/span", selector, values)
+
+
+def refused_on_node(node: str, selector: str, values: list[str]) -> str:
+    """Validate one final record holding a single call-artifact row beside its status."""
+    root = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    rows = [
+        ["header", "function:main::value", root, CHECKER_PROFILE],
+        ["artifact-call", node, selector] + values,
+        ["status", "", "refused", "false"],
+    ]
+    match from_native_final_fields(rows):
+        Ok(_) => return ""
+        Err(CodecFault.Unsupported(name)) => return name
+        Err(CodecFault.Malformed) => return "malformed"
+        Err(_) => return "other"

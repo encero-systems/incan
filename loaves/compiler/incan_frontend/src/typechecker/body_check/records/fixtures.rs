@@ -7,11 +7,12 @@ use super::*;
 pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
     let (_, checker, owner) = fixture(source, name)?;
     if declaration {
-        return checker
-            .produced_declaration_records
-            .get(&owner)
-            .cloned()
-            .ok_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()));
+        return match checker.produced_declaration_records.get(&owner) {
+            Some(fields) => Ok(fields.clone()),
+            None => Err(checker
+                .declaration_record_refusal(owner)
+                .unwrap_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()))),
+        };
     }
     match checker.produced_final_record(owner) {
         Some(fields) => Ok(fields.clone()),

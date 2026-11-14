@@ -494,11 +494,10 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
     Ok(())
 }
 
-/// Record types retain nominal versus generic identity, while the current owner profile still refuses generics.
+/// Record types retain nominal versus generic identity.
 #[test]
-fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result<(), Box<dyn std::error::Error>> {
+fn result_requirement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use crate::symbols::ResolvedType;
-    use crate::typechecker::canonical_nodes::NodeBindingError;
     for info in incan_lang::lang::types::numerics::NUMERIC_TYPES {
         let expected = ResolvedType::Numeric(info.id);
         let mut fields = Vec::new();
@@ -520,11 +519,22 @@ fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result
         fields.pop();
         assert!(super::super::types::read_type(&mut fields.iter()).is_err());
     }
-    let source = "trait Failure[E]:\n    def fail(self, marker: Borrowed[int]) -> Result[None, E]:\n        pass\ndef forward[E, F with Failure[E]](failure: Borrowed[F], marker: Borrowed[int]) -> Result[None, E]:\n    return failure.fail(marker)\n";
-    let (program, checker, owner) = fixture(source, "forward")?;
-    assert!(matches!(
-        Positions::new(&checker, &program, owner, false),
-        Err(NodeBindingError::Unsupported("modified, generic, or generated owner"))
-    ));
+    Ok(())
+}
+
+/// A generic free function is its own checked record, and so is a caller that instantiates it at two types: each
+/// declaration and final record is position-free and reconstructs natively to its independent cold check.
+#[test]
+fn generic_owners_and_their_callers_are_records() -> Result<(), Box<dyn std::error::Error>> {
+    let pick = "def pick[T](items: list[T]) -> T:\n    return items[2]\n\ndef main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n";
+    let pair = "def second[A, B](left: A, right: B) -> B:\n    return right\n";
+    for (source, name) in [(pick, "pick"), (pick, "main"), (pair, "second")] {
+        for declaration in [true, false] {
+            let fields = super::super::fixture_record(source, name, declaration)?;
+            let moved = format!("# moved owner\n{source}");
+            assert_eq!(fields, super::super::fixture_record(&moved, name, declaration)?);
+            super::super::verify_fixture(&moved, name, fields)?;
+        }
+    }
     Ok(())
 }
