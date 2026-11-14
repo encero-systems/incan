@@ -95,6 +95,8 @@ pub class WorkerHost:
     active: Option[Connection] = None
     active_record: Option[RecordMessage] = None
     retire_after: bool = false
+    # Whether the open activation only reads sources, which the footprint policy holds only to its ceiling.
+    active_light: bool = false
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
 
@@ -175,7 +177,7 @@ pub class WorkerHost:
         is sent, then send the reply and close the activation.
         """
         self.finish_observation()
-        settled = self.policy.settle(outcome, footprint)
+        settled = self.policy.settle(outcome, footprint, self.active_light)
         match settled.retirement:
             Some(reason) => self.retire(reason)
             None => pass
@@ -289,6 +291,7 @@ pub class WorkerHost:
                         self.active = Some(caller)
                         self.active_record = Some(request)
                         self.retire_after = false
+                        self.active_light = false
                         return Some(WorkerActivation.Record(request))
                     RecordAdmission.Incompatible =>
                         self.retire(Retirement.Incompatible)
@@ -313,6 +316,7 @@ pub class WorkerHost:
                                 self.activation_clock = trace_begin(self.observer is not None)
                                 self.active = Some(caller)
                                 self.retire_after = request.retire_after
+                                self.active_light = request.command.light()
                                 return Some(WorkerActivation.Compile(request))
 
     def served_peer(self, caller: Connection) -> bool:
