@@ -6,8 +6,8 @@ use incan_lang::lang::types::builtin_type_name;
 use serde_json::Value;
 
 use super::*;
-use crate::library_manifest::declaration_records::{DeclarationFacet, restored_declaration};
-use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, TypeRef};
+use crate::library_manifest::declaration_records::{DeclarationFacet, OVERLOAD_FIELD, restored_declaration};
+use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph, TypeRef};
 
 impl TypeChecker {
     /// Bind `from <loaf>[.<path>] import <namespace>, …` from the Loaf's namespace records when every item names one of
@@ -155,9 +155,10 @@ impl TypeChecker {
     }
 
     /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
-    /// member's own declaration records. `None` when they cannot settle it exactly: no records, another kind of member,
-    /// an alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
-    /// manifest then resolves the member.
+    /// member's own declaration records; an overloaded function is resolved from each overload's records. `None` when
+    /// they cannot settle it exactly: no records, another kind of member, an alias, a bounded type parameter, a
+    /// signature naming anything but built-in types and its own type parameters, a default record that names no
+    /// overload, or no single declaration identity; the manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -166,39 +167,26 @@ impl TypeChecker {
     ) -> Option<ResolvedPublicModuleSymbol> {
         let admitted = self.loaves.admitted(library)?;
         let members = self.record_namespace_members(library, module_path, member)?;
-        let [found] = members.as_slice() else {
-            return None;
-        };
+        let (found, overloads) = members.split_first()?;
         let source_path: Vec<String> = serde_json::from_value(found.get("source_path")?.clone()).ok()?;
+        if overloads
+            .iter()
+            .any(|overload| overload.get("source_path") != found.get("source_path"))
+        {
+            return None;
+        }
         let (source_name, source_module) = source_path.split_last()?;
         let qualified = source_path.join("::");
         let signatures = self
             .loaves
             .declaration_facts(library, DeclarationFacet::Signature, &qualified)
             .ok()??;
-        let [signature] = signatures.as_slice() else {
-            return None;
-        };
         let defaults = self
             .loaves
             .declaration_facts(library, DeclarationFacet::Defaults, &qualified)
             .ok()??;
-        if defaults.len() > 1 {
-            return None;
-        }
-        let declaration: ApiDeclaration =
-            serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
-        let built_in = match &declaration {
-            ApiDeclaration::Function(function) => {
-                function.type_params.is_empty()
-                    && function.params.iter().all(|param| built_in_type(&param.ty))
-                    && built_in_type(&function.return_type)
-            }
-            ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
-            ApiDeclaration::Static(item) => built_in_type(&item.ty),
-            _ => false,
-        };
-        if !built_in {
+        let declarations = restored_declarations(&signatures, &defaults)?;
+        if !declarations.iter().all(settled_by_built_in_types) {
             return None;
         }
         let public_path = std::iter::once(admitted.name.clone())
@@ -206,25 +194,123 @@ impl TypeChecker {
             .chain(std::iter::once(member.to_owned()))
             .collect::<Vec<_>>();
         let namespace = self.loaves.public_namespace(library, module_path).ok()??;
-        let identities: Vec<ExportIdentity> = serde_json::from_value(namespace.get("identities")?.clone()).ok()?;
-        let matching = identities
-            .iter()
-            .filter(|identity| identity.public_path == public_path && identity.source_path == source_path)
-            .collect::<Vec<_>>();
-        let [identity] = matching.as_slice() else {
-            return None;
+        let exports: Vec<ExportIdentity> = serde_json::from_value(namespace.get("identities")?.clone()).ok()?;
+        let (mut kind, canonical) = match declarations.as_slice() {
+            [declaration] => {
+                let matching = exports
+                    .iter()
+                    .filter(|identity| identity.public_path == public_path && identity.source_path == source_path)
+                    .collect::<Vec<_>>();
+                let [identity] = matching.as_slice() else {
+                    return None;
+                };
+                let canonical = identity.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)?;
+                (
+                    self.symbol_kind_from_api_declaration(None, declaration)?,
+                    Some(canonical),
+                )
+            }
+            overloads => self.record_overloads(overloads, exports, &public_path, &source_path)?,
         };
-        let canonical = identity.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)?;
-        let mut kind = self.symbol_kind_from_api_declaration(None, &declaration)?;
         Self::mark_compiled_class_field_provider(&mut kind, library);
         let mut source_module_path = admitted.binding_root;
         source_module_path.extend(source_module.iter().cloned());
         Some(ResolvedPublicModuleSymbol {
             kind,
-            canonical: Some(canonical),
+            canonical,
             source_module_path,
             source_name: source_name.clone(),
         })
+    }
+
+    /// The overload set the function declarations `overloads` publish at `public_path`, each candidate with its own
+    /// identity among `exports`, the namespace's identities, in declaration order, and the set's one identity when
+    /// every candidate shares it, as the manifest route selects them. `None` when a declaration is no function.
+    fn record_overloads(
+        &self,
+        overloads: &[ApiDeclaration],
+        exports: Vec<ExportIdentity>,
+        public_path: &[String],
+        source_path: &[String],
+    ) -> Option<(SymbolKind, Option<CanonicalSymbolId>)> {
+        let graph = LibraryIdentityGraph {
+            exports,
+            ..Default::default()
+        };
+        let identities = graph.identities_for_public_source_path(public_path, source_path);
+        let mut candidates = Vec::with_capacity(overloads.len());
+        for (index, declaration) in overloads.iter().enumerate() {
+            if !matches!(declaration, ApiDeclaration::Function(_)) {
+                return None;
+            }
+            let SymbolKind::Function(info) = self.symbol_kind_from_api_declaration(None, declaration)? else {
+                return None;
+            };
+            candidates.push(FunctionOverloadInfo {
+                info,
+                span: Span::default(),
+                identity: identities.get(index).cloned().flatten(),
+            });
+        }
+        let canonical = identities
+            .first()
+            .cloned()
+            .flatten()
+            .filter(|first| identities.iter().all(|identity| identity.as_ref() == Some(first)))
+            .or_else(|| graph.canonical_for_public_path(public_path));
+        Some((SymbolKind::FunctionOverloads(candidates), canonical))
+    }
+}
+
+/// The declarations the `signatures` records of one name describe, in declaration order, each with the defaults of its
+/// own `defaults` record put back. An overload's default record names the overload it belongs to; `None` when one
+/// names none, as in a set converted before it did, or when a record does not decode.
+fn restored_declarations(signatures: &[Value], defaults: &[Value]) -> Option<Vec<ApiDeclaration>> {
+    if let [signature] = signatures {
+        if defaults.len() > 1 {
+            return None;
+        }
+        let declaration = serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
+        return Some(vec![declaration]);
+    }
+    let mut by_overload = std::collections::BTreeMap::new();
+    for record in defaults {
+        let entries = record.as_array()?;
+        let overload = entries.first()?.get(OVERLOAD_FIELD)?.as_u64()?;
+        if entries
+            .iter()
+            .any(|entry| entry.get(OVERLOAD_FIELD).and_then(Value::as_u64) != Some(overload))
+            || overload >= signatures.len() as u64
+            || by_overload.insert(overload, record).is_some()
+        {
+            return None;
+        }
+    }
+    signatures
+        .iter()
+        .zip(0u64..)
+        .map(|(signature, overload)| {
+            serde_json::from_value(restored_declaration(
+                signature.clone(),
+                by_overload.get(&overload).copied(),
+            ))
+            .ok()
+        })
+        .collect()
+}
+
+/// Whether `declaration` is a function, constant or static whose types are built in, or a function's own unbounded
+/// type parameters.
+fn settled_by_built_in_types(declaration: &ApiDeclaration) -> bool {
+    match declaration {
+        ApiDeclaration::Function(function) => {
+            function.type_params.iter().all(|param| param.bounds.is_empty())
+                && function.params.iter().all(|param| built_in_type(&param.ty))
+                && built_in_type(&function.return_type)
+        }
+        ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
+        ApiDeclaration::Static(item) => built_in_type(&item.ty),
+        _ => false,
     }
 }
 
@@ -239,7 +325,7 @@ fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// Whether `ty` names built-in types only, which no provider's type remapping can change.
+/// Whether `ty` names built-in types and type parameters only, which no provider's type remapping can change.
 fn built_in_type(ty: &TypeRef) -> bool {
     match ty {
         TypeRef::Named { name, origin } => origin.is_none() && builtin_type_name(name).is_some(),
@@ -247,6 +333,7 @@ fn built_in_type(ty: &TypeRef) -> bool {
             origin.is_none() && builtin_type_name(name).is_some() && args.iter().all(built_in_type)
         }
         TypeRef::Function { params, return_type } => params.iter().all(built_in_type) && built_in_type(return_type),
+        TypeRef::TypeParam { .. } => true,
         _ => false,
     }
 }
