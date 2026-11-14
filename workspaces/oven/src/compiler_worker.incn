@@ -417,11 +417,6 @@ def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     command.arg(f"{endpoint.ready}").arg(f"{endpoint.directory}")
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
-    # The macOS allocator keeps the small blocks a compile frees resident, and pressure relief returns none of them,
-    # so a warm worker stayed tens of megabytes over its baseline after every compile and retired after its second.
-    # In space-efficient mode freed pages go back to the system: the footprint the worker host judges is what the
-    # worker retains. Other systems ignore the variable.
-    command.env("MallocSpaceEfficient", "1")
     clock = begin()
     child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
     record(Operation.DriverSpawn, toolchain.driver, clock)
