@@ -1,5 +1,6 @@
 """Convert operands at carrier boundaries, test union members, and bind enum payloads."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     Carrier,
     Constant,
@@ -169,17 +170,17 @@ pub def boundary_plan_operand(
             PlanType.Enum(owner, _name) =>
                 if (
                     owner >= len(builder.enums)
-                    and builder.intrinsics[owner - len(builder.enums)].carrier == Carrier.Declared
+                    and builder.intrinsics[carrier_position(owner)].carrier == Carrier.Declared
                 ):
                     mut convert = false
                     for union in builder.unions:
                         if not semantic_key_matches_native(
-                            builder.intrinsics[owner - len(builder.enums)].semantic_key,
+                            builder.intrinsics[carrier_position(owner)].semantic_key,
                             union,
                         )?:
                             continue
                         mut members: list[PlanType] = []
-                        for variant in builder.intrinsics[owner - len(builder.enums)].variants:
+                        for variant in builder.intrinsics[carrier_position(owner)].variants:
                             members.append(variant.fields[0])
                         convert = PlanType.FrozenStr not in members and PlanType.String in members
                         break
@@ -283,8 +284,8 @@ def converted_carrier_operand(
         _ => return Ok(None)
     if source_owner < len(builder.enums) or target_owner < len(builder.enums):
         return Ok(None)
-    before = builder.intrinsics[source_owner - len(builder.enums)]
-    after = builder.intrinsics[target_owner - len(builder.enums)]
+    before = builder.intrinsics[carrier_position(source_owner)]
+    after = builder.intrinsics[carrier_position(target_owner)]
     if before.carrier == Carrier.Declared or before.carrier != after.carrier:
         return Ok(None)
     # An existing optional payload lifts as a whole, including None inside Some(None).
@@ -342,7 +343,7 @@ def option_payload_operand(
         PlanType.Enum(owner, _name) =>
             if owner < len(builder.enums):
                 return Ok(value)
-            declaration = builder.intrinsics[owner - len(builder.enums)]
+            declaration = builder.intrinsics[carrier_position(owner)]
             if declaration.carrier != Carrier.Option:
                 return Ok(value)
             payload = declaration.variants[1].fields[0]
@@ -535,7 +536,7 @@ def moved_native_enum_payload(
             if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
                 return enum_payload_read(builder, payload, fact, span)
     else:
-        carrier = builder.intrinsics[owner - len(builder.enums)].carrier
+        carrier = builder.intrinsics[carrier_position(owner)].carrier
         if carrier == Carrier.Declared:
             return enum_payload_read(builder, payload, fact, span)
     if len(fields) != 1 or source.projection != Projection.Whole:

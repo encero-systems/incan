@@ -10,6 +10,7 @@ from pub::incan_mir_plan import (
     PlanType,
     UnitNominals,
 )
+from pub::incan_mir_plan import carrier_position
 from layout_types import native_source_type
 from signature_lifetimes import signature_lifetimes, generic_loans
 from rust::incan_semantics_core import IncanType as RustType
@@ -502,7 +503,7 @@ pub def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[E
     """
     match ty:
         PlanType.Enum(owner, _name) =>
-            index = owner - len(module.enum_declarations)
+            index = carrier_position(owner)
             if index < 0 or index >= len(intrinsics):
                 return false
             declaration = intrinsics[index]

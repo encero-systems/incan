@@ -1,5 +1,6 @@
 """Checked serde reconstruction rooted in exact source hook bodies and authored Incan error mapping."""
 
+from pub::incan_mir_plan import carrier_position, is_carrier_index
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from rust::incan_semantics_core import (
     IncanType as RustType,
@@ -175,9 +176,9 @@ def checked_result_layout(mut builder: Builder, ty: PlanType) -> Result[EnumDecl
     """Check bounds and the full standard Result shape before reading checked ingress payloads."""
     match ty:
         PlanType.Enum(owner, name) =>
-            if owner < len(builder.enums) or owner - len(builder.enums) >= len(builder.intrinsics):
+            if not is_carrier_index(owner) or carrier_position(owner) >= len(builder.intrinsics):
                 return Err("unsupported Body IR checked Deserialize Result index")
-            if builder.intrinsics[owner - len(builder.enums)].name != name:
+            if builder.intrinsics[carrier_position(owner)].name != name:
                 return Err("unsupported Body IR checked Deserialize Result name")
         _ => return Err("unsupported Body IR checked Deserialize Result carrier")
     # A Result carrier lays out Ok then Err; its variant spellings are presentation only.

@@ -48,7 +48,7 @@ pub def product_nominal_table(
 
 pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDeclaration]) -> UnitNominals:
     """
-    Describe every model and enum position of the program's tables, then each intrinsic carrier after the enums.
+    Describe every model and enum position of the program's tables, then each intrinsic carrier at its carrier position.
 
     A declaration without a stable identity is described with an empty identity, which a product refuses to name.
     """
@@ -75,11 +75,10 @@ pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDe
 
 
 pub def sync_carriers(mut unit: UnitNominals, program: &ProgramContext, intrinsics: &list[EnumDeclaration]) -> None:
-    """Describe intrinsic carriers lowering admitted since the table was described; their positions follow the enums."""
-    base = len(program.enums.as_ref())
-    while len(unit.enums) < base + len(intrinsics):
-        declaration = borrowed_at(intrinsics, len(unit.enums) - base)
-        unit.append_enum(carrier_nominal(declaration), declaration.name)
+    """Describe intrinsic carriers lowering admitted since the table was described, each at its carrier position."""
+    while len(unit.carriers) < len(intrinsics):
+        declaration = borrowed_at(intrinsics, len(unit.carriers))
+        unit.append_carrier(carrier_nominal(declaration), declaration.name)
 
 
 pub def retain_named_scalar(

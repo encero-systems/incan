@@ -1,5 +1,6 @@
 """Scalar, collection, and nominal layout admission from canonical frontend records."""
 
+from pub::incan_mir_plan import carrier_position, is_carrier_index
 from table_views import borrowed_at
 pub from frame import place_type
 from collections import primitive_leaf
@@ -431,9 +432,9 @@ def field_projection(
                 return Err("invalid Body IR optional projection owner")
             match root:
                 PlanType.Enum(owner, _name) =>
-                    if owner < len(enums) or owner >= len(enums) + len(intrinsics):
+                    if not is_carrier_index(owner) or carrier_position(owner) >= len(intrinsics):
                         return Err("invalid Body IR optional projection carrier")
-                    carrier = borrowed_at(intrinsics, owner - len(enums))
+                    carrier = borrowed_at(intrinsics, carrier_position(owner))
                     ty = retained_type(constructors, declarations, enums, unions, payload, intrinsics)?
                     if (
                         carrier.carrier != Carrier.Option
