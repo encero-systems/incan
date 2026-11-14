@@ -23,7 +23,7 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
         decoded_nanoseconds += outcome.decode_ns
         match twin_encode(item)?:
             Some(encoded) =>
-                decoded = twin_decode(item.operation, encoded)?
+                decoded = twin_decode(item, encoded)?
                 if outcome.kind == 0u8 and outcome.encoded == encoded and outcome.decoded == decoded:
                     completed += 1
             None =>

@@ -43,7 +43,7 @@ def run(arguments: list[str]) -> Result[None, str]:
             if not supported:
                 break
             decode_started = Instant.now()
-            decoded = twin_decode(item.operation, encoded)?
+            decoded = twin_decode(item, encoded)?
             decode_times.append(decode_started.elapsed().as_secs_f64())
         if supported:
             encode_ns = median(encode_times) * 1000000000.0
