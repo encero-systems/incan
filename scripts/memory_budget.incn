@@ -412,18 +412,18 @@ def clone_source(root: Path, destination: Path, commit: str) -> Result[None, str
         .stdout(Stdio.null())
         .stderr(Stdio.null())
         .status()
-        .map_err((error) => f"cannot clone measured source: {error}")?
+        .map_err((error) => f"cannot clone measured source {root.0} into {destination.0}: {error}")?
     if not checkout_status.success():
-        return Err("cannot clone measured source")
+        return Err(f"cannot clone measured source {root.0} into {destination.0}")
     status = Command
         .new("git")
         .args(["-C", destination.0, "checkout", "--detach", commit])
         .stdout(Stdio.null())
         .stderr(Stdio.null())
         .status()
-        .map_err((error) => f"cannot select measured source: {error}")?
+        .map_err((error) => f"cannot select measured commit {commit} in {destination.0}: {error}")?
     if not status.success():
-        return Err("cannot select measured source")
+        return Err(f"cannot select measured commit {commit} in {destination.0}")
     return Ok(None)
 
 
@@ -433,9 +433,9 @@ def committed_source(root: Path) -> Result[str, str]:
         .new("git")
         .args(["-C", root.0, "rev-parse", "HEAD"])
         .output()
-        .map_err((error) => f"cannot resolve measured source: {error}")?
+        .map_err((error) => f"cannot resolve the measured commit of {root.0}: {error}")?
     if not output.status.success():
-        return Err("cannot resolve measured source")
+        return Err(f"cannot resolve the measured commit of {root.0}")
     return Ok(str(RustString.from_utf8(output.stdout).map_err((error) => str(error))?).strip())
 
 

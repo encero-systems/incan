@@ -693,12 +693,13 @@ def positive(value: str, name: str) -> Result[int, str]:
 def source_directory() -> Result[Path, str]:
     """Find the dev-loop sources above this program's Oven output directory."""
     binary = current_exe().map_err((error) => error.to_string())?
-    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    program = Path(binary.to_string_lossy().into_owned())
+    mut directory = program.parent()
     while true:
         candidate = directory.joinpath("workspaces/benchmarks/dev_loop")
         if candidate.joinpath("run.incn").is_file():
             return Ok(candidate)
         parent = directory.parent()
         if parent.0 in [directory.0, "", "."]:
-            return Err("cannot find the dev-loop benchmark sources")
+            return Err(f"cannot find the dev-loop benchmark sources above {program.0}")
         directory = parent

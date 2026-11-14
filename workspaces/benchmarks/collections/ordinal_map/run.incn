@@ -82,14 +82,15 @@ def positive(value: str) -> Result[int, str]:
 def source_directory() -> Result[Path, str]:
     """Find the OrdinalMap benchmark sources above this program's output path."""
     binary = current_exe().map_err((error) => error.to_string())?
-    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    program = Path(binary.to_string_lossy().into_owned())
+    mut directory = program.parent()
     while true:
         candidate = directory.joinpath("workspaces/benchmarks/collections/ordinal_map")
         if candidate.joinpath("ordinal_map.incn").is_file():
             return Ok(candidate)
         parent = directory.parent()
         if parent.0 in [directory.0, "", "."]:
-            return Err("cannot find the OrdinalMap benchmark sources")
+            return Err(f"cannot find the OrdinalMap benchmark sources above {program.0}")
         directory = parent
 
 

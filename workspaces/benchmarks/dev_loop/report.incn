@@ -292,11 +292,12 @@ def require(command: str, arguments: list[str], directory: Path) -> Result[Captu
 def repository_root() -> Result[Path, str]:
     """Find the repository above this report program's output directory."""
     binary = current_exe().map_err((error) => error.to_string())?
-    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    program = Path(binary.to_string_lossy().into_owned())
+    mut directory = program.parent()
     while true:
         if directory.joinpath("AGENTS.md").is_file() and directory.joinpath("workspaces/benchmarks").is_dir():
             return Ok(directory)
         parent = directory.parent()
         if parent.0 in [directory.0, "", "."]:
-            return Err("cannot find the repository above the dev-loop report program")
+            return Err(f"cannot find the repository above the dev-loop report program {program.0}")
         directory = parent

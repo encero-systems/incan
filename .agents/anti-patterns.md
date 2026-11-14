@@ -7,7 +7,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 - Run every search from the repository root with ripgrep 14. A search whose count needs structure that a regular expression cannot see (fenced code, docstrings, scopes) names an awk program from [Structural searches](#structural-searches).
 - Incan scope is every `*.incn` file outside a `fixtures` directory, and Rust scope is every `*.rs` file outside one. Contract and Loaf fixtures keep the shape their cases assert, so they are not counted.
 - **Before** is the count at `dd3ee72d8` (the `queue/square-1` head this inventory was built from). **Now** is the count at the commit that last changed this file. A clearing commit updates its own rule's **Now**.
-- **Real** separates the hits that violate the rule from those the search over-approximates (comments, user-facing advice text, generated pages), as the notes under each rule list them.
+- **Real** separates the hits that violate the rule from those the search over-approximates (comments, user-facing advice text, generated pages), as the notes under each rule list them. A dash marks a review set: a search whose hits each need a judgment that has not been made for all of them.
 - Some hits sit in paths other lanes were rewriting when this was built: `workspaces/oven/src/compiler_body_publication.incn`, `loaves/compiler/internal_models/src/compiled_body_frames.incn`, `loaves/platform/src/store/index.incn` and `loaves/toolchain/incan-lsp/`. They are counted, and listed as lane hits, but not cleared here.
 
 ## Summary
@@ -25,31 +25,31 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | RS9 | `macro_rules!` outside `incan_derive` | 22 | 22 | 22 |
 | RS10 | `collect::<Vec<_>>()` only to iterate again | 0 | 0 | 0 |
 | RS11 | Builtin trait names as string literals in compiler layers | 3 | 2 | 3 |
-| RS12 | `Err(_) =>` arms that drop the error (Rust) | 47 | 47 | 47 |
-| RS13 | `map_err(\|e\| e.to_string())` that drops the operation | 106 | 106 | 106 |
+| RS12 | `Err(_) =>` arms that drop the error (Rust) | 47 | — | 47 |
+| RS13 | `map_err(\|e\| e.to_string())` that drops the operation | 106 | — | 106 |
 | IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2589 |
-| IN2 | String-literal `match` arms where an `Enum(str)` belongs | 172 | 172 | 172 |
+| IN2 | String-literal `match` arms where an `Enum(str)` belongs | 172 | — | 172 |
 | IN3 | Repeated `kind == "a" or kind == "b"` chains | 46 | 46 | 46 |
 | IN4 | Imports after the first declaration | 1 | 1 | 0 |
 | IN5 | Incan lines over 120 characters | 1252 | 1252 | 1252 |
 | IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | 32 | 32 |
 | IN7 | `str("literal")` wrappers | 8 | 8 | 8 |
 | IN8 | `== true` / `== false` comparisons | 0 | 0 | 0 |
-| IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | 26 | 26 |
-| IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | 407 | 407 |
+| IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | — | 26 |
+| IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 407 |
 | IN11 | Stale Python script names in Incan programs | 13 | 13 | 13 |
 | IN12 | Declarations without a docstring | 529 | 529 | 529 |
 | IN13 | Helpers nested inside function bodies | 0 | 0 | 0 |
-| IN14 | Positional magic numbers (`parts[3]`) | 257 | 257 | 257 |
+| IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 257 |
 | IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 11 |
-| IN16 | Failure messages that name no subject | 341 | 341 | 341 |
+| IN16 | Failure messages that name no subject | 341 | — | 335 |
 | MD1 | Hard-wrapped Markdown prose | 34 | 30 | 4 |
 | MD2 | RFC references in user-facing docs | 12 | 12 | 0 |
 | MD3 | Workstation paths in committed text | 8 | 0 | 8 |
 | PR1 | Production Python outside the allowed uses | 0 | 0 | 0 |
 | PR2 | Oven tests missing from `workspaces/contracts/oven-tests.txt` | 0 | 0 | 0 |
 
-IN15 counts candidates, and IN16 counts a superset to review one by one: a message that names its subject in the surrounding error type passes.
+IN15 counts candidates. A message that names its subject in the surrounding error type passes IN16.
 
 ## Rust rules
 
@@ -126,7 +126,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 
 - Source: `readable-maintainable-rust.md`, "Clear error handling" and "Error taxonomy".
 - Search: `rg -n -P 'map_err\(\|\w*\|\s*\w+\.to_string\(\)\)' -g '*.rs' -g '!**/fixtures/**'`
-- `std::io::Error` text carries no path, so each hit loses the file and the operation. Lane hits: 5.
+- `std::io::Error` text carries no path, so each hit loses the file and the operation. Lane hits: 5. Reviewed: the ten in `loaves/stdlib/primitives/rust/src/file.rs` pass, because `std.fs` wraps each in an `IoError` that names the operation and the path (`_io_error`, `_fs_error` in `loaves/stdlib/system/src/fs/path.incn`); adding the path natively would name it twice. 53 hits are in tests.
 
 ## Incan rules
 
@@ -220,6 +220,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 
 - Source: `readable-maintainable-rust.md`, "Clear error handling" ("keep error messages actionable"); repository rule: an error names its path or operation.
 - Search: `rg -n 'Err\("(cannot|could not|failed to|unable to|invalid|malformed|missing|unexpected|corrupt)[^"{]*"\)' -g '*.incn' -g '!**/fixtures/**'`
+- Reviewed: the seven script and benchmark failures that named an operation on a path or commit without either now name it. 280 hits are `incan_mir_lowering` invariant errors that name the malformed checked structure; whether each also needs its declaration is a judgment per site.
 
 ## Markdown and process rules
 
