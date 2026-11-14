@@ -22,6 +22,8 @@ from c_interop_requirements import (
     requirement_entry,
 )
 
+# 0.5.1's `[oven.interop].schema`, the one version of this table.
+const INTEROP_SCHEMA: int = 1
 const TARGET_KEYS: FrozenList[str] = [
     "target",
     "toolchain",
@@ -121,7 +123,20 @@ pub def parse_c_targets(root: Dict[str, TomlValue], manifest: str) -> Result[lis
     if "c" not in interop:
         return Ok([])
     c = as_table(interop["c"], manifest, ["interop", "c"])?
-    known_keys(c, ["targets"], manifest, ["interop", "c"])?
+    known_keys(c, ["schema", "targets"], manifest, ["interop", "c"])?
+    if "schema" in c:
+        schema = c["schema"]
+            .as_int()
+            .map_err((error) => refused(manifest, ["interop", "c", "schema"], IntakeErrorKind.Invalid, error.message()))?
+        if schema != INTEROP_SCHEMA:
+            return Err(
+                refused(
+                    manifest,
+                    ["interop", "c", "schema"],
+                    IntakeErrorKind.Invalid,
+                    f"[interop.c].schema must be {INTEROP_SCHEMA}, found {schema}",
+                ),
+            )
     if "targets" not in c:
         return Ok([])
     entries = c["targets"]
