@@ -663,6 +663,26 @@ pub def test_freed_heap_an_allocator_keeps_does_not_retire_the_worker() -> Resul
     return Ok(None)
 
 
+pub def test_the_heap_a_worker_keeps_from_one_compile_to_the_next_does_not_retire_it() -> Result[None, str]:
+    """
+    A worker keeps the Loaf readings its first compile decoded, far over the margin above what it held at start.
+    Compile after compile at that same live heap it keeps serving; a live heap more than the margin above the least
+    it has held after a compile, for two compiles in a row, still retires it.
+    """
+    mut policy = lifecycle(8585840, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=FOOTPRINT_CEILING), 558880)
+    for _round in range(8):
+        assert stays(
+            policy.settle(ActivationOutcome.Exited(0), 24822408, false, 19549776).retirement,
+        ), "a worker retired at the live heap its first compile left"
+    grown = 19549776 + FOOTPRINT_MARGIN + 1
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 24822408 + FOOTPRINT_MARGIN, false, grown).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 24822408 + FOOTPRINT_MARGIN, false, grown).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a live heap over the margin above the kept heap for two compiles kept the worker")
+    return Ok(None)
+
+
 pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() -> Result[None, str]:
     """
     Formatting, a source listing or an import collection is held only to the ceiling: over the margin, within it or
