@@ -640,6 +640,27 @@ pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[Non
     return Ok(None)
 
 
+pub def test_freed_heap_an_allocator_keeps_does_not_retire_the_worker() -> Result[None, str]:
+    """
+    With its live heap known, a worker whose footprint stays over the margin while its live heap does not keeps
+    serving; a live heap over the margin for two compiles retires it, and the ceiling still judges the footprint.
+    """
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000), 500)
+    for _round in range(4):
+        assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 550).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a live heap over the margin for two compiles kept the worker")
+    mut ceiling = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000), 500)
+    match ceiling.settle(ActivationOutcome.Exited(0), 5001, false, 550).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a footprint over the ceiling kept the worker although its live heap was small")
+    return Ok(None)
+
+
 pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() -> Result[None, str]:
     """
     Formatting, a source listing or an import collection is held only to the ceiling: over the margin, within it or

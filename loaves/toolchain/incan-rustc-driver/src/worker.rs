@@ -22,7 +22,7 @@ mod console;
 
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut host = incan_worker_host::start(&arguments.to_vec(), footprint())?;
+    let mut host = incan_worker_host::start(&arguments.to_vec(), footprint(), live_heap())?;
     let home = incan_worker_host::selected_home(&host);
     while let Some(activation) = incan_worker_host::next_activation(&mut host) {
         match activation {
@@ -41,13 +41,13 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     crate::heap::release_free_memory();
                     timing.mark("worker_heap_released");
                 }
-                incan_worker_host::complete(&mut host, outcome, footprint());
+                incan_worker_host::complete(&mut host, outcome, footprint(), live_heap());
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
                 crate::heap::release_free_memory();
-                incan_worker_host::complete_record(&mut host, reply, footprint());
+                incan_worker_host::complete_record(&mut host, reply, footprint(), live_heap());
             }
         }
     }
@@ -100,6 +100,39 @@ fn footprint() -> i64 {
         .ok()
         .and_then(|bytes| i64::try_from(bytes).ok())
         .unwrap_or(-1)
+}
+
+/// libmalloc's statistics of the process's zones (`malloc_statistics_t`).
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Default)]
+struct MallocStatistics {
+    blocks_in_use: libc::c_uint,
+    size_in_use: libc::size_t,
+    max_size_in_use: libc::size_t,
+    size_allocated: libc::size_t,
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    /// libmalloc: sum the statistics of `zone`, or of every zone when null, into `stats`.
+    fn malloc_zone_statistics(zone: *mut libc::c_void, stats: *mut MallocStatistics);
+}
+
+/// The bytes in live allocations, which the worker host judges retention by: the allocator keeps blocks a compile
+/// freed resident, so the physical footprint overstates what the worker holds. -1 when it cannot be read.
+#[cfg(target_os = "macos")]
+fn live_heap() -> i64 {
+    let mut stats = MallocStatistics::default();
+    // SAFETY: a null zone asks libmalloc to sum every zone into `stats`, a valid exclusive out-parameter.
+    unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
+    i64::try_from(stats.size_in_use).unwrap_or(-1)
+}
+
+/// Other systems judge retention by the physical footprint.
+#[cfg(not(target_os = "macos"))]
+fn live_heap() -> i64 {
+    -1
 }
 
 /// Observes an activation's caller while the compiler runs and hands a caller that left to the host's `abandon`,
