@@ -40,6 +40,37 @@ struct PendingBodyFallback {
     reason: String,
 }
 
+/// Canonicalize the rendered owner inventory at the Rust-to-Incan framing boundary.
+fn canonical_lowering_inputs(inputs: Vec<Vec<String>>) -> Result<Vec<Vec<String>>, String> {
+    let mut canonical = std::collections::BTreeMap::new();
+    for input in inputs {
+        let [identity, witness] = input.as_slice() else {
+            return Err("compiled graph output contains a malformed lowering witness".to_owned());
+        };
+        match canonical.entry(identity.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(witness.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != witness => {
+                return Err(format!(
+                    "conflicting lowering witnesses for Body IR owner {}",
+                    entry.key()
+                ));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    Ok(canonical
+        .into_iter()
+        .map(|(identity, witness)| vec![identity, witness])
+        .collect())
+}
+
+/// Normalize an optional fallback owner before it crosses the Incan codec boundary.
+fn fallback_identity(identity: Option<String>) -> Option<String> {
+    identity.filter(|value| !value.is_empty())
+}
+
 /// Invocation-local collector for the optional graph-publication sidecar.
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
@@ -118,7 +149,7 @@ impl GraphBodyOutput {
                         Err(reason) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
-                            identity: Some(fields.identity),
+                            identity: fallback_identity(Some(fields.identity)),
                             reason,
                         }),
                     }
@@ -127,7 +158,7 @@ impl GraphBodyOutput {
                     self.fallbacks.push(PendingBodyFallback {
                         module: module_path.clone(),
                         name: fallback.name,
-                        identity: fallback.identity,
+                        identity: fallback_identity(fallback.identity),
                         reason: fallback.reason,
                     });
                 }
@@ -158,12 +189,13 @@ impl GraphBodyOutput {
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
                     .map_err(|error| format!("Body IR namespace frame output refused: {error}"))?;
-                namespace.lowering_inputs = lowering_inputs
-                    .iter()
-                    .filter(|(identity, _)| lowered.bodies.iter().any(|body| &body.direct_call_id == identity))
-                    .map(|(identity, witness)| vec![identity.path().to_owned(), witness.clone()])
-                    .collect();
-                namespace.lowering_inputs.sort();
+                namespace.lowering_inputs = canonical_lowering_inputs(
+                    lowering_inputs
+                        .iter()
+                        .filter(|(identity, _)| lowered.bodies.iter().any(|body| &body.direct_call_id == identity))
+                        .map(|(identity, witness)| vec![identity.path().to_owned(), witness.clone()])
+                        .collect(),
+                )?;
             }
             for body in &lowered.bodies {
                 let Some(pending) = self
@@ -365,7 +397,7 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::GraphBodyOutput;
+    use super::{GraphBodyOutput, canonical_lowering_inputs, fallback_identity};
 
     /// Explicit sidecar roots resolve aliases and refuse missing roots; an inactive collector needs neither.
     #[test]
@@ -388,5 +420,33 @@ mod tests {
         assert!(GraphBodyOutput::prepare(None, missing).is_ok());
         std::fs::remove_dir_all(root)?;
         Ok(())
+    }
+
+    /// Framing coalesces equal owner evidence and names disagreement before the Incan codec sees it.
+    #[test]
+    fn lowering_inputs_are_unique_by_rendered_owner() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            canonical_lowering_inputs(vec![
+                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
+                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
+            ])?,
+            vec![vec!["main#decl.0..12".to_owned(), "body:a".to_owned()]]
+        );
+        assert_eq!(
+            canonical_lowering_inputs(vec![
+                vec!["main#decl.0..12".to_owned(), "body:a".to_owned()],
+                vec!["main#decl.0..12".to_owned(), "body:b".to_owned()],
+            ]),
+            Err("conflicting lowering witnesses for Body IR owner main#decl.0..12".to_owned())
+        );
+        Ok(())
+    }
+
+    /// A checker fallback without an identity is encoded as absence rather than an invalid present-empty value.
+    #[test]
+    fn fallback_identity_normalizes_empty_presence() {
+        assert_eq!(fallback_identity(Some(String::new())), None);
+        assert_eq!(fallback_identity(None), None);
+        assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
     }
 }

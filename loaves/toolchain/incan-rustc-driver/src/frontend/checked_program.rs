@@ -194,6 +194,28 @@ pub(super) fn runtime_declarations(
     Ok(bindings)
 }
 
+/// Merge lowering witnesses from independent accepted products while refusing disagreement for one compiler owner.
+fn canonical_lowering_inputs(
+    inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+) -> Result<Vec<(incan_semantics_core::CompilerNodeId, String)>, String> {
+    let mut canonical = BTreeMap::new();
+    for (identity, witness) in inputs {
+        match canonical.entry(identity) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(witness);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != &witness => {
+                return Err(format!(
+                    "conflicting lowering witnesses for Body IR owner {}",
+                    entry.key().path()
+                ));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    Ok(canonical.into_iter().collect())
+}
+
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
 ///
 /// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
@@ -381,6 +403,7 @@ pub(super) fn checked_modules(
             .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
         cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
     }
+    let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
     let graph = if library && collect_codegraph {
@@ -1040,4 +1063,31 @@ pub(super) fn take_rust_enums(
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_lowering_inputs;
+    use incan_semantics_core::CompilerNodeId;
+
+    /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
+    #[test]
+    fn lowering_witnesses_are_unique_by_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let value = CompilerNodeId::declaration_span("main", 0, 12);
+        let other = CompilerNodeId::declaration_span("main", 14, 30);
+        let inputs = vec![
+            (value.clone(), "body:a".to_owned()),
+            (other.clone(), "body:b".to_owned()),
+            (value.clone(), "body:a".to_owned()),
+        ];
+        assert_eq!(
+            canonical_lowering_inputs(inputs)?,
+            vec![(value.clone(), "body:a".to_owned()), (other, "body:b".to_owned())]
+        );
+        assert_eq!(
+            canonical_lowering_inputs(vec![(value.clone(), "body:a".to_owned()), (value, "body:b".to_owned())]),
+            Err("conflicting lowering witnesses for Body IR owner main#decl.0..12".to_owned())
+        );
+        Ok(())
+    }
 }
