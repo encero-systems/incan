@@ -731,7 +731,7 @@ fn compile_unit(
     // resolution, so release the items rather than carry them through lowering and rustc.
     program.dependencies.loaves.release_resolved_rust_items();
     // Checking freed its analysis and the session; return those pages before lowering allocates its contexts.
-    crate::heap::release_free_memory();
+    incan_platform::release_free_heap();
     timing.mark("checked_heap_released");
     let mut published_unions = Vec::new();
     let plan = lower_compilation_plan(
@@ -792,7 +792,7 @@ fn compile_unit(
     drop(dependencies.graph_body_records);
     // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
     // here or the footprint that decides a handoff is read, so neither counts the frontend's freed heap.
-    crate::heap::release_free_memory();
+    incan_platform::release_free_heap();
     timing.mark("frontend_heap_released");
     // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
     let mut rustc_args = dependencies.rustc_args;
@@ -944,7 +944,7 @@ fn lower_compilation_plan(
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
                 // The attempt's worker contexts and temporaries are freed; return their pages before runtime
                 // resolution and the resumed attempt allocate.
-                crate::heap::release_free_memory();
+                incan_platform::release_free_heap();
                 timing.mark("lowering_attempt_heap_released");
                 retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
                 continuation = Some(preserved);
