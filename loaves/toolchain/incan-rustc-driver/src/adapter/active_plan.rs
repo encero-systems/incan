@@ -49,6 +49,8 @@ struct FunctionProduct {
     schema: u64,
     inputs: Vec<String>,
     function: String,
+    /// The generic instance requests the function's lowering made; the digest authenticates them with the function.
+    requests: Vec<String>,
     digest: String,
 }
 
@@ -148,7 +150,7 @@ impl PlanReader {
             }
             let product: FunctionProduct = serde_json::from_str(&event.product)
                 .map_err(|error| format!("cannot decode native function product for {}: {error}", event.function))?;
-            if product.schema != 3 {
+            if product.schema != 4 {
                 return Err(format!(
                     "native function product for {} has an unsupported schema",
                     event.function
@@ -159,7 +161,9 @@ impl PlanReader {
             if key.strip_prefix("sha256:") != Some(event.key.as_str()) {
                 return Err(format!("native function event key differs for {}", event.function));
             }
-            let digest = incan_semantics_core::semantic_digest::semantic_digest(&vec![product.function.clone()])
+            let mut authenticated = vec![product.function.clone()];
+            authenticated.extend(product.requests.iter().cloned());
+            let digest = incan_semantics_core::semantic_digest::semantic_digest(&authenticated)
                 .map_err(|error| format!("cannot fingerprint native function product: {error}"))?;
             if digest != product.digest {
                 return Err(format!("native function product digest differs for {}", event.function));
