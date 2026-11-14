@@ -1,0 +1,375 @@
+"""
+ECDSA signature verification over NIST P-256 and P-384, for release signatures (DD-0016).
+
+Verification reads public values only, so nothing here is constant-time, and nothing here signs. Numbers are lists of
+24-bit limbs, least significant first, in `int`, so a limb product and two carries never overflow. Field and
+scalar arithmetic is Montgomery multiplication; points are Jacobian with Montgomery coordinates.
+"""
+
+from std.encoding.hex import unhexlify
+
+const LIMB_BITS: int = 24
+const LIMB_MASK: int = 16777215
+
+
+pub enum Curve(str):
+    """The curves Sigstore's certificates, logs and release signatures use."""
+
+    P256 = "P-256"
+    P384 = "P-384"
+
+
+model Modulus:
+    """An odd modulus with its Montgomery constants."""
+
+    value: list[int]
+    # The negated inverse of the lowest limb, modulo the limb base.
+    inverse: int
+    # The Montgomery form of one, and the square of the Montgomery radix.
+    one: list[int]
+    radix_squared: list[int]
+
+
+model Domain:
+    """One curve's field, group order, `b` coefficient and base point; the coordinates are in Montgomery form."""
+
+    field: Modulus
+    order: Modulus
+    b: list[int]
+    base_x: list[int]
+    base_y: list[int]
+    octets: int
+
+
+model Point:
+    """A Jacobian point with Montgomery coordinates; `z` is zero at infinity."""
+
+    x: list[int]
+    y: list[int]
+    z: list[int]
+
+
+pub def verify(curve: Curve, public_key: bytes, digest: bytes, r: bytes, s: bytes) -> bool:
+    """
+    Return whether (`r`, `s`) signs `digest` under an uncompressed public point.
+
+    1. The key is an uncompressed point on the curve, and `r` and `s` are in the group's range.
+    2. The digest becomes a scalar: its leftmost octets, as many as the group order has.
+    3. `x(u1·G + u2·Q) mod n` equals `r`.
+    """
+    match domain(curve):
+        Ok(found) => return verify_in(found, found.octets, public_key, digest, r, s)
+        Err(_) => return false
+
+
+def verify_in(curve: Domain, size: int, public_key: bytes, digest: bytes, r: bytes, s: bytes) -> bool:
+    """Verify in a built domain; see `verify`."""
+    limbs = len(curve.field.value)
+    # 1. The key and both signature halves are well formed.
+    if len(public_key) != 1 + 2 * size or int(public_key[0]) != 4:
+        return false
+    if len(r) > size or len(s) > size or len(digest) == 0:
+        return false
+    key_x = number(public_key[1:1 + size], limbs)
+    key_y = number(public_key[1 + size:], limbs)
+    if compare(key_x, curve.field.value) >= 0 or compare(key_y, curve.field.value) >= 0:
+        return false
+    r_value = number(r, limbs)
+    s_value = number(s, limbs)
+    if is_zero(r_value) or is_zero(s_value):
+        return false
+    if compare(r_value, curve.order.value) >= 0 or compare(s_value, curve.order.value) >= 0:
+        return false
+    x = to_montgomery(key_x, curve.field)
+    y = to_montgomery(key_y, curve.field)
+    if not on_curve(curve.field, curve.b, x, y):
+        return false
+    # 2. The digest's leftmost octets, reduced once: a value of the order's length is below twice the order.
+    e = reduced(number(leading(digest, size), limbs), curve.order.value)
+    # 3. The combination's affine x coordinate, read as a scalar, is `r`.
+    inverse_s = inverted(to_montgomery(s_value, curve.order), curve.order)
+    u1 = from_montgomery(multiply(to_montgomery(e, curve.order), inverse_s, curve.order), curve.order)
+    u2 = from_montgomery(multiply(to_montgomery(r_value, curve.order), inverse_s, curve.order), curve.order)
+    base = Point(x=curve.base_x, y=curve.base_y, z=curve.field.one)
+    key = Point(x=x, y=y, z=curve.field.one)
+    total = added(curve.field, scaled(curve.field, base, u1), scaled(curve.field, key, u2))
+    if is_zero(total.z):
+        return false
+    inverse_z = inverted(total.z, curve.field)
+    affine = multiply(total.x, multiply(inverse_z, inverse_z, curve.field), curve.field)
+    found = reduced(from_montgomery(affine, curve.field), curve.order.value)
+    return compare(found, r_value) == 0
+
+
+def domain(curve: Curve) -> Result[Domain, str]:
+    """Build a curve's domain from its published parameters."""
+    match curve:
+        Curve.P256 =>
+            return built(
+                32,
+                "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+                "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+                "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b",
+                "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+                "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+            )
+        Curve.P384 =>
+            return built(
+                48,
+                "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
+                "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef",
+                "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7",
+                "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f",
+            )
+
+
+def built(octets: int, prime: str, order: str, b: str, x: str, y: str) -> Result[Domain, str]:
+    """Read one curve's hexadecimal parameters into a domain."""
+    limbs = (octets + 2) // 3
+    field = modulus(number(parameter(prime)?, limbs))
+    return Ok(
+        Domain(
+            field=field,
+            order=modulus(number(parameter(order)?, limbs)),
+            b=to_montgomery(number(parameter(b)?, limbs), field),
+            base_x=to_montgomery(number(parameter(x)?, limbs), field),
+            base_y=to_montgomery(number(parameter(y)?, limbs), field),
+            octets=octets,
+        ),
+    )
+
+
+def parameter(text: str) -> Result[bytes, str]:
+    """Decode one hexadecimal curve parameter."""
+    return unhexlify(text).map_err((error) => error.message())
+
+
+def modulus(value: list[int]) -> Modulus:
+    """Derive an odd modulus's Montgomery constants: Newton's iteration for the limb inverse, doubling for the radix."""
+    mut inverse: int = 1
+    for _ in range(6):
+        product = (value[0] * inverse) & LIMB_MASK
+        inverse = (inverse * ((LIMB_MASK + 3 - product) & LIMB_MASK)) & LIMB_MASK
+    limbs = len(value)
+    mut power: list[int] = [0 for _ in range(limbs)]
+    power[0] = 1
+    mut one: list[int] = []
+    for step in range(2 * LIMB_BITS * limbs):
+        if step == LIMB_BITS * limbs:
+            one = power.clone()
+        power = add_modular(power, power, value)
+    return Modulus(value=value, inverse=(LIMB_MASK + 1 - inverse) & LIMB_MASK, one=one, radix_squared=power)
+
+
+def number(octets: bytes, limbs: int) -> list[int]:
+    """Read big-endian octets into `limbs` limbs; the callers bound the length."""
+    mut value: list[int] = [0 for _ in range(limbs)]
+    count = len(octets)
+    for index in range(count):
+        position = count - 1 - index
+        limb = index // 3
+        if limb < limbs:
+            shift = 8 * (index % 3)
+            value[limb] = value[limb] | (int(octets[position]) << shift)
+    return value
+
+
+def is_zero(value: list[int]) -> bool:
+    """Return whether every limb is zero."""
+    for limb in value:
+        if limb != 0:
+            return false
+    return true
+
+
+def compare(left: list[int], right: list[int]) -> int:
+    """Order two numbers of equal limb count: negative, zero or positive."""
+    for offset in range(len(left)):
+        index = len(left) - 1 - offset
+        if left[index] > right[index]:
+            return 1
+        if left[index] < right[index]:
+            return -1
+    return 0
+
+
+def subtracted(left: list[int], right: list[int]) -> list[int]:
+    """Subtract modulo the limb count's range; the callers know the true difference fits."""
+    mut result: list[int] = [0 for _ in range(len(left))]
+    mut borrow: int = 0
+    for index in range(len(left)):
+        difference = left[index] + LIMB_MASK + 1 - right[index] - borrow
+        result[index] = difference & LIMB_MASK
+        borrow = 1 - (difference >> LIMB_BITS)
+    return result
+
+
+def reduced(value: list[int], bound: list[int]) -> list[int]:
+    """Subtract `bound` once when `value` reaches it."""
+    if compare(value, bound) >= 0:
+        return subtracted(value, bound)
+    return value
+
+
+def add_modular(left: list[int], right: list[int], bound: list[int]) -> list[int]:
+    """Add two reduced numbers modulo `bound`."""
+    mut result: list[int] = [0 for _ in range(len(left))]
+    mut carry: int = 0
+    for index in range(len(left)):
+        total = left[index] + right[index] + carry
+        result[index] = total & LIMB_MASK
+        carry = total >> LIMB_BITS
+    if carry != 0 or compare(result, bound) >= 0:
+        return subtracted(result, bound)
+    return result
+
+
+def subtract_modular(left: list[int], right: list[int], bound: list[int]) -> list[int]:
+    """Subtract two reduced numbers modulo `bound`."""
+    if compare(left, right) >= 0:
+        return subtracted(left, right)
+    return subtracted(left, subtracted(right, bound))
+
+
+def multiply(left: list[int], right: list[int], bound: Modulus) -> list[int]:
+    """Montgomery multiplication, coarsely integrated operand scanning."""
+    limbs = len(bound.value)
+    mut window: list[int] = [0 for _ in range(limbs + 2)]
+    for outer in range(limbs):
+        mut carry: int = 0
+        for inner in range(limbs):
+            total = window[inner] + left[inner] * right[outer] + carry
+            window[inner] = total & LIMB_MASK
+            carry = total >> LIMB_BITS
+        top = window[limbs] + carry
+        window[limbs] = top & LIMB_MASK
+        window[limbs + 1] = top >> LIMB_BITS
+        quotient = (window[0] * bound.inverse) & LIMB_MASK
+        carry = (window[0] + quotient * bound.value[0]) >> LIMB_BITS
+        for inner in range(1, limbs):
+            total = window[inner] + quotient * bound.value[inner] + carry
+            window[inner - 1] = total & LIMB_MASK
+            carry = total >> LIMB_BITS
+        folded = window[limbs] + carry
+        window[limbs - 1] = folded & LIMB_MASK
+        window[limbs] = window[limbs + 1] + (folded >> LIMB_BITS)
+    result: list[int] = window[0:limbs]
+    if window[limbs] != 0 or compare(result, bound.value) >= 0:
+        return subtracted(result, bound.value)
+    return result
+
+
+def to_montgomery(value: list[int], bound: Modulus) -> list[int]:
+    """Enter Montgomery form."""
+    return multiply(value, bound.radix_squared, bound)
+
+
+def from_montgomery(value: list[int], bound: Modulus) -> list[int]:
+    """Leave Montgomery form."""
+    mut unit: list[int] = [0 for _ in range(len(value))]
+    unit[0] = 1
+    return multiply(value, unit, bound)
+
+
+def inverted(value: list[int], bound: Modulus) -> list[int]:
+    """Invert a nonzero Montgomery value modulo a prime, by raising it to the prime less two."""
+    mut two: list[int] = [0 for _ in range(len(value))]
+    two[0] = 2
+    exponent = subtracted(bound.value, two)
+    mut result = bound.one.clone()
+    for offset in range(LIMB_BITS * len(exponent)):
+        bit = LIMB_BITS * len(exponent) - 1 - offset
+        result = multiply(result, result, bound)
+        if bit_of(exponent, bit):
+            result = multiply(result, value, bound)
+    return result
+
+
+def bit_of(value: list[int], bit: int) -> bool:
+    """Read one bit of a number."""
+    shift = bit % LIMB_BITS
+    return ((value[bit // LIMB_BITS] >> shift) & 1) == 1
+
+
+def on_curve(field: Modulus, b: list[int], x: list[int], y: list[int]) -> bool:
+    """Return whether `y² = x³ − 3x + b` for Montgomery coordinates."""
+    triple = add_modular(add_modular(x, x, field.value), x, field.value)
+    cube = multiply(multiply(x, x, field), x, field)
+    right = add_modular(subtract_modular(cube, triple, field.value), b, field.value)
+    return compare(multiply(y, y, field), right) == 0
+
+
+def doubled(field: Modulus, point: Point) -> Point:
+    """Double a Jacobian point on a curve whose `a` is −3."""
+    if is_zero(point.z):
+        return point
+    delta = multiply(point.z, point.z, field)
+    gamma = multiply(point.y, point.y, field)
+    beta = multiply(point.x, gamma, field)
+    spread = multiply(subtract_modular(point.x, delta, field.value), add_modular(point.x, delta, field.value), field)
+    alpha = add_modular(add_modular(spread, spread, field.value), spread, field.value)
+    beta2 = add_modular(beta, beta, field.value)
+    beta4 = add_modular(beta2, beta2, field.value)
+    beta8 = add_modular(beta4, beta4, field.value)
+    x = subtract_modular(multiply(alpha, alpha, field), beta8, field.value)
+    sum = add_modular(point.y, point.z, field.value)
+    z = subtract_modular(subtract_modular(multiply(sum, sum, field), gamma, field.value), delta, field.value)
+    gamma_squared = multiply(gamma, gamma, field)
+    gamma2 = add_modular(gamma_squared, gamma_squared, field.value)
+    gamma4 = add_modular(gamma2, gamma2, field.value)
+    gamma8 = add_modular(gamma4, gamma4, field.value)
+    y = subtract_modular(multiply(alpha, subtract_modular(beta4, x, field.value), field), gamma8, field.value)
+    return Point(x=x, y=y, z=z)
+
+
+def added(field: Modulus, left: Point, right: Point) -> Point:
+    """Add two Jacobian points, doubling equal ones and returning infinity for opposite ones."""
+    if is_zero(left.z):
+        return right
+    if is_zero(right.z):
+        return left
+    left_z2 = multiply(left.z, left.z, field)
+    right_z2 = multiply(right.z, right.z, field)
+    u1 = multiply(left.x, right_z2, field)
+    u2 = multiply(right.x, left_z2, field)
+    s1 = multiply(left.y, multiply(right_z2, right.z, field), field)
+    s2 = multiply(right.y, multiply(left_z2, left.z, field), field)
+    h = subtract_modular(u2, u1, field.value)
+    slope = subtract_modular(s2, s1, field.value)
+    if is_zero(h):
+        if is_zero(slope):
+            return doubled(field, left)
+        return Point(x=field.one, y=field.one, z=[0 for _ in range(len(field.value))])
+    h2 = multiply(h, h, field)
+    h3 = multiply(h2, h, field)
+    middle = multiply(u1, h2, field)
+    x = subtract_modular(
+        subtract_modular(multiply(slope, slope, field), h3, field.value),
+        add_modular(middle, middle, field.value),
+        field.value,
+    )
+    y = subtract_modular(
+        multiply(slope, subtract_modular(middle, x, field.value), field),
+        multiply(s1, h3, field),
+        field.value,
+    )
+    z = multiply(h, multiply(left.z, right.z, field), field)
+    return Point(x=x, y=y, z=z)
+
+
+def scaled(field: Modulus, point: Point, scalar: list[int]) -> Point:
+    """Multiply a point by a scalar, most significant bit first."""
+    mut result = Point(x=field.one, y=field.one, z=[0 for _ in range(len(scalar))])
+    for offset in range(LIMB_BITS * len(scalar)):
+        result = doubled(field, result)
+        if bit_of(scalar, LIMB_BITS * len(scalar) - 1 - offset):
+            result = added(field, result, point)
+    return result
+
+
+def leading(digest: bytes, size: int) -> bytes:
+    """A digest's leftmost `size` octets, or all of a shorter one."""
+    if len(digest) > size:
+        return digest[0:size]
+    return digest
