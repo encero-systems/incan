@@ -77,7 +77,23 @@ pub from _plan import (
     EnumDeclaration,
     EnumVariant,
 )
-pub from function_records import encode_product, decode_product, encode_scalar, decode_scalar
+pub from function_records import (
+    encode_product,
+    decode_product,
+    encode_scalar,
+    decode_scalar,
+    product_identities,
+    product_nominals,
+)
+pub from nominal_identities import (
+    NominalKind,
+    NominalReference,
+    ProductNominal,
+    UnitNominals,
+    describe_nominals,
+    resolve_nominals,
+    unit_nominals,
+)
 pub from record_codec import (
     encode_record_plan,
     encode_record_plan_products,

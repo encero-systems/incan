@@ -1,11 +1,22 @@
-"""Read and atomically retain scalar native products under their producer's complete input witnesses."""
+"""Read and atomically retain native plan products under their producer's complete input witnesses."""
 
 from rust::serde import Serialize, Deserialize
 from rust::serde_json import to_string, from_str, Error as JsonError
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
-from pub::incan_mir_plan import ExternalFunction, Function, SourceSpan
+from pub::incan_mir_plan import (
+    ExternalFunction,
+    Function,
+    NominalKind,
+    NominalReference,
+    ProductNominal,
+    SourceSpan,
+    UnitNominals,
+    product_identities,
+    product_nominals,
+    resolve_nominals,
+)
 from scalar_products import encode_product, decode_product
 from record_positions import relocate_product
 
@@ -21,6 +32,15 @@ model ScalarRecord:
 
 
 @derive(Serialize, Deserialize)
+model EventReference:
+    """The current unit position and native name one product ordinal resolved to; request-local, never retained."""
+
+    kind: NominalKind
+    index: int
+    name: str
+
+
+@derive(Serialize, Deserialize)
 model ScalarRecordEvent:
     """One request-local observation of an evaluated or reused plan-function product."""
 
@@ -31,6 +51,7 @@ model ScalarRecordEvent:
     product: str
     reused: bool
     runtime_requirements: int
+    references: list[EventReference]
 
 
 @derive(Serialize, Deserialize)
@@ -65,14 +86,15 @@ pub def record_scalar_inputs(body: str, name: str, span: SourceSpan, overflow: b
 pub def retained_scalar(
     directory: str,
     inputs: list[str],
+    unit: &UnitNominals,
     span: Option[SourceSpan] = None,
-) -> Option[tuple[Function, list[ExternalFunction]]]:
+) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference]]]:
     """
-    Read a complete native function whose full producer inputs still match.
+    Read a complete native function whose full producer inputs and named declarations still match.
 
     1. Read the content-addressed private record.
-    2. Validate its input witness and payload digest.
-    3. Restore the complete native function or return a cache miss.
+    2. Validate its input witness and payload digest, and resolve each declaration it names in the current unit.
+    3. Restore the complete native function at the current positions, or return a cache miss.
     """
     # 1. Missing, corrupt and concurrently replaced entries all remain ordinary misses.
     match scalar_path(directory, inputs):
@@ -80,45 +102,87 @@ pub def retained_scalar(
         Ok(path) =>
             match path.read_text("utf-8", "strict"):
                 Err(_) => return None
-                Ok(text) => return restore_record(text, inputs, span)
+                Ok(text) =>
+                    # 2. A changed or missing named declaration is a miss, never a stale position.
+                    payload = match record_payload(text, inputs, span):
+                        Some(value) => value
+                        None => return None
+                    references = match product_identities(payload):
+                        Ok(identities) => resolve_nominals(identities, unit)
+                        Err(_) => None
+                    match references:
+                        None => return None
+                        Some(resolved) =>
+                            # 3. The restored function names the declarations at their current positions.
+                            match decode_product(payload, resolved):
+                                Ok(product) =>
+                                    function, runtime = product
+                                    return Some((function, runtime, resolved))
+                                Err(_) => return None
 
 
-pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[None, str]:
+pub def retain_scalar(
+    directory: str,
+    inputs: list[str],
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    nominals: list[ProductNominal] = [],
+) -> Result[None, str]:
     """
-    Publish a loss-checked scalar native function without changing compilation's verdict.
+    Publish a loss-checked native function without changing compilation's verdict.
 
-    1. Encode and authenticate every function field against its producer inputs.
+    1. Encode and authenticate every function field and named declaration against its producer inputs.
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
-    text = encoded_record(inputs, function, runtime)?
+    text = encoded_record(inputs, function, runtime, nominals)?
     # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
     return publish_record(directory, inputs, text)
 
 
-pub def finalize_scalar(directory: str, key: str, function: &Function, reused: bool) -> Result[str, str]:
+pub def finalize_scalar(
+    directory: str,
+    key: str,
+    function: &Function,
+    reused: bool,
+    references: list[NominalReference],
+) -> Result[tuple[str, list[NominalReference]], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
 
-    1. Read the product lowering retained or reused for this declaration.
-    2. Encode the function the whole-program plan compiles, after unit-level runtime resolution, with that demand.
+    1. Read the product lowering retained or reused for this declaration, at the positions this request resolved.
+    2. Encode the function the whole-program plan compiles, after unit-level runtime resolution, with that demand and
+       the declarations the product named for those positions.
     3. Accept a reused product only when it is already identical; replace a fresh product atomically.
+
+    Returns the final record and the positions its ordinals take in this request.
     """
     # 1. The event key names the product by its complete producer inputs.
     path = Path(directory).joinpath(key + ".incnfunction")
     text = path.read_text("utf-8", "strict").map_err((error) => f"cannot read plan-function product {error.message()}")?
     record = decode_record(text).map_err((error) => str(error))?
     current = relocate_product(record.function, str(function.span.file), function.span.line)?
-    _captured, demand = decode_product(current)?
+    identities = product_identities(current)?
+    _captured, demand = decode_product(current, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
-    final = encoded_record(record.inputs, function, demand)?
+    whole = product_nominals(function, demand)?
+    mut nominals: list[ProductNominal] = []
+    for reference in whole:
+        mut named: Option[ProductNominal] = None
+        for ordinal in range(len(references)):
+            if references[ordinal] == reference:
+                named = Some(identities[ordinal])
+        match named:
+            Some(nominal) => nominals.append(nominal)
+            None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
+    final = encoded_record(record.inputs, function, demand, nominals)?
     if final == text:
-        return Ok(text)
+        return Ok((text, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
     if reused:
         return Err(f"plan-function {function.name} differs from the whole-program plan")
     publish_record(directory, record.inputs, final)?
-    return Ok(final)
+    return Ok((final, whole))
 
 
 pub def report_scalar(
@@ -129,6 +193,7 @@ pub def report_scalar(
     function: str,
     reused: bool,
     runtime: int,
+    references: list[NominalReference] = [],
 ) -> Result[None, str]:
     """Publish one bounded product event for Bakery admission; records mode refuses incomplete transport."""
     if let Some(root) = directory:
@@ -137,8 +202,11 @@ pub def report_scalar(
             (error) => f"cannot read plan-function product {error.message()}",
         )?
         # Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
-        if restore_record(product, inputs) is None:
+        if not valid_record(product, inputs):
             return Err("plan-function product failed its lowering codec round trip")
+        mut stored: list[EventReference] = []
+        for reference in references:
+            stored.append(EventReference(kind=reference.kind, index=reference.index, name=reference.name))
         event = ScalarRecordEvent(
             schema=2,
             identity=identity,
@@ -147,12 +215,22 @@ pub def report_scalar(
             product=product,
             reused=reused,
             runtime_requirements=runtime,
+            references=stored,
         )
         text = to_string(event).map_err((error) => str(error))?
         path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
         path.parent().mkdir(true, true).map_err((error) => error.message())?
         path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
     return Ok(None)
+
+
+pub def event_references(event: str) -> Result[list[NominalReference], str]:
+    """Read the positions a reported product's ordinals resolved to in this request."""
+    decoded = decode_event(event).map_err((error) => str(error))?
+    mut references: list[NominalReference] = []
+    for reference in decoded.references:
+        references.append(NominalReference(kind=reference.kind, index=reference.index, name=reference.name))
+    return Ok(references)
 
 
 pub def report_scalar_refusal(
@@ -177,14 +255,19 @@ pub def report_scalar_refusal(
     return Ok(None)
 
 
-def encoded_record(inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[str, str]:
+def encoded_record(
+    inputs: list[str],
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    nominals: list[ProductNominal],
+) -> Result[str, str]:
     """Authenticate the entire native payload after the codec proves an exact structural round trip."""
-    mut payload = encode_product(function, runtime)?
+    mut payload = encode_product(function, runtime, nominals)?
     if inputs[0] == "incan.record-function/1":
         relative = relocate_product(payload, "<owner>", 1)?
         restored = relocate_product(relative, str(function.span.file), function.span.line)?
-        restored_function, restored_runtime = decode_product(restored)?
-        if encode_product(restored_function, restored_runtime)? != payload:
+        restored_function, restored_runtime = decode_product(restored, product_nominals(function, runtime)?)?
+        if encode_product(restored_function, restored_runtime, nominals)? != payload:
             return Err("plan-function position round trip changed native facts")
         payload = relative
     digest = fingerprint([payload])?
@@ -192,11 +275,7 @@ def encoded_record(inputs: list[str], function: &Function, runtime: &list[Extern
     return to_string(record).map_err((error) => str(error))
 
 
-def restore_record(
-    text: str,
-    inputs: list[str],
-    span: Option[SourceSpan] = None,
-) -> Option[tuple[Function, list[ExternalFunction]]]:
+def record_payload(text: str, inputs: list[str], span: Option[SourceSpan] = None) -> Option[str]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
     match decode_record(text):
         Err(_) => return None
@@ -214,13 +293,32 @@ def restore_record(
                     match relocate_product(payload, str(current.file), current.line):
                         Ok(moved) => payload = moved
                         Err(_) => return None
-            match decode_product(payload):
-                Ok(product) => return Some(product)
-                Err(_) => return None
+            return Some(payload)
+
+
+def valid_record(text: str, inputs: list[str]) -> bool:
+    """Require a record to decode completely, binding each named declaration to its own ordinal."""
+    match record_payload(text, inputs):
+        None => return false
+        Some(payload) =>
+            match product_identities(payload):
+                Err(_) => return false
+                Ok(identities) =>
+                    mut ordinals: list[NominalReference] = []
+                    for ordinal in range(len(identities)):
+                        ordinals.append(NominalReference(kind=identities[ordinal].kind, index=ordinal))
+                    match decode_product(payload, ordinals):
+                        Ok(_) => return true
+                        Err(_) => return false
 
 
 def decode_record(text: str) -> Result[ScalarRecord, JsonError]:
     """Pass the expected private record type to the native generic decoder through its result contract."""
+    return from_str(text)
+
+
+def decode_event(text: str) -> Result[ScalarRecordEvent, JsonError]:
+    """Pass the expected request-local event type to the native generic decoder."""
     return from_str(text)
 
 

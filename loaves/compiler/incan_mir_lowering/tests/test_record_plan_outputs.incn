@@ -5,6 +5,10 @@ from std.json import JsonValue, parse
 from std.tempfile import TemporaryDirectory
 from pub::incan_mir_plan import (
     BasicBlock,
+    ModelDeclaration,
+    NominalKind,
+    Parameter,
+    ProductNominal,
     ExternalFunction,
     Function,
     Local,
@@ -14,6 +18,7 @@ from pub::incan_mir_plan import (
     Terminator,
     TerminatorKind,
     source_span,
+    product_nominals,
 )
 from record_plan_codec import decode_record_plan
 from record_plan_outputs import publish_plan_records
@@ -62,6 +67,33 @@ pub def test_reused_keyed_plan_must_equal_whole_program_plan() -> Result[None, s
             assert false, "a reused keyed plan that differs from the whole-program plan was accepted"
         Err(message) =>
             assert "plan-function main differs from the whole-program plan" in message, message
+    return Ok(None)
+
+
+pub def test_keyed_plan_naming_a_model_publishes_its_interface() -> Result[None, str]:
+    """A fresh product that names a model by declaration identity finalizes against the whole-program plan."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products, report = record_directories(scratch.path())?
+    span = source_span(file="keyed_plan.incn", line=4, column=1)
+    point = ModelDeclaration(
+        name="Point_0_37",
+        public=true,
+        fields=[Parameter(name="x", ty=PlanType.Int, span=span)],
+        field_public=[true],
+        derives=[],
+        span=span,
+    )
+    mut function = unit_function("main", span, 1)
+    function.locals.append(Local(ty=PlanType.Model(0, "Point_0_37"), span=span))
+    plan = Plan(enums=[], models=[point], functions=[function], externals=[], programs=[], span=span)
+    inputs = record_scalar_inputs("checked-meaning", function.name, function.span, false, "reads", "positions")
+    empty_runtime: list[ExternalFunction] = []
+    references = product_nominals(function, empty_runtime)?
+    identity = ProductNominal(kind=NominalKind.Model, identity="model:keyed_plan::Point", digest="point-v1")
+    retain_scalar(products.0, inputs, function, empty_runtime, [identity])?
+    report_scalar(Some(report.0), products.0, inputs, function.name, function.name, false, 0, references)?
+    publish_plan_records(plan, products.0, report.0)?
+    assert decode_record_plan(interface_plan(report)?)? == plan
     return Ok(None)
 
 
