@@ -68,6 +68,7 @@ from release_support import (
     write_json,
 )
 from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_signer import stamp_release_signer
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
 
@@ -605,6 +606,7 @@ def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
+    _ = stamp_release_signer(run.paths.source, run.paths.toolchain)?
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     overlap = candidate.pending_lsp.is_some()
     oven = match build_oven_with_standard_profile(

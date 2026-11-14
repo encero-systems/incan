@@ -1,0 +1,7 @@
+{
+  "signer": {
+    "workflow": "https://github.com/encero-systems/incan/.github/workflows/release.yml",
+    "issuer": "https://token.actions.githubusercontent.com"
+  },
+  "trusted_root": null
+}
