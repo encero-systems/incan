@@ -287,6 +287,8 @@ pub model ForeignFunction:
     # The Clove whose static archive provides `library` and the configuration it links; empty for a system library.
     pub clove: str = ""
     pub configuration: str = ""
+    # Whether `library` is an Apple framework (`c.framework`) rather than a library.
+    pub framework: bool = false
 
 
 @derive(Clone, PartialEq)

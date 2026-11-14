@@ -96,6 +96,9 @@ pub struct CheckedForeignCall {
     /// The Clove configuration whose archive the call links; empty for a system library.
     #[serde(default)]
     pub configuration: String,
+    /// Whether `library` is an Apple framework (`c.framework`) rather than a library.
+    #[serde(default)]
+    pub framework: bool,
     /// Verified header retained as declaration provenance.
     pub header: String,
     /// Exact native parameter carriers in declaration order.
