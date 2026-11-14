@@ -1,10 +1,13 @@
-"""Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
+"""Verify memory-budget option, process-table, tree-walk, trace, budget and report contracts without compiling projects."""
 
+from std.json import JsonValue
 from pub::incan_platform.probes import ProcessResource, parse_process_table
 from memory_budget import (
     MIB,
+    HeapPeak,
     Measurement,
     budget_outcome,
+    heap_peak,
     measurements_report,
     measurements_tsv,
     parse_options,
@@ -43,6 +46,25 @@ def test_process_rows_and_tree_keep_only_current_descendants() -> Result[None, s
     return Ok(None)
 
 
+def test_heap_peak_keeps_the_greatest_live_heap_any_compiler_process_recorded() -> Result[None, str]:
+    """Heap samples and timing marks both carry a live heap; every other trace record is skipped."""
+    trace = "\n".join(
+        [
+            trace_line("heap-sample: ", 7, 100)?,
+            "{\"fields\":{\"message\":\"heap-sample: named in prose\"},\"kind\":\"event\",\"operation\":\"invocation\"}",
+            trace_line("native-time: ", 8, 300)?,
+            trace_line("heap-sample: ", 7, 200)?,
+            "",
+        ],
+    )
+    peak = heap_peak(trace, HeapPeak(bytes=-1, process=0))?
+    assert peak.bytes == 300
+    assert peak.process == 8
+    assert heap_peak(trace, HeapPeak(bytes=400, process=9))?.bytes == 400
+    assert heap_peak("", HeapPeak(bytes=-1, process=0))?.bytes == -1
+    return Ok(None)
+
+
 def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
     """The gate compares bytes while the human report alone renders MiB and whole seconds."""
     under = measured("oven", 1, 2048 * MIB, 90_000)
@@ -50,46 +72,80 @@ def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Resul
     assert budget_outcome(under.tree_peak_bytes, 2048 * MIB) == "under"
     assert budget_outcome(over.tree_peak_bytes, 2048 * MIB) == "over"
     tsv = measurements_tsv([under, over], 2048 * MIB)
-    assert tsv.startswith("command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n")
-    assert f"contracts\t2\t{2048 * MIB + 1}\tincan-rustc-driver\t{2048 * MIB + 1}\t{2048 * MIB}\n" in tsv
+    assert tsv.startswith(
+        "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tlive_peak_bytes\tgated_reading\tbudget_bytes\n",
+    )
+    assert f"contracts\t2\t{2048 * MIB + 1}\tincan-rustc-driver\t{2048 * MIB + 1}\t{2048 * MIB + 1}\ttree-footprint\t{2048 * MIB}\n" in tsv
     report = measurements_report([under, over], 2048 * MIB)
-    assert "oven\t1\t2048\tincan-rustc-driver\t2048\t90\tunder" in report
-    assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t1\tover" in report
+    assert "oven\t1\t2048\tincan-rustc-driver\t2048\t2048\t90\tlive-heap\tunder" in report
+    assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t2048\t1\ttree-footprint\tover" in report
     assert require_budget([under], 2048 * MIB) == Ok(None)
     assert budget_refusal([measured("oven", 1, 2048 * MIB + 1, 90_000)], 2048 * MIB) == "accepted"
-    assert budget_refusal([over], 2048 * MIB) == f"process-tree footprint budget exceeded: contracts run 2: {2048 * MIB + 1} > {2048 * MIB} bytes"
+    assert budget_refusal([over], 2048 * MIB) == f"memory budget exceeded: contracts run 2: tree-footprint {2048 * MIB + 1} > {2048 * MIB} bytes"
     return Ok(None)
 
 
-def test_oven_is_held_to_the_lowering_budget() -> Result[None, str]:
-    """Oven, the toolchain's lowering compile, is gated at 6 GiB while the other gated builds keep the selected budget."""
+def test_oven_is_held_to_the_lowering_budget_by_its_live_heap() -> Result[None, str]:
+    """
+    Oven, the toolchain's lowering compile, is gated at 6 GiB on the greatest live heap its compiler processes recorded,
+    not on a footprint the allocator's retention swells; a run that recorded no live heap is refused.
+    """
     budget = 2048 * MIB
     lowering = 6144 * MIB
-    within = measured("oven", 1, lowering, 300_000)
-    over = measured("oven", 2, lowering + 1, 300_000)
-    assert require_budget([within], budget) == Ok(None)
-    assert budget_refusal([over], budget) == f"process-tree footprint budget exceeded: oven run 2: {lowering + 1} > {lowering} bytes"
-    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t{lowering}\n" in measurements_tsv([over], budget)
-    report = measurements_report([within, over], budget)
-    assert "oven\t1\t6144\tincan-rustc-driver\t6144\t300\tunder" in report
-    assert "oven\t2\t6144\tincan-rustc-driver\t6144\t300\tover" in report
+    swollen = traced("oven", 1, lowering + 1024 * MIB, lowering)
+    over = traced("oven", 2, lowering, lowering + 1)
+    unsampled = traced("oven", 3, MIB, -1)
+    assert require_budget([swollen], budget) == Ok(None)
+    assert budget_refusal([over], budget) == f"memory budget exceeded: oven run 2: live-heap {lowering + 1} > {lowering} bytes"
+    assert budget_refusal([unsampled], budget) == "memory budget exceeded: oven run 3: no live-heap reading"
+    assert f"oven\t2\t{lowering}\tincan-rustc-driver\t{lowering}\t{lowering + 1}\tlive-heap\t{lowering}\n" in measurements_tsv([over], budget)
+    report = measurements_report([swollen, over, unsampled], budget)
+    assert "oven\t1\t7168\tincan-rustc-driver\t7168\t6144\t300\tlive-heap\tunder" in report
+    assert "oven\t2\t6144\tincan-rustc-driver\t6144\t6144\t300\tlive-heap\tover" in report
+    assert "oven\t3\t1\tincan-rustc-driver\t1\t-\t300\tlive-heap\tover" in report
     return Ok(None)
 
 
 def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
-    """Create one deterministic report row."""
+    """Create one deterministic report row whose live heap equals its footprint."""
+    mut result = traced(command, run, peak, peak)
+    result.peak_at_ms = wall_ms - 100
+    result.wall_ms = wall_ms
+    return result
+
+
+def traced(command: str, run: int, peak: int, live: int) -> Measurement:
+    """Create one deterministic 300-second report row with distinct footprint and live heap peaks."""
     return Measurement(
         command=command,
         run=run,
         status=0,
         tree_peak_bytes=peak,
-        peak_at_ms=wall_ms - 100,
+        peak_at_ms=299_900,
         peak_holder="incan-rustc-driver",
         peak_holder_bytes=peak,
         largest_process="incan-rustc-driver",
         largest_process_peak_bytes=peak,
-        wall_ms=wall_ms,
+        wall_ms=300_000,
+        live_peak_bytes=live,
+        live_peak_process=4242,
     )
+
+
+def trace_line(prefix: str, process: int, live: int) -> Result[str, str]:
+    """One engine trace record carrying a compiler process's heap reading, escaped as the trace channel writes it."""
+    reading = JsonValue.object(
+        {"footprint": JsonValue.int(live * 2), "live": JsonValue.int(live), "process": JsonValue.int(process)},
+    )
+    body = reading.to_json().map_err((error) => error.message())?
+    record = JsonValue.object(
+        {
+            "key": JsonValue.string(prefix + body),
+            "kind": JsonValue.string("line"),
+            "operation": JsonValue.string("native_timing"),
+        },
+    )
+    return record.to_json().map_err((error) => error.message())
 
 
 def refusal(arguments: list[str]) -> str:
