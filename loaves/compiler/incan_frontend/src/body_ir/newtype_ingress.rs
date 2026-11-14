@@ -46,7 +46,7 @@ impl BodyBuilder<'_, '_> {
                             && declaration.fields == ["0"]
                             && declaration.type_parameters.is_empty()
                     })
-                    .cloned()
+                    .map(|declaration| (*declaration).clone())
             })
             .collect::<Option<Vec<_>>>();
         let Some(declarations) = declarations.filter(|declarations| !declarations.is_empty()) else {

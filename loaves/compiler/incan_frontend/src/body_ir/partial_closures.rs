@@ -126,7 +126,7 @@ impl BodyBuilder<'_, '_> {
             {
                 return Err("partial newtype constructor requiring validation".to_owned());
             }
-            Some(declaration.clone())
+            Some((*declaration).clone())
         } else {
             None
         };
