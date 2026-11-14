@@ -769,8 +769,11 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             return Err(CodecFault.Malformed)
         if field.selector in ["item_taking_iterations", "in_place_match_scrutinees"] and values != ["true"]:
             return Err(CodecFault.Malformed)
+        if field.selector == "comprehension_source_consumption" and values[0] not in ["true", "false"]:
+            return Err(CodecFault.Malformed)
         if field.selector not in [
             "body_ir_truthiness_receivers",
+            "comprehension_source_consumption",
             "item_taking_iterations",
             "in_place_match_scrutinees",
         ]:

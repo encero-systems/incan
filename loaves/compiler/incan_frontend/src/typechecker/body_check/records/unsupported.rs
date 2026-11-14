@@ -145,11 +145,11 @@ fn collect_protocol_artifacts(value: &ProtocolArtifacts, refusals: &mut Vec<&'st
         body_ir_iterations,
         iterations,
         item_taking_iterations: _,
-        comprehension_source_consumption,
+        comprehension_source_consumption: _,
         in_place_match_scrutinees: _,
         loan_free_scrutinees: _,
     } = value;
-    collect_nonempty!(refusals, "ProtocolArtifacts"; body_ir_iterations, iterations, comprehension_source_consumption);
+    collect_nonempty!(refusals, "ProtocolArtifacts"; body_ir_iterations, iterations);
 }
 
 /// Refuse every unrepresented nonempty RustInteropArtifacts field; additions must choose a canonical capability.
