@@ -60,6 +60,20 @@ pub struct UnitDescription {
     /// session-scoped `conftest.incn` fixture with it, whose tests run in one process so the fixture is set up once.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub test_batch: Vec<PathBuf>,
+    /// The dependency key under which a test unit's `loaves` bind its project's shared library unit. That library
+    /// holds every module of the source root but `excluded_sources` and the root entry files, so a project-local
+    /// import of any of them names the library: the test unit compiles only its own modules, and the rest compile
+    /// once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_library: Option<String>,
+    /// Source files the project's shared library leaves out: its test modules. The library unit omits them from its
+    /// module set, and a test unit naming `project_library` compiles them as its own modules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_sources: Vec<PathBuf>,
+    /// Check a library unit as its project's program is checked: a project's shared library is no published API, so
+    /// it skips the publication-only API docstring check.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub program_checks: bool,
     /// The package's root directory, which package-relative paths are spelled against.
     pub project_root: PathBuf,
     /// The package's source root, which module paths are spelled against.

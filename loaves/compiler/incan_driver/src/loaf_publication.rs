@@ -251,7 +251,13 @@ impl PublicationFacts {
         model_bundles: &[CanonicalModelBundle],
     ) -> CliResult<LibraryManifest> {
         materialize_api_alias_projections(&mut self.api_modules);
-        let docstring_errors = validate_checked_api_docstrings(&self.api_modules)
+        // A project's shared library is checked as its program is: it publishes no API, so its docstrings are free.
+        let documented = if unit.program_checks {
+            &self.api_modules[..0]
+        } else {
+            &self.api_modules[..]
+        };
+        let docstring_errors = validate_checked_api_docstrings(documented)
             .into_iter()
             .map(|diagnostic| {
                 match modules
