@@ -154,13 +154,19 @@ pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
 
 pub def decode_record(encoded: bytes, profile: str, owner: str, root: str) -> Result[CheckedRecord, CodecFault]:
     """Decode one complete Crumb row, then bind its profile, stable owner and semantic root."""
+    record = decode_owned_record(encoded, profile, owner)?
+    if record.root != root:
+        return Err(CodecFault.BodyChanged)
+    return Ok(record)
+
+
+pub def decode_owned_record(encoded: bytes, profile: str, owner: str) -> Result[CheckedRecord, CodecFault]:
+    """Decode one complete Crumb row once and bind its profile and stable owner; it keeps the root its row carries."""
     record = decoded_record(encoded)?
     if record.profile != profile:
         return Err(CodecFault.ProfileMismatch)
     if record.owner != owner:
         return Err(CodecFault.OwnerMismatch)
-    if record.root != root:
-        return Err(CodecFault.BodyChanged)
     return Ok(record)
 
 
@@ -626,19 +632,13 @@ def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecor
     """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
     if len(value.body_ir) == 0:
         return Err(CodecFault.Malformed)
-    local = decode_graph_record(value.local, value.identity)?
-    final = decode_graph_record(value.final, value.identity)?
+    local = decode_owned_record(value.local, CHECKER_PROFILE, value.identity)?
+    final = decode_owned_record(value.final, CHECKER_PROFILE, value.identity)?
     if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:
         return Err(CodecFault.Malformed)
     if local.root != final.root:
         return Err(CodecFault.BodyChanged)
     return Ok([local, final])
-
-
-def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
-    """Read one selected Crumb row and bind it to the graph-selected stable owner."""
-    record = decoded_record(encoded)?
-    return decode_record(encoded, CHECKER_PROFILE, identity, record.root)
 
 
 def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
