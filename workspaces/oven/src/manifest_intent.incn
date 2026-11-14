@@ -34,7 +34,6 @@ pub from manifest_models import (
     ProjectIntent,
     RustInputRequest,
 )
-pub from manifest_tool import unknown_tool_keys
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
