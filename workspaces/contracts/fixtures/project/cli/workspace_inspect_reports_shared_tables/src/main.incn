@@ -1,4 +1,4 @@
-# behavior: `oven workspace inspect --format json` reports the root's shared tables as 0.5.1's `incan workspace inspect` did: `shared_dependencies` (`libraries`, `rust`, `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources`; the declared `exclusions`; the `invocation` directory; and per member its `effective_dependencies`, each entry with its `origin` and the member's and workspace's features, and its `workspace_environment_extends` (#3141).
+# behavior: `oven workspace inspect --format json` reports the root's shared tables as 0.5.1's `incan workspace inspect` did: `shared_dependencies` (`libraries`, `rust`, `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources`; the declared `exclusions`; the `invocation` directory; per member its `effective_dependencies`, each entry with its `origin` and the member's and workspace's features, its `workspace_environment_extends` and its `capabilities`; each selected member by its absolute `root`; the lock's `state` and each member's own `oven.lock`; the workspace `capabilities`; and an `unused_shared_dependency` warning for a shared dependency no member inherits (#3141).
 # cli-commands:
 #   oven workspace inspect --format json
 # expect-stdout-contains:
@@ -30,6 +30,23 @@
 #         "workspace_environment_extends": {
 #           "ci": [
 #             "workspace:ci"
+#     "capabilities": {
+#       "reason": "workspace capability application remains unavailable until scoped mutation planning and policy evaluation are implemented",
+#       "status": "member_local_only"
+#     "lock": {
+#       "canonical_path": "<project>/oven.lock",
+#       "exists": true,
+#       "stale_member_local_locks": [
+#         "<project>/app/oven.lock"
+#       "state": {
+#         "status": "invalid"
+#         "capabilities": [],
+#     "selected_scope": {
+#           "root": "<project>"
+#     "warnings": [
+#         "dependency_kind": "rust",
+#         "kind": "unused_shared_dependency",
+#         "name": "regex"
 # expect-exit: 0
 
 def main() -> None:

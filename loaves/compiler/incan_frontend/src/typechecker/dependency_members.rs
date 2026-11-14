@@ -152,9 +152,8 @@ impl TypeChecker {
         if self.owns_standard_module(module_path) {
             return None;
         }
-        let entry = self.loaves.owner_of(module_path)?;
-        let root = entry.binding_root();
-        Some((entry.key.clone(), module_path[root.len()..].to_vec()))
+        let owner = self.loaves.admitted_owner_of(module_path)?;
+        Some((owner.key, module_path[owner.binding_root.len()..].to_vec()))
     }
 
     /// Return whether `module` is one of the program's own standard modules: the program is a standard package and

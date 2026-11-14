@@ -73,7 +73,7 @@ pub(super) fn read_runtime_bindings_in(
     validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
     let bytes = open_value(&set.root, &entry.value)
         .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
-    set.count_read(bytes.len());
+    set.count_read(&entry.key, bytes.len());
     let process = set.reads();
     tracing::trace!(
         target: "incan::invocation",

@@ -340,7 +340,7 @@ def generation_of(toolchain: Toolchain) -> Result[str, str]:
     """The generation a resident owner retained, or the one this invocation's compiler and environment select."""
     if toolchain.worker_generation != "":
         return Ok(toolchain.worker_generation)
-    return generation_for(compiler_fingerprint(toolchain)?)
+    return generation_for(toolchain, compiler_fingerprint(toolchain)?)
 
 
 pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[Endpoint, str]:
@@ -404,14 +404,20 @@ def memory_workers() -> int:
                     return int(text) // WORKER_CEILING_BYTES
 
 
-pub def generation_for(compiler: str) -> Result[str, str]:
+pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     """
-    Bind a worker to the complete observed compiler identity and this process's inherited configuration.
+    Bind a worker to the complete observed compiler identity, the compiler-record set its launch selects and this
+    process's inherited configuration.
 
-    A resident owner may retain this digest only while it watches all compiler inputs and its environment remains
-    unchanged. Every other caller derives it for the request; source, checking and compilation are never retained.
+    The record set is no unit input, but a worker keeps reading the set it was launched with, so another set needs
+    another worker. A resident owner may retain this digest only while it watches all compiler inputs and its
+    environment remains unchanged. Every other caller derives it for the request; source, checking and compilation are
+    never retained.
     """
-    return Ok(fingerprint([SCHEMA, RECORD_SCHEMA, compiler] + environment()?)?[0:16])
+    mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
+    if let Some(pin) = toolchain.compiler_records:
+        selected.append(f"compiler-records {pin.digest}")
+    return Ok(fingerprint(selected + environment()?)?[0:16])
 
 
 def environment() -> Result[list[str], str]:

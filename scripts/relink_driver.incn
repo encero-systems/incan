@@ -206,7 +206,7 @@ pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Resu
     # relative to the toolchain directory, so the compiler home selects the installed trees rather than a copy.
     for tree in ["loaves", "native", "registry"]:
         share_tree(selected, destination, tree)?
-    text = compiler_manifest(read_manifest(selected)?, selected.0)?
+    text = absolute_manifest(read_manifest(selected)?, selected.0)?
     target = destination.joinpath("toolchain.json")
     if target.is_file() and read_text(target)? == text:
         return Ok(false)
@@ -229,32 +229,8 @@ def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str
     return link.symlink_to(source).map_err((error) => error.message())
 
 
-def compiler_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
-    """
-    The installed manifest as the compiler home selects it: every artifact path absolute, except a registry closure or
-    lock inside the linked `registry` tree, which stays relative and so resolves through the compiler home's own link.
-
-    A Loaf's native closure names registry artifacts relative to the toolchain directory, so the compiler home's builds
-    read them through that link. Naming the closure there too admits each artifact under the spelling its builds read.
-    """
-    mut fields = absolute_fields(manifest, base)?
-    for key in ["registry_units", "registry_lock"]:
-        match manifest.get(key):
-            Some(value) =>
-                text = value.as_str().unwrap_or("")
-                if text.startswith("registry/"):
-                    fields[key] = JsonValue.string(text)
-            None => pass
-    return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
-
-
 pub def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
     """The installed manifest with every artifact path absolute, so a compiler home reads the installed files."""
-    return JsonValue.object(absolute_fields(manifest, base)?).to_pretty_json().map_err((error) => error.message())
-
-
-def absolute_fields(manifest: JsonValue, base: str) -> Result[Dict[str, JsonValue], str]:
-    """The installed manifest's fields with every artifact path absolute against `base`."""
     mut fields = manifest.expect_object().map_err((error) => error.message())?
     for key in ["driver", "sysroot"]:
         fields[key] = JsonValue.string(absolute(manifest_text(manifest, key)?, base))
@@ -281,7 +257,7 @@ def absolute_fields(manifest: JsonValue, base: str) -> Result[Dict[str, JsonValu
             records["root"] = JsonValue.string(absolute(root, base))
             fields["compiler_records"] = JsonValue.object(records)
         None => pass
-    return Ok(fields)
+    return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
 
 
 def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -> Result[None, str]:

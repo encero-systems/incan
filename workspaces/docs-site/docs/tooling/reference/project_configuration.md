@@ -75,6 +75,13 @@ The dependency key is the code-facing alias. `package`, `crate`, bare string val
 
 `loaf` accepts an unscoped identity or one scope and name separated by `/`. Components contain 1 through 64 lowercase ASCII letters, digits or hyphens and begin with a letter or digit. Unscoped local identities and exact upstream names under `crates-io/` may also contain underscores. Capitals are refused and are never folded. The default Rust crate name is the identity's final component with hyphens replaced by underscores.
 
+A provider dependency is a `provider`-kind requirement (RFC 117): a target-specific library, SDK, toolchain, runtime or deployment requirement that an Oven-managed provider satisfies. It requires `provider`, which follows the `loaf` identity rules, and `version`, a version requirement. It also accepts `features` (default empty), `optional` (default `false`) and `target`. `loaf` and `path` are refused beside `provider`. `oven dependency list` prints it as `KEY: provider NAME REQUIREMENT`. This toolchain manages no providers, so locking, running, building or testing a project whose graph declares one is refused, naming the manifest, the key and the provider.
+
+```toml
+[dependencies]
+vision = { provider = "vision-runtime", version = ">=2.0" }
+```
+
 ## `[build]`
 
 | Field | Type | Contract |
@@ -130,7 +137,7 @@ Accepts a required nonempty string `entry`; `crate` and other keys are refused. 
 
 ## `[workspace]`
 
-A manifest with a `[workspace]` table is a workspace root. `members`, `default-members` and `exclude` are arrays of member directories relative to the root; [Workspaces](../../language/how-to/workspaces.md) covers member selection.
+A manifest with a `[workspace]` table is a workspace root. `members`, `default-members` and `exclude` are arrays of member directories relative to the root. An entry of `members` or `exclude` may be a glob pattern (`*`, `?`, `[abc]`): it names every directory it matches that holds a `loaf.toml`, a wildcard never crosses a `/`, and a pattern that matches nothing names no member. [Workspaces](../../language/how-to/workspaces.md) covers member selection.
 
 `[workspace.dependencies]` declares dependencies the members share. Each entry names a local `path`, relative to the root, or a registry `loaf` with its `version`, and accepts the fields of a `[dependencies]` entry. A member inherits one with `NAME = { workspace = true }` in its own `[dependencies]`, optionally with `features`, added to the entry's, and `optional`. The member must be the root or one of its `members`; a local `path` is rebased from the root onto the member. `[workspace.rust-dependencies]` is refused with the corresponding `[workspace.dependencies]` Loaf form. `[workspace.rust-dev-dependencies]` is refused with that form too, and with `NAME = { workspace = true }` for each member's `[envs.test.dependencies]`, which inherits a shared entry as `[dependencies]` does.
 

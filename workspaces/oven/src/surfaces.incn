@@ -40,6 +40,9 @@ pub const INTEROP_BAKE_MOVED: str = "interop bake` is `oven build` now: an ordin
 # 0.5.1's `inspect oven --receipt` read an Oven Alpha receipt, which 0.6 does not write; either spelling names what
 # reports a run's evidence now.
 pub const INSPECT_OVEN_MOVED: str = "inspect oven` read 0.5's Oven Alpha receipts, which 0.6 does not write: run `oven inspect run ID --proofs` with INCAN_ENGINE=records for a run's evidence"
+# 0.5.1's `incan oven bake` materialized a project's sealed Loaves and executable plans without running them, which an
+# ordinary build does; RFC 118's `oven bake` packages a `*.loaf` asset instead, and is not built.
+const BAKE_MOVED: str = "`incan oven bake` is `oven build` now: a build materializes or reuses the project's Loaves and its executable without running it"
 
 
 pub def invoked() -> str:
@@ -78,6 +81,9 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
     command also names the `oven` command that runs it now. A language command on `oven` names the `incan` command
     that runs it.
     """
+    if surface == INCAN and command == "cache":
+        if let Some(current) = bakery_command(arguments):
+            return Some(f"{INCAN}: `incan cache {arguments[0]}` is `{current}` now: run `{current}`")
     owner = owner_of(command, arguments)
     if owner == "" or owner == surface:
         return None
@@ -108,10 +114,39 @@ def incan_oven(arguments: list[str]) -> str:
         words.append(argument)
     if len(words) >= 2 and words[0] == "interop" and words[1] == "bake":
         return f"{INCAN}: `incan oven {INTEROP_BAKE_MOVED}"
+    if len(words) > 0 and words[0] == "bake":
+        return f"{INCAN}: {BAKE_MOVED}"
+    if len(words) > 0 and retired_oven(words[0]) != "":
+        return f"{INCAN}: `incan oven {words[0]}` {retired_oven(words[0])}; 0.6 has no such command"
+    if len(words) >= 2 and words[0] == "store":
+        if let Some(current) = bakery_command(words[1:]):
+            return f"{INCAN}: `incan oven store {words[1]}` is `{current}` now: run `{current}`"
     spelled = " ".join(words)
     if spelled == "":
         return f"{INCAN}: `incan oven` is the `oven` command now: run `oven`"
     return f"{INCAN}: `incan oven {spelled}` is an Oven command: run `oven {spelled}`"
+
+
+def retired_oven(command: str) -> str:
+    """What a 0.5.1 `incan oven` command retired with Cargo and its plan manifests did; empty for any other command."""
+    if command == "compiler-libtests":
+        return "ran the 0.5 repository's Cargo-era compiler tests, which 0.6 removed"
+    if command == "plan":
+        return "published 0.5's direct-rustc plan manifests, which 0.6 does not write"
+    if command == "import":
+        return "froze Cargo declarations for Oven; 0.6 never runs Cargo, and adopting a Cargo crate is not built"
+    return ""
+
+
+def bakery_command(arguments: list[str]) -> Option[str]:
+    """The bakery command that does what 0.5.1's `cache` or `oven store` subcommand did, when it has one."""
+    if len(arguments) == 0:
+        return None
+    if arguments[0] == "inspect":
+        return Some("oven bakery status")
+    if arguments[0] == "prune":
+        return Some("oven bakery gc")
+    return None
 
 
 def spelled(command: str, arguments: list[str]) -> str:

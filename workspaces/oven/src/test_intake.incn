@@ -8,6 +8,7 @@ from std.testing import fail
 from scratch import scratch_directory
 from toml_fields import read_manifest
 from files import write
+from dependency_plans import listed_dependencies
 
 
 pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
@@ -363,4 +364,41 @@ def record_identity_controls() -> Result[None, str]:
             Err(error) =>
                 assert error.kind == IntakeErrorKind.Invalid
                 assert error.field == ["project", "registry-id"]
+    return Ok(None)
+
+
+pub def test_a_provider_dependency_is_read_as_a_provider_requirement() -> Result[None, IntakeError]:
+    """
+    RFC 117: `ALIAS = { provider = "NAME", version = "REQ" }` in `[dependencies]` is a `provider`-kind requirement,
+    read beside the Loaf dependencies and never as one.
+
+    1. The provider, its version requirement, features, `optional` and target are kept; no Loaf request is made, and
+       `oven dependency list` names it as a provider.
+    2. A provider entry that also names a Loaf or a path, has no version, has a requirement that does not parse, or
+       has a name that is not an identity, is refused.
+    """
+    source = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nvision = { provider = \"vision-runtime\", version = \">=2.0\", features = [\"gpu\"], optional = true }\nregex = { loaf = \"crates-io/regex\", version = \"1\" }\n"
+    # 1. One provider requirement and one Loaf request.
+    project = parse_intent(source, "loaf.toml")?
+    assert len(project.providers) == 1, f"{len(project.providers)} provider requirements"
+    vision = project.providers[0]
+    assert vision.alias == "vision" and vision.provider == "vision-runtime" and vision.version == ">=2.0"
+    assert vision.features == ["gpu"] and vision.optional and vision.target is None
+    assert [request.alias for request in project.rust_inputs] == ["regex"]
+    match listed_dependencies(source, "loaf.toml"):
+        Ok(lines) =>
+            assert lines == ["regex: crates-io/regex 1", "vision: provider vision-runtime >=2.0"], f"{lines}"
+        Err(reason) => fail(reason)
+    # 2. Anything that would make it a Loaf, or leave it without a checked requirement, is refused.
+    for entry in [
+        "{ provider = 'vision-runtime', loaf = 'crates-io/vision', version = '2' }",
+        "{ provider = 'vision-runtime', path = '../vision', version = '2' }",
+        "{ provider = 'vision-runtime' }",
+        "{ provider = 'vision-runtime', version = 'two' }",
+        "{ provider = 'Vision', version = '2' }",
+    ]:
+        manifest = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nvision = " + entry + "\n"
+        match parse_intent(manifest, "loaf.toml"):
+            Ok(_) => fail(f"a provider entry was accepted: {entry}")
+            Err(_) => pass
     return Ok(None)

@@ -455,7 +455,7 @@ pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits
         )
         mut transaction = begin(selected)
         rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
-        receipt = edge_receipt(selected, reader, read)?
+        receipt = edge_receipt(selected, reader, [read])?
         _ = prepare_evaluation(transaction, "claim", rank, f"main {edit}".encode("utf-8"), receipt)?
         supersede_outputs(selected, transaction)?
         _ = commit(transaction).map_err((error) => error.message())?
@@ -469,15 +469,109 @@ pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits
     return Ok(None)
 
 
-def edge_receipt(selected: Snapshot, output: RecordKey, read: RecordRequest) -> Result[ReadReceipt, str]:
-    """The completed receipt of an evaluation of `output` that reads one record through the store."""
+pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates a dependency in a new context, and one declaration's slot reads it. The reader's edge into the
+    dependency is keyed by the dependency's slot, not by the context the edit replaced, so after any number of edits the
+    edge indexes hold the one current edge in each direction, tombstones included. A reader lookup still names the
+    exact record read: the current dependency has the current reader, and an earlier context has none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut earlier = graph_key("final", "function:helper", "checked")
+    mut dependency = earlier
+    mut reader = earlier
+    for edit in range(12):
+        earlier = dependency
+        dependency = graph_key("final", "function:helper", f"checked {edit}")
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(selected, reader, [RecordRequest(key=dependency, selection=RecordSelection.Field("value"))])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    edges = indexed_keys(root, latest, "incan.engine.edge-")?
+    assert len(edges) == 2, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    assert readers_of(latest, [earlier], "profile")? == []
+    return Ok(None)
+
+
+pub def test_a_reader_of_two_contexts_of_one_record_is_found_from_each() -> Result[None, str]:
+    """
+    One evaluation that makes the same read of two contexts of one record has one incoming edge for each, though both
+    sit under the record's slot. When the next evaluation reads only one of them, the other has no reader left.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    first = graph_key("final", "function:helper", "checked 1")
+    second = graph_key("final", "function:helper", "checked 2")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    transaction = put(put(transaction, encode_record_key(first)?, b"one"), encode_record_key(second)?, b"two")
+    selected = commit(transaction).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "edit 0")
+    both = [
+        RecordRequest(key=first, selection=RecordSelection.Field("value")),
+        RecordRequest(key=second, selection=RecordSelection.Field("value")),
+    ]
+    publish_reader(selected, reader, both)?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [first], "profile")? == [reader]
+    assert readers_of(latest, [second], "profile")? == [reader]
+    edited = graph_key("body-ir", "function:main", "edit 1")
+    publish_reader(latest, edited, [both[1]])?
+    current = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(current, [first], "profile")? == []
+    assert readers_of(current, [second], "profile")? == [edited]
+    assert len(indexed_keys(root, current, "incan.engine.edge-")?) == 4
+    return Ok(None)
+
+
+def graph_key(family: str, identity: str, context: str) -> RecordKey:
+    """A compiler record key in the one identity profile, origin and facet these graph tests use."""
+    return RecordKey(
+        family=family,
+        identity=identity,
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context=context,
+    )
+
+
+def publish_reader(selected: Snapshot, reader: RecordKey, reads: list[RecordRequest]) -> Result[None, str]:
+    """Publish an evaluation of `reader` that makes `reads`, retiring its slot's earlier evaluation, in one commit."""
+    mut transaction = begin(selected)
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    receipt = edge_receipt(selected, reader, reads)?
+    _ = prepare_evaluation(transaction, "claim", rank, f"{reader.context}".encode("utf-8"), receipt)?
+    supersede_outputs(selected, transaction)?
+    _ = commit(transaction).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def indexed_keys(root: Path, selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Every key the snapshot's index holds under `prefix`, tombstones included."""
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), selected.index).map_err((error) => error.detail)?:
+        if entry.key.startswith(prefix):
+            found.append(entry.key)
+    return Ok(found)
+
+
+def edge_receipt(selected: Snapshot, output: RecordKey, requests: list[RecordRequest]) -> Result[ReadReceipt, str]:
+    """The completed receipt of an evaluation of `output` that reads `requests` through the store, in order."""
     scope = ReadScope(snapshot=selected.digest, profile="profile")
     preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
-    source = StoreRecordSource.open(selected, scope, [encode_record_key(read.key)?])
-    mut reads = RecordReads.start(scope, preparation, [read])
-    match reads.read(source, read):
-        RecordRead.Failed(_) => return Err("the dependency read failed")
-        _ => pass
+    mut roots: list[str] = []
+    for request in requests:
+        roots.append(encode_record_key(request.key)?)
+    source = StoreRecordSource.open(selected, scope, roots)
+    mut reads = RecordReads.start(scope, preparation, requests)
+    for request in requests:
+        match reads.read(source, request):
+            RecordRead.Failed(_) => return Err("the dependency read failed")
+            _ => pass
     return reads.finish().map_err((_) => "the dependency receipt failed")
 
 
