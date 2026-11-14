@@ -14,6 +14,7 @@
 #   ea
 #   typed channel
 #   thread 42
+#   bytes 3
 #   stored 3
 #   3
 #   2
@@ -188,11 +189,17 @@ def retained_callback() -> () -> str:
 
 
 def show_thread_capture() -> None:
-    """Join direct and locally retained Rust callbacks that own integer and string captures."""
+    """Join direct and locally retained Rust callbacks that own integer, string and byte captures."""
     number = 42
     text = "thread"
     worker = spawn(() => f"{text} {number}")
     match worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    payload = b"abc"
+    bytes_worker = spawn(() => f"bytes {len(payload)}")
+    match bytes_worker.join():
         Ok(value) => println(value)
         Err(_) =>
             assert false
