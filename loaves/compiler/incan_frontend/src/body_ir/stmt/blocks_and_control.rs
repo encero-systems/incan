@@ -29,6 +29,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.enter_terminal_path(stmts, scope);
         }
         for (index, stmt) in stmts.iter().enumerate() {
+            if is_documentation(stmt, &stmts[index + 1..]) {
+                continue;
+            }
             let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
             self.insert_statement_temporary_drops(out, scope, first_temporary, None, hir_span(stmt.span));

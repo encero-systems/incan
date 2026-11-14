@@ -78,3 +78,12 @@ fn may_leave_enclosing_loop(stmts: &[ast::Spanned<ast::Statement>]) -> bool {
         _ => false,
     })
 }
+
+/// Whether `stmt` is documentation: a string-literal statement that a later statement of its block, other than `pass`,
+/// follows. It has no effect, so Body IR leaves it out and documentation never reaches Body IR or the plans keyed on
+/// it. A block's last statement can be its value (#2025), and a docstring before only `pass` marks a documented trait
+/// placeholder, so both stay; the records engine's source projection draws the same line.
+fn is_documentation(stmt: &ast::Spanned<ast::Statement>, rest: &[ast::Spanned<ast::Statement>]) -> bool {
+    matches!(&stmt.node, ast::Statement::Expr(expr) if matches!(&expr.node, ast::Expr::Literal(ast::Literal::String(_))))
+        && rest.iter().any(|later| !matches!(later.node, ast::Statement::Pass))
+}
