@@ -17,7 +17,7 @@ from std.fs.locking import FileLock
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file, open_stream
 from home import owners_dir
-from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
+from pub::incan_worker_host.protocol import SCHEMA, completion, handoff, ready, request_document, retired
 from pub::incan_worker_host.record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
@@ -215,6 +215,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     2. Submit the ordinary compiler arguments and this request's console paths and working directory.
     3. Read its completion; a submitted request is never replayed after a transport failure.
     4. A worker that retired with this reply is not dialed again: the next request starts a fresh one.
+    5. A worker over its footprint ceiling answered with its rustc handoff instead; rustc runs here, in a fresh process.
     """
     # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
     connecting = begin()
@@ -249,7 +250,32 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 trace("compiler worker: retired after its request")
             elif toolchain.retire_worker:
                 return Err("compiler worker did not honor the requested activation lifetime")
+            # 5. The handoff is this request's native compilation, so it runs exactly once, after the worker's heap is gone.
+            if let Some(path) = handoff(reply):
+                trace("compiler worker: rustc handed to a fresh process")
+                return Ok(Some(rustc_from_handoff(toolchain, path)?))
             return Ok(Some(status_code(completion(reply)?)))
+
+
+def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
+    """
+    Run native compilation from the handoff a retired worker wrote, in a fresh driver process that appends to this
+    request's console sinks, and return the status it exits with; a process ended by a signal has status one. The
+    handoff is removed even when that process could not start.
+    """
+    mut command = driver_command(toolchain)?
+    command.arg("--rustc-handoff").arg(path)
+    command.stdin(Stdio.null())
+    command.stdout(open_stream(f"{toolchain.console}.out")?)
+    command.stderr(open_stream(f"{toolchain.console}.err")?)
+    clock = begin()
+    ended = command.status()
+    record(Operation.DriverSpawn, path, clock)
+    discard_file(Path(path))
+    status = ended.map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    match status.code():
+        Some(code) => return Ok(code)
+        None => return Ok(1)
 
 
 def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:

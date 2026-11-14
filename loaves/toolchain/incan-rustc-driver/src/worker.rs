@@ -16,7 +16,9 @@ use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
-use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand};
+use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand, WorkerHost};
+
+use crate::frontend::UnitCompiled;
 
 mod console;
 
@@ -30,7 +32,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                 let mut timing = crate::native_timing::Timing::requested();
                 let watch = incan_worker_host::caller_watch(&mut host)
                     .map(|watch| Abandonment::watch(watch, request.retire_after));
-                let outcome = activate(&request);
+                let outcome = activate(&request, &host);
                 timing.mark("worker_compiled");
                 // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
                 drop(watch);
@@ -57,7 +59,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 /// Run one admitted request with its caller's console files and working directory. The reported status is the one
 /// the short-lived command exits with: its own status, or the status of a returned error, which [`crate::report`]
 /// prints as `main` does. A panic is contained and reported as such once the adapter's state is usable again.
-fn activate(request: &CompileRequest) -> ActivationOutcome {
+fn activate(request: &CompileRequest, host: &WorkerHost) -> ActivationOutcome {
     let console = match console::Capture::open(
         Path::new(&request.stdout),
         Path::new(&request.stderr),
@@ -67,10 +69,10 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
         Err(error) => return ActivationOutcome::Unavailable(error.to_string()),
     };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run(&request.command, &request.arguments)
+        run(&request.command, &request.arguments, host)
     }));
     let ended = match outcome {
-        Ok(Ok(code)) => ActivationOutcome::Exited(code.into()),
+        Ok(Ok(ended)) => ended,
         Ok(Err(error)) => ActivationOutcome::Exited(crate::report(error.as_ref()).into()),
         Err(_) => {
             crate::adapter::recover();
@@ -83,15 +85,28 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
     ended
 }
 
-/// Run one request through the entry point its short-lived command uses, returning that command's status.
-fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
-    match command {
-        WorkerCommand::Unit => crate::frontend::compile_resident(arguments).map(|()| 0),
-        WorkerCommand::Check => crate::check(arguments),
-        WorkerCommand::Format => crate::format(arguments),
-        WorkerCommand::SourceFiles => crate::source_files(arguments),
-        WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0),
-    }
+/// Run one request through the entry point its short-lived command uses, returning that command's status. A unit
+/// asks the host after lowering whether this process's footprint hands rustc to the caller; if so, its outcome is the
+/// handoff it wrote.
+fn run(
+    command: &WorkerCommand,
+    arguments: &[String],
+    host: &WorkerHost,
+) -> Result<ActivationOutcome, Box<dyn std::error::Error>> {
+    let status = match command {
+        WorkerCommand::Unit => {
+            let hands_off = || incan_worker_host::hands_rustc_off(host, footprint());
+            return Ok(match crate::frontend::compile_resident(arguments, &hands_off)? {
+                UnitCompiled::InProcess => ActivationOutcome::Exited(0),
+                UnitCompiled::HandedOff(path) => ActivationOutcome::HandedOff(path.to_string_lossy().into_owned()),
+            });
+        }
+        WorkerCommand::Check => crate::check(arguments)?,
+        WorkerCommand::Format => crate::format(arguments)?,
+        WorkerCommand::SourceFiles => crate::source_files(arguments)?,
+        WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0)?,
+    };
+    Ok(ActivationOutcome::Exited(status.into()))
 }
 
 /// The process's physical footprint in bytes, or -1 when it cannot be read.
