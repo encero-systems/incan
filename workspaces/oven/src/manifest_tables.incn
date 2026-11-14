@@ -8,13 +8,19 @@ from manifest_errors import IntakeError, IntakeErrorKind
 from toolchain_access import BINARY_SEPARATOR, access_keys, read_access
 from manifest_fields import allowed, flag, refusal, required, string_list, table, text
 from manifest_dependencies import moved_dependencies
+from manifest_environments import validate_environment
 
 
 pub def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
     """
-    A `[workspace]` table lists member directories, which workspace selection reads, and the shared
-    `[workspace.dependencies]` entries members inherit (`workspace_inheritance`). 0.5.1's
-    `[workspace.rust-dependencies]` entries are shared dependencies now, in their Loaf form.
+    A `[workspace]` table, with the tables 0.5.1 accepted in it:
+
+    1. `members`, `default-members` and `exclude` list member directories, which workspace selection reads.
+    2. `[workspace.dependencies]` entries are shared dependencies members inherit (`workspace_inheritance`); 0.5.1's
+       `[workspace.rust-dependencies]` entries are shared dependencies now, in their Loaf form.
+    3. `[workspace.envs.NAME]` fragments are environment tables members extend as `workspace:NAME` (`environments`).
+    4. `[workspace.policy]` and `[workspace.sources]` are raw tables 0.5.1 reserved for later RFC 076 and RFC 077
+       phases; no command reads them.
     """
     if "workspace" not in root:
         return Ok(None)
@@ -22,7 +28,9 @@ pub def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[
     if "rust-dependencies" in workspace:
         field = ["workspace", "rust-dependencies"]
         return moved_dependencies(workspace["rust-dependencies"], field, "[workspace.dependencies]", manifest)
-    allowed(workspace, ["members", "default-members", "exclude", "dependencies"], manifest, ["workspace"])?
+    keys = ["members", "default-members", "exclude", "dependencies", "envs", "policy", "sources"]
+    allowed(workspace, keys, manifest, ["workspace"])?
+    # 1. Member directories.
     for key in ["members", "default-members", "exclude"]:
         if key in workspace:
             entries = workspace[key]
@@ -30,6 +38,7 @@ pub def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[
                 .map_err((error) => refusal(manifest, ["workspace", key], IntakeErrorKind.Invalid, error.message()))?
             for entry in entries:
                 text(entry, manifest, ["workspace", key])?
+    # 2. Shared dependencies.
     if "dependencies" in workspace:
         shared = table(workspace["dependencies"], manifest, ["workspace", "dependencies"])?
         for alias in sorted([key for key in shared.keys()]):
@@ -37,6 +46,15 @@ pub def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[
             if "path" not in entry and "loaf" not in entry:
                 detail = "a shared dependency names a local `path` or a registry `loaf`"
                 return Err(refusal(manifest, ["workspace", "dependencies", alias], IntakeErrorKind.Missing, detail))
+    # 3. Environment fragments.
+    if "envs" in workspace:
+        fragments = table(workspace["envs"], manifest, ["workspace", "envs"])?
+        for name in sorted([name for name in fragments.keys()]):
+            validate_environment(fragments[name], manifest, ["workspace", "envs", name])?
+    # 4. Reserved tables.
+    for key in ["policy", "sources"]:
+        if key in workspace:
+            table(workspace[key], manifest, ["workspace", key])?
     return Ok(None)
 
 
