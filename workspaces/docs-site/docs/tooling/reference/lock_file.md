@@ -16,7 +16,7 @@ Unknown fields are refused.
 
 ## Toolchain table
 
-`toolchain.version` is required. `toolchain.identity` records the content identity of the compiler, Rust fact caches, linked native units, target and selected SDK facts. `--locked` refuses a different version or identity. An ordinary lock refresh under a different toolchain selects `lowest`, then retains every exact producer selection that still satisfies the graph.
+`toolchain.version` is required. `toolchain.identity` records the content identity of the compiler, Rust fact caches, linked native units, target and selected SDK facts. `--locked` refuses a different version or identity. An ordinary lock refresh under a different toolchain keeps the recorded mode and retains every exact producer selection that still satisfies the graph.
 
 ## Loaf entries
 
