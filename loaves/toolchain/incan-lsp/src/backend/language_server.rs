@@ -191,6 +191,16 @@ impl LanguageServer for IncanLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
+        // On the engine route, a declaration's signature comes from the editor view's records first.
+        if let Some(signature) = self.engine_hover(uri, position).await {
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```incan\n{signature}\n```"),
+                }),
+                range: None,
+            }));
+        }
         let docs = self.documents.read().await;
         let doc = match docs.get(uri) {
             Some(doc) => doc,

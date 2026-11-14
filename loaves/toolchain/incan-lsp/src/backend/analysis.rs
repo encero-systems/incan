@@ -8,6 +8,19 @@ use incan_driver::modules::{collect_document_modules, entry_module_segments};
 use incan_driver::unit::UnitDescription;
 
 impl IncanLanguageServer {
+    /// On the engine route, the signature the editor view answers for the declaration at `position` of the latest
+    /// buffer; `None` leaves hover to the in-process analysis.
+    pub(super) async fn engine_hover(&self, uri: &Url, position: Position) -> Option<String> {
+        if !engine_overlay::selected() {
+            return None;
+        }
+        let path = uri.to_file_path().ok()?;
+        let source = self.pending_sources.read().await.get(uri).cloned()?;
+        let (line, column) = (position.line + 1, position.character + 1);
+        let answered = tokio::task::spawn_blocking(move || engine_overlay::hover(&path, &source, line, column)).await;
+        answered.ok()?.ok()?
+    }
+
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
     pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32, debounce: bool) {
         let ticket = Arc::new(());
