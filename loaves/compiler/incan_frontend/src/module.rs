@@ -82,8 +82,12 @@ pub struct MissingSourceModule {
 /// One resolved import declaration inside a parsed program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedProgramSourceImport {
+    /// The import declaration's span.
     pub span: Span,
+    /// What the import names.
     pub resolution: SourceModuleImportResolution,
+    /// Every path the resolution looked for and found absent, in lookup order.
+    pub probed: Vec<PathBuf>,
 }
 
 /// Kind of declaration surfaced by [`exported_type_like_docs`].

@@ -88,7 +88,7 @@ def counted_toolchain(scratch: Path) -> Result[Toolchain, str]:
     """A compiler that cannot start a worker, counts each compilation and writes a fixed executable."""
     driver = scratch.joinpath("toolchain").joinpath("driver")
     attempts = scratch.joinpath("attempts")
-    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\n"
     script += "printf '%s' '{\"schema\":\"incan.native-shared/1\",\"libraries\":[]}' > \"$4.native-shared.json\"\nexit 0\n"
     write(driver, script)?

@@ -22,14 +22,15 @@ from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitDescription
 from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
 from frozen_inputs import observation as frozen_observation
-from source_identity import entry_scope, source_inputs
+from source_identity import absent_inputs, entry_scope, source_inputs
+from unit_sources import SourceGraph, source_graph
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from rust::std::env::consts import OS
 
-const UNIT_DOMAIN: str = "incan.oven.unit/3"
+const UNIT_DOMAIN: str = "incan.oven.unit/4"
 const CODEGEN_DOMAIN: str = "incan.oven.codegen/2"
 
 
@@ -159,13 +160,22 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
-    mut key = reconciled_key(unit, selected_compiler, description_digest(unit)?, project)?
+    described = description_digest(unit)?
+    # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
+    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", ledger_name(unit), project)?
+    mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
 
 
-pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def reconciled_key(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     The key of a unit against a ledger that may already hold what earlier requests observed.
 
@@ -173,7 +183,7 @@ pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut
     """
     hashed = project.hashed
     listed = project.listed
-    key = unit_key_with(unit, compiler, described, project)?
+    key = unit_key_with(unit, compiler, described, project, graph)?
     project.save()?
     work = f"hashed {project.hashed - hashed} files, listed {project.listed - listed} directories"
     trace(f"{ledger_name(unit)}: key {key.digest[:12]}, {work}")
@@ -354,7 +364,13 @@ pub def linked_natives(unit: UnitDescription) -> list[NativeCrate]:
     return [native for native in unit.externs if native.name not in unit.toolchain_access.sysroot_dependencies]
 
 
-pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def unit_key_with(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     Digest compiled source contents and fold the recorded identities of the units it links.
 
@@ -367,7 +383,7 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     3. Combine them with the compiler and the description into the key.
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
-    sources = source_contents(unit, project)?
+    sources = source_contents(unit, project, graph)?
     # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
     # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
     # frozen installation inputs after admission.
@@ -386,13 +402,27 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     )
 
 
-def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
-    """Resolve declared entries from their project and identify their roles without physical source locations."""
+def source_contents(unit: UnitDescription, mut project: Ledger, graph: Option[SourceGraph]) -> Result[list[str], str]:
+    """
+    Resolve declared entries from their project and identify their roles without physical source locations.
+
+    A unit with a source graph reads exactly its graph's files, and the graph's absent paths are inputs too: a file
+    created at one changes what collection reads. Any other unit reads every source under its roots.
+    """
     root = Path(unit.source_root)
     declared = Path(unit.project_root)
     mut contents = ["entry", entry_scope(Path(unit.source), root), project.digest(Path(unit.source))?]
-    modules = [path for path in unit_files(unit, project)? if path != unit.source]
-    contents.extend(source_inputs(modules, root, project)?)
+    match graph:
+        Some(collected) =>
+            # The collection's own paths are physical; bind them under the physical root.
+            physical = root.resolve().unwrap_or(root)
+            entry = Path(unit.source).resolve().unwrap_or(Path(unit.source)).0
+            modules = [path for path in collected.read if path != entry and path != unit.source]
+            contents.extend(source_inputs(modules, physical, project)?)
+            contents.extend(["absent"] + absent_inputs(collected.absent, physical))
+        None =>
+            modules = [path for path in unit_files(unit, project)? if path != unit.source]
+            contents.extend(source_inputs(modules, root, project)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     if let Some(entry) = unit.vocab_entry:
