@@ -16,7 +16,8 @@ from c_interop_requirements import CPlatformKind
 from files import json_text, write
 from features import FeatureRequest
 from intake import LocalProject, ManifestReader, intake
-from lock_format import OvenLock, lock_path, read_lock
+from lock_authority import lock_authority
+from lock_format import OvenLock, read_lock
 from project_lock import ensure_project_lock
 from unit import discovered_project
 
@@ -131,7 +132,9 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
     # 2. The lock covers the target's contract and every bundled file's digest.
     root = Path(project.root)
     ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), options.locked)?
-    lock = read_lock(lock_path(root))?
+    authority = lock_authority(root)?
+    lock = read_lock(authority.lock())?
+    package = authority.package(root)?
     # 3. A caller-owned output is never replaced.
     output = Path(options.output)
     if output.exists() or output.is_symlink():
@@ -143,7 +146,7 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
         staging.remove_tree().map_err((error) => f"{staging.0}: {error.message()}")?
     staging.mkdir(false, false).map_err((error) => f"{staging.0}: {error.message()}")?
     # 4. Each copy is the declared file's bytes, which the lock records.
-    match locked_files(project, target, options.adapter, staging, lock):
+    match locked_files(project, target, options.adapter, staging, lock, package):
         Ok(files) =>
             # 5. The manifest names output-relative paths only; the directory appears whole.
             manifest = staging.joinpath(MANIFEST_NAME)
@@ -173,13 +176,17 @@ def locked_files(
     adapter: StageAdapter,
     staging: Path,
     lock: OvenLock,
+    package: str,
 ) -> Result[list[StagedFile], str]:
-    """The staged files, each the digest `oven.lock` records for its artifact."""
+    """
+    The staged files, each the digest `oven.lock` records for its artifact under `package`, which names the
+    project in its workspace's lock and is empty for a lock's own root.
+    """
     files = staged_files(project, target, adapter, staging)?
     for file in files:
         mut recorded = ""
         for entry in lock.interop:
-            if entry.target == target.target:
+            if entry.target == target.target and entry.package == package:
                 for artifact in entry.artifacts:
                     if artifact.name == file.artifact.name:
                         recorded = artifact.digest

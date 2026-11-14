@@ -360,7 +360,7 @@ pub def local_facets(
     return Ok(facets)
 
 
-def compiled_domain(root: LocalDemand, reader: ManifestReader) -> Result[LocalDemand, str]:
+pub def compiled_domain(root: LocalDemand, reader: ManifestReader) -> Result[LocalDemand, str]:
     """
     A procedural macro runs in the compiler, so a root one is built for the host, as a dependency one is (step 4 of
     `child`). Its facet is then the one the release selects for the installed support generation. A test root keeps

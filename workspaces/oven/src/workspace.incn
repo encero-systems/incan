@@ -15,6 +15,7 @@ from std.toml import TomlValue
 from cli_help import render
 from files import read
 from intake import read_project, source_root_of
+from lock_authority import member_path
 from lock_format import LOCK_NAME, read_lock
 from workspace_shared import member_tables, shared_tables, unused_shared
 from rust::std::env import current_exe
@@ -127,9 +128,9 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     mut members: list[Member] = []
     if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
         members.append(Member(name=name, relative=".", root=root, is_root_member=true))
-    excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
+    excluded = [member_path(item) for item in strings(document, "workspace.exclude", manifest)]
     for item in listed:
-        relative = normalized(item)
+        relative = member_path(item)
         if relative in excluded:
             continue
         member_manifest = root.joinpath(relative).joinpath("loaf.toml")
@@ -145,7 +146,7 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
         members.append(Member(name=name, relative=relative, root=root.joinpath(relative)))
     if len(members) == 0:
         return Err(f"{manifest.0}: a virtual workspace must declare at least one member")
-    defaults = [normalized(item) for item in strings(document, "workspace.default-members", manifest)]
+    defaults = [member_path(item) for item in strings(document, "workspace.default-members", manifest)]
     return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults, excluded=excluded))
 
 
@@ -155,18 +156,6 @@ def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
         Ok(Some(values)) => return values
         Ok(None) => return []
         Err(_) => return []
-
-
-def normalized(path: str) -> str:
-    """A member path without a leading `./` or a trailing `/`; the root itself is `.`."""
-    mut text = path
-    while text.startswith("./"):
-        text = text[2:]
-    while text.endswith("/") and len(text) > 1:
-        text = text[:len(text) - 1]
-    if text == "":
-        return "."
-    return text
 
 
 pub def select_members(workspace: Workspace, selection: Selection) -> Result[tuple[ScopeOrigin, list[Member]], str]:
@@ -193,7 +182,7 @@ pub def select_members(workspace: Workspace, selection: Selection) -> Result[tup
 
 def resolve(workspace: Workspace, selector: str) -> Result[Member, str]:
     """The member a selector names by project name or root-relative path."""
-    path = normalized(selector)
+    path = member_path(selector)
     for member in workspace.members:
         if member.name == selector or member.relative == path:
             return Ok(member)

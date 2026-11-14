@@ -31,6 +31,7 @@ from files import json_text
 from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
+from lock_authority import project_lock_path
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
 from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
@@ -826,6 +827,19 @@ def toolchain_roots(toolchain: Toolchain) -> list[str]:
     return unique([root for root in roots if root != ""])
 
 
+def lock_inputs(root: Path) -> list[InputPath]:
+    """
+    The locks a manifest leads capture to: the one beside it, and its workspace root's when a workspace lists the
+    project, which is where its producer selection is read from (`lock_authority`).
+    """
+    own = root.joinpath("oven.lock").0
+    mut files = [InputPath(path=own, role=InputRole.Lock)]
+    authority = project_lock_path(root).0
+    if authority != own:
+        files.append(InputPath(path=authority, role=InputRole.Lock))
+    return files
+
+
 def declarations_of(manifest: str, content: bytes) -> Declarations:
     """
     What a manifest's admitted bytes lead capture to: the lock, the vocabulary entry, the contract models and C headers
@@ -836,11 +850,11 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
         Err(_) =>
             return Declarations(
                 manifest=manifest,
-                files=[InputPath(path=root.joinpath("oven.lock").0, role=InputRole.Lock)],
+                files=lock_inputs(root),
             )
         Ok(document) =>
             intent = document.intent
-            mut files = [InputPath(path=root.joinpath("oven.lock").0, role=InputRole.Lock)]
+            mut files = lock_inputs(root)
             if let Some(entry) = intent.vocab_entry:
                 files.append(InputPath(path=root.joinpath(entry).0, role=InputRole.Vocabulary))
             for named in intent.contract_models + intent.c_headers:

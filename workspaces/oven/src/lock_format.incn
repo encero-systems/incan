@@ -82,11 +82,6 @@ pub model OvenLock:
     pub interop: list[LockInterop] = []
 
 
-pub def lock_path(project: Path) -> Path:
-    """The one generated lock at a root project's boundary."""
-    return project.joinpath(LOCK_NAME)
-
-
 pub def validate_mode(mode: str) -> Result[str, str]:
     """Admit exactly the three RFC 125 version-selection modes."""
     if mode not in LOCK_MODES:
@@ -218,8 +213,8 @@ def read_loaf(value: TomlValue, source: str) -> Result[LockLoaf, str]:
         for selection in values:
             features.append(read_features(selection, source)?)
     origin = required_text(table, "origin", source)?
-    if origin not in ["root", "path", "registry", "toolchain"]:
-        return Err(f"{source}: Loaf origin must be root, path, registry or toolchain, got `{origin}`")
+    if origin not in ["root", "member", "path", "registry", "toolchain"]:
+        return Err(f"{source}: Loaf origin must be root, member, path, registry or toolchain, got `{origin}`")
     name = required_text(table, "name", source)?
     refuse_capitals(name).map_err((reason) => f"{source}: {reason}")?
     return Ok(
@@ -380,23 +375,54 @@ pub def published_lock(lock: OvenLock, name: str, version: str) -> Result[OvenLo
 
 
 pub def graph_identity(lock: OvenLock) -> Result[str, str]:
-    """Fold the root's semantic closure independently of table and edge order."""
-    mut roots: list[int] = []
-    for index in range(len(lock.loaves)):
-        if lock.loaves[index].origin == "root":
-            roots.append(index)
-    if len(roots) != 1:
-        return Err(f"oven.lock must contain exactly one root Loaf, found {len(roots)}")
-    reached = reachable_entries(roots[0], lock, set())?
+    """
+    Fold the semantic closure of the lock's root, and of a workspace lock's members, independently of table and edge
+    order. A lock with one root and no member keeps the identity it always had.
+    """
+    roots = graph_roots(lock)?
+    mut reached: set[str] = set()
+    for root in roots:
+        reached = reachable_entries(root, lock, reached)?
     if len(reached) != len(lock.loaves):
         return Err(f"oven.lock contains {len(lock.loaves) - len(reached)} Loaf entries outside the root graph")
-    mut visiting: set[str] = set()
-    digest = entry_digest(roots[0], lock, visiting)?
+    mut digests: list[str] = []
+    for root in roots:
+        mut visiting: set[str] = set()
+        digests.append(entry_digest(root, lock, visiting)?)
+    mut digest = digests[0]
+    if len(digests) > 1 or lock.loaves[roots[0]].origin == "member":
+        digest = hexlify(sha256.digest(length_prefixed(["members"] + sorted(digests)).encode("utf-8")))
     if len(lock.interop) == 0:
         return Ok("sha256:" + digest)
     # A root that declares C interop targets folds their contracts in; a lock without them keeps its identity.
     folded = length_prefixed([digest, interop_fact(lock.interop)])
     return Ok("sha256:" + hexlify(sha256.digest(folded.encode("utf-8"))))
+
+
+def graph_roots(lock: OvenLock) -> Result[list[int], str]:
+    """
+    The entries a lock's graph starts from: its one root Loaf, and each member of a workspace lock. A virtual
+    workspace's lock has members and no root.
+    """
+    mut roots: list[int] = []
+    mut members: list[int] = []
+    for index in range(len(lock.loaves)):
+        if lock.loaves[index].origin == "root":
+            roots.append(index)
+        if lock.loaves[index].origin == "member":
+            members.append(index)
+    if len(roots) > 1 or len(roots) + len(members) == 0:
+        return Err(f"oven.lock must contain exactly one root Loaf, or a workspace's members, found {len(roots)}")
+    return Ok(roots + members)
+
+
+pub def lock_roots(lock: OvenLock) -> list[LockLoaf]:
+    """A lock's root Loaf and workspace members, in the lock's order."""
+    mut entries: list[LockLoaf] = []
+    for entry in lock.loaves:
+        if entry.origin == "root" or entry.origin == "member":
+            entries.append(entry.clone())
+    return entries
 
 
 def reachable_entries(index: int, lock: OvenLock, seen: set[str]) -> Result[set[str], str]:
