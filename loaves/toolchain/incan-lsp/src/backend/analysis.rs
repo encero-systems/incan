@@ -35,8 +35,9 @@ impl IncanLanguageServer {
                 return;
             }
         }
-        // With the engine selected, diagnostics are the overlay request's answer, published as soon as it arrives; the
-        // in-process analysis below still keeps the document state hover and navigation read.
+        // With the engine selected, diagnostics are the overlay request's answer, published as soon as it arrives. The
+        // in-process analysis below still keeps the document state hover and navigation read, but only once typing
+        // pauses: an edit within the pause supersedes it, so it never competes with the next keystroke's request.
         let overlay = engine_overlay::selected();
         if overlay && let Ok(path) = uri.to_file_path() {
             let text = source.to_owned();
@@ -55,6 +56,11 @@ impl IncanLanguageServer {
             self.client
                 .publish_diagnostics(uri.clone(), diagnostics, Some(version))
                 .await;
+            tokio::time::sleep(std::time::Duration::from_millis(engine_overlay::ANALYSIS_PAUSE_MS)).await;
+            let tickets = self.analysis_tickets.read().await;
+            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
+                return;
+            }
         }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
