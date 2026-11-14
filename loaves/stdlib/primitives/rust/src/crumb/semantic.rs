@@ -21,13 +21,14 @@ pub struct SemanticCase {
 
 /// Exercise one corpus case through the native semantic boundary without borrowing an Incan result.
 ///
-/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec.
+/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec. Timing
+/// starts after the corpus document is parsed, so both stages measure the codec rather than the JSON reader.
 pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCase {
-    let encode_started = Instant::now();
     let parsed = match serde_json::from_str::<Value>(&document) {
         Ok(value) => value,
         Err(_) => return SemanticCase::unsupported(),
     };
+    let encode_started = Instant::now();
     let encoded = match operation.as_str() {
         "member_identity" => member_identity(&parsed),
         "nominal_identity" => nominal_identity(&parsed),
