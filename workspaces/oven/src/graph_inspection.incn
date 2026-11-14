@@ -305,7 +305,7 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     3. Otherwise prepare it, watching the inputs its answer will be paged with.
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
-    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
+    path = inspected_path(selected)?
     toolchain = load_toolchain()?
     key = page_key(selected, path, toolchain)?
     # 2. A warm request reads its page and checks its inputs' metadata.
@@ -335,7 +335,7 @@ def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Resu
     """
     # 1. Path failures are execution errors after syntax has been admitted.
     started = Instant.now()
-    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
+    path = inspected_path(selected)?
     if key != "":
         watch_inputs()
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
@@ -407,6 +407,18 @@ pub model Answered:
     pub snapshot: str = ""
     # Whether a selected unit failed checking, so the answer carries warnings that belong to its request.
     pub unchecked: bool = false
+
+
+def inspected_path(selected: GraphOptions) -> Result[Path, str]:
+    """
+    The resolved path a request inspects. A directory that holds no `loaf.toml` but lies inside a Loaf, such as its
+    `src`, names that Loaf, so its answer is the Loaf's.
+    """
+    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
+    if path.is_dir() and not path.joinpath("loaf.toml").is_file():
+        if let Some(root) = project_root_of(path.joinpath("loaf.toml")):
+            return Ok(root)
+    return Ok(path)
 
 
 def entry_source(path: Path) -> Path:
