@@ -1,6 +1,10 @@
 """Render command help and recognize help flags without reading a project or installed toolchain."""
 
+from manifest_errors import NO_SDK_SELECTION
+
 pub const REFERENCE: str = "Reference: https://incan.io/latest/tooling/reference/cli_reference/"
+# 0.5.1 selected an SDK profile with this option on check, build, run, test, lock and inspect; 0.6 removed it (#3144).
+const SDK_PROFILE: str = "--sdk-profile"
 
 
 pub def help_hint(surface: str) -> str:
@@ -41,5 +45,15 @@ pub def unknown_option(arguments: list[str]) -> Option[str]:
     """Return the first option where a command accepts operands only."""
     for argument in arguments:
         if argument.startswith("-"):
-            return Some(f"unknown option `{argument}`")
+            return Some(refused_option(argument))
     return None
+
+
+pub def refused_option(argument: str) -> str:
+    """
+    The refusal of an option a command does not take. 0.5.1's `--sdk-profile` (and its `=VALUE` spelling) is named with
+    its removal and why 0.6 needs no SDK selection, in the words the `[sdk]` table's refusal uses.
+    """
+    if argument == SDK_PROFILE or argument.startswith(f"{SDK_PROFILE}="):
+        return f"unknown option `{SDK_PROFILE}`: 0.6 removed SDK profiles and `[sdk]` (#3144); {NO_SDK_SELECTION}"
+    return f"unknown option `{argument}`"

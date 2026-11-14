@@ -6,7 +6,7 @@ selected closure, so it is Oven's inspection (RFC 118); `incan inspect features`
 
 from std.fs import Path
 from std.json import JsonValue
-from cli_help import render
+from cli_help import refused_option, render
 from features import FeatureRequest, resolve_features
 from intake import LocalProject, intake
 from unit import project_root_of
@@ -45,7 +45,7 @@ pub def parse_features(arguments: list[str]) -> Result[FeatureInspection, str]:
         elif argument == "--all-features":
             selected.request.all_features = true
         elif argument.startswith("-"):
-            return Err(f"unknown option `{argument}`")
+            return Err(refused_option(argument))
         elif seen_path:
             return Err(f"unexpected argument `{argument}`")
         else:

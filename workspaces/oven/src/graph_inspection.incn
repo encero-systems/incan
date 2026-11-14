@@ -36,7 +36,7 @@ from rust_manifest import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
 from unit_freshness import artifact_identity, fingerprint
-from cli_help import render as render_help
+from cli_help import refused_option, render as render_help
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
@@ -89,7 +89,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         return Err("expected `codegraph`")
     if arguments[0] != "codegraph":
         if arguments[0].startswith("-"):
-            return Err(f"unknown option `{arguments[0]}`")
+            return Err(refused_option(arguments[0]))
         return Err(f"unknown command `{arguments[0]}`")
     # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
     mut result = GraphOptions()
@@ -131,7 +131,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
             apply_flag(result, value, arguments[index + 1])?
             index += 2
         elif value.startswith("-"):
-            return Err(f"unknown option `{value}`")
+            return Err(refused_option(value))
         elif result.path != "":
             return Err(f"unexpected argument `{value}`")
         else:
