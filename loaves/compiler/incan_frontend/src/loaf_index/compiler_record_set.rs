@@ -26,7 +26,8 @@ use crate::library_manifest::{
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
 use crate::api_metadata::ApiDocumentation;
-use crate::library_manifest::executable_surface::ExecutableSurface;
+use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
@@ -374,6 +375,16 @@ fn read_surface_in(
         .unwrap_or_else(PoisonError::into_inner)
         .insert(prefix, found.clone());
     Ok(Some(found))
+}
+
+/// Read one Loaf group's runtime callable bindings from `set`, with the manifest digest of the group they belong to.
+fn read_runtime_bindings_in(
+    set: &RecordSet,
+    dir: &Path,
+    name: &str,
+) -> Result<Option<(Arc<Vec<RuntimeCallableBinding>>, String)>, LoafIndexError> {
+    Ok(read_group(set, dir, name, Projection::Execution)?
+        .map(|(manifest, digest)| (Arc::new(runtime_bindings(&manifest)), digest)))
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -920,13 +931,13 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{
-        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
-        read_surface_in,
+        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_runtime_bindings_in,
+        read_summary, read_surface_in,
     };
     use crate::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     };
-    use crate::library_manifest::executable_surface::ExecutableSurface;
+    use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
     use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
 
     /// The canonical lowercase SHA-256 spelling of `bytes`.
@@ -1208,6 +1219,27 @@ mod tests {
             "executable resolution read {} records, {} bytes; the bound is {SURFACE_BOUND}",
             read.records,
             read.bytes
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_lowering_reads_a_loafs_runtime_bindings_by_name() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library()?;
+        let set = installed_library(root.path(), &manifest)?;
+        let dir = root.path().join("debug");
+        // The index admits an installed Loaf by its inventory summary before anything demands its records.
+        read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+        let indexed = set.reads();
+        let (bindings, _) = read_runtime_bindings_in(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+        let expected = runtime_bindings(&manifest);
+        assert!(!expected.is_empty(), "`prices::price` is a runtime callable");
+        assert_eq!(*bindings, expected, "the bindings the manifest describes");
+        let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+        assert_eq!(
+            records, 1,
+            "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
         );
         Ok(())
     }

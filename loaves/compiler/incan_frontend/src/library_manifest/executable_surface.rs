@@ -1,10 +1,12 @@
-//! What executable resolution reads of one Loaf (RFC 179): its name and version, its executable descriptor and its
-//! own public executable identities. The installed compiler records publish the descriptor and the identities as
-//! records of their own, so resolving a reached Loaf never decodes its whole contract metadata.
+//! What executable resolution and native lowering read of one Loaf (RFC 179): its name and version, its executable
+//! descriptor, its own public executable identities and its runtime callable bindings. The installed compiler records
+//! publish the descriptor, the identities and the bindings as records of their own, so resolving a reached Loaf or a
+//! lowered runtime call never decodes its whole contract metadata.
 
 use std::collections::BTreeSet;
 
-use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::public_identities::public_executable_identities;
 use super::{ExecutableRepresentationExport, LibraryManifest};
@@ -36,8 +38,32 @@ impl ExecutableSurface {
 pub fn own_public_identities(manifest: &LibraryManifest) -> BTreeSet<CanonicalSymbolId> {
     public_executable_identities(manifest)
         .into_iter()
-        .filter(
-            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name),
-        )
+        .filter(|identity| owned(manifest, identity))
         .collect()
+}
+
+/// The runtime callables `manifest` binds for native lowering: every export with a two-segment public path that names
+/// a function the Loaf itself declares, as its public path and canonical identity.
+pub fn runtime_bindings(manifest: &LibraryManifest) -> Vec<RuntimeCallableBinding> {
+    manifest
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|export| export.public_path.len() == 2)
+        .filter_map(|export| {
+            Some(RuntimeCallableBinding {
+                path: export.public_path.join("::"),
+                canonical: export.canonical.as_ref()?.hydrate()?,
+            })
+        })
+        .filter(|binding| {
+            binding.canonical.kind == SemanticSourceTargetKind::Function && owned(manifest, &binding.canonical)
+        })
+        .collect()
+}
+
+/// Whether `manifest`'s Loaf itself declares `identity`.
+fn owned(manifest: &LibraryManifest, identity: &CanonicalSymbolId) -> bool {
+    matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
 }
