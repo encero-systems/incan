@@ -328,12 +328,16 @@ fn lower_component(
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
                 .entered();
-        let lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
+        let mut lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
             &module.ast,
             &module.path_segments,
             type_infos[index],
             &context,
         );
+        // A changed dependency declaration span can invalidate this namespace while leaving an exact scalar body
+        // reusable. That retained body still carries the dependency's previous edit-local canonical locator, so a
+        // newly assembled module needs the same rebinding as a whole-module restore before native planning.
+        incan_frontend::body_ir::refresh_dependency_call_targets(&mut lowered, &context_modules);
         context_modules.truncate(completed);
         context_modules.push(lowered);
     }
