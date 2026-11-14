@@ -223,7 +223,7 @@ The root project's `oven.lock` records each target's contract under `[[interop]]
 
 ## `[c]`
 
-A Loaf with a `[c]` table carries a C facet and is a Clove (RFC 159). Every path is relative to the Loaf root.
+A Loaf with a `[c]` table carries a C facet and is a Clove. Every path is relative to the Loaf root.
 
 | Field | Form | Meaning |
 | --- | --- | --- |
@@ -240,7 +240,7 @@ A configuration accepts `extends` (one other configuration), `sources` and `defi
 
 An `oven build`, `run`, `test` or `check` of a unit that reaches a Clove (its own project or a path dependency) compiles every configuration into a static archive under the Clove's own `target/incan/cloves/`, once for every unit that reaches it. Archive members, their order and their metadata are fixed, so identical inputs give identical archive bytes. A configuration is reused while its declared inputs and every file its compiles read are unchanged; a rebuilt archive rebuilds the units that link it. Optimization follows the profile: `-O0` for `debug`, `-O3` for `release`.
 
-No C toolchain release is installed with the Incan toolchain yet. `INCAN_C_COMPILER=host` selects the host compiler for local development: Xcode's Clang and `libtool` on macOS, `cc`, `c++` and `ar` elsewhere. The unit records the host compiler's identity and is not publishable.
+No C toolchain release is installed with the Incan toolchain. `INCAN_C_COMPILER=host` selects the host compiler for local development: Xcode's Clang and `libtool` on macOS, `cc`, `c++` and `ar` elsewhere. The unit records the host compiler's identity and is not publishable.
 
 - Refused: a missing `library`, `public-headers` or `[[c.compile]]` entry; a `library` that is not a C identifier; a declared `[c.configurations]` without `default`; an `extends` that names no configuration or forms a cycle; a definition that redefines one inherited through `extends`; a source of another file kind; an absolute path, a path naming an environment variable, or a path that leaves the Loaf root; a glob that matches nothing or spans directories; compiler flags (`flags`, `cflags` and other keys); a build without `INCAN_C_COMPILER=host`; and a compile that reads a file outside the Loaf root.
 
