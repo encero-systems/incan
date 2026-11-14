@@ -427,6 +427,14 @@ impl TypeChecker {
                 .values()
                 .flatten()
                 .all(|field| self.capture_has_native_auto_trait(field, marker, depth + 1)),
+            TypeInfo::Newtype(newtype) if newtype.is_rusttype => newtype.trait_adoptions.iter().any(|adoption| {
+                adoption.name == marker
+                    || adoption
+                        .name
+                        .rsplit(['.', ':'])
+                        .find(|segment| !segment.is_empty())
+                        .is_some_and(|name| name == marker)
+            }),
             TypeInfo::Newtype(newtype) if !newtype.is_rusttype => {
                 self.capture_has_native_auto_trait(&newtype.underlying, marker, depth + 1)
             }
