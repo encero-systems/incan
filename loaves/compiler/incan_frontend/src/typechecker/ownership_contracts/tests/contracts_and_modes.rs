@@ -308,6 +308,21 @@ fn mutable_stored_string_copy_warns() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+/// The migration warning labels the place it copies with the local that receives the copy.
+#[test]
+fn place_migration_warning_labels_the_copied_place() -> Result<(), Box<dyn std::error::Error>> {
+    let checker = checked(
+        "model Page:\n    title: str\ndef main() -> None:\n    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"new\"\n",
+    )?;
+    let warning = checker
+        .warnings
+        .iter()
+        .find(|warning| warning.stable_code() == Some("INCAN-T0125"))
+        .ok_or("missing INCAN-T0125")?;
+    assert_eq!(warning.primary_label(), Some("this place is copied into 'title'"));
+    Ok(())
+}
+
 /// Compatible annotations, scalar fields and read-only locals do not accidentally request independent copies.
 #[test]
 fn place_migration_includes_annotations_scalars_and_readonly() -> Result<(), Box<dyn std::error::Error>> {
