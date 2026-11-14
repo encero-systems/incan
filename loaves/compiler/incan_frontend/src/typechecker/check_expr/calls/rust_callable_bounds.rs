@@ -322,15 +322,27 @@ impl TypeChecker {
                 .and_then(|name| self.lookup_semantic_type_info(name)),
             _ => None,
         };
-        let source_fields = match source_model {
-            Some(TypeInfo::Model(model)) => Some(&model.fields),
-            Some(TypeInfo::Class(class)) => Some(&class.fields),
-            _ => None,
-        };
-        if let Some(fields) = source_fields {
-            return fields
-                .values()
-                .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
+        match source_model {
+            Some(TypeInfo::Model(model)) => {
+                return model
+                    .fields
+                    .values()
+                    .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
+            }
+            Some(TypeInfo::Class(class)) => {
+                return class
+                    .fields
+                    .values()
+                    .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
+            }
+            Some(TypeInfo::Enum(enum_info)) => {
+                return enum_info
+                    .variant_fields
+                    .values()
+                    .flatten()
+                    .all(|field| self.capture_has_native_auto_trait(field, marker, depth + 1));
+            }
+            _ => {}
         }
         let native = match ty {
             ResolvedType::Int => ResolvedType::RustPath("i64".into()),
