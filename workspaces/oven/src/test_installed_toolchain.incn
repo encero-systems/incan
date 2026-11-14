@@ -5,6 +5,7 @@ standard Loaf is incomplete is refused at admission, and a zstd archive needs no
 
 from rust::std::process import Command
 from std.fs import Path
+from std.testing import xfail
 from archive_decompression import plain_archive
 from files import make_directory, write as write_file
 from freshness_fixtures import make_executable, write
@@ -72,6 +73,7 @@ pub def test_a_zstd_toolchain_archive_is_read_without_a_zstd_program() -> Result
     return Ok(None)
 
 
+@xfail("its rule was reverted in 036c2e7c6; the admission lane lands the rule and this test again together")
 pub def test_an_installation_with_an_incomplete_standard_loaf_is_refused_at_admission() -> Result[None, str]:
     """
     A standard Loaf is admitted whole or not at all: its native library, interface, bodies and native description,
