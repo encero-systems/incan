@@ -9,7 +9,7 @@ from cli_help import render
 from files import read, write
 from semver_req import Version, parse_version
 from unit import project_root_of
-from workspace import Selection, find_workspace, select_members
+from workspace import ONE_MEMBER, Selection, find_workspace, root_scope, select_members
 
 pub const VERSION_USAGE: str = "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]"
 
@@ -120,13 +120,15 @@ pub def change_version(request: VersionRequest) -> Result[str, str]:
 
 def selected_manifest(project: Option[str], selection: Selection) -> Result[Path, str]:
     """
-    The manifest `--project` names, the one workspace member `--member` or `--workspace` selects, or the nearest one
-    at or above the working directory.
+    The manifest `--project` names, the one workspace member `--member` or `--workspace` selects, the one member a
+    workspace root's default members or virtual workspace select (`root_scope`), or the nearest one at or above the
+    working directory.
     """
-    if selection.workspace or len(selection.members) > 0:
+    implicit = project is None and root_scope("version", [], [])
+    if selection.workspace or len(selection.members) > 0 or implicit:
         _origin, members = select_members(find_workspace(Path("."))?, selection)?
         if len(members) != 1:
-            return Err("requires exactly one workspace member; select one with --member NAME_OR_PATH")
+            return Err(ONE_MEMBER)
         return Ok(members[0].root.joinpath("loaf.toml"))
     if let Some(directory) = project:
         manifest = Path(directory).joinpath("loaf.toml")

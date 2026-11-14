@@ -23,6 +23,8 @@ from rust::std::process import Command
 pub const INSPECT_USAGE: str = "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."
 # The workspace table's keys.
 pub const WORKSPACE_KEYS: FrozenList[str] = ["members", "default-members", "exclude"]
+# `run` and `version` act on one project; a selection of several members is refused, as in 0.5.1.
+pub const ONE_MEMBER: str = "requires exactly one workspace member; select one with --member NAME_OR_PATH"
 
 
 @derive(Eq)
@@ -32,6 +34,8 @@ pub enum ScopeOrigin(str):
     DefaultMembers = "default_members"
     Workspace = "workspace"
     ExplicitMembers = "explicit_members"
+    CurrentMember = "current_member"
+    ImplicitRootMember = "implicit_root_member"
 
 
 pub model Selection:
@@ -162,22 +166,18 @@ def normalized(path: str) -> str:
 pub def select_members(workspace: Workspace, selection: Selection) -> Result[tuple[ScopeOrigin, list[Member]], str]:
     """
     The members a selection names, in declaration order: every member for `--workspace`, the named ones for
-    `--member`, otherwise the default members (every member when none are declared); `--exclude` removes members.
+    `--member`, otherwise the implicit scope (`implicit_scope`); `--exclude` removes members.
     """
-    mut origin = ScopeOrigin.DefaultMembers
+    mut origin = ScopeOrigin.Workspace
     mut chosen: list[str] = []
     if selection.workspace:
-        origin = ScopeOrigin.Workspace
         chosen = [member.relative for member in workspace.members]
     elif len(selection.members) > 0:
         origin = ScopeOrigin.ExplicitMembers
         for selector in selection.members:
             chosen.append(resolve(workspace, selector)?.relative)
-    elif len(workspace.default_members) > 0:
-        for selector in workspace.default_members:
-            chosen.append(resolve(workspace, selector)?.relative)
     else:
-        chosen = [member.relative for member in workspace.members]
+        origin, chosen = implicit_scope(workspace)?
     mut removed: list[str] = []
     for selector in selection.excluded:
         removed.append(resolve(workspace, selector)?.relative)
@@ -192,6 +192,79 @@ def resolve(workspace: Workspace, selector: str) -> Result[Member, str]:
         if member.name == selector or member.relative == path:
             return Ok(member)
     return Err(f"`{selector}` does not identify a workspace member of {workspace.manifest.0}")
+
+
+def implicit_scope(workspace: Workspace) -> Result[tuple[ScopeOrigin, list[str]], str]:
+    """
+    The members a command acts on when it names none, as in 0.5.1: the member whose directory holds the working
+    directory, else the default members, else a rooted workspace's root project, else every member.
+    """
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    mut current = ""
+    for member in workspace.members:
+        inside = working.0 == member.root.0 or working.0.startswith(member.root.0 + "/")
+        if not member.is_root_member and inside and len(member.relative) > len(current):
+            current = member.relative
+    if current != "":
+        return Ok((ScopeOrigin.CurrentMember, [current]))
+    if len(workspace.default_members) > 0:
+        mut chosen: list[str] = []
+        for selector in workspace.default_members:
+            chosen.append(resolve(workspace, selector)?.relative)
+        return Ok((ScopeOrigin.DefaultMembers, chosen))
+    for member in workspace.members:
+        if member.is_root_member:
+            return Ok((ScopeOrigin.ImplicitRootMember, [member.relative]))
+    return Ok((ScopeOrigin.Workspace, [member.relative for member in workspace.members]))
+
+
+pub def root_scope(command: str, arguments: list[str], valued: list[str]) -> bool:
+    """
+    Whether a project command that selects no member acts on its workspace's members, as in 0.5.1: when the working
+    directory is a workspace root whose implicit scope is its default members or, for a virtual workspace, every
+    member, and the command names no PATH. A root without default members acts on its root project, as before.
+    """
+    if names_operand(command, arguments, valued):
+        return false
+    match root_origin():
+        Ok(Some(origin)) => return origin == ScopeOrigin.DefaultMembers or origin == ScopeOrigin.Workspace
+        Ok(None) => return false
+        # A workspace root whose members cannot be read: member selection reports why.
+        Err(_) => return true
+
+
+def root_origin() -> Result[Option[ScopeOrigin], str]:
+    """
+    The implicit scope's origin when the working directory is a workspace root, and `None` when it is not or its
+    manifest does not parse, which the command itself then reports.
+    """
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    manifest = working.joinpath("loaf.toml")
+    if not manifest.is_file():
+        return Ok(None)
+    match toml.parse(read(manifest)?):
+        Err(_) => return Ok(None)
+        Ok(document) =>
+            if "workspace" not in document.as_table().map_err((error) => error.message())?:
+                return Ok(None)
+            origin, _members = implicit_scope(read_workspace(working, manifest, document)?)?
+            return Ok(Some(origin))
+
+
+def names_operand(command: str, arguments: list[str], valued: list[str]) -> bool:
+    """Whether a project command's arguments name a PATH, skipping each option's value; after `--` only `fmt` takes paths."""
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            return command == "fmt" and index + 1 < len(arguments)
+        if argument in valued:
+            index += 2
+            continue
+        if not argument.startswith("-"):
+            return true
+        index += 1
+    return false
 
 
 pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
@@ -292,6 +365,8 @@ pub def run_members(surface: str, command: str, selection: Selection) -> Result[
     _origin, members = select_members(workspace, selection)?
     if len(members) == 0:
         return Err(f"the selection names no member of {workspace.manifest.0}")
+    if command == "run" and len(members) != 1:
+        return Err(ONE_MEMBER)
     executable = current_exe().map_err((error) => f"cannot locate the running Oven: {error}")?
     mut own: list[str] = []
     mut passed: list[str] = []
