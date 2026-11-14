@@ -205,13 +205,9 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
     family's range of it: the index holds every edit's records, so a whole listing grew with each edit.
     """
-    if family == "" or profile == "" or "\t" in family or "\t" in profile:
-        return Err("reusable compiler family selection requires delimiter-free family and profile names")
     prefix = "incan.engine.output\t" + profile + "\t"
     mut records: list[ReusableRecord] = []
-    for indexed in keys_with_prefix(selected, prefix + family + "\t").map_err((error) => error.message())?:
-        if not indexed.startswith(prefix):
-            continue
+    for indexed in family_outputs(selected, family, profile)?:
         key = decode_record_key(indexed[len(prefix):])?
         if key.family != family:
             continue
@@ -219,6 +215,21 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
             None => pass
     return Ok(records)
+
+
+pub def family_outputs(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
+    """
+    List one family/profile's current outputs in the graph's output index, by key, without reading, decoding or
+    validating any of them. A new evaluation in the family changes the listing.
+    """
+    if family == "" or profile == "" or "\t" in family or "\t" in profile:
+        return Err("reusable compiler family selection requires delimiter-free family and profile names")
+    prefix = "incan.engine.output\t" + profile + "\t"
+    mut listed: list[str] = []
+    for indexed in keys_with_prefix(selected, prefix + family + "\t").map_err((error) => error.message())?:
+        if indexed.startswith(prefix):
+            listed.append(indexed)
+    return Ok(listed)
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:

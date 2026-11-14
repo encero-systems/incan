@@ -50,7 +50,6 @@ from unit_compiler import (
     crate_name,
     described_by,
     run_compiler,
-    write_selected_records,
     write_unit,
 )
 from files import discard_file
@@ -82,25 +81,23 @@ pub def check_prepared(
     ready: UnitDescription,
     toolchain: Toolchain,
     format: str,
-    records: Option[list[SelectedBodyPage]] = None,
+    pages: Option[Path] = None,
 ) -> Result[CheckedUnit, str]:
     """
-    Check a prepared unit. With the engine's selected checked-body records, the compiler restores each owner they hold
-    instead of checking it, exactly as a build does, and reports which bodies it checked and which it restored.
+    Check a prepared unit. With a directory of the engine's selected checked-body pages, the compiler restores each
+    owner they hold instead of checking it, exactly as a build does, and reports which bodies it checked and restored.
 
     1. Key the prepared unit and publish its description under that key.
-    2. Write the selected records beside the description, and name the sidecar the compiler reports its bodies in.
+    2. Name the page directory and the sidecar the compiler reports its bodies in.
     3. Replay the stored report for this key and format, or check and retain a certified report.
     """
     # 1. An unchanged description is kept as it is.
     key = unit_key(ready, toolchain)?
     path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
-    # 2. A check's records sit apart from a build's, which may be selected for the same unit.
+    # 2. The engine keeps a check's pages apart from a build's, which may be selected for the same unit.
     mut options: list[str] = []
     mut sidecar: Option[Path] = None
-    if let Some(pages) = records:
-        directory = Path(f"{path.0}.check-body-records")
-        write_selected_records(directory, ready, pages)?
+    if let Some(directory) = pages:
         report = Path(f"{path.0}.checked-bodies")
         discard_file(report)
         options = ["--checked-bodies", report.0, "--graph-body-records", directory.0]

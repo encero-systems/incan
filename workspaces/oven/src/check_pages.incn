@@ -1,0 +1,170 @@
+"""
+A check's selected checked-body pages, kept between keystrokes.
+
+Each program an editor view checks keeps one page directory. Its pages are selected, encoded and written once, when the
+view's checked-body records first appear or change; a later keystroke only parks the pages of the owners its edit
+reaches and returns the pages of those it no longer reaches. The compiler reads the directory exactly as a build's.
+
+The directory's selection is recorded beside it, so every request finds it, whichever engine process serves it.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from rust::std::fs import remove_dir_all
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from compiler_body_values import encode_body_inventory, select_body_inventory_except
+from compiler_graph_records import family_outputs
+from observation import trace
+from publication import place, publish
+from unit import UnitDescription
+from unit_compiler import write_selected_records
+
+# The checker families one page carries; a new output in any of them selects the view's pages again.
+const PAGE_FAMILIES: FrozenList[str] = ["local", "final", "body-ir"]
+
+
+model KeptPages:
+    """One page directory's selection: what it was selected from, each owner's page key, and the owners parked now."""
+
+    pub source: str
+    pub pages: Dict[str, str] = {}
+    pub parked: list[str] = []
+
+
+pub model CheckPages:
+    """A check's page directory, how many owners' pages it offers the compiler, and how many it wrote for them."""
+
+    pub directory: Path
+    pub offered: int = 0
+    pub written: int = 0
+
+
+pub def check_page_directory(store: Path, view: str, unit: UnitDescription) -> Path:
+    """One directory per store, view and program, so two engines or two views never share a selection."""
+    name = hexlify(sha256.digest(f"{store.0}\n{view}".encode("utf-8")))[:24]
+    return Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("check-pages").joinpath(name)
+
+
+pub def keep_check_pages(
+    graph: Snapshot,
+    origin: str,
+    invalid: list[str],
+    unit: UnitDescription,
+    directory: Path,
+) -> Result[CheckPages, str]:
+    """
+    Offer the compiler every selected owner's page except those of the owners `invalid` names.
+
+    1. Name what the pages are selected from: the compiler context and the view's checked-body outputs.
+    2. Select, encode and write every owner's page only when that changed, or when the directory is gone.
+    3. Park the page of each owner this request invalidates, and return each page it no longer does.
+    """
+    # 1. The output index names each current evaluation without reading or validating it.
+    source = selection_source(graph, unit)?
+    mut state = recorded_selection(directory)
+    mut written = 0
+    # 2. A new evaluation in the view, another compiler context or a removed directory selects every owner again.
+    if state.source != source or not directory.is_dir():
+        trace(f"check pages {directory.0}: selected again; recorded source '{state.source}', current '{source}'")
+        state = select_pages(graph, origin, unit, directory, source)?
+        written = len(state.pages)
+    # 3. Each move is one rename: no page is selected, encoded or written again.
+    parked = parked_directory(directory)
+    mut resting: list[str] = []
+    mut offered = 0
+    for identity in sorted([owner for owner in state.pages.keys()]):
+        key = state.pages[identity]
+        was_parked = identity in state.parked
+        if identity in invalid:
+            if not was_parked:
+                place(directory.joinpath(key), parked.joinpath(key))?
+            resting.append(identity)
+        else:
+            if was_parked:
+                place(parked.joinpath(key), directory.joinpath(key))?
+            offered += 1
+    state.parked = resting
+    record_selection(directory, state)?
+    return Ok(CheckPages(directory=directory, offered=offered, written=written))
+
+
+def recorded_selection(directory: Path) -> KeptPages:
+    """The selection recorded beside `directory`; an absent or unreadable record selects every page again."""
+    match read_selection(directory):
+        Ok(state) => return state
+        Err(_) => return KeptPages(source="")
+
+
+def read_selection(directory: Path) -> Result[KeptPages, str]:
+    """Read a recorded selection; an owner is parked exactly when its page rests in the parked directory."""
+    file = selection_file(directory)
+    if not file.is_file():
+        return Ok(KeptPages(source=""))
+    text = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+    value = parse(text).map_err((error) => error.message())?
+    source = value.require("source").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    keyed = value.require("pages").map_err((error) => error.message())?
+    listed: Dict[str, JsonValue] = keyed.expect_object().map_err((error) => error.message())?
+    mut pages: Dict[str, str] = {}
+    mut parked: list[str] = []
+    for identity in sorted([owner for owner in listed.keys()]):
+        key = listed[identity].expect_str().map_err((error) => error.message())?
+        pages[identity] = key
+        if parked_directory(directory).joinpath(key).is_file():
+            parked.append(identity)
+    return Ok(KeptPages(source=source, pages=pages, parked=parked))
+
+
+def record_selection(directory: Path, state: KeptPages) -> Result[None, str]:
+    """Record what the directory's pages were selected from and each owner's page key, replacing the earlier record."""
+    mut pages: Dict[str, JsonValue] = {}
+    for identity in state.pages.keys():
+        pages[identity] = JsonValue.string(state.pages[identity])
+    document = JsonValue.object({"source": JsonValue.string(state.source), "pages": JsonValue.object(pages)})
+    return publish(selection_file(directory), document.to_json().map_err((error) => error.message())?)
+
+
+def selection_source(graph: Snapshot, unit: UnitDescription) -> Result[str, str]:
+    """The compiler context and every current checked-body output key in the view, as one digest."""
+    context = match unit.checked_context:
+        Some(value) => value
+        None => return Err("checked-body pages require the complete compiler context")
+
+    mut parts = [context]
+    for family in PAGE_FAMILIES:
+        parts.extend(family_outputs(graph, family, CHECKER_PROFILE)?)
+    return Ok(hexlify(sha256.digest("\n".join(parts).encode("utf-8"))))
+
+
+def select_pages(
+    graph: Snapshot,
+    origin: str,
+    unit: UnitDescription,
+    directory: Path,
+    source: str,
+) -> Result[KeptPages, str]:
+    """Select, encode and write every reusable owner's page into a fresh directory, with no owner parked."""
+    records = select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?
+    pages = encode_body_inventory(records)?
+    write_selected_records(directory, unit, pages)?
+    parked = parked_directory(directory)
+    if parked.exists():
+        remove_dir_all(parked.0).map_err((error) => f"cannot replace parked pages: {error}")?
+    parked.mkdir(true, true).map_err((error) => f"{parked.0}: {error.message()}")?
+    mut keys: Dict[str, str] = {}
+    for index in range(len(records)):
+        keys[records[index].identity] = pages[index].key
+    return Ok(KeptPages(source=source, pages=keys, parked=[]))
+
+
+def parked_directory(directory: Path) -> Path:
+    """Where the pages of invalidated owners wait, beside the directory the compiler reads."""
+    return Path(f"{directory.0}.parked")
+
+
+def selection_file(directory: Path) -> Path:
+    """Where the directory's selection is recorded, beside the directory the compiler reads."""
+    return Path(f"{directory.0}.selection")
