@@ -1,5 +1,6 @@
 """
-Checked compiler metadata for tooling and documentation: a source package's public API and its typed registries.
+Checked compiler metadata for tooling and documentation: a source package's public API, its contract-backed models
+and its typed registries.
 
 Each view reads the library manifest the compiler publishes for the package's checked source interface, the same
 `contract_metadata` a compiled Loaf's `.incnlib` carries. Nothing is compiled natively and no module is executed.
@@ -16,8 +17,10 @@ from intake import ManifestReader, entry_source
 from unit import describe
 from unit_compiler import crate_name, run_compiler, write_unit
 from unit_rust import prepare_native, toolchain_for
+from toolchain import load_toolchain
 
 pub const API_USAGE: str = "incan tools metadata api [PATH] [--format json]"
+pub const MODEL_USAGE: str = "incan tools metadata model PATH MODEL [--format incan|json]"
 pub const REGISTRY_USAGE: str = "incan inspect registry IDENTITY [--project PATH] [--format json]"
 
 
@@ -26,6 +29,7 @@ pub enum MetadataView(str):
     """Which checked metadata a request prints."""
 
     Api = "api"
+    Model = "model"
     Registry = "registry"
 
 
@@ -39,14 +43,17 @@ pub model MetadataRequest:
 
 
 pub def parse_metadata(arguments: list[str]) -> Result[MetadataRequest, str]:
-    """`tools metadata api [PATH] [--format json]`."""
+    """`tools metadata api [PATH] [--format json]` or `tools metadata model PATH MODEL [--format incan|json]`."""
     if len(arguments) == 0:
-        return Err("expected `api`")
-    if arguments[0] != "api":
-        if arguments[0].startswith("-"):
-            return Err(f"unknown option `{arguments[0]}`")
-        return Err(f"unknown command `{arguments[0]}`")
+        return Err("expected `api` or `model`")
+    view = arguments[0]
+    if view != "api" and view != "model":
+        if view.startswith("-"):
+            return Err(f"unknown option `{view}`")
+        return Err(f"unknown command `{view}`")
     mut format = "json"
+    if view == "model":
+        format = "incan"
     mut operands: list[str] = []
     mut index = 1
     while index < len(arguments):
@@ -58,14 +65,20 @@ pub def parse_metadata(arguments: list[str]) -> Result[MetadataRequest, str]:
             return Err(f"unknown option `{arguments[index]}`")
         operands.append(arguments[index])
         index += 1
-    if len(operands) > 1:
-        return Err(f"unexpected argument `{operands[1]}`")
-    if format != "json":
-        return Err(f"`--format` is json, got `{format}`")
-    mut path = "."
-    if len(operands) == 1:
-        path = operands[0]
-    return Ok(MetadataRequest(view=MetadataView.Api, path=path, format=format))
+    if view == "api":
+        if len(operands) > 1:
+            return Err(f"unexpected argument `{operands[1]}`")
+        if format != "json":
+            return Err(f"`--format` is json, got `{format}`")
+        mut path = "."
+        if len(operands) == 1:
+            path = operands[0]
+        return Ok(MetadataRequest(view=MetadataView.Api, path=path, format=format))
+    if len(operands) != 2:
+        return Err("expected PATH and MODEL")
+    if format != "incan" and format != "json":
+        return Err(f"`--format` is incan or json, got `{format}`")
+    return Ok(MetadataRequest(view=MetadataView.Model, path=operands[0], name=operands[1], format=format))
 
 
 pub def parse_registry(arguments: list[str]) -> Result[MetadataRequest, str]:
@@ -94,7 +107,9 @@ pub def parse_registry(arguments: list[str]) -> Result[MetadataRequest, str]:
 
 
 pub def checked_metadata(request: MetadataRequest) -> Result[i32, str]:
-    """Print the requested view; a registry the package does not publish is refused with the ones it does."""
+    """Print the requested view; a model or registry the package does not publish is refused with what it does."""
+    if request.view == MetadataView.Model:
+        return print_model(request)
     metadata = contract_metadata(checked_manifest(Path(request.path))?)?
     if request.view == MetadataView.Registry:
         return print_registry(metadata, request)
@@ -103,6 +118,20 @@ pub def checked_metadata(request: MetadataRequest) -> Result[i32, str]:
             println(api.to_pretty_json().map_err((error) => error.message())?)
             return Ok(0)
         None => return Err(f"{request.path}: the compiler published no checked API metadata")
+
+
+def print_model(request: MetadataRequest) -> Result[i32, str]:
+    """
+    Print one contract-backed model from checked model metadata: a bundle JSON file, a `.incnlib` artifact, or the
+    manifest of a project's checked source interface. The compiler formats the model source and names the bundles
+    available when MODEL is not one of them.
+    """
+    path = Path(request.path)
+    mut metadata = path
+    if not path.is_file() or not (path.0.endswith(".json") or path.0.endswith(".incnlib")):
+        metadata = checked_manifest(path)?
+    toolchain = load_toolchain()?
+    return run_compiler(toolchain, ["--emit-model", metadata.0, request.name, request.format, request.path])
 
 
 def checked_manifest(path: Path) -> Result[Path, str]:
@@ -222,13 +251,23 @@ def text(value: JsonValue, key: str) -> Result[str, str]:
 
 
 pub def metadata_help(view: MetadataView) -> str:
-    """`incan tools metadata api --help` and `incan inspect registry --help`."""
+    """`incan tools metadata api|model --help` and `incan inspect registry --help`."""
     match view:
         MetadataView.Api =>
             return render(
                 API_USAGE,
                 ["  --format json  Checked public API metadata, the `contract_metadata.api` a library publishes."],
                 "incan tools metadata api src/lib.incn",
+            )
+        MetadataView.Model =>
+            return render(
+                MODEL_USAGE,
+                [
+                    "  --format incan|json  Formatted Incan model source (default) or the canonical model bundle.",
+                    "  PATH is a project directory, a bundle JSON file or a `.incnlib` artifact.",
+                    "  MODEL is a logical type name or a stable model id.",
+                ],
+                "incan tools metadata model . Order",
             )
         MetadataView.Registry =>
             return render(
