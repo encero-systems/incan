@@ -18,6 +18,7 @@ concurrency:
 
 env:
   INCAN_NO_BANNER: 1
+  INCAN_STDLIB: ${{ github.workspace }}/loaves/stdlib
 
 jobs:
   hygiene:
