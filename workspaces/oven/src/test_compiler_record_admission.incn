@@ -1,5 +1,7 @@
 """Installation admits the compiler records a toolchain ships, without running a compiler or copying them (RFC 179)."""
 
+from rust::std::os::unix::fs import symlink
+from rust::std::process import Command
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import file_digest, sha256
@@ -46,7 +48,65 @@ pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Re
     # 3. Nothing was converted, copied or rewritten.
     assert pin.digest == sealed.digest, "the shipped pin is kept"
     assert sealed_inventory(installed)? == before, "admission wrote no object"
+
+
+pub def test_a_stage_seals_the_records_of_the_manifests_it_links_and_of_no_other() -> Result[None, str]:
+    """
+    Packing seals the records of the Loaves its stage ships. A manifest the stage links has its records in the set; a
+    manifest the builder's installation holds besides, such as a replaced native runtime's, has none.
+
+    1. An installation with two builds of one Loaf, and a stage that links only the newer one.
+    2. Seal the stage's records with a driver that, like the compiler, exports the regular manifest files it is shown.
+    3. The set holds the shipped build's record and not the other's.
+    """
+    scratch = scratch_directory()?
+    # 1. The stage names what ships by links, as packing stages every artifact.
+    installed = scratch.path().joinpath("toolchain")
+    replaced = installed.joinpath("native/replaced/fixture.incnlib")
+    current = installed.joinpath("native/current/fixture.incnlib")
+    for manifest in [replaced, current]:
+        manifest.parent().mkdir(true, true).map_err((error) => error.message())?
+        manifest.write_bytes(f"manifest of {manifest.parent().name()}".encode("utf-8")).map_err(
+            (error) => error.message(),
+        )?
+    stage = scratch.path().joinpath("stage")
+    stage.joinpath("native/current").mkdir(true, true).map_err((error) => error.message())?
+    symlink(current.0, stage.joinpath("native/current/fixture.incnlib").0).map_err((error) => str(error))?
+    # 2. The export names each record by its manifest's directory and Loaf, as the compiler's does.
+    driver = exporting_driver(scratch.path().joinpath("driver"))?
+    pin = convert(driver.0, stage, stage)?
+    # 3. Only the linked manifest was exported.
+    sealed = stage.joinpath(pin.root).joinpath("manifest.json").read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )?
+    assert "loaf/current/fixture/" in sealed, "the shipped Loaf's record is not in the sealed set"
+    assert "loaf/replaced/fixture/" not in sealed, "a Loaf the stage does not ship has a record in the sealed set"
     return Ok(None)
+
+
+def exporting_driver(path: Path) -> Result[Path, str]:
+    """A driver that exports one record for each regular `.incnlib` file below the directory it is shown."""
+    lines = [
+        "#!/bin/sh",
+        "[ \"$1\" = --compiler-records ] || exit 1",
+        "mkdir -p \"$3/objects\" || exit 1",
+        "records=",
+        "for manifest in $(/usr/bin/find \"$2\" -type f -name '*.incnlib' | /usr/bin/sort); do",
+        "  revision=$(/usr/bin/shasum -a 256 \"$manifest\" | /usr/bin/cut -d' ' -f1)",
+        "  /bin/cp \"$manifest\" \"$3/objects/$revision\"",
+        "  profile=$(/usr/bin/basename \"$(/usr/bin/dirname \"$manifest\")\")",
+        "  key=\"loaf/$profile/$(/usr/bin/basename \"$manifest\" .incnlib)/metadata/00000000/$revision\"",
+        "  shape='{\"key\":\"%s\",\"revision\":\"%s\",\"object\":\"objects/%s\"}'",
+        "  record=$(printf \"$shape\" \"$key\" \"$revision\" \"$revision\")",
+        "  records=\"$records${records:+,}$record\"",
+        "done",
+        "printf '{\"schema\":\"incan.compiler-record-export/2\",\"records\":[%s]}' \"$records\" > \"$3/index.json\"",
+        "",
+    ]
+    path.write_bytes("\n".join(lines).encode("utf-8")).map_err((error) => error.message())?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().map_err((error) => str(error))?.success(), "chmod failed"
+    return Ok(path)
 
 
 def ship_one_record(installed: Path) -> Result[Path, str]:
