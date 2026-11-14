@@ -55,9 +55,9 @@ pub(super) fn diagnostics(path: &Path, source: &str, version: i32) -> Result<Vec
         .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
     let version = version.max(0);
     let answered = if per_process() {
-        process_answer(path, &buffer, version, false)
+        process_answer(path, &buffer, version, &Ask::Diagnostics)
     } else {
-        served_answer(&mut server, path, &buffer, version, false)
+        served_answer(&mut server, path, &buffer, version, &Ask::Diagnostics)
     };
     let _ = std::fs::remove_file(&buffer);
     document_diagnostics(path, &answered?, version)
@@ -67,9 +67,9 @@ pub(super) fn diagnostics(path: &Path, source: &str, version: i32) -> Result<Vec
 pub(super) fn saved(path: &Path) -> Result<(), String> {
     let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let answered = if per_process() {
-        process_answer(path, path, 0, true)?
+        process_answer(path, path, 0, &Ask::Build)?
     } else {
-        served_answer(&mut server, path, path, 0, true)?
+        served_answer(&mut server, path, path, 0, &Ask::Build)?
     };
     if let Some(reason) = answered["error"].as_str() {
         return Err(reason.to_string());
@@ -80,15 +80,49 @@ pub(super) fn saved(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The signature of the declaration named at one-based `line` and `column` of `source`, answered from the editor
+/// view's records for an imported declaration, or from the buffer itself for one of its own; `None` names nothing.
+pub(super) fn hover(path: &Path, source: &str, line: u32, column: u32) -> Result<Option<String>, String> {
+    let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let buffer = buffer_path(path);
+    std::fs::write(&buffer, source)
+        .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
+    let ask = Ask::Hover(line, column);
+    let answered = if per_process() {
+        process_answer(path, &buffer, 0, &ask)
+    } else {
+        served_answer(&mut server, path, &buffer, 0, &ask)
+    };
+    let _ = std::fs::remove_file(&buffer);
+    let answered = answered?;
+    if let Some(reason) = answered["error"].as_str() {
+        return Err(reason.to_string());
+    }
+    Ok(answered["hover"].as_str().map(str::to_string))
+}
+
+/// What one overlay request asks the engine for.
+enum Ask {
+    Diagnostics,
+    Build,
+    Hover(u32, u32),
+}
+
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
 fn served_answer(
     server: &mut Option<OverlayServer>,
     path: &Path,
     buffer: &Path,
     version: i32,
-    build: bool,
+    ask: &Ask,
 ) -> Result<serde_json::Value, String> {
-    let request = serde_json::json!({"source": path, "buffer": buffer, "version": version, "build": build}).to_string();
+    let mut request = serde_json::json!({"source": path, "buffer": buffer, "version": version});
+    match ask {
+        Ask::Diagnostics => {}
+        Ask::Build => request["build"] = serde_json::json!(true),
+        Ask::Hover(line, column) => request["hover"] = serde_json::json!([line, column]),
+    }
+    let request = request.to_string();
     let mut last = String::new();
     for _ in 0..2 {
         if server.is_none() {
@@ -146,7 +180,7 @@ fn exchange(server: &mut OverlayServer, request: &str) -> Result<serde_json::Val
 }
 
 /// One answer from an Oven started for this analysis alone.
-fn process_answer(path: &Path, buffer: &Path, version: i32, build: bool) -> Result<serde_json::Value, String> {
+fn process_answer(path: &Path, buffer: &Path, version: i32, ask: &Ask) -> Result<serde_json::Value, String> {
     let mut command = Command::new(oven()?);
     command
         .arg("check")
@@ -157,8 +191,14 @@ fn process_answer(path: &Path, buffer: &Path, version: i32, build: bool) -> Resu
         .arg(version.to_string())
         .arg("--format")
         .arg("json");
-    if build {
-        command.arg("--build");
+    match ask {
+        Ask::Diagnostics => {}
+        Ask::Build => {
+            command.arg("--build");
+        }
+        Ask::Hover(line, column) => {
+            command.arg("--hover").arg(format!("{line}:{column}"));
+        }
     }
     let output = command
         .output()
