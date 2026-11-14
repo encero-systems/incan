@@ -10,6 +10,7 @@ from pub::incan_platform.store import (
     commit,
     get,
     keys_with_prefix,
+    revisions_with_prefix,
     stage_delete,
     stage_put,
 )
@@ -135,7 +136,7 @@ pub def prepare_evaluation(
     stage_put(transaction, value_key, value)
     stage_put(transaction, receipt_key, receipt_bytes)
     stage_put(transaction, evaluation_key, evaluation)
-    stage_put(transaction, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
+    stage_put(transaction, output_index_key(receipt.scope.profile, value_key)?, value_key.encode("utf-8"))
     outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
     mut encoded: list[bytes] = []
     for fact in edges:
@@ -206,14 +207,11 @@ pub def reusable_evaluation(
 pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
     """
     Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
-    family's range of it: the index holds every edit's records, so a whole listing grew with each edit.
+    family's range of it. The index holds one entry per slot, which names the slot's current record.
     """
-    prefix = "incan.engine.output\t" + profile + "\t"
     mut records: list[ReusableRecord] = []
-    for indexed in family_outputs(selected, family, profile)?:
-        key = decode_record_key(indexed[len(prefix):])?
-        if key.family != family:
-            continue
+    for output in family_outputs(selected, family, profile)?:
+        key = decode_record_key(output)?
         match reusable_evaluation(selected, key, profile)?:
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
             None => pass
@@ -231,11 +229,10 @@ pub def reusable_owner_records(
     Select the witnessed values of one family/profile for only the owners of `origin` that `owners` names, reading and
     validating no other owner's evaluation.
     """
-    prefix = "incan.engine.output\t" + profile + "\t"
     mut records: list[ReusableRecord] = []
-    for indexed in family_outputs(selected, family, profile)?:
-        key = decode_record_key(indexed[len(prefix):])?
-        if key.family != family or key.origin != origin or key.identity not in owners:
+    for output in family_outputs(selected, family, profile)?:
+        key = decode_record_key(output)?
+        if key.origin != origin or key.identity not in owners:
             continue
         match reusable_evaluation(selected, key, profile)?:
             Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
@@ -254,11 +251,9 @@ pub def owner_evaluations(
     digests their evaluations record. Another output, or another value under an output's old key, changes the owner's
     digest; evaluating the same value again does not. No value is read or validated.
     """
-    prefix = "incan.engine.output\t" + profile + "\t"
     mut parts: Dict[str, list[str]] = {}
     for family in families:
-        for indexed in family_outputs(selected, family, profile)?:
-            value_key = indexed[len(prefix):]
+        for value_key in family_outputs(selected, family, profile)?:
             key = decode_record_key(value_key)?
             if key.origin != origin:
                 continue
@@ -280,17 +275,35 @@ pub def owner_evaluations(
 
 pub def family_outputs(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
     """
-    List one family/profile's current outputs in the graph's output index, by key, without reading, decoding or
-    validating any of them. A new evaluation in the family changes the listing.
+    One family/profile's current outputs, as encoded record keys in the order of their slots. Each is the value of its
+    slot's entry in the graph's output index; no output is read, decoded or validated.
     """
+    mut listed: list[str] = []
+    for indexed in keys_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())?:
+        if len(indexed.split("\t")) != 7:
+            # An entry an earlier Oven keyed by the record's context as well; the slot's next evaluation retires it.
+            continue
+        output = required_value(selected, indexed)?.decode().map_err((_) => "compiler output index entry is not UTF-8")?
+        if output_index_key(profile, output)? != indexed:
+            return Err("compiler output index entry names a record of another slot")
+        listed.append(output)
+    return Ok(listed)
+
+
+pub def family_listing(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
+    """
+    The revision of every entry in one family/profile's range of the output index, in key order, read from the index
+    alone. A slot's entry is keyed by the slot and holds its current record's key, so the listing changes whenever a
+    slot of the family is evaluated in another context, joins the family or leaves it, and no entry's value is read.
+    """
+    return revisions_with_prefix(selected, family_range(family, profile)?).map_err((error) => error.message())
+
+
+def family_range(family: str, profile: str) -> Result[str, str]:
+    """The key range of the output index that holds one family/profile's entries."""
     if family == "" or profile == "" or "\t" in family or "\t" in profile:
         return Err("reusable compiler family selection requires delimiter-free family and profile names")
-    prefix = "incan.engine.output\t" + profile + "\t"
-    mut listed: list[str] = []
-    for indexed in keys_with_prefix(selected, prefix + family + "\t").map_err((error) => error.message())?:
-        if indexed.startswith(prefix):
-            listed.append(indexed)
-    return Ok(listed)
+    return Ok("incan.engine.output\t" + profile + "\t" + family + "\t")
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
@@ -323,13 +336,13 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
     record's readers are its current evaluations.
 
     An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
-    evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
-    index. A slot's edges are keyed by the slot and the read, and an incoming entry by the slot of the record it reads,
-    not by an evaluated context or the read's evidence, so the new evaluation writes its edges over the earlier one's,
-    under the same keys, also when the edit replaced the records it reads; only the earlier edges it does not write
-    again leave. A family selection and a reader lookup then meet one output per slot and one edge per current read
-    instead of one per earlier edit, and the edge indexes do not grow with edits. The superseded values, evaluations
-    and receipts stay, content named.
+    evaluated content, which an edit changes. The output index is keyed by the slot and names the slot's current
+    record, so the new evaluation writes its entry over the earlier one's. A slot's edges are keyed by the slot and the
+    read, and an incoming entry by the slot of the record it reads, not by an evaluated context or the read's evidence,
+    so the new evaluation writes its edges over the earlier one's, under the same keys, also when the edit replaced
+    the records it reads; only the earlier edges it does not write again leave. A family selection and a reader lookup
+    then meet one output per slot and one edge per current read instead of one per earlier edit, and neither index
+    grows with edits. The superseded values, evaluations and receipts stay, content named.
     """
     mut writing: set[str] = set()
     for write in transaction.writes:
@@ -337,13 +350,12 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
             writing.add(write.key)
     mut slots: set[str] = set()
     for key in writing:
-        fields = key.split("\t")
-        if key.startswith("incan.engine.output\t") and len(fields) == 8:
-            slots.add("\t".join(fields[:7]) + "\t")
+        if key.startswith("incan.engine.output\t") and len(key.split("\t")) == 7:
+            slots.add(key)
     for slot in sorted([item for item in slots]):
-        for old in keys_with_prefix(selected, slot).map_err((error) => error.message())?:
-            if old not in writing:
-                stage_delete(transaction, old)
+        # An earlier Oven keyed a slot's outputs by their context as well; the slot's own entry replaces them.
+        for old in keys_with_prefix(selected, slot + "\t").map_err((error) => error.message())?:
+            stage_delete(transaction, old)
         fields = slot.split("\t")
         retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing)?
     return Ok(None)
@@ -425,13 +437,16 @@ pub def evaluation_record_key(profile: str, output: str) -> str:
     return "incan.engine.evaluation\t" + identity
 
 
-def output_index_key(profile: str, output: str) -> str:
-    """Name one profile's current logical output without duplicating its value or evaluation document."""
-    return "incan.engine.output\t" + profile + "\t" + output
+def output_index_key(profile: str, output: str) -> Result[str, str]:
+    """
+    Where one profile's current output of a slot is indexed: under the slot, not the output's evaluated context, so the
+    next evaluation of the slot writes its entry over the earlier one's. The entry's value is the output's record key.
+    """
+    return Ok("incan.engine.output\t" + profile + "\t" + record_slot(output)?)
 
 
 def decode_record_key(encoded: str) -> Result[RecordKey, str]:
-    """Decode the canonical six-field record key retained verbatim in the output index."""
+    """Decode the canonical six-field record key retained verbatim as the output index's value."""
     fields = encoded.split("\t")
     if len(fields) != 6:
         return Err("compiler output index contains a malformed record key")
