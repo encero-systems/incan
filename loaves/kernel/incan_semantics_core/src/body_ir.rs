@@ -159,11 +159,6 @@ pub struct BodyIrModule {
     /// Checked concrete trait slots and the implementation body selected for each adopter.
     #[serde(default)]
     pub trait_implementations: Vec<TraitImplementation>,
-    /// Canonical callables this module publishes: each `pub` function or method, which another module, package or
-    /// Rust caller can name. Their parameter passing belongs to the published signature and follows declared rules
-    /// only, never the body. Settlement reads it from a freshly lowered module; publication never serializes it.
-    #[serde(skip)]
-    pub published_callables: Vec<CanonicalSymbolId>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
 }
@@ -182,7 +177,6 @@ impl BodyIrModule {
             type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),
             trait_implementations: Vec::new(),
-            published_callables: Vec::new(),
             module_id: CompilerNodeId::module(owner),
             loaf_callables: Vec::new(),
             native_union_declarations: Vec::new(),

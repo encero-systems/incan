@@ -647,7 +647,6 @@ mod decorated_bindings;
 mod entrypoint_effects;
 mod free_function_baseline;
 mod model_constants;
-mod published_callables;
 mod published_methods;
 mod registry_descriptions;
 mod registry_effects;

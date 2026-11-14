@@ -663,7 +663,6 @@ fn body_ir_module_snapshot_wraps_bodies() {
         value_enum_declarations: Vec::new(),
         trait_declarations: Vec::new(),
         trait_implementations: Vec::new(),
-        published_callables: Vec::new(),
         bodies: vec![sample_body()],
     };
     let snapshot = module.render_snapshot();
