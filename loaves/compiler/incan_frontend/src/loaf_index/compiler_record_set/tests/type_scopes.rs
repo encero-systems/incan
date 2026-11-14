@@ -1,5 +1,8 @@
 //! A Loaf's nominal type scope, read by module from the installed set (RFC 179).
 
+use std::sync::Arc;
+
+use super::super::thread_selection;
 use super::typechecker_reads::{CODECS, catalog_with, manifest_import_reads};
 use super::{content_name, installed_library, read_declaration_in, read_summary};
 use crate::api_metadata::{
@@ -7,6 +10,8 @@ use crate::api_metadata::{
     collect_checked_api_metadata, materialize_checked_api_public_namespaces,
 };
 use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::loaf_index::LoafIndex;
 
 /// The record family of a module's type scope.
 const TYPE_SCOPE: &str = "type-scope";
@@ -32,8 +37,13 @@ fn a_consumer_reads_one_modules_type_scope_record_alone() -> Result<(), Box<dyn 
     let [scope] = scopes.as_slice() else {
         return Err(format!("one type scope record for `money`, found {}", scopes.len()).into());
     };
+    let mut scope = scope.clone();
+    let identity = scope["names"]["Receipt"]
+        .as_object_mut()
+        .and_then(|declared| declared.remove("identity"));
+    assert!(identity.is_some(), "the scope names the identity of `Receipt`: {scope}");
     assert_eq!(
-        *scope,
+        scope,
         serde_json::json!({
             "module": ["money"],
             "standard": false,
@@ -178,6 +188,41 @@ fn a_standard_packages_type_scope_follows_its_std_spellings() -> Result<(), Box<
             "standard": true,
             "names": { "EncodingError": { "module": ["encoding", "_shared"], "name": "EncodingError", "scoped": true } },
         }),
+    );
+    Ok(())
+}
+
+/// A program that calls a function returning a model its module re-exports through another module is checked from
+/// the function's records, the type scopes of the modules on the way and the model's own records: it reads the
+/// model's layout by its declaring module's name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_a_function_naming_a_reexported_model_from_its_records() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let _selection = thread_selection::select(installed_library(root.path(), &reexporting(CODECS, &["std"])?)?);
+    let index = LoafIndex::deferred([(CODECS.to_owned(), CODECS.to_owned(), root.path().join("debug"), true)])?;
+    let source = "from std.encoding import hex\n\ndef main() -> str:\n    match hex.unhexlify(\"00\"):\n        Ok(data) => return \"\"\n        Err(error) => return error.detail\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let exports: Arc<[crate::module::ExportedSymbol]> = Arc::from(crate::module::exported_symbols(&program));
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_owned()]));
+    checker.set_loaves(Arc::new(index));
+    checker
+        .check_with_imports_and_exports(&program, &[], Default::default())
+        .map_err(|errors| format!("{errors:?}"))?;
+    checker.seal_current_module_dependency_interface("main", &program, exports, true);
+    let read = thread_selection::read_keys();
+    let layout = format!("/{}/", RecordFamily::Layout.as_str());
+    let named = format!("/{}", content_name(b"encoding::_shared::EncodingError"));
+    assert!(
+        read.iter().any(|key| key.contains(&layout) && key.ends_with(&named)),
+        "checking reads `EncodingError`'s layout by its declaring module's name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
     );
     Ok(())
 }
