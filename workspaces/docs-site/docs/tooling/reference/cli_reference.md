@@ -65,7 +65,7 @@ Unknown features, invalid feature edges and unknown options fail the command. Fe
 
 ## `oven lock`
 
-Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. A generated write adds no other stdout or stderr.
+Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. After that line, it prints one `untested lower bound: LOAF BOUND is not published; locked VERSION` line for each local requirement whose lower bound names a version the registry does not publish, because the bound itself was not tested. A requirement's lower bound is the version its `^`, `~`, `>=`, `=` or partial wildcard comparator names, with a missing minor or patch as `0`. A generated write adds no other stdout or stderr.
 
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 

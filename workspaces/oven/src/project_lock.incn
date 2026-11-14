@@ -27,7 +27,15 @@ from observation import SETTLE_SECONDS, now_seconds, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
 from retained_readings import recall, retain
 from rust_activation import DependencyDomain
-from semver_req import parse_requirement, parse_version, requirement_matches
+from semver_req import (
+    Version,
+    compare_versions,
+    lower_bound,
+    parse_requirement,
+    parse_version,
+    requirement_matches,
+    version_text,
+)
 from rust_registry import read_registry_units, registry_selection, resolve_registry
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
@@ -47,6 +55,13 @@ pub model LockResult:
     pub changed: bool
     # The C interop contracts the lock records; their declared files are identified by bytes, not by a manifest.
     pub interop: int = 0
+    # One line for each local requirement whose lower bound is not published, so that bound was not tested (RFC 125).
+    pub untested: list[str] = []
+
+
+pub def locked_report(result: LockResult) -> list[str]:
+    """What `oven lock` prints: `locked NAME VERSION (MODE)`, then each untested lower bound."""
+    return [f"locked {result.name} {result.version} ({result.mode})"] + result.untested
 
 
 pub model LockCommand:
@@ -265,8 +280,42 @@ def reconcile(
             mode=mode,
             changed=changed,
             interop=len(generated.interop),
+            untested=untested_bounds(facets, registry.units, selected)?,
         ),
     )
+
+
+pub def untested_bounds(
+    facets: list[LocalFacet],
+    published: list[RegistryUnit],
+    selected: RegistryUnits,
+) -> Result[list[str], str]:
+    """
+    RFC 125: each local requirement whose lower bound names a version that is not published, with the version locked
+    in its place, so the report shows that the bound itself was not tested.
+    """
+    mut lines: list[str] = []
+    for facet in facets:
+        for record in facet.registry:
+            selection = registry_selection(record)?
+            match lower_bound(parse_requirement(selection.requirement)?):
+                None => pass
+                Some(bound) =>
+                    demand = RegistryDemand(selection=selection, domain=facet.domain.value())
+                    if not published_version(published, selection.loaf, bound)? and demand.key() in selected.bindings:
+                        unit = unit_for(selected.bindings[demand.key()], selected.units)?
+                        line = f"untested lower bound: {selection.loaf} {version_text(bound)} is not published; locked {unit.version}"
+                        if line not in lines:
+                            lines.append(line)
+    return Ok(lines)
+
+
+def published_version(units: list[RegistryUnit], loaf: str, version: Version) -> Result[bool, str]:
+    """Whether the registry publishes exactly `version` of `loaf`."""
+    for unit in units:
+        if unit.loaf == loaf and unit.refusal == "" and compare_versions(parse_version(unit.version)?, version) == 0:
+            return Ok(true)
+    return Ok(false)
 
 
 pub def local_interop(
