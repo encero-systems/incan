@@ -21,6 +21,8 @@ from pub::incan_mir_plan import (
     GenericEnumDeclaration,
     StaticCell,
     ZipCarrier,
+    fold_carrier_positions,
+    fold_inventories,
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
@@ -738,6 +740,7 @@ def finish_unit_plan(
         templates,
         enum_templates,
         zip_carriers,
+        len(enums) - len(intrinsics),
     )?
     return Ok(UnitPlanning.Complete(planned))
 
@@ -887,6 +890,7 @@ def completed_plan(
     templates: list[GenericModelDeclaration],
     enum_templates: list[GenericEnumDeclaration],
     zip_carriers: list[ZipCarrier],
+    sources: int,
 ) -> Result[Option[Plan], str]:
     """Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan."""
     has_main, declares_main = main_selection(context, entry_owner)
@@ -898,24 +902,22 @@ def completed_plan(
         return Ok(None)
     if kind == "program":
         program_entries = selected_program_entries(context)?
-    return Ok(
-        Some(
-            Plan(
-                enums=enums,
-                models=models,
-                functions=functions,
-                externals=externals,
-                span=plan_span(file=file, line=1, column=1),
-                statics=statics,
-                exports=exports,
-                tests=test_entries,
-                programs=program_entries,
-                generic_models=templates,
-                generic_enums=enum_templates,
-                zip_carriers=zip_carriers,
-            ),
-        ),
+    planned = Plan(
+        enums=enums,
+        models=models,
+        functions=functions,
+        externals=externals,
+        span=plan_span(file=file, line=1, column=1),
+        statics=statics,
+        exports=exports,
+        tests=test_entries,
+        programs=program_entries,
+        generic_models=templates,
+        generic_enums=enum_templates,
+        zip_carriers=zip_carriers,
     )
+    # The inventories were folded when the last carrier was appended; storage and templates are folded here.
+    return Ok(Some(fold_carrier_positions(planned, sources)?))
 
 
 def lower_plan_frames(
@@ -1100,9 +1102,12 @@ def finalize_plan_layouts(
 ) -> Result[None, str]:
     """Publish completed layouts and validate callable and coroutine storage after every instance has contributed."""
     # Instance lowering can append carriers needed by a callable or coroutine capture.
+    sources = len(enums)
     for declaration_position in range(len(intrinsics)):
         declaration = borrowed_at(intrinsics, declaration_position)
         enums.append(declaration)
+    # No carrier is appended after this point, so each carrier position takes its place in the plan's enum table.
+    fold_inventories(functions, models, enums, externals, sources)?
     if publish:
         publish_local_layouts(models, enums)
     retain_factory_callable_storage(context, functions, models, externals)?

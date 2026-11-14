@@ -47,15 +47,21 @@ pub model NominalRemap:
 
     Capture replaces each unit position by its product-local ordinal and its native name by an empty name, recording
     both in first-seen order. Binding replaces each ordinal by the unit position and native name `references` resolved
-    for it. A whole-unit record, whose tables are its own, preserves both.
+    for it. A whole-unit record, whose tables are its own, preserves both. Publication folds each carrier position
+    into the plan's enum table after its `fold` source enums.
     """
 
     pub capture: bool
     pub references: list[NominalReference]
     pub preserve: bool = false
+    pub fold: int = -1
 
     pub def slot(mut self, kind: NominalKind, index: int, name: str) -> Result[NominalReference, str]:
         """Return the translated position and native name, refusing an ordinal the product does not name."""
+        if self.fold >= 0:
+            if kind == NominalKind.Enum and is_carrier_index(index):
+                return Ok(NominalReference(kind=kind, index=self.fold + carrier_position(index), name=name))
+            return Ok(NominalReference(kind=kind, index=index, name=name))
         if self.preserve:
             return Ok(NominalReference(kind=kind, index=index, name=name))
         if self.capture:
@@ -92,6 +98,31 @@ pub def preserving_remap() -> NominalRemap:
     """Keep the positions of a record whose model and enum tables travel with it."""
     references: list[NominalReference] = []
     return NominalRemap(capture=false, references=references, preserve=true)
+
+
+pub def folding_remap(sources: int) -> NominalRemap:
+    """Fold each carrier position into the plan's enum table, after its `sources` source enums."""
+    references: list[NominalReference] = []
+    return NominalRemap(capture=false, references=references, fold=sources)
+
+
+# Far above any source enum count, so lowering's two enum position ranges never meet.
+pub const CARRIER_BASE: int = 1099511627776
+
+
+pub def carrier_index(position: int) -> int:
+    """The lowering position of the carrier at `position` among the carriers lowering admitted."""
+    return CARRIER_BASE + position
+
+
+pub def is_carrier_index(index: int) -> bool:
+    """Whether a lowering enum position names an admitted carrier rather than a source enum."""
+    return index >= CARRIER_BASE
+
+
+pub def carrier_position(index: int) -> int:
+    """The position among the admitted carriers that a carrier's lowering position names."""
+    return index - CARRIER_BASE
 
 
 pub def remap_types(types: list[PlanType], mut remap: NominalRemap) -> Result[list[PlanType], str]:
@@ -196,7 +227,7 @@ def remap_leaves(leaves: list[ListLeaf], mut remap: NominalRemap) -> Result[list
     return Ok(translated)
 
 
-def remap_leaf(leaf: ListLeaf, mut remap: NominalRemap) -> Result[ListLeaf, str]:
+pub def remap_leaf(leaf: ListLeaf, mut remap: NominalRemap) -> Result[ListLeaf, str]:
     """Translate one collection leaf's nominal positions."""
     match leaf:
         ListLeaf.Model(index, name) =>
@@ -224,7 +255,7 @@ def remap_elements(elements: list[TupleElement], mut remap: NominalRemap) -> Res
     return Ok(translated)
 
 
-def remap_element(element: TupleElement, mut remap: NominalRemap) -> Result[TupleElement, str]:
+pub def remap_element(element: TupleElement, mut remap: NominalRemap) -> Result[TupleElement, str]:
     """Translate one tuple element's nominal positions."""
     match element:
         TupleElement.Model(index, name) =>
@@ -254,11 +285,12 @@ def remap_element(element: TupleElement, mut remap: NominalRemap) -> Result[Tupl
 
 pub model UnitNominals:
     """
-    The current unit's model and enum tables: each position's declaration, by stable identity and meaning digest,
-    and the native name it has at that position.
+    The current unit's model, source enum and carrier tables: each position's declaration, by stable identity and
+    meaning digest, and the native name it has at that position.
 
     `model_positions` and `enum_positions` keep each identity's first position, as lowering's own first-match name
-    resolution does.
+    resolution does. A carrier's position is its lowering position, `carrier_index` of its place among the carriers,
+    so a source enum appended later moves none.
     """
 
     pub models: list[ProductNominal]
@@ -267,13 +299,26 @@ pub model UnitNominals:
     pub enum_names: list[str]
     pub model_positions: dict[str, int]
     pub enum_positions: dict[str, int]
+    pub carriers: list[ProductNominal] = []
+    pub carrier_names: list[str] = []
 
-    pub def append_enum(mut self, nominal: ProductNominal, name: str) -> None:
-        """Describe the next enum position, such as a standard carrier lowering admitted after the table was built."""
+    pub def append_carrier(mut self, nominal: ProductNominal, name: str) -> None:
+        """Describe the next standard carrier lowering admitted, at its lowering position."""
         if self.enum_positions.get(nominal.identity) == None:
-            self.enum_positions[nominal.identity] = len(self.enums)
-        self.enums.append(nominal)
-        self.enum_names.append(name)
+            self.enum_positions[nominal.identity] = carrier_index(len(self.carriers))
+        self.carriers.append(nominal)
+        self.carrier_names.append(name)
+
+    pub def enum_at(self, index: int) -> Option[tuple[ProductNominal, str]]:
+        """The declaration and native name at a lowering enum position, if the unit describes one."""
+        if is_carrier_index(index):
+            position = carrier_position(index)
+            if position >= len(self.carriers):
+                return None
+            return Some((self.carriers[position], self.carrier_names[position]))
+        if index < 0 or index >= len(self.enums):
+            return None
+        return Some((self.enums[index], self.enum_names[index]))
 
 
 pub def unit_nominals(
@@ -320,9 +365,13 @@ pub def resolve_nominals(stored: &list[ProductNominal], unit: &UnitNominals) -> 
             match unit.enum_positions.get(nominal.identity):
                 None => return None
                 Some(position) =>
-                    if unit.enums[position].digest != nominal.digest:
-                        return None
-                    references.append(NominalReference(kind=NominalKind.Enum, index=position, name=unit.enum_names[position]))
+                    match unit.enum_at(position):
+                        None => return None
+                        Some(found) =>
+                            described, name = found
+                            if described.digest != nominal.digest:
+                                return None
+                            references.append(NominalReference(kind=NominalKind.Enum, index=position, name=name))
     return Some(references)
 
 
@@ -342,11 +391,13 @@ pub def describe_nominals(references: &list[NominalReference], unit: &UnitNomina
                 return Err("plan product names a model by another native name")
             nominals.append(unit.models[reference.index])
         else:
-            if reference.index < 0 or reference.index >= len(unit.enums):
-                return Err("plan product names an enum the unit does not describe")
-            if reference.name != "" and unit.enum_names[reference.index] != reference.name:
-                return Err("plan product names an enum by another native name")
-            nominals.append(unit.enums[reference.index])
+            match unit.enum_at(reference.index):
+                None => return Err("plan product names an enum the unit does not describe")
+                Some(found) =>
+                    described, name = found
+                    if reference.name != "" and name != reference.name:
+                        return Err("plan product names an enum by another native name")
+                    nominals.append(described)
     for nominal in nominals:
         if nominal.identity == "":
             return Err("plan product names a declaration without a stable identity")

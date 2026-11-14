@@ -1,5 +1,6 @@
 """Canonical normal-enum layouts and identity-checked native construction and pattern admission."""
 
+from pub::incan_mir_plan import carrier_index
 from table_views import borrowed_at, borrowed_table
 from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
@@ -194,7 +195,7 @@ pub def native_source_type(
     for declaration_position in range(len(intrinsics)):
         declaration = borrowed_at(intrinsics, declaration_position)
         if semantic_key_matches_native(declaration.semantic_key, ty)?:
-            return Ok(PlanType.Enum(len(declarations) + index, declaration.name))
+            return Ok(PlanType.Enum(carrier_index(index), declaration.name))
         index += 1
     match enum_type(declarations, ty):
         Some(result) => return Ok(result)

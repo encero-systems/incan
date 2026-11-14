@@ -1,5 +1,6 @@
 """Compare optional owned and frozen text without changing either payload's storage or lifetime."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     BinaryOp,
     Carrier,
@@ -82,7 +83,7 @@ def optional_text_payload(builder: Builder, ty: PlanType) -> Option[PlanType]:
         PlanType.Enum(owner, _name) =>
             if owner < len(builder.enums):
                 return None
-            declaration = builder.intrinsics[owner - len(builder.enums)]
+            declaration = builder.intrinsics[carrier_position(owner)]
             if declaration.carrier != Carrier.Option or len(declaration.variants[1].fields) != 1:
                 return None
             payload = declaration.variants[1].fields[0]

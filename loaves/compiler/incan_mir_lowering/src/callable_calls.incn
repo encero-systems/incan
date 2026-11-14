@@ -1,5 +1,6 @@
 """Lower calls through bound callables, type parameters, locals, closures, and function pointers."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     Carrier,
     CalleeKind,
@@ -900,7 +901,7 @@ pub def carrier_callable_operand(
         _ => return Ok(value)
     if owner < len(builder.enums):
         return Ok(value)
-    declaration = builder.intrinsics[owner - len(builder.enums)]
+    declaration = builder.intrinsics[carrier_position(owner)]
     source = operand_type(builder, value)?
     if declaration.carrier != Carrier.Declared or not callable_copy_type(source):
         return Ok(value)

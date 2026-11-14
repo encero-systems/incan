@@ -1,5 +1,6 @@
 """Owned native future construction, suspension and canonical executor entry."""
 
+from pub::incan_mir_plan import carrier_position
 from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanPrimitiveType as Primitive,
@@ -336,7 +337,7 @@ pub def async_entry(
     if body.return_type != PlanType.Unit:
         match body.return_type:
             PlanType.Enum(owner, _name) =>
-                index = owner - len(module.enum_declarations)
+                index = carrier_position(owner)
                 if index < 0 or index >= len(intrinsics):
                     return Err("unsupported Body IR async main outside a standard Result")
                 declaration = intrinsics[index]
