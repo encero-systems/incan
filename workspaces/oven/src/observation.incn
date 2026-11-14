@@ -342,7 +342,7 @@ pub def observe(path: Path) -> Result[Observation, str]:
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     info = described(found.map_err((error) => f"{prefix}{error}")?)
-    WATCHED.note(path.0, info.stamp())
+    WATCHED.note(path.0, Some(info))
     return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
 
 
@@ -354,11 +354,11 @@ pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
     match found:
         Ok(info) =>
             described_info = described(info)
-            WATCHED.note(path.0, described_info.stamp())
+            WATCHED.note(path.0, Some(described_info))
             return Ok(Some(described_info))
         Err(error) =>
             if error.kind() == ErrorKind.NotFound:
-                WATCHED.note(path.0, "")
+                WATCHED.note(path.0, None)
                 return Ok(None)
             return Err(f"{path.0}: {error}")
 
@@ -371,26 +371,41 @@ model Watched:
 
     active: bool = false
     seen: Dict[str, str] = {}
+    fresh: list[str] = []
 
     def start(mut self) -> None:
         """Watch from now, forgetting any earlier watch."""
         self.active = true
         self.seen = {}
+        self.fresh = []
 
     def watching(self) -> bool:
         """Whether a request is watching its inputs."""
         return self.active
 
-    def note(mut self, path: str, stamp: str) -> None:
-        """Remember a path's first observation while watching."""
-        if self.active and path not in self.seen:
-            self.seen[path] = stamp
+    def note(mut self, path: str, info: Option[FileMetadata]) -> None:
+        """
+        Remember a path's first observation while watching: its metadata, empty when nothing was there, and whether it
+        was a file changed too recently for its metadata to vouch for its bytes.
+        """
+        if not self.active or path in self.seen:
+            return
+        match info:
+            Some(found) =>
+                self.seen[path] = found.stamp()
+                if found.is_file() and not found.settled(SETTLE_SECONDS):
+                    self.fresh.append(path)
+            None => self.seen[path] = ""
 
     def finish(mut self) -> WatchedInputs:
         """Stop watching and return what was observed."""
         self.active = false
-        found = WatchedInputs(stamps={path: self.seen[path] for path in self.seen.keys()})
+        found = WatchedInputs(
+            stamps={path: self.seen[path] for path in self.seen.keys()},
+            fresh=[path for path in self.fresh],
+        )
         self.seen = {}
+        self.fresh = []
         return found
 
 
@@ -398,6 +413,8 @@ pub model WatchedInputs:
     """The paths a watch observed, each with its first metadata (empty when nothing was there)."""
 
     pub stamps: Dict[str, str]
+    # The observed files whose last change was too recent for their metadata to vouch for their bytes.
+    pub fresh: list[str] = []
 
 
 static WATCHED: Watched = Watched()
