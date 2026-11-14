@@ -277,7 +277,20 @@ pub model Builder:
             match argument.kind:
                 OperandKind.Move(value) =>
                     if value.projection == Projection.Whole:
-                        self.forget_owned(value.local)
+                        moved_text = borrowed_at(self.locals, value.local).ty == PlanType.String
+                        if self.name == "e1_probe" and moved_text:
+                            # E1: keep the moved string an owner, so scope end drops it unconditionally and no join
+                            # reconciles it; rustc's drop elaboration must decide.
+                            pass
+                        elif self.name == "e1_twice" and moved_text:
+                            # E1: move the same string a second time, to see whether rustc's borrow checker runs.
+                            spare = self.temporary(PlanType.String, value.span)
+                            again = Operand(kind=OperandKind.Move(value), span=value.span)
+                            self.emit(plan_assign(spare, RvalueKind.Use(again), value.span))
+                            self.forget_owned(value.local)
+                            self.own(spare.local)
+                        else:
+                            self.forget_owned(value.local)
                     else:
                         match value.projection:
                             Projection.Field(slot, _ty) =>
