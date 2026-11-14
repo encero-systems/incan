@@ -3,6 +3,7 @@ A home without this Oven's toolchain refuses by naming what is missing and how t
 standard Loaf is incomplete is refused at admission, and a zstd archive needs no `zstd`.
 """
 
+from rust::std::fs import remove_dir_all
 from rust::std::process import Command
 from std.fs import Path
 from archive_decompression import plain_archive
@@ -12,6 +13,7 @@ from home_paths import TOOLCHAIN
 from rust_target import decoded
 from scratch import scratch_directory
 from toolchain import load_toolchain_at, prepare_installation
+from toolchain_archive import open_stage
 from unit_publication import record_path, record_payload
 
 
@@ -106,8 +108,34 @@ pub def test_an_installation_with_an_incomplete_standard_loaf_is_refused_at_admi
     return Ok(None)
 
 
-def staged_installation(stage: Path) -> Result[Path, str]:
-    """A staged toolchain with one complete standard Loaf, `fixture`, and nothing else to admit."""
+pub def test_a_newer_build_is_staged_over_the_records_an_earlier_installation_left() -> Result[None, str]:
+    """
+    An installation is staged at one path every time, so a home's admission records of an earlier stage's payloads
+    describe another installation's files. A newer build of the same toolchain is staged and admitted all the same.
+
+    1. Stage and admit one build, then drop the stage as an Oven that kept its admission records did.
+    2. Stage another build of every member at the same path.
+    3. It is admitted, each payload under the producer it arrived with.
+    """
+    scratch = scratch_directory()?
+    target = scratch.path().joinpath("toolchains/installed")
+    make_directory(target.parent())?
+    # 1. The earlier installation's records stay behind, keyed by the staged paths.
+    older = staged_installation(open_stage(target)?, "older")?
+    _ = prepare_installation(older)?
+    remove_dir_all(older.0).map_err((error) => str(error))?
+    # 2. Every member has other bytes and another producer than the record at its path names.
+    newer = staged_installation(open_stage(target)?, "newer")?
+    # 3. The records of the earlier stage refuse nothing.
+    _, admission = prepare_installation(newer)?
+    assert len(admission.payloads) == len(executable_set()), f"{len(admission.payloads)} payloads were admitted"
+    for relative, payload in admission.payloads:
+        assert payload.identity.startswith("newer producer of "), f"{relative} was admitted as {payload.identity}"
+    return Ok(None)
+
+
+def staged_installation(stage: Path, build: str = "fixture") -> Result[Path, str]:
+    """A staged toolchain of one `build` with one complete standard Loaf, `fixture`, and nothing else to admit."""
     write(stage.joinpath("driver"), "fixture compiler")?
     rustc = stage.joinpath("sysroot/bin/rustc")
     write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
@@ -115,11 +143,11 @@ def staged_installation(stage: Path) -> Result[Path, str]:
     write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
     for name in executable_set():
         member = stage.joinpath(PROVIDER).joinpath(name)
-        mut content = f"fixture {name}"
+        mut content = f"{build} {name}"
         if name.endswith(".native.json"):
             content = "{\"search\":[],\"externs\":[],\"macro_externs\":[]}"
         write(member, content)?
-        record_payload(member, f"fixture producer of {name}")?
+        record_payload(member, f"{build} producer of {name}")?
     write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
     write(
         stage.joinpath("toolchain.json"),
