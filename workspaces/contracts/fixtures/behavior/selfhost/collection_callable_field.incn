@@ -1,0 +1,33 @@
+# behavior: function pointers read from tuple entries in a model's list keep their signatures and remain callable
+# expect-stdout:
+#   first
+#   second
+#   first
+
+model Registry:
+    """Retain callable tuple entries in ordinary owned list storage."""
+
+    entries: list[tuple[str, () -> str, str]]
+
+    def read(self, index: int) -> str:
+        """Copy the function pointer out of the selected tuple and invoke it."""
+        callback = self.entries[index][1]
+        return callback()
+
+
+def first() -> str:
+    """Return one distinguishable callback result."""
+    return "first"
+
+
+def second() -> str:
+    """Return another distinguishable callback result."""
+    return "second"
+
+
+def main() -> None:
+    """Project both function pointers repeatedly without consuming the registry."""
+    registry = Registry(entries=[("a", first, "one"), ("b", second, "two")])
+    println(registry.read(0))
+    println(registry.read(1))
+    println(registry.read(0))

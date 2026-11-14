@@ -1,0 +1,440 @@
+"""Check stored field tables before matching requested fields; never repair identities from display names."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError, CrumbFailure
+from crate.primitives.crumb.spelling import selector_spelling, shape_spelling
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, ScalarKind, TypeNode, VariantShape
+from crate.primitives.hex import hexlify
+
+
+pub enum AdmissionFailure(str):
+    """Stable structural refusal categories, separate from diagnostic paths and causes."""
+
+    IdentityWidth = "IdentityWidth"
+    DuplicateIdentity = "DuplicateIdentity"
+    IdentityOrder = "IdentityOrder"
+    InvalidType = "InvalidType"
+    NominalMismatch = "NominalMismatch"
+    MissingField = "MissingField"
+    IncompatibleType = "IncompatibleType"
+    ResourceLimit = "ResourceLimit"
+    MissingDescription = "MissingDescription"
+
+
+pub model AdmissionError:
+    """A structural refusal retains its typed category and field path independently of a rendered message."""
+
+    pub kind: AdmissionFailure
+    pub path: str
+    pub cause: Option[CrumbError] = None
+
+    pub def message(self) -> str:
+        """Render the category and structural location without embedding a stored value."""
+        return self.kind.value() + " at " + self.path
+
+
+pub model RecordShape:
+    """
+    An explicitly supplied nominal binding and its field table, not a checked description digest.
+
+    Written tables are in identity order; requested tables retain declaration order. Full
+    description properties remain with their owning description and are not replaced by this
+    structural view. A binding must supply the nominal identity; display names are not authority.
+    """
+
+    pub nominal: bytes
+    pub fields: list[FieldShape]
+
+
+pub enum ValuePlan:
+    """A reader's structural conversion steps; containers retain their own value-admission obligations."""
+
+    Identity
+    Widen(ScalarKind)
+    Wrap(list[ValuePlan])
+    Optional(list[ValuePlan])
+    Container(ContainerKind, list[ValuePlan])
+    Record(list[FieldPlan])
+    Recur(int)
+    Enum(list[VariantPlan])
+    Union(list[MemberPlan])
+
+
+pub model VariantPlan:
+    """One written variant's retained identity and requested payload reconstruction plan."""
+
+    pub identity: bytes
+    pub fields: list[FieldPlan]
+
+
+pub model MemberPlan:
+    """A union branch's original and requested declaration positions and structural conversion."""
+
+    pub written_index: int
+    pub requested_index: int
+    pub conversion: ValuePlan
+
+
+pub model FieldPlan:
+    """
+    One requested field's source or admitted absence, in requested declaration order.
+
+    A source index selects the written table. The conversion retains nested Option and container
+    steps; a reader still checks actual values and final validation. None selects only the
+    requested field's explicit absent policy, never its constructor's default.
+    """
+
+    pub requested: FieldShape
+    pub source: Option[int]
+    pub conversion: ValuePlan
+
+
+pub def check_written(fields: list[FieldShape], mut budget: Budget) -> Result[None, AdmissionError]:
+    """Require exact identities, strict stored order, unique members and supported type/absence facts."""
+    return check_fields(fields, true, "", budget)
+
+
+pub def plan_adaptation(
+    written: RecordShape,
+    requested: RecordShape,
+    mut budget: Budget,
+) -> Result[list[FieldPlan], AdmissionError]:
+    """
+    Build a structural read plan without mutating values or invoking model construction.
+
+    1. Check nominal identity and both field tables before matching anything.
+    2. Match by exact identity in requested order and check declared source-type compatibility.
+    3. Supply only declared absent values when no written field exists.
+    """
+    if len(written.nominal) == 0 or len(requested.nominal) == 0:
+        return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path="/nominal"))
+    if written.nominal != requested.nominal:
+        return Err(AdmissionError(kind=AdmissionFailure.NominalMismatch, path="/nominal"))
+    check_fields(written.fields, true, "", budget)?
+    check_fields(requested.fields, false, "", budget)?
+    mut active: list[tuple[str, str]] = []
+    return plan_fields(written.fields, requested.fields, "", active, budget)
+
+
+def plan_fields(
+    written: list[FieldShape],
+    requested: list[FieldShape],
+    path: str,
+    mut active: list[tuple[str, str]],
+    mut budget: Budget,
+) -> Result[list[FieldPlan], AdmissionError]:
+    """Plan an already validated field table, including nested records and declared absence."""
+    mut by_identity: dict[str, int] = {}
+    for index in range(len(written)):
+        charge_member(path, budget)?
+        by_identity[hexlify(written[index].identity)] = index
+    mut plans: list[FieldPlan] = []
+    for target in requested:
+        charge_member(path, budget)?
+        identity = hexlify(target.identity)
+        field_path = path + "/fields/" + identity
+        if identity in by_identity:
+            index = by_identity[identity]
+            conversion = compatible(written[index].storage_type, target.storage_type, field_path, active, budget)?
+            plans.append(FieldPlan(requested=target, source=Some(index), conversion=conversion))
+        else:
+            if target.absent == AbsentPolicy.Required:
+                return Err(AdmissionError(kind=AdmissionFailure.MissingField, path=field_path))
+            plans.append(FieldPlan(requested=target, source=None, conversion=ValuePlan.Identity))
+    return Ok(plans)
+
+
+def charge_member(path: str, mut budget: Budget) -> Result[None, AdmissionError]:
+    """Bound table indexing before allocating identity keys or plan entries."""
+    budget
+        .charge_elements(1)
+        .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    budget
+        .charge_bytes(12)
+        .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    return Ok(None)
+
+
+def check_fields(
+    fields: list[FieldShape],
+    ordered: bool,
+    prefix: str,
+    mut budget: Budget,
+) -> Result[None, AdmissionError]:
+    """Validate representation facts before allocating a matching plan or observing record data."""
+    mut seen: set[str] = set()
+    mut previous = ""
+    for index in range(len(fields)):
+        charge_member(prefix, budget)?
+        field = fields[index]
+        if len(field.identity) != 6:
+            return Err(AdmissionError(kind=AdmissionFailure.IdentityWidth, path=prefix + f"/fields/{index}/id"))
+        identity = hexlify(field.identity)
+        path = prefix + "/fields/" + identity
+        if identity in seen:
+            return Err(AdmissionError(kind=AdmissionFailure.DuplicateIdentity, path=path))
+        if ordered and previous != "" and identity < previous:
+            return Err(AdmissionError(kind=AdmissionFailure.IdentityOrder, path=prefix + "/fields"))
+        seen.add(identity)
+        previous = identity
+        check_nested(field.storage_type, ordered, path, budget)?
+        if prefix == "":
+            selector_spelling(field.storage_type, budget).map_err((error) => type_failure(path, error))?
+            shape_spelling(field.storage_type, budget).map_err((error) => type_failure(path, error))?
+        if not allows_absence(field.storage_type, field.absent):
+            return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
+    return Ok(None)
+
+
+pub def allows_absence(node: TypeNode, policy: AbsentPolicy) -> bool:
+    """Only outer Option and list/set/map emptiness have the corresponding implicit stored values."""
+    if policy == AbsentPolicy.Required:
+        return true
+    match node:
+        TypeNode.Underlying(items) =>
+            if len(items) == 1:
+                return allows_absence(items[0], policy)
+        TypeNode.Container(kind, _) =>
+            if policy == AbsentPolicy.NoneValue:
+                return kind == ContainerKind.Option
+            return kind == ContainerKind.List or kind == ContainerKind.Set or kind == ContainerKind.Map
+        _ => return false
+    return false
+
+
+def check_nested(node: TypeNode, ordered: bool, path: str, mut budget: Budget) -> Result[None, AdmissionError]:
+    """Validate every nested table even when a requested projection will drop it."""
+    budget.enter().map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    result = check_nested_inner(node, ordered, path, budget)
+    budget.leave().map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    return result
+
+
+def check_nested_inner(node: TypeNode, ordered: bool, path: str, mut budget: Budget) -> Result[None, AdmissionError]:
+    """Bounded traversal preserves written identity order instead of sorting corruption away."""
+    budget
+        .charge_elements(1)
+        .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    match node:
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
+            selector_spelling(items[0], budget).map_err((error) => type_failure(path, error))?
+            return Ok(None)
+        TypeNode.Bound(items) =>
+            if len(items) != 2:
+                return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
+            return check_nested(items[1], ordered, path, budget)
+        TypeNode.Container(_, items) | TypeNode.Underlying(items) =>
+            for item in items:
+                check_nested(item, ordered, path, budget)?
+        TypeNode.Record(_, fields) => return check_fields(fields, ordered, path, budget)
+        TypeNode.Enum(_, variants) =>
+            mut previous = ""
+            mut seen: set[str] = set()
+            for variant in variants:
+                charge_member(path, budget)?
+                if len(variant.identity) != 6:
+                    return Err(AdmissionError(kind=AdmissionFailure.IdentityWidth, path=path + "/variants"))
+                identity = hexlify(variant.identity)
+                if identity in seen:
+                    return Err(
+                        AdmissionError(kind=AdmissionFailure.DuplicateIdentity, path=path + "/variants/" + identity),
+                    )
+                if ordered and previous != "" and identity < previous:
+                    return Err(AdmissionError(kind=AdmissionFailure.IdentityOrder, path=path + "/variants"))
+                seen.add(identity)
+                previous = identity
+                check_fields(variant.fields, ordered, path + "/variants/" + identity, budget)?
+        _ => pass
+    return Ok(None)
+
+
+def compatible(
+    source: TypeNode,
+    target: TypeNode,
+    path: str,
+    mut active: list[tuple[str, str]],
+    mut budget: Budget,
+) -> Result[ValuePlan, AdmissionError]:
+    """Every conversion step shares depth and work limits, with balanced cleanup on refusal."""
+    budget
+        .charge_elements(1)
+        .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    budget.enter().map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    result = compatible_inner(source, target, path, active, budget)
+    budget.leave().map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
+    return result
+
+
+def compatible_inner(
+    source: TypeNode,
+    target: TypeNode,
+    path: str,
+    mut active: list[tuple[str, str]],
+    mut budget: Budget,
+) -> Result[ValuePlan, AdmissionError]:
+    """Nominal equality precedes nested shape adaptation; local recursion keys are not identity."""
+    match source:
+        TypeNode.Underlying(items) => return compatible(items[0], target, path, active, budget)
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        _ => pass
+    match target:
+        TypeNode.Underlying(items) => return compatible(source, items[0], path, active, budget)
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Container(ContainerKind.Option, items) =>
+            match source:
+                TypeNode.Container(ContainerKind.Option, original) =>
+                    inner = compatible(original[0], items[0], path, active, budget)?
+                    return Ok(ValuePlan.Optional([inner]))
+                _ =>
+                    inner = compatible(source, items[0], path, active, budget)?
+                    return Ok(ValuePlan.Wrap([inner]))
+        _ => pass
+    match source:
+        TypeNode.Bound(original) =>
+            match target:
+                TypeNode.Bound(items) =>
+                    left = selector_spelling(original[0], budget).map_err((error) => type_failure(path, error))?
+                    right = selector_spelling(items[0], budget).map_err((error) => type_failure(path, error))?
+                    if left != right:
+                        return Err(AdmissionError(kind=AdmissionFailure.NominalMismatch, path=path))
+                    return compatible(original[1], items[1], path, active, budget)
+                _ => return Err(AdmissionError(kind=AdmissionFailure.NominalMismatch, path=path))
+        TypeNode.Record(key, fields) =>
+            match target:
+                TypeNode.Record(target_key, target_fields) =>
+                    active.append((key, target_key))
+                    result = plan_fields(fields, target_fields, path, active, budget)
+                    active.pop()
+                    return result.map((plans) => ValuePlan.Record(plans))
+                _ => pass
+        TypeNode.Enum(key, variants) =>
+            match target:
+                TypeNode.Enum(target_key, target_variants) =>
+                    active.append((key, target_key))
+                    result = plan_variants(variants, target_variants, path, active, budget)
+                    active.pop()
+                    return result.map((plans) => ValuePlan.Enum(plans))
+                _ => pass
+        TypeNode.Recursive(key) =>
+            match target:
+                TypeNode.Recursive(target_key) =>
+                    for offset in range(len(active)):
+                        pair = active[len(active) - 1 - offset]
+                        if key == pair[0] and target_key == pair[1]:
+                            return Ok(ValuePlan.Recur(offset))
+                _ => pass
+        TypeNode.Container(kind, original) =>
+            match target:
+                TypeNode.Container(target_kind, items) =>
+                    if kind == ContainerKind.Union and target_kind == ContainerKind.Union:
+                        plans = plan_members(original, items, path, active, budget)?
+                        return Ok(ValuePlan.Union(plans))
+                    if kind == target_kind and len(items) == len(original):
+                        mut steps: list[ValuePlan] = []
+                        for index in range(len(items)):
+                            steps.append(compatible(original[index], items[index], path, active, budget)?)
+                        return Ok(ValuePlan.Container(kind, steps))
+                _ => pass
+        TypeNode.Reference(original) =>
+            match target:
+                TypeNode.Reference(items) =>
+                    if len(original) == 1 and len(items) == 1:
+                        source_spelling = selector_spelling(original[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        target_spelling = selector_spelling(items[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        if source_spelling == target_spelling:
+                            return Ok(ValuePlan.Identity)
+                _ => pass
+        TypeNode.Scalar(name) =>
+            match target:
+                TypeNode.Scalar(target_name) =>
+                    if name == target_name:
+                        return Ok(ValuePlan.Identity)
+                    if widening(name, target_name):
+                        return Ok(ValuePlan.Widen(target_name))
+                _ => pass
+        TypeNode.Decimal(precision, scale) =>
+            match target:
+                TypeNode.Decimal(target_precision, target_scale) =>
+                    if precision == target_precision and scale == target_scale:
+                        return Ok(ValuePlan.Identity)
+                _ => pass
+        _ => pass
+    return Err(AdmissionError(kind=AdmissionFailure.IncompatibleType, path=path))
+
+
+def type_failure(path: str, error: CrumbError) -> AdmissionError:
+    """Keep exhausted caller limits distinct from malformed or unsupported type descriptions."""
+    if error.kind == CrumbFailure.Limit:
+        return AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error))
+    return AdmissionError(kind=AdmissionFailure.InvalidType, path=path)
+
+
+def widening(source: ScalarKind, target: ScalarKind) -> bool:
+    """Integer range inclusion and exact binary32 widening are independent of a row's actual value."""
+    if source == ScalarKind.Fp32 and target == ScalarKind.Fp64:
+        return true
+    source_signed, source_bits = match source.integer_facts():
+        Some(facts) => facts
+        None => return false
+
+    target_signed, target_bits = match target.integer_facts():
+        Some(facts) => facts
+        None => return false
+
+    if source_signed == target_signed:
+        return source_bits <= target_bits
+    return not source_signed and target_signed and source_bits < target_bits
+
+
+def plan_variants(
+    written: list[VariantShape],
+    requested: list[VariantShape],
+    path: str,
+    mut active: list[tuple[str, str]],
+    mut budget: Budget,
+) -> Result[list[VariantPlan], AdmissionError]:
+    """Every possible written variant needs a requested identity; payloads follow ordinary field rules."""
+    mut targets: dict[str, int] = {}
+    for index in range(len(requested)):
+        charge_member(path, budget)?
+        targets[hexlify(requested[index].identity)] = index
+    mut plans: list[VariantPlan] = []
+    for variant in written:
+        charge_member(path, budget)?
+        identity = hexlify(variant.identity)
+        variant_path = path + "/variants/" + identity
+        if identity not in targets:
+            return Err(AdmissionError(kind=AdmissionFailure.IncompatibleType, path=variant_path))
+        fields = plan_fields(variant.fields, requested[targets[identity]].fields, variant_path, active, budget)?
+        plans.append(VariantPlan(identity=variant.identity, fields=fields))
+    return Ok(plans)
+
+
+def plan_members(
+    written: list[TypeNode],
+    requested: list[TypeNode],
+    path: str,
+    mut active: list[tuple[str, str]],
+    mut budget: Budget,
+) -> Result[list[MemberPlan], AdmissionError]:
+    """Match closed union discriminators, never a same-shaped alternative or source declaration order."""
+    mut targets: dict[str, int] = {}
+    for index in range(len(requested)):
+        name = selector_spelling(requested[index], budget).map_err((error) => type_failure(path, error))?
+        targets[name] = index
+    mut plans: list[MemberPlan] = []
+    for index in range(len(written)):
+        name = selector_spelling(written[index], budget).map_err((error) => type_failure(path, error))?
+        if name not in targets:
+            return Err(AdmissionError(kind=AdmissionFailure.IncompatibleType, path=path))
+        target_index = targets[name]
+        plan = compatible(written[index], requested[target_index], path, active, budget)?
+        plans.append(MemberPlan(written_index=index, requested_index=target_index, conversion=plan))
+    return Ok(plans)

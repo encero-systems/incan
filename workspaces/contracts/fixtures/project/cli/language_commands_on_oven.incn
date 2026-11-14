@@ -1,0 +1,16 @@
+# behavior: A language command run as oven fails before running, naming the incan command that owns it (RFC 118).
+# cli-commands:
+#   oven explain INCAN-T0001
+#   oven fmt --check src/main.incn
+#   oven inspect codegraph . --help
+#   oven mcp .
+#   oven toolchain pack out.tar.zst
+# expect-stdout:
+# expect-stderr-contains:
+#   is a language command: run `incan
+#   Run `oven --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

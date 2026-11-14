@@ -1,0 +1,14 @@
+# behavior: malformed vocabulary output is a provider diagnostic instead of a compiler failure
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`
+#   malformed response
+
+from pub::words import marker
+
+
+def main() -> None:
+    """A malformed provider reply must be attributed to its query node."""
+    value = query:
+        FROM 1
+    println(value)

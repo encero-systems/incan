@@ -1,0 +1,264 @@
+# behavior: memory graph and reusable-buffer views, including generic selections and cursors that carry views through fields and nested containers, borrow their actual sources until their last use, after which the source can be replaced (#2500, #2519, #2524).
+# expect-stdout:
+#   10
+#   2
+#   4
+#   2
+#   3
+#   3
+#   2
+#   3
+#   3
+#   1
+#   3
+#   4
+#   8
+#   9
+#   2
+#   0
+#   3
+"""Exercise the RFC 164 ownership shapes required by storage and graph readers."""
+
+
+class ColumnBuffer:
+    pub values: list[int]
+
+
+class ReusableBatch:
+    pub buffer: ColumnBuffer
+
+    pub def column(self) -> Borrowed[ColumnBuffer] from self.buffer:
+        """Borrow the current reusable buffer contents."""
+        return self.buffer
+
+    pub def refill(mut self, first: int, second: int) -> None:
+        """Replace the buffer after every dependent view has ended."""
+        self.buffer = ColumnBuffer(values=[first, second])
+
+
+class GraphState:
+    pub nodes: list[int]
+
+    pub def node_count(self) -> int:
+        """Return the number of nodes visible through this graph state."""
+        return len(self.nodes)
+
+    pub def contains_index(self, index: int) -> Result[bool, str]:
+        """Return whether an index identifies a stored node."""
+        return Ok(index >= 0 and index < len(self.nodes))
+
+
+trait GraphRead:
+    def node_count(self) -> int: ...
+
+
+class BoundedReader[G with GraphRead]:
+    pub graph: G
+
+    pub def node_count(self) -> int:
+        """Dispatch a read-only trait method through the carried graph view."""
+        return self.graph.node_count()
+
+
+class BoundedGraph with GraphRead:
+    pub nodes: list[int]
+
+    def node_count(self) -> int:
+        """Return the number of nodes visible through the bounded carrier."""
+        return len(self.nodes)
+
+    pub def read_view(self) -> BoundedReader[Borrowed[BoundedGraph]] from self:
+        """Carry this graph through a type parameter with its read-only trait bound."""
+        return BoundedReader[Borrowed[BoundedGraph]](graph=self)
+
+
+trait GraphEdit:
+    def replace(mut self, value: int) -> None: ...
+
+
+class EditableGraph with GraphEdit:
+    pub value: int
+
+    def replace(mut self, value: int) -> None:
+        """Replace this graph's stored value."""
+        self.value = value
+
+
+class Editor[G with GraphEdit]:
+    pub graph: G
+
+
+def edit(graph: BorrowedMut[EditableGraph]) -> Editor[Reference[EditableGraph]] from graph:
+    """Carry exclusive graph access through a mutable-receiver trait bound."""
+    return Editor[Reference[EditableGraph]](graph=graph)
+
+
+@derive(Clone, Copy, Eq)
+model GraphKey:
+    pub local: int
+
+
+class KeyHolder:
+    pub key: GraphKey
+
+
+class KeySelection[R]:
+    pub reader: R
+    pub key: GraphKey
+
+
+def key_local(key: GraphKey) -> int:
+    """Return the scalar stored in a Copy graph key."""
+    return key.local
+
+
+def select_key(
+    reader: Borrowed[GraphState], key: GraphKey
+) -> KeySelection[Borrowed[GraphState]] from reader:
+    """Carry a Copy graph key beside a borrowed reader."""
+    return KeySelection[Borrowed[GraphState]](reader=reader, key=key)
+
+
+def key_through_borrowed(holder: Borrowed[KeyHolder]) -> int:
+    """Pass a Copy key field read through a borrowed parameter by value."""
+    return key_local(holder.key)
+
+
+class MemoryGraph:
+    pub state: GraphState
+
+    pub def read_view(self) -> Borrowed[GraphState] from self.state:
+        """Borrow the in-memory graph state selected by this reader."""
+        return self.state
+
+
+class Cursor[S]:
+    pub selection: S
+    pub offset: int
+
+
+class Selection[R]:
+    pub reader: R
+    pub key: int
+
+    pub def cursor(self, offset: int) -> Cursor[Borrowed[Selection[R]]] from self:
+        """Borrow this selection into a scoped cursor."""
+        return Cursor[Borrowed[Selection[R]]](selection=self, offset=offset)
+
+
+def select(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphState]] from reader:
+    """Retain a graph reader inside a generic selection."""
+    return Selection[Borrowed[GraphState]](reader=reader, key=key)
+
+
+def relay_selection(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphState]] from reader:
+    """Return another carrying value from the same declared source."""
+    return select(reader, key)
+
+
+def select_mut(reader: BorrowedMut[GraphState], key: int) -> Selection[Reference[GraphState]] from reader:
+    """Retain exclusive graph access inside a generic selection."""
+    return Selection[Reference[GraphState]](reader=reader, key=key)
+
+
+def select_result(reader: Borrowed[GraphState]) -> Result[Selection[Borrowed[GraphState]], str] from reader:
+    """Carry a generic selection inside a Result."""
+    return Ok(select(reader, 1))
+
+
+def select_option(reader: Borrowed[GraphState]) -> Option[Selection[Borrowed[GraphState]]] from reader:
+    """Carry a generic selection inside an Option."""
+    return Some(select(reader, 2))
+
+
+def select_tuple(reader: Borrowed[GraphState]) -> Tuple[int, Selection[Borrowed[GraphState]]] from reader:
+    """Carry a generic selection inside a tuple."""
+    return (1, select(reader, 1))
+
+
+def select_list(reader: Borrowed[GraphState]) -> list[Selection[Borrowed[GraphState]]] from reader:
+    """Carry generic selections inside a list."""
+    return [select(reader, 0), select(reader, 2)]
+
+
+def selected_key[R](selection: Borrowed[Selection[R]]) -> int:
+    """Read an owned field after passing a carrying value as an argument."""
+    return selection.key
+
+
+def cursor_offset[S](cursor: Borrowed[Cursor[S]]) -> int:
+    """Read an owned field after passing a chained carrying value as an argument."""
+    return cursor.offset
+
+
+def refill_after_column_use(mut reusable: BorrowedMut[ReusableBatch]) -> None:
+    """Release a borrowed column at last use before refilling its buffer."""
+    column = reusable.column()
+    println(column.values[0])
+    reusable.refill(50, 60)
+
+
+def replace_after_graph_read(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    """Release a graph read view at last use before replacing its state."""
+    view = graph.read_view()
+    println(view.nodes[1])
+    graph.state = GraphState(nodes=[3, 4])
+    println(graph.state.nodes[1])
+
+
+def replace_after_carrier_use(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    """Release every generic carrier at its last dependent use before replacing graph storage."""
+    reader = graph.read_view()
+    selection = relay_selection(reader, 1)
+    println(selection.reader.nodes[selected_key(selection)])
+    println(selection.reader.node_count())
+    cursor = selection.cursor(1)
+    println(cursor.selection.reader.nodes[cursor.selection.key + cursor_offset(cursor)])
+
+    result = select_result(reader)
+    match result:
+        Ok(selected) => println(selected.reader.nodes[selected_key(selected)])
+        Err(_) => println(-1)
+
+    optional = select_option(reader)
+    match optional:
+        Some(selected) => println(selected.reader.nodes[selected_key(selected)])
+        None => println(-1)
+
+    marker, selected = select_tuple(reader)
+    println(selected.reader.nodes[selected_key(selected)] + marker)
+
+    listed = select_list(reader)
+    println(listed[0].reader.nodes[selected_key(listed[0])])
+    println(listed[1].reader.nodes[selected_key(listed[1])])
+
+    graph.state = GraphState(nodes=[4, 5, 6])
+    println(graph.state.nodes[0])
+
+
+def replace_after_exclusive_carrier_use(mut graph: BorrowedMut[MemoryGraph]) -> None:
+    """Write through an exclusive generic carrier, then replace its source after the last dependent use."""
+    mut selection = select_mut(graph.state, 1)
+    selection.reader.nodes = [7, 8]
+    println(graph.state.nodes[selection.key])
+    graph.state = GraphState(nodes=[9])
+    println(graph.state.nodes[0])
+
+
+def main() -> None:
+    """Run the borrowed reader shapes."""
+    mut reusable = ReusableBatch(buffer=ColumnBuffer(values=[10, 20]))
+    refill_after_column_use(reusable)
+    mut graph = MemoryGraph(state=GraphState(nodes=[1, 2]))
+    replace_after_graph_read(graph)
+    graph.state = GraphState(nodes=[1, 2, 3])
+    replace_after_carrier_use(graph)
+    replace_after_exclusive_carrier_use(graph)
+    bounded_graph = BoundedGraph(nodes=[1, 2])
+    bounded = bounded_graph.read_view()
+    println(bounded.node_count())
+    copy_reader = GraphState(nodes=[1])
+    keyed = select_key(copy_reader, GraphKey(local=0))
+    assert copy_reader.contains_index(keyed.key.local) == Ok(True)
+    println(key_local(keyed.key))
+    println(key_through_borrowed(KeyHolder(key=GraphKey(local=3))))

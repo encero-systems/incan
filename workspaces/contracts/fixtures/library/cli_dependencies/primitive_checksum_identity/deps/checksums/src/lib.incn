@@ -1,0 +1,21 @@
+"""Publish one canonical checksum class through both standard import surfaces."""
+
+from std.checksum import Crc32 as LegacyCrc32, crc32
+from std.primitives.checksum import Crc32
+
+
+pub def start() -> LegacyCrc32:
+    """Return a legacy-typed hasher after one chunk."""
+    mut hasher = crc32.new()
+    hasher.update(b"ab")
+    return hasher
+
+
+pub def observe(value: Crc32) -> u32:
+    """Read a primitive-typed snapshot without consuming its state."""
+    return value.finalize_u32()
+
+
+pub def forward(value: LegacyCrc32) -> Crc32:
+    """Return the same canonical class across the old and new import paths."""
+    return value

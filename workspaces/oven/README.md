@@ -1,129 +1,91 @@
-# Oven control plane
+# Oven
 
-The Incan-authored half of Oven: the decisions a bake makes before any compiler runs. The Rust crates under `loaves/oven/` own the store, leases, direct `rustc` execution and receipts; this project owns reading `loaf.toml`, selecting a native plan, and activating Rust dependency features. It is written in Incan so the build system's own rules are expressed in the language it builds. Generated Rust is never edited.
+Oven is the build system and the `incan` command line, written in Incan (DD-0008). It reads `loaf.toml`, resolves Loaves, plans each unit's Rust facet, orders and compiles units through `incan-rustc-driver`, and keeps the store. No Rust crate makes an Oven decision.
 
-## What it decides
+## Homes
 
-- **Intake** (`intake.incn`, `manifest_errors.incn`, `source_inventory.incn`): reads a local `loaf.toml` closure into a topology of authored aliases and canonical roots. Manifest bytes and their SHA-256 are source evidence only, never an effective action key; a parsed request excludes comments and formatting. A selected package inventory records build-unit presence only to produce one inert-script warning, never an execution candidate. Every refusal is an `IntakeError` naming the manifest, the field path, the TOML location where one exists, a category and a detail.
-- **Selection** (`plan.incn`, `plan_json.incn`, `source_unit.incn`): `select_native` is a pure, partial selector over intact closures. It compares explicit runtime, target, toolchain, profile and feature facts and checked provider semantics; a candidate that cannot be proven compatible is refused, never guessed, and equal ranks are reported as ambiguous. `source_unit` binds a batch of source units to the foundations that offer them and calls the selector once per batch.
-- **Native compilation** (`native_compilation.incn`): projects the checked native inputs of one compilation — command sections, once-only options, input digests — while keeping physical admission and compilation provenance the host's; it discovers nothing and holds no graph.
-- **Rust dependency activation** (`rust_source.incn`, `rust_activation.incn`, `rust_graph.incn`): reads dependency catalogs, evaluates `cfg` predicates and version requirements per unit, and propagates feature demands across the graph to a fixed point, keeping host and target activation separate. Authenticated roots carry the requested features, default-feature choice and declaration owner; physical units carry only their observed effective features, and source ownership remains a separate host-validated fact.
-- **Invocation** (`invocation.incn`): turns the CLI flags and environment observations a command was given into the set of restrictions it runs under (locked, frozen, offline and their implications). It reads nothing itself, and a decision admits no lock, plan, network action or publication.
-- **Lock preparation** (`lock_preparation.incn`): selects canonical fallback, reuse, publication and retention from the original owner's observations. An unchanged request and source must retain current discovery and published bytes; unavailable or racing evidence cannot be retained. The host owns physical observation, the original session and execution of the selected operation.
-
-`lib.incn` is the public facade and re-exports the host-facing functions.
-
-## Wire schemas
-
-The host and this project exchange JSON documents. The schemas this source currently reads and writes:
-
-| Schema | Owner | Purpose |
-| --- | --- | --- |
-| `incan.oven.selection/1`, `/2` | `plan_json.incn` | one native plan selection; `/2` requires the request's `build_unit_identity` and exact-unit evidence per candidate |
-| `incan.oven.source-unit-batch/1`, `/2`, `/3` | `plan_json.incn`, `source_unit.incn` | one selection serving a batch of source units; `/3` adds compiler-runtime needs and grants |
-| `incan.oven.native-compilation/2` | `native_compilation.incn` | one direct-`rustc` invocation to validate |
-| `incan.oven.rust-policy-exchange/5` | `rust_policy_exchange.incn` | validate one authenticated selected-Rust-graph projection, including authority-bound root intent and toolchain-bound sysroot externs, typed environment, generated-member and linked-library closure evidence; return exhaustive activations, derived default-feature demands, source inventories and inert-script warnings |
-| `incan.oven.loaf-resolution/1` | `loaf_resolve.incn` | source-selection projection: `units` in deterministic Loaf/domain order; each unit contains `loaf`, `version`, `archive_digest`, `domain` (`host` or `target`), sorted `features`, and `target_predicates` (declaration index, target expression, and boolean match). This projection is not a trust admission. |
-| `incan.oven.loaf-closure-request/1` | `loaf_closure_exchange.incn` | source dispatch for a pinned snapshot: `pin`, `index_commit`, `names`, `cfg`, index-spelled `roots`, `target` and `host`; returns the shared standalone lock driver's resolution or a refusal with `status` and `reason`. Host staging must extract committed index bytes rather than copy the worktree. The CLI currently requires `--lock` because the engine cannot bake without sealed Rust inspection authority. |
-| `incan.oven.lock-preparation/1` | `lock_preparation.incn` | `route`, `reuse` or `retain` phase with complete typed facts; returns one action bound to the SHA-256 of the exact request, or a refusal. The host retains original capabilities and verifies physical observations across the exchange. |
-
-Each schema defines its required fields and conditional response fields. Request decoders reject unknown or missing required fields rather than supplying defaults. Refusal envelopes differ by schema:
-
-| Schema family | Refusal response |
+| Module | Owns |
 | --- | --- |
-| `incan.oven.selection`, `incan.oven.source-unit-batch` | `status: "refused"` with an `error` object containing stable `kind` and `fields`. |
-| `incan.oven.native-compilation/2` | `status: "refused"` with a `fields` path. |
-| `incan.oven.rust-policy-exchange/5` | `status: "refused"` with an `error` object containing stable `kind`, `fields`, and optional `detail`. |
-| `incan.oven.loaf-closure-request/1` | `schema`, `status: "refused"`, and `reason`. |
-| `incan.oven.lock-preparation/1` | `schema`, `request_digest`, `status: "refused"`, and `reason`. A successful response instead has `status: "selected"` and `action`, with no `reason`. |
+| `main.incn` | The `oven` and `incan` command lines: dispatch, option parsing and failures for every command. |
+| `surfaces.incn` | Which commands `oven` and which `incan` runs (RFC 118), the refusal for a command given to the other name, and the entry points installation exposes. |
+| `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_loaves.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, reading published Loaf graphs, caching legacy exports by input digest, and querying compiler-owned records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
+| `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`oven describe-unit PATH`). |
+| `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
+| `toolchain_archive.incn` | Packing the installed toolchain's named artifacts and rewriting toolchain, registry and standard Loaf paths for relocation. |
+| `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
+| `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
+| `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
+| `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, libraries in dependency order, one `rustc` per unit against compiled registry units (`incan build`). |
+| `rust_build.incn` | The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned toolchain's libraries and `rustc` invocation. |
+| `rust_binaries.incn` | A facet's binaries. A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
+| `rust_manifest.incn` | A Loaf's Rust facet declaration: its library crate, binaries and toolchain requests. |
+| `rust_registry.incn` | The registry closure a toolchain ships, and the registry units a build selects from it. |
+| `intake.incn`, `manifest_intent.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `store_path_conversion.incn` | The one boundary adapter between Oven's `std.fs.Path` values and the private path type of the store substrate in `incan_platform.store`; Oven keeps store policy, while the platform owns snapshots, transactions, payloads, repair and collection. |
+| `features.incn` | Project feature requests and the Incan view of the shared local facet graph (RFC 114). |
+| `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
+| `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
+| `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-Lock-preparation responses bind `request_digest` to the SHA-256 of the exact request bytes, including refused requests. `reason` and `detail` are explanatory text for the operator; hosts dispatch on the schema's structured status, action or error kind rather than those prose strings.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
 
-## Layout
+## Test units
 
-```text
-loaf.toml               project manifest: two scripts, no third-party Rust dependencies
-src/*.incn              the modules above, plus lib.incn
-src/semver_req.incn     pure Incan version parsing, precedence, total ordering and requirement matching
-src/cfg_predicate.incn  canonical RFC 119 selectors over caller-supplied cfg facts
-src/test_*.incn         one test module per source module
-src/acceptance.incn     runs the ten local-intake contracts as one baked program
-src/loaf_index.incn     strict pinned Loaf index and root-dependency JSON intake
-src/loaf_resolve.incn   semver selection with shared activation and per-domain feature demand
-src/loaf_closure_exchange.incn shared standalone/engine resolution over an explicitly pinned snapshot
-src/loaf_facts.incn     recorded feature-table closure audit independent of Rust inspection
-src/loaf_facts_main.incn pure Incan pin audit driver: PIN_DIRECTORY NAMES_FILE CFG_TRIPLE CFG_FILE
-src/loaf_pin_check.incn pin audit and real-root smoke driver: PIN_DIRECTORY NAMES_FILE CFG_FILE
-src/plan_json_main.incn the sealed `core_engine` script: REQUEST RESPONSE file paths, strict UTF-8 exchange and schema dispatch
-tests/fixtures/         manifests the intake tests read: a cycle, a collision, a plan missing its features, a Rust source tree
+`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names and outcome markers beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
+
+Fixtures, test parameters, async tests, timeouts and resource markers currently produce named refusals. Their execution contracts are not implemented by this initial native harness.
+
+## Building
+
+`incan toolchain pack OUT` writes the installed toolchain to a `.tar`, `.tar.gz` or `.tar.zst` archive. It includes the named driver and Rust ABI caches, compiled standard Loaves, runtime native dependencies and prepared registry units. Paths in the toolchain manifest, registry closure and Loaf native closures are relative to their containing directories. Rust's sysroot and the driver's local identity proof are not archived. Packing requires `tar` with support for the selected compression format.
+
+`incan toolchain install ARCHIVE` extracts the archive into staging beside `$INCAN_HOME/toolchains/0.6.0-dev.8`, refuses a mismatched toolchain name, creates its `sysroot` link and invokes the staged driver with `--identity SYSROOT`. The local sysroot comes from `INCAN_SYSROOT`, otherwise `rustup run 1.98.0 rustc --print sysroot`, otherwise `rustc --print sysroot`. Install the matching Rust 1.98.0 toolchain with `rustc-dev` first. Only successful identity verification replaces an existing installation; a refusal preserves it.
+
+Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `incan build src/main.incn` in this directory produces the `incan` program. Its standard packages come from `INCAN_STDLIB`.
+
+`incan run` and `incan check` need an installed toolchain: its `toolchain.json` names `incan-rustc-driver` and the closure of the runtime and the standard packages' Rust crates, and the standard packages' Loaves sit in the toolchain's `loaves/` directory.
+
+`incan run`, `incan check` and `incan build` compile active path dependencies before their consumer, stopping on the first dependency refusal. Each library receives the features unified across the root project's selected graph, with declared aliases and inactive optional edges preserved, and writes its five DD-0007 artifacts under the root's `target/incan/loaves/<package>/<profile>` directory. A successful input fingerprint beside the complete artifact set allows unchanged libraries to be reused. Source additions, removals, content changes, feature changes and changed dependency artifacts invalidate that fingerprint. `describe-unit` describes units without compiling Incan libraries.
+
+`incan build PATH` compiles an Incan source file without running it. A directory selects `src/lib.incn` when present, otherwise `src/main.incn`. A Rust project uses the prepared registry units named by the installed toolchain.
+
+## Inspecting source relationships
+
+Run `incan inspect codegraph PATH --format jsonl` for a source file or project. `--format json` returns an array of the same records. A Rust source path selects its owning Loaf; a Rust project exports its own units and reads dependency graphs from their Loaf artifacts. A legacy source-backed dependency without a graph receives one cached checking-only export. Registry artifacts that do not yet ship a graph remain external references; source-free artifacts cannot be reconstructed by inspection.
+
+Use `--query defs|refs|callers|callees|imports TERM` instead of `--format` to print one `kind identity file:line` line per hit. A term is an exact short name, qualified declaration name or full exported graph ID; ambiguous short names include their matching declarations. Imports select module names. For example, `incan inspect codegraph loaves/toolchain/incan-rustc-driver --query callers resolve_rust_facts` finds callers across its local closure. Query locations are relative to the repository, or the owning project outside a repository. Queries default to 20 hits; `--limit N` accepts a nonnegative integer and appends `… N more` when hits are omitted. Definitions carry span-free `stable_identity` values. Spans remain source anchors, independent of those identities.
+
+Incan builds skip codegraph projection. Inspection checks source on demand and retains its graph under a key covering the compiler, unit, source and dependency inputs; unchanged requests reuse that graph. The LSP projects its checked editor buffers on request. `incan build path/to/lib.incn --codegraph` explicitly publishes `<name>.incngraph` beside the native artifacts for consumers that need inspection without source. A current library exports through the same checked inspection cache without recompiling native code; separate proofs bind both artifacts to their exact inputs. Graphs retain span-free declaration IDs and Loaf-relative source paths. Rust compilation still collects its graph during ordinary rustc analysis. The kernel owns the versioned indexed-postcard format; JSON is generated only for query/export output. Inspection rejects unsupported versions and malformed records rather than replacing a published graph with source facts.
+
+Own-unit and legacy graphs are cached under the requesting project's `target/incan/codegraph/`, one entry per unit. Source and dependency digests invalidate changed exports; published dependency graphs remain authoritative until rebuilt. Completed query answers are keyed by graph contents and arguments.
+
+Export is tolerant by default (RFC 106, "Checked and tolerant export"). A unit that fails checking contributes only its parseable facts, with no checked signatures and no resolved call or reference edges; its hits end in `(unchecked)`, it publishes no interface for its dependents, and every inspection prints one stderr warning line naming the unit and its first diagnostic. A Rust unit that rustc refuses has no parse-only facts and contributes none. Either outcome is cached with the unit's digest, so one bad unit never forces another unit to be exported again. `--strict` refuses instead, listing every unchecked unit's diagnostics. The header's `mode` is `allow_errors` or `strict`, and its `degraded` is true while any selected unit is unchecked. An abnormal compiler exit fails the command and caches nothing.
+
+Rust receiver types and signatures use canonical crate-qualified paths so a consumer's method target links to the defining crate's declaration. Rust call records with `kind: indirect` have no proved target; `virtual_method` names a trait requirement rather than a set of possible implementors. These records describe a lower bound on reachability, never proof that an unlisted implementation cannot be called.
+
+Incan libraries without published graphs are checked in dependency order. Each checking pass supplies both its source graph and a checking-only interface under the inspection cache. Vocabulary providers require execution, so their dependency closure is prepared through the ordinary library build before checking the consumer. Other Incan inspection passes produce no native publication. Rust checking may need a native library for an Incan dependency: inspection uses an exact library recorded by the project's successful `incan build` in `target/incan/rust/<profile>/units.json`, or an explicitly installed toolchain extern, and refuses if neither is available. A bootstrap-emitted Rust graph cannot replace the authored Incan graph: publication must include the Incan manifest and complete artifact set. Source projections do not assert source/artifact equivalence.
+
+Projects can include source context that their binary does not statically link:
+
+```toml
+[tool.incan.codegraph]
+sources = ["relative/path/to/runtime"]
 ```
 
-The intake tests also read the committed `workbench/app`, `workbench/pricing` and `workbench/catalog` projects.
+These projects contribute their Incan graphs without changing compilation dependencies. Paths resolve relative to the declaring project; a cycle is refused. The compiler uses this to include its native runtime's authored source. `--substitute NAME=DIR` remains an explicit build-graph selection, as for `incan build`; inspection uses the installed toolchain's rustc without requiring `RUSTC`. Checking-only export still observes checker admission limits: the current compiler source closure refuses an unadmitted `NativeUnionDeclaration::clone`, and the runtime source refuses slice `to_vec` and `str::split_whitespace`. A published authored Loaf graph avoids rechecking its dependency source.
 
-## Running it
+## Records engine control channel
 
-From the repository root, with a compiler built from this tree:
+`INCAN_ENGINE=legacy|records` selects the migration path. The default is `legacy`. `records` connects file-based `run` and `build` to the engine, plus `inspect run ID --proofs`. Other commands refuse without entering legacy. Help and version remain available; an invalid selector is an error. The first producer handles ordinary program units with standard packages: feature-selection flags, additional program entries, editable path dependencies, vocabulary and foreign headers are refused explicitly.
 
-```bash
-incan check workspaces/oven/src/lib.incn
-incan test workspaces/oven
-incan test workspaces/oven/src/test_rust_graph.incn
-incan test workspaces/oven/src/test_rust_policy_exchange.incn
-incan oven bake --project workspaces/oven
-```
+Oven carries the internal `--internal-engine` service entry. Its inputs are the physical store directory, full store identity, profile, service generation, compiler generation and idle timeout in seconds. The service holds a store-level lifetime lock, authenticates Unix peer credentials and the complete `Hello` identity, and retires after 600 seconds without a client, request, worker, effect or reader pin. Explicit internal timeout arguments support lifecycle tests. Runtime socket names remain short when the store directory is deep. Windows transport has not been qualified.
 
-The bake produces both declared scripts. `core_engine` takes exactly two arguments, `REQUEST RESPONSE`, and dispatches a Rust-policy request using the exchange schema listed above to its strict policy decoder; other requests retain the native selection decoder.
+The transport is the `ipc` module of the platform Loaf, `incan_platform` in `loaves/platform`: Unix connections and listeners, bounded reads and length-framed writes, data-credit windows and OS peer identity. It carries bytes only. `owner_protocol.incn` encodes one JSON document per frame for the owner and compiler-worker clients. `engine_wire.incn`, `engine_messages.incn` and `engine_codec.incn` define the 64-byte `incan.engine/1` header and every versioned message family. `engine_channel.incn` owns session and sequence checks and keeps eight data credits per direction in the platform's credit windows. Its `Blocked` outcome applies back-pressure before encoding or retaining the caller's message; synchronous control frames bypass exhausted data credits. There is no outgoing message queue.
 
-The two focused test commands exercise the Rust graph policy and its strict exchange envelope directly. The baked `acceptance` script runs only the ten local-intake contracts imported by `src/acceptance.incn`; it is not an aggregate runner for every `test_*.incn` module. The Rust host adapter that supplies authenticated production inputs remains separate from this Incan policy workspace.
+The service handles negotiation, submission, events, completion, interest cancellation, execution pins, publication resolution, drain and stop. A file submission names its absolute source in `requested_roots`, its project view in `view`, and `debug` or `release` in `input_selection`; additional build options are currently refused. `Accepted` precedes metadata-first capture. `Captured` names the actual epoch identity and committed snapshot. `engine_epochs.incn` stores capture revisions and their selected heads in the same record store, so a service restart can reuse capture evidence without retaining a decoded epoch while idle. The unit producer captures the existing conservative authored inventory, including additions; per-import reach remains a later producer boundary. Build and run capture the same program inputs.
 
-## Resolver index pin and policy boundaries
+`engine_programs.incn` obtains the existing bakery's whole compiled unit under its RFC 124 identity. `incan_units.incn` remains the single claim, worker compilation and publication path; a successful bake revalidates its inputs before publishing. These are unit records, not declaration records. The engine stores a finalized native descriptor and selects its exact payload in the caller's virtual view. `engine_actions.incn` holds a substrate lease before returning `Complete`; `Pin` confirms the caller's exact result, and `Release` or disconnection drops the lease. The CLI waits for its child while it holds that interest, and never runs or replays a program in the service. `Resolve` reports whether a native descriptor publication committed; it does not execute or select a result for another caller. Collection is still disabled in the underlying bakery.
 
-`loaf_lock_main` accepts `PIN_DIRECTORY NAMES_FILE CFG_FILE ROOTS_FILE INDEX_COMMIT`. Its index pin is always caller-supplied, and the staged `revision` must match. The roots document must name explicit `target` and `host` triples. This transport accepts native resolution only: both triples must match and own the supplied cfg snapshot. It does not reuse one cfg snapshot for cross-compilation. SDK root documents use `deps` and optional local `host-projects`; closure root documents use `roots` and retain named refusals while resolving admitted roots together.
+`engine_client.incn` records the compiler's admitted content identity once per installed pin and checks only the pin on an unchanged request. A native descriptor hit avoids native preparation and compiler activation. `--engine-report` explicitly retains and prints a report from `engine_proofs.incn`; an ordinary unchanged request does not retain a report. Its capture counters describe capture operations, not compiler reads of frozen facts. The CLI reference lists the report schema.
 
-`loaf_pin.pinned_revision()` selects incan.pub revision `6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87` from `index`. The pin audit drivers require a caller-owned immutable extraction whose `revision` file names that revision; the marker is a selection check, not an integrity attestation. `read_index` continues to accept explicit fixture directories for tests. Neither driver changes the registry checkout or reads upstream package metadata.
-
-The pure feature audit takes the retained cfg output and its target triple explicitly. It refuses recorded facts for another target rather than guessing their cfg values. A non-weak `x/f` adds local feature `x` only when that feature exists and an optional declaration of `x` applies to the supplied target. `dep:x` and `x?/f` do not add `x`; defaults enter the audit only through recorded membership. The resolver applies the same target eligibility independently in host and target domains.
-
-`semver_req` implements complete SemVer 2.0 versions and comma-conjoined requirements with caret, tilde, equality, ordered comparators, and trailing `*`, `x`, or `X` wildcards. A bare version means caret. Pre-releases need an explicit same-core pre-release comparator and must satisfy every comparator. Build metadata does not affect requirements or SemVer precedence; the resolver preserves the former semver crate's build-metadata tie order when choosing among equal-precedence candidates. Version components retain the unsigned 64-bit range without narrowing to an Incan integer. Requirements retain the replaced parser's 32-comparator limit and ASCII-space syntax.
-
-`cfg_predicate` accepts exact target triples and canonical `cfg(...)` selectors with atoms, quoted key-value atoms, `all`, `any`, and single-argument `not`. It evaluates all branches from the supplied complete snapshot, including feature and debug-assertion facts; it never infers package features or queries the host. Canonical separators are `, ` and ` = `, with no other whitespace outside quoted values. Unsupported functions, invalid arity, malformed quoting, escapes and noncanonical spacing are refusals naming the construct.
-
-## Developer workflow contract
-
-`src/developer_workflow_acceptance.incn` is a separate, Incan-authored CLI acceptance program. It takes `COMPILER ROOT SCENARIO`; `COMPILER` is an absolute path to the compiler under test and `ROOT` is an existing disposable directory. It writes only its named fixture projects beneath that root. Do not point it at an existing project. It requires the selected compiler's prepared toolchain; this is not proof of installed-toolchain or MIR acceptance.
-
-Run each scenario in the order shown. A nonzero exit is a failed capability contract, even when that capability is not implemented yet. The program never treats an unknown command as a passing test. It is intentionally separate from the default green unit-test suite while these public command contracts are being implemented.
-
-| Scenario | Contract |
-| --- | --- |
-| `scaffold` | Create `workflow_a` and `workflow_b`, without baking. |
-| `ordinary` | Run, repeat, check, build and test A; edit its answer from 42 to 43; rerun and retest; B still returns 42. |
-| `dependency-fixture` | Create `workflow_dependency`, a controlled local source library returning 100. |
-| `oven-build` / `oven-run` | Require ordinary project operations through the Oven command family. |
-| `dependency-add` | Require proposed `oven add workflow_dependency --path ../workflow_dependency`; `--path` is the acceptance target for local requirements, not a shipped command claim. |
-| `local-dependency` | Declare the same local dependency in both consumers; run without baking; edit only the child's source from 100 to 101; both consumers must return 101. |
-| `external-test-control` | Change the tracked root as well as the helper; prove the same assertion-failure and restoration oracle succeeds when the harness actually recompiles. |
-| `external-test-input` | Compile a Rust test using `../helper.rs`; edit only that helper so the assertion should fail; require that exact test failure, then restore and pass again. |
-
-For example, from the repository root:
-
-```bash
-incan run workspaces/oven/src/developer_workflow_acceptance.incn -- /absolute/path/to/incan /absolute/disposable/root scaffold
-incan run workspaces/oven/src/developer_workflow_acceptance.incn -- /absolute/path/to/incan /absolute/disposable/root ordinary
-```
-
-The actual subprocess commands contain no Cargo or manual bake invocation. Apply the usual negative Cargo guard to the environment and retain each scenario's stdout, stderr, exit status and compiler/source identities. Fresh roots are required when repeating scaffold scenarios. Failures can leave their disposable fixtures changed so that the failure remains inspectable.
-
-This contract does not yet assert a single owner across standalone `oven` and `incan`, eager registry acquisition, exact lock generation, or storage bounds. Those checks belong to subsequent owner/dependency slices. The library fixture uses local source only and does not exercise registry resolution.
-
-## Native test consumed inputs
-
-The `external-test-input` scenario reproduces the native runner's previous stale reuse: `src/lib.rs` uses `#[path = "../helper.rs"]`, and changing only the helper from 42 to 43 used to run the old passing assertion. The corrected native output record retains the files and environment observed by Rustc, so this edit rebuilds the harness and executes the failing assertion; restoration can reuse the earlier admitted output.
-
-The runner's source receipt still records its crate-root tree. The existing direct compiler now supplements native test output evidence with exact Rustc dep-info, using the existing parser and metadata-sensitive file digester. A cache hit checks those consumed inputs without launching Rustc. On a miss, a dep-info-only pass discovers inputs before compilation; the actual compile reports its consumed set again, and the original physical observations must still match before publication. This adds cold discovery work; it does not add a second cache, resolver or Rust source scanner.
-
-Missing evidence in older output records causes a miss. Missing consumed files cannot select stale tests. Changed-during-compilation inputs, unsupported dependency observations, and input paths whose identity cannot be safely observed are refused. This focused correction is verified on macOS; it does not establish non-Unix acceptance or complete dependency discovery for arbitrary procedural macro filesystem access.
-
-The existing Incan native-compilation policy remains the intended shared policy boundary. The native-test adapter is removable Rust host debt under #1698 and #1034: it supplies observations unavailable through the previous binary/test API. The current native output lifecycle still owns publication and original leases.
-
-Acceptance covers unchanged reuse, helper-only edits, restored source, missing includes, `include_str!`/`include_bytes!`, consumed environment and a compilation race. Existing feature/compiler binding and output corruption controls remain in the direct Rustc suite. No whole developer-workflow, installed-toolchain or MIR acceptance follows from these controls.
+Run `incan test src/test_engine_protocol.incn` with the newly built Oven installed in `INCAN_HOME/bin/incan`, or set `OVEN_ENGINE_BINARY` to that Oven executable. The tests exercise real concurrent service starts and idle exit as well as binary framing, all message codecs, credit pressure, identity checks and lifecycle state.

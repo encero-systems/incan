@@ -179,15 +179,15 @@ pub fn builtin_max_arity(name: &str, max: usize, found: usize, span: Span) -> Co
 pub fn explicit_type_arg_arity(name: &str, type_params: &[String], written: &[String], span: Span) -> CompileError {
     let expected = type_params.len();
     let found = written.len();
+    if expected == 0 {
+        return CompileError::type_error(format!("'{name}' takes no type arguments"), span)
+            .with_stable_code("INCAN-T0129")
+            .with_hint("Remove the type argument list");
+    }
     let error = CompileError::type_error(
         format!("{name} expects {expected} explicit type argument(s), got {found}"),
         span,
     );
-    if expected == 0 {
-        return error.with_hint(format!(
-            "'{name}' declares no type parameters; remove the type argument list"
-        ));
-    }
     let error = error.with_note(format!(
         "'{name}' declares type parameters [{}]; an explicit list binds every one of them in that order",
         type_params.join(", ")
@@ -214,6 +214,18 @@ pub fn call_site_type_inference_unresolved(callee: &str, type_param: &str, span:
             "Could not infer type parameter '{type_param}' for '{callee}' from value arguments; replace `_` with an explicit type or adjust the call"
         ),
         span,
+    )
+}
+
+/// Report a Rust callable const parameter that neither its arguments nor its expected result fixes.
+pub fn call_site_const_inference_unresolved(callee: &str, const_param: &str, span: Span) -> CompileError {
+    let callee = callee.strip_prefix("rust::").unwrap_or(callee);
+    CompileError::type_error(
+        format!("Rust callee `rust::{callee}`: its const parameter `{const_param}` is not fixed by the call"),
+        span,
+    )
+    .with_note(
+        "A Rust const parameter must be fixed by an exact native argument or by the type the call result is expected to have",
     )
 }
 

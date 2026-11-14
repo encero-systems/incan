@@ -9,31 +9,18 @@ use super::*;
 /// pattern payload is being bound, and whether `?` preserves the enclosing error type exactly. It does not infer
 /// a conversion or admit a differently shaped generic carrier.
 pub(super) fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanType)> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    (collections::from_str(base) == Some(CollectionTypeId::Result)).then_some(())?;
-    match args.as_slice() {
+    match ty.collection_arguments(CollectionTypeId::Result)? {
         [ok_type, error_type] => Some((ok_type, error_type)),
         _ => None,
     }
 }
-/// Return the member types of `ty` when it is the builtin collection `kind` (a list's or set's element type, a dict's
-/// key and value types).
-pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) -> Option<&[IncanType]> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
-}
 /// Report whether a checked type is an optional union (`int | str | None`): an intrinsic `Option` whose payload is a
 /// union, so a member pattern over it selects `Some` and then the member of that payload.
 pub(super) fn is_optional_union(ty: &IncanType) -> bool {
-    let IncanType::Generic { base, args } = ty else {
-        return false;
-    };
-    collections::from_str(base) == Some(CollectionTypeId::Option)
-        && matches!(args.as_slice(), [IncanType::Generic { base, .. }] if base == "Union")
+    matches!(
+        ty.collection_arguments(CollectionTypeId::Option),
+        Some([payload]) if payload.union_members().is_some()
+    )
 }
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
@@ -47,14 +34,16 @@ pub(super) fn result_variant_kind(name: &str) -> Option<bir::ResultVariantKind> 
         _ => None,
     }
 }
-/// Whether a type is string-like enough to route binary operators through the compiler-owned string helpers
-/// (mirrors `is_string_like_type` in `loaves/compiler/incan_emit/src/conversions.rs`, restated here so Body IR does not
-/// depend on that Rust-emission-specific module — see this file's module docs).
+/// Whether a type routes binary operators through the compiler-owned string helpers.
+///
+/// Imported Rust text constants retain their native `&str` carrier, so this recognizes that checked shared reference
+/// beside the two source text primitives. Other native references remain foreign values and cannot enter text helpers.
 pub(super) fn is_string_like(ty: &IncanType) -> bool {
-    matches!(
-        ty,
-        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr)
-    )
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr) => true,
+        IncanType::Ref(inner) => matches!(inner.as_ref(), IncanType::RustInteropPath(path) if path == "str"),
+        _ => false,
+    }
 }
 /// Map a string-typed binary operator to its compiler-owned helper operation, or `None` for operators that have no
 /// string-specific helper (arithmetic-only operators never reach here because `lower_binary` only checks this for
@@ -86,14 +75,8 @@ pub(super) fn string_helper_for_binop(op: ast::BinaryOp) -> Option<bir::HelperOp
 /// Reads the collection registry rather than comparing base names against literals, so adding a collection to
 /// `incan_lang` cannot silently leave this mapping stale.
 fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    if args.is_empty() {
-        return None;
-    }
-    match collections::from_str(base) {
-        Some(id @ (CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)) => Some(id),
+    match ty.collection()? {
+        (id @ (CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict), [_, ..]) => Some(id),
         _ => None,
     }
 }
@@ -106,22 +89,23 @@ pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType,
         && shared_equality_operand(rhs_ty)
 }
 
-/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling.
+/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling. A type
+/// parameter qualifies too: equality never consumes an operand, and the parameter's instantiation may be a collection.
 fn shared_equality_operand(ty: &IncanType) -> bool {
-    builtin_collection_id(ty).is_some() || matches!(ty, IncanType::Primitive(IncanPrimitiveType::Bytes))
+    builtin_collection_id(ty).is_some()
+        || matches!(
+            ty,
+            IncanType::Primitive(IncanPrimitiveType::Bytes) | IncanType::TypeVar(_)
+        )
 }
+
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
-    let IncanType::Generic { base, args } = ty else {
-        return None;
-    };
-    if args.is_empty() {
-        return None;
-    }
-    match collections::from_str(base)? {
-        CollectionTypeId::FrozenList => Some(CollectionTypeId::List),
-        CollectionTypeId::FrozenSet => Some(CollectionTypeId::Set),
-        CollectionTypeId::FrozenDict => Some(CollectionTypeId::Dict),
+    match ty.collection()? {
+        (_, []) => None,
+        (CollectionTypeId::FrozenList, _) => Some(CollectionTypeId::List),
+        (CollectionTypeId::FrozenSet, _) => Some(CollectionTypeId::Set),
+        (CollectionTypeId::FrozenDict, _) => Some(CollectionTypeId::Dict),
         _ => None,
     }
 }
@@ -139,15 +123,15 @@ fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
 /// two strings asks for substring containment while `in` over a collection asks for element lookup, so neither can
 /// be a [`bir::BinOp`] without silently applying one meaning to the other.
 ///
-/// All seven helpers named here have a runtime function in `incan_std_core::collections`, and the executor runs the
-/// three list forms. Set and dict membership still refuse — not for want of a helper, but because the replacement
+/// All seven helpers named here have a runtime function in `incan_std_primitives::collections`, and the executor runs
+/// the three list forms. Set and dict membership still refuse — not for want of a helper, but because the replacement
 /// executor has no set or dict value at all, so their aggregates refuse before membership is reached. #1247 owns
 /// that value gap and inherits the membership arms with it.
 ///
 /// `+` earns a helper on a narrower ground, and the distinction matters because it is what keeps this table from
 /// swallowing comparisons too. The test is not that a heap container cannot sit under a primitive -- `==` on two
 /// lists does exactly that, faithfully -- but that `determine_binop_plan` routes list `+` to
-/// `incan_std_core::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
+/// `incan_std_primitives::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
 /// therefore agreement with the Rust-emission backend, not a judgment about the operand's representation.
 pub(super) fn collection_helper_for_binop(
     op: ast::BinaryOp,
@@ -328,11 +312,10 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
         return Some(bir::Constant::Float((-(value.magnitude as f64)).to_string()));
     }
-    // `int`'s most negative value is only spellable negated: its magnitude does not fit `i64`, so the literal's
-    // `value` saturates and a runtime negation of it would yield `-i64::MAX`. Fold it to `i64::MIN`, as legacy does.
+    // Admit the signed literal before narrowing: the minimum has no representable positive `int` intermediate.
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Int)) = (lit, ty)
         && value.suffix.is_none()
-        && value.magnitude == 1_u128 << 63
+        && value.signed_value(true) == Some(i128::from(i64::MIN))
     {
         return Some(bir::Constant::Int(i64::MIN));
     }
@@ -340,14 +323,9 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))
             if info_for(*kind).family == NumericFamily::SignedInteger =>
         {
-            let signed = if value.magnitude == (1_u128 << 127) {
-                i128::MIN
-            } else {
-                -i128::try_from(value.magnitude).ok()?
-            };
             bir::TypedNumericConstant::Signed {
                 kind: *kind,
-                value: signed,
+                value: value.signed_value(true)?,
             }
         }
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {

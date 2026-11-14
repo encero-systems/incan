@@ -1,4 +1,32 @@
-rust.module("incan_std_testing")
+pub from rust::incan_std_testing import fail_t
+from rust::incan_std_testing import (
+    feature as native_feature,
+    fixture as native_fixture,
+    mark as native_mark,
+    param_case as native_param_case,
+    parametrize as native_parametrize,
+    platform as native_platform,
+    resource as native_resource,
+    serial as native_serial,
+    skip as native_skip,
+    skipif as native_skipif,
+    slow as native_slow,
+    test as native_test,
+    timeout as native_timeout,
+    xfail as native_xfail,
+    xfailif as native_xfailif,
+)
+
+
+def marker[F](
+    kind: str,
+    runner_only: bool,
+    scope_arg: str = "",
+    autouse_arg: str = "",
+    scopes: List[str] = [],
+) -> (F) -> F:
+    """Retain bootstrap compatibility while the compiler consumes this declaration annotation directly."""
+    return (function) => function
 
 """
 Incan Testing Framework
@@ -26,8 +54,8 @@ def test_future() -> None:
     pass
 ```
 
-Marker semantics are declared on marker APIs via `@rust.extern(metadata={...})`.
-`incan test` consumes that metadata from this module as the source of truth.
+Marker semantics are declared on marker APIs via checked `@marker(...)` metadata.
+`incan test` consumes those source-owned declarations as the source of truth.
 """
 
 # =============================================================================
@@ -48,26 +76,11 @@ pub def fail(msg: str) -> None:
     return fail_t(msg)
 
 
-@rust.extern
-pub def fail_t[T](msg: str) -> T:
-    """Generic failure primitive for helper functions returning `T`.
-
-    This always fails by delegating to the host panic boundary, but has a generic return type so assertion helpers -
-    like `assert_is_some()` - can typecheck cleanly.
-
-    Example:
-
-    ```incan
-    return fail_t("assertion failed")
-    ```
-    """
-    ...
-
 # =============================================================================
 # Markers
 # =============================================================================
 
-@rust.extern(metadata={"marker_kind": "skip", "runner_only": true})
+@marker(kind="skip", runner_only=true)
 pub def skip(reason: str = "") -> None:
     """
     Skip a test unconditionally.
@@ -83,10 +96,10 @@ pub def skip(reason: str = "") -> None:
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
-    ...
+    native_skip(reason)
 
 
-@rust.extern(metadata={"marker_kind": "test", "runner_only": true})
+@marker(kind="test", runner_only=true)
 pub def test() -> None:
     """
     Mark a function as a test even when its name does not start with `test_`.
@@ -102,20 +115,20 @@ pub def test() -> None:
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
-    ...
+    native_test()
 
 
-@rust.extern(metadata={"marker_kind": "skipif", "runner_only": true})
+@marker(kind="skipif", runner_only=true)
 pub def skipif(condition: bool, reason: str = "") -> None:
     """
     Skip a test when a collection-time condition is true.
 
     Supported conditions are literals, boolean operators, string equality against `platform()`, and `feature("name")`.
     """
-    ...
+    native_skipif(condition, reason)
 
 
-@rust.extern(metadata={"marker_kind": "xfail", "runner_only": true})
+@marker(kind="xfail", runner_only=true)
 pub def xfail(reason: str = "") -> None:
     """
     Mark a test as expected to fail.
@@ -134,40 +147,38 @@ pub def xfail(reason: str = "") -> None:
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
-    ...
+    native_xfail(reason)
 
 
-@rust.extern(metadata={"marker_kind": "xfailif", "runner_only": true})
+@marker(kind="xfailif", runner_only=true)
 pub def xfailif(condition: bool, reason: str = "") -> None:
     """
     Expect a test to fail when a collection-time condition is true.
 
     Supported conditions are literals, boolean operators, string equality against `platform()`, and `feature("name")`.
     """
-    ...
+    native_xfailif(condition, reason)
 
 
-@rust.extern
 pub def platform() -> str:
     """
     Return the platform name used by collection-time testing marker probes.
 
     `incan test` evaluates this during collection; runtime calls return the host OS identifier.
     """
-    ...
+    return native_platform()
 
 
-@rust.extern
 pub def feature(name: str) -> bool:
     """
     Return whether an `incan test --feature <name>` collection feature is enabled.
 
     Runtime calls return false because collection features are runner metadata, not application configuration.
     """
-    ...
+    return native_feature(name)
 
 
-@rust.extern(metadata={"marker_kind": "slow", "runner_only": true})
+@marker(kind="slow", runner_only=true)
 pub def slow() -> None:
     """
     Mark a test as slow.
@@ -186,58 +197,58 @@ pub def slow() -> None:
     Note: Marker decorators are consumed by `incan test` during discovery.
           Their runtime implementation stays a host boundary so metadata remains parseable in this declaration surface.
     """
-    ...
+    native_slow()
 
 
-@rust.extern(metadata={"marker_kind": "mark", "runner_only": true})
+@marker(kind="mark", runner_only=true)
 pub def mark(name: str) -> None:
     """
     Attach a named marker to a test for `incan test -m` selection.
 
     Marker names should use snake_case. With `--strict-markers`, names must be registered by TEST_MARKERS.
     """
-    ...
+    native_mark(name)
 
 
-@rust.extern(metadata={"marker_kind": "resource", "runner_only": true})
+@marker(kind="resource", runner_only=true)
 pub def resource(name: str) -> None:
     """
     Attach resource metadata to a test.
 
     `incan test --jobs N` will not overlap tests that share the same resource key.
     """
-    ...
+    native_resource(name)
 
 
-@rust.extern(metadata={"marker_kind": "serial", "runner_only": true})
+@marker(kind="serial", runner_only=true)
 pub def serial() -> None:
     """
     Attach serial-execution metadata to a test.
 
     `incan test --jobs N` runs serial tests alone against all other scheduled units.
     """
-    ...
+    native_serial()
 
 
-@rust.extern(metadata={"marker_kind": "timeout", "runner_only": true})
+@marker(kind="timeout", runner_only=true)
 pub def timeout(duration: str) -> None:
     """
     Set the timeout used for the generated test batch that contains this test, such as "250ms", "5s", or "2m".
     """
-    ...
+    native_timeout(duration)
 
 
 # =============================================================================
 # Fixtures
 # =============================================================================
 
-@rust.extern(metadata={
-    "marker_kind": "fixture",
-    "runner_only": true,
-    "scope_arg": "scope",
-    "autouse_arg": "autouse",
-    "scopes": ["function", "module", "session"],
-})
+@marker(
+    kind="fixture",
+    runner_only=true,
+    scope_arg="scope",
+    autouse_arg="autouse",
+    scopes=["function", "module", "session"],
+)
 pub def fixture() -> None:
     """
     Mark a function as a test fixture.
@@ -260,14 +271,14 @@ pub def fixture() -> None:
 
     Note: Fixtures are injected by parameter name matching.
     """
-    ...
+    native_fixture()
 
 
 # =============================================================================
 # Parametrize
 # =============================================================================
 
-@rust.extern(metadata={"marker_kind": "parametrize", "runner_only": true})
+@marker(kind="parametrize", runner_only=true)
 pub def parametrize[T](argnames: str, argvalues: List[T]) -> None:
     """
     Run a test with multiple parameter sets.
@@ -294,15 +305,14 @@ pub def parametrize[T](argnames: str, argvalues: List[T]) -> None:
     test_add[100-200-300] ... PASSED
     ```
     """
-    ...
+    native_parametrize(argnames, argvalues)
 
 
-@rust.extern
 pub def param_case[T](value: T, marks: List[str] = [], id: str = "") -> T:
     """
     Attach metadata to one parameter set inside `parametrize`.
     """
-    ...
+    return native_param_case(value, marks, id)
 
 
 # =============================================================================
@@ -336,26 +346,22 @@ pub def assert_eq[T](left: T, right: T, msg: str = "assertion failed: left != ri
     assert_eq(result, expected, "calculation was wrong")
     ```
     """
-    if left != right:
-        fail(msg)
+    assert left == right, msg
 
 
 pub def assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == right") -> None:
     """Assert two values are not equal."""
-    if left == right:
-        fail(msg)
+    assert left != right, msg
 
 
 pub def assert_true(condition: bool, msg: str = "assertion failed: expected true") -> None:
     """Assert condition is true."""
-    if not condition:
-        fail(msg)
+    assert condition, msg
 
 
 pub def assert_false(condition: bool, msg: str = "assertion failed: expected false") -> None:
     """Assert condition is false."""
-    if condition:
-        fail(msg)
+    assert not condition, msg
 
 
 pub def assert_is_some[T](option: Option[T], msg: str = "assertion failed: expected Some, got None") -> T:

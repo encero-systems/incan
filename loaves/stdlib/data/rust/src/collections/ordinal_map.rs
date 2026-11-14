@@ -1,8 +1,8 @@
 //! Rust support for generated `std.collections.OrdinalMap` modules.
 //!
-//! The user-facing type and public API are authored in `stdlib/collections.incn`. This module only supplies the
-//! crate-local Rust fragment that generated `std.collections` modules splice in when they need borrowed string-key
-//! lookup without exposing borrow syntax in Incan source.
+//! The user-facing type and public API are authored in `loaves/stdlib/data/src/collections.incn`. This module only
+//! supplies the crate-local Rust fragment that generated `std.collections` modules splice in when they need borrowed
+//! string-key lookup without exposing borrow syntax in Incan source.
 
 /// Add private-field-aware string lookup helpers to a generated `std.collections.OrdinalMap[str]`.
 ///

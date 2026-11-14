@@ -1,0 +1,6 @@
+"""Expose an ordinary library value beside the counting provider."""
+
+
+pub def marker() -> int:
+    """Return the public library value."""
+    return 7

@@ -1,0 +1,42 @@
+"""Run one invocation through the same owning pool as concurrent contract commands."""
+
+from std.fs import Path
+pub from processes import Outcome, built_program, clear_trace, set_timeout, trace_file, unit_notes
+from workers import Invocation, invoke_many
+
+
+pub def invoke(
+    incan: str,
+    arguments: list[str],
+    project: Path,
+    environment: list[str] = [],
+    arg0: Option[str] = None,
+) -> Result[Outcome, str]:
+    """Run one command through the pool's capture, deadline and reaping contract, with any declared settings."""
+    request = Invocation(
+        program=incan,
+        arguments=arguments,
+        project=project,
+        selector=None,
+        environment=environment,
+        arg0=arg0,
+    )
+    return invoke_many([request], 1)[0]
+
+
+pub def invoke_to_file(incan: str, arguments: list[str], project: Path, output: Path) -> Result[Outcome, str]:
+    """Capture a protocol response on disk through the same pool, deadlines and process-group reaping as other runs."""
+    request = Invocation(program=incan, arguments=arguments, project=project, selector=None, stdout_file=Some(output))
+    return invoke_many([request], 1)[0]
+
+
+pub def surface(arguments: list[str]) -> tuple[Option[str], list[str]]:
+    """
+    The program name and arguments one command line selects (RFC 118). A leading `oven` starts the given `incan` under
+    the name `oven`, which selects its project surface; a leading `incan`, or none, starts it as `incan`.
+    """
+    if len(arguments) > 0 and arguments[0] == "oven":
+        return (Some("oven"), arguments[1:])
+    if len(arguments) > 0 and arguments[0] == "incan":
+        return (None, arguments[1:])
+    return (None, arguments)

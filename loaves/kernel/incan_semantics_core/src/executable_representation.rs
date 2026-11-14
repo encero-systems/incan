@@ -14,12 +14,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+mod module_codec;
 mod publication;
+mod surface_build;
+mod surface_reading;
+
+pub use module_codec::*;
+pub use surface_build::*;
 
 use crate::CanonicalSymbolId;
 use crate::CompilerNodeId;
 use crate::body_ir::{
-    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration,
+    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, TraitFieldImplementation,
+    ValueEnumDeclaration,
 };
 
 /// Version of the encoded representation, independent of the manifest that ships beside it.
@@ -31,7 +38,68 @@ use crate::body_ir::{
 /// are positional: adding a serde-defaulted field does not authorize an older consumer to reinterpret that payload.
 /// Version 19 appends checked numeric newtype constants and their canonical constructor/layout requirements.
 /// Version 20 appends the canonical diverging ValueError helper operation.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 20;
+/// Version 21 is the Loaf representation (DD-0007): Loaf callables replace standard-library delegations, enum
+/// declarations name their compiled item, and modules no longer carry re-exported names.
+/// Version 22 appends metadata-selected native Rust constants with their checked carrier types.
+/// Version 23 appends builtin codec label guards; their conditional evaluation is retained in ordinary Body IR blocks.
+/// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
+/// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
+/// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
+/// Version 27 retains checked native callable signatures with deferred executable bodies.
+/// Version 28 retains native default callees alongside compiled callable frames and appends checked panic-hook
+/// registration.
+/// Version 29 retains checked owned callback storage and native Send/Sync capture obligations.
+/// Version 30 carries checked required-field witnesses in nominal fragment trailers.
+/// Version 31 appends the pure generated field-table operation for closed type parameters.
+/// Version 32 retains owned native collection parameter ABIs independently of source callable mutability markers.
+/// Version 33 retains verified foreign call descriptors independently of source class layouts.
+/// Version 34 retains checked private pointer carriers and foreign bridge operations.
+/// Version 35 retains expansion contexts in every checked source span and canonical identity.
+/// Version 36 appends the typed C span bridge operations.
+/// Version 37 carries explicit input access independently of binding mutability and native collection ownership.
+/// Version 38 retains checked generic value metadata; version 39 adds a source-owned explicit-input body profile.
+/// Version 40 combines the input and reflection contracts. Their independently developed positional layouts are
+/// incompatible with this combined representation and require regenerated providers.
+/// Version 41 retains canonical whole-owner initializer transfers independently of ordinary native assignments.
+/// Every provider must be rebuilt; an older profile cannot silently discard the added positional field.
+/// Version 42 retains each explicit local binding on its body, so a body that loses its checked profile still
+/// exposes the explicit-input obligation.
+/// Version 43 retains a body's returned view: the parameter slot its result borrows and the view's access.
+/// Version 44 executes conditional explicit bodies: a checked input profile 2 is admitted, and its owned initializer
+/// transfers travel with the body.
+/// Version 45 marks a returned view carried in a `Result` or `Option` payload, so a caller keeps the source loan
+/// through `?` instead of taking the carrier as an owned value.
+/// Version 46 records which payload carries a returned view, so a view may travel in a `Result` error as well as in
+/// its success payload.
+/// Version 47 lets a tuple element carry a returned view, so a result can pair a view with owned values.
+/// Version 48 distinguishes body-inferred shared inputs from explicit `Borrowed` inputs while preserving their shared
+/// native ABI. Older representations carry no such fact and retain their existing inferred meaning.
+/// Version 49 carries the checker's typed builtin-method operation on every method target. Older representations are
+/// refused because an absent operation would force consumers to reconstruct builtin meaning from canonical text.
+/// Version 50 carries the primary source label in persisted checker diagnostics. Older representations are refused
+/// because decoding the prior diagnostic row shape would shift every following structured field.
+/// Version 51 closes the builtin-method operation over text, iterator, carrier, clone, and numeric methods as well, so
+/// partial operation registries are refused rather than reintroducing name-based dispatch.
+/// Version 52 publishes generic nominal ownership-mode substitutions and the view dependencies they carry.
+/// Version 53 retains each reflection-visible field's rename history, stored-record identity and canonical-hash flag.
+/// Version 54 carries declared persistent package namespaces beside model and enum layouts, and the complete
+/// field lifecycle, original-position and literal-empty-default facts. The positional schema requires fresh producers.
+/// Version 55 retains unresolved source-result independence obligations in checked input profiles. Generic
+/// templates carry their exact result types until the consuming instantiation proves independent storage.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 55;
+
+/// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
+/// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
+/// views, conditional profiles or the component carrying a view.
+const OLDEST_SUPPORTED_VERSION: u32 = 55;
+
+/// Required-field witnesses transported separately from the legacy positional nominal layout.
+#[derive(Serialize, Deserialize)]
+struct TraitFieldBindings {
+    owner: CanonicalSymbolId,
+    trait_owner: CanonicalSymbolId,
+    fields: Vec<TraitFieldImplementation>,
+}
 
 /// Largest index this format admits, in bytes.
 ///
@@ -51,6 +119,25 @@ pub struct EncodedModuleRepresentation {
     pub version: u32,
     /// The checked module this representation carries.
     pub module: BodyIrModule,
+}
+
+/// One executable owner's checked representation, framed under the same kernel-owned version as module surfaces.
+///
+/// Project records use this frame instead of defining a second Body IR schema. The module identity and logical source
+/// path retain the provenance that a whole-module container otherwise supplies, while [`Body`] remains the one
+/// semantic representation interpreted by checking, lowering and the native adapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncodedOwnerRepresentation {
+    /// Encoded-shape version, checked before the owner is interpreted.
+    pub version: u32,
+    /// Canonical owning module of the executable declaration.
+    pub module: CompilerNodeId,
+    /// Project-relative logical source path that supplied this owner.
+    pub source: String,
+    /// Position-free declaration identity used by the compiler record graph.
+    pub identity: String,
+    /// The complete checked executable owner.
+    pub body: Body,
 }
 
 /// Why a representation could not be interpreted.
@@ -92,74 +179,6 @@ pub enum ExecutableRepresentationError {
         /// Declaration the consumer asked for.
         declaration: String,
     },
-}
-
-/// Encode an entire checked module for internal round-trip diagnostics.
-///
-/// Package publication uses [`build_surface`], which projects public coverage and its required execution closure.
-/// This whole-module codec deliberately retains every checked fact for compiler regression tests.
-pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    /// The borrowed twin of [`EncodedModuleRepresentation`]: postcard encodes a struct field by field, so this
-    /// serializes byte-for-byte like the owned frame without copying the module first.
-    #[derive(Serialize)]
-    struct BorrowedFrame<'module> {
-        version: u32,
-        module: &'module BodyIrModule,
-    }
-    let framed = BorrowedFrame {
-        version: EXECUTABLE_REPRESENTATION_VERSION,
-        module,
-    };
-    postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
-        reason: format!("could not encode the checked module: {error}"),
-    })
-}
-
-/// Decode an internal whole-module snapshot, refusing an unfamiliar version before decoding its contents.
-///
-/// The version is checked before the module is used, so an unfamiliar representation is refused rather than
-/// partially interpreted. A decode that succeeds has produced the same checked module the declaring compilation
-/// encoded; there is no reconstruction step in which a consumer could arrive at a different answer.
-pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentationError> {
-    require_supported_version(bytes)?;
-    let framed: EncodedModuleRepresentation =
-        postcard::from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
-            reason: format!("could not decode the framed representation: {error}"),
-        })?;
-    if framed.version != EXECUTABLE_REPRESENTATION_VERSION {
-        return Err(ExecutableRepresentationError::UnsupportedVersion {
-            found: framed.version,
-            supported: EXECUTABLE_REPRESENTATION_VERSION,
-        });
-    }
-    Ok(framed.module)
-}
-
-/// Read the version a representation declares without interpreting the module it carries.
-///
-/// A consumer resolving dependencies needs to know whether it can execute a package before it commits to using it.
-/// RFC 123 requires that requirement to be settled at resolution time rather than at the first call, and settling it
-/// must not mean decoding a surface the consumer may then refuse.
-pub fn representation_version(bytes: &[u8]) -> Result<u32, ExecutableRepresentationError> {
-    // Postcard encodes struct fields in declaration order, so the leading varint is the version and reading it does
-    // not require the module behind it to be interpretable by this consumer — which is the whole point.
-    let (version, _) =
-        postcard::take_from_bytes::<u32>(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
-            reason: format!("could not read the representation version: {error}"),
-        })?;
-    Ok(version)
-}
-
-/// Reject an unfamiliar encoding from its stable leading version, before decoding any version-specific fields.
-pub fn require_supported_version(bytes: &[u8]) -> Result<(), ExecutableRepresentationError> {
-    let found = representation_version(bytes)?;
-    if found != EXECUTABLE_REPRESENTATION_VERSION {
-        return Err(ExecutableRepresentationError::UnsupportedVersion {
-            found,
-            supported: EXECUTABLE_REPRESENTATION_VERSION,
-        });
-    }
-    Ok(())
 }
 
 /// Stable reason a public export has no executable fragment. Reasons never disclose private declaration names.
@@ -211,35 +230,63 @@ pub enum ExecutableDeclaration {
         /// Checked replacement storage and computation under the same canonical source identity.
         storage: Box<crate::body_ir::StaticDeclaration>,
     },
-    /// The generic wrapper evaluates its checked decorator chain per invocation and retains its source original.
+    /// Retired serialized discriminant; identity validation refuses the former per-call decorator fragment.
     InvocationDecoratedBody {
         /// Ordinary calls select this wrapper using the call site's checked type arguments.
         body: Box<Body>,
         /// Only explicit original-callable reads select this implementation under the same declared binders.
         binding: Box<crate::body_ir::DecoratedBinding>,
     },
+    /// Deferred checked meaning and the exact native instantiations its calls select.
+    NativeBody {
+        /// The generic or otherwise caller-instantiated source frame.
+        body: Box<Body>,
+        /// Checker-produced signatures, matched by canonical identity and native type arguments.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
+    /// Producer-authenticated passing modes and defaults of a compiled callable, with no executable implementation.
+    /// Consumers call the canonical rlib export; this frame never joins their executable body queue.
+    CompiledCallableFrame {
+        /// Exact declaration-local parameter passing, representation and default computations.
+        frame: Box<Body>,
+        /// Producer-selected native callees used by retained default computations.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
+    /// A generic wrapper, original and initializer template close together and use the checked per-instance policy.
+    GenericDecoratedBody {
+        /// Ordinary calls select this wrapper with their checked type arguments.
+        body: Box<Body>,
+        /// The original and initializer retain the same canonical declaration and exact type parameters.
+        binding: Box<crate::body_ir::DecoratedBinding>,
+        /// Producer-selected native callees required by any of the three retained frames.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
-    /// Canonical identity carried by this fragment; it must agree with the index identity used to select it.
+    /// Canonical identity carried by this fragment; it must agree with the selecting index. Native-body records may
+    /// transport only exact Rust callable identities, never authorize a package declaration outside that index.
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
-            Self::InvocationDecoratedBody { body, binding } => {
+            Self::NativeBody { body, callables } => (!callables.is_empty() && valid_native_calls(callables))
+                .then_some(body.canonical.as_ref())
+                .flatten(),
+            Self::CompiledCallableFrame { frame, callables } => (frame.block.stmts.is_empty()
+                && valid_native_calls(callables)
+                && crate::body_ir::LoafCallable::from_body(frame).is_some())
+            .then_some(frame.canonical.as_ref())
+            .flatten(),
+            Self::InvocationDecoratedBody { .. } => None,
+            Self::GenericDecoratedBody {
+                body,
+                binding,
+                callables,
+            } => {
                 let identity = body.canonical.as_ref()?;
-                (binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
-                    && binding.initializer.is_none()
-                    && identity.kind == crate::SemanticSourceTargetKind::Function
-                    && !body.type_parameters.is_empty()
-                    && !body.is_async
-                    && !binding.original_body.is_async
-                    && binding.original_body.canonical.as_ref() == Some(identity)
-                    && binding.original_body.direct_call_id == body.direct_call_id
-                    && binding.original_body.decl_id == body.decl_id
-                    && binding.original_body.type_parameters == body.type_parameters
-                    && binding.original_body.params == body.params
-                    && binding.original_body.return_type == body.return_type)
-                    .then_some(identity)
+                let mut module = BodyIrModule::declarations_only(crate::canonical_module_identity(identity)?);
+                module.bodies.push(body.as_ref().clone());
+                (valid_native_calls(callables) && module.is_well_formed_decorated_binding(binding)).then_some(identity)
             }
             Self::DecoratedBody { body, binding, storage } => {
                 let identity = body.canonical.as_ref()?;
@@ -266,6 +313,18 @@ impl ExecutableDeclaration {
             Self::Static(value) => Some(&value.canonical),
         }
     }
+}
+
+/// Native records carry exact Rust identities and closed signatures, never another source declaration's executable
+/// authority.
+fn valid_native_calls(callables: &[crate::body_ir::LoafCallable]) -> bool {
+    callables.iter().all(|callable| {
+        matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+            && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
+            && callable.type_parameters.is_empty()
+            && callable.parameter_defaults.is_empty()
+            && callable.declaration_frame.is_none()
+    })
 }
 
 /// Explicit admission and payload address for one public root or internal execution dependency.
@@ -313,719 +372,6 @@ struct AdmittedDeclaration {
     requirements: BTreeSet<CanonicalSymbolId>,
 }
 
-/// Build public coverage and its deterministic execution closure from one declaring compilation.
-///
-/// `public` comes from the finalized manifest, including public members, and remains the exact resolution surface.
-/// Private declarations enter only when reachable from covered public roots. `unrepresentable` names the bodies Body IR
-/// could not fully represent ([`crate::body_ir::Body::first_representation_gap`]), in addition to this layer's
-/// portable-reference checks.
-///
-/// The work is a pipeline and the order is load-bearing, in a way worth stating exactly. Coverage starts
-/// pessimistic, and `Covered` is written once, in the final phase, from whatever is still admitted by then. The
-/// admitted set itself both grows and shrinks: projection fills it, and `retain_only_satisfiable` removes from it.
-/// Publishing coverage last is what makes that safe, because a declaration dropped late can never already have been
-/// reported covered. A declaration no phase reaches keeps the pessimistic answer it started with. Each phase is
-/// separated out below; this function is the order they run in.
-pub fn build_surface(
-    modules: &[BodyIrModule],
-    library: &str,
-    package_version: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    unrepresentable: &BTreeSet<CanonicalSymbolId>,
-) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    let candidates = checked_candidates(modules, library, public);
-    let mut declarations = uncovered_owned_declarations(library, &candidates);
-    let mut admitted = project_declarations(modules, library, &candidates, unrepresentable, &mut declarations)?;
-    record_trait_slots(&admitted, &mut declarations);
-    record_type_context_members(&admitted, &mut declarations);
-    retain_only_satisfiable(library, &mut admitted, &mut declarations);
-    retain_reachable(library, public, &mut admitted, &mut declarations);
-    for coverage in declarations.values_mut() {
-        if matches!(coverage, DeclarationCoverage::TypeContext { owner } if !admitted.contains_key(owner)) {
-            *coverage = DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable);
-        }
-    }
-    encode_surface(library, package_version, public, admitted, declarations)
-}
-
-/// Collect actual checked declarations and their members; eligibility never adds an importable export.
-fn checked_candidates(
-    modules: &[BodyIrModule],
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-) -> BTreeSet<CanonicalSymbolId> {
-    let mut identities = public.clone();
-    for module in modules {
-        // ---- Declarations: checked bodies, storage, aliases, and trait owners ----
-        identities.extend(module.bodies.iter().filter_map(|body| body.canonical.clone()));
-        identities.extend(module.static_declarations.iter().map(|value| value.canonical.clone()));
-        identities.extend(module.constant_declarations.iter().map(|value| value.canonical.clone()));
-        identities.extend(
-            module
-                .type_alias_declarations
-                .iter()
-                .map(|value| value.canonical.clone()),
-        );
-        identities.extend(module.trait_declarations.iter().cloned());
-
-        // ---- Layouts: checked fields and variants remain part of their declaring context ----
-        for value in &module.nominal_declarations {
-            identities.insert(value.canonical.clone());
-            identities.extend(value.field_identities.iter().cloned());
-        }
-        for value in &module.enum_declarations {
-            identities.insert(value.canonical.clone());
-            identities.extend(value.variants.iter().map(|variant| variant.canonical.clone()));
-        }
-        for value in &module.fieldless_enum_declarations {
-            identities.insert(value.canonical.clone());
-            identities.extend(value.variants.iter().map(|variant| variant.canonical.clone()));
-        }
-        for value in &module.value_enum_declarations {
-            identities.insert(value.canonical.clone());
-            identities.extend(value.variants.iter().map(|variant| variant.canonical.clone()));
-        }
-
-        // ---- Dispatch: retain actual slot identities, without completing an absent implementation body ----
-        for implementation in &module.trait_implementations {
-            identities.insert(implementation.method.clone());
-            identities.insert(implementation.implementation.clone());
-        }
-    }
-    identities.retain(|identity| identity.scope_discriminant.is_none() && owned_by(identity, library));
-    identities
-}
-
-/// Prune implementation fragments outside the satisfiable closure of finalized public exports.
-fn retain_reachable(
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) {
-    let mut pending = public.clone();
-    let mut reached = BTreeSet::new();
-    while let Some(identity) = pending.pop_first() {
-        if !reached.insert(identity.clone()) {
-            continue;
-        }
-        if let Some(DeclarationCoverage::TypeContext { owner }) = declarations.get(&identity) {
-            pending.insert(owner.clone());
-        }
-        if let Some(entry) = admitted.get(&identity) {
-            pending.extend(
-                entry
-                    .requirements
-                    .iter()
-                    .filter(|required| owned_by(required, library))
-                    .cloned(),
-            );
-        }
-    }
-    admitted.retain(|identity, _| reached.contains(identity));
-    declarations.retain(|identity, _| public.contains(identity) || reached.contains(identity));
-}
-
-/// Start every eligible identity this package declares at uncovered before dependency and reachability checks.
-///
-/// An identity no later phase reaches keeps this answer, which is the safe direction: a consumer refuses a
-/// declaration this package could not publish, rather than attempting one whose payload was never written. Later
-/// phases may replace this reason with a more specific one, or supersede it entirely once the declaration is
-/// encoded, but nothing reaches `Covered` without surviving every phase in between.
-fn uncovered_owned_declarations(
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-) -> BTreeMap<CanonicalSymbolId, DeclarationCoverage> {
-    public
-        .iter()
-        .filter(|identity| owned_by(identity, library))
-        .map(|identity| {
-            (
-                identity.clone(),
-                DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration),
-            )
-        })
-        .collect()
-}
-
-/// Return whether a canonical identity is declared by this package rather than reached through a dependency.
-fn owned_by(identity: &CanonicalSymbolId, library: &str) -> bool {
-    matches!(&identity.origin, crate::SymbolOrigin::Package { library: owner, .. } if owner == library)
-}
-
-/// Project every declaration this package owns, admitting what survives and recording why the rest did not.
-///
-/// Each declaration kind reaches the same two outcomes through its own projection: admitted with its requirements,
-/// or uncovered with the reason a consumer is told. Nothing here decides whether a requirement can actually be met
-/// — that is a whole-package question, answered next.
-fn project_declarations(
-    modules: &[BodyIrModule],
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    unrepresentable: &BTreeSet<CanonicalSymbolId>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) -> Result<BTreeMap<CanonicalSymbolId, AdmittedDeclaration>, ExecutableRepresentationError> {
-    let mut admitted = BTreeMap::new();
-    for module in modules {
-        for value in &module.static_declarations {
-            if !declarations.contains_key(&value.canonical) {
-                continue;
-            }
-            match publication::project_static(value, module, library, public) {
-                Ok((value, requirements)) => {
-                    admitted.insert(
-                        value.canonical.clone(),
-                        AdmittedDeclaration {
-                            declaration: ExecutableDeclaration::Static(value),
-                            requirements,
-                        },
-                    );
-                }
-                Err(reason) => {
-                    declarations.insert(value.canonical.clone(), DeclarationCoverage::Uncovered(reason));
-                }
-            }
-        }
-        for value in &module.type_alias_declarations {
-            if !declarations.contains_key(&value.canonical) {
-                continue;
-            }
-            match publication::project_type_alias(value, module, library, public) {
-                Ok((value, requirements)) => {
-                    admitted.insert(
-                        value.canonical.clone(),
-                        AdmittedDeclaration {
-                            declaration: ExecutableDeclaration::TypeAlias(value),
-                            requirements,
-                        },
-                    );
-                }
-                Err(reason) => {
-                    declarations.insert(value.canonical.clone(), DeclarationCoverage::Uncovered(reason));
-                }
-            }
-        }
-        for value in &module.constant_declarations {
-            if declarations.contains_key(&value.canonical) {
-                match publication::project_constant(value, module, library, public) {
-                    Ok((value, requirements)) => {
-                        admitted.insert(
-                            value.canonical.clone(),
-                            AdmittedDeclaration {
-                                declaration: ExecutableDeclaration::Constant(value),
-                                requirements,
-                            },
-                        );
-                    }
-                    Err(reason) => {
-                        declarations.insert(value.canonical.clone(), DeclarationCoverage::Uncovered(reason));
-                    }
-                }
-            }
-        }
-        // ---- Bodies: the executable declarations a consumer calls ----
-        for body in &module.bodies {
-            let Some(identity) = body.canonical.as_ref() else {
-                continue;
-            };
-            if !declarations.contains_key(identity) {
-                continue;
-            }
-            // A profile-level refusal is recorded exactly like a projection failure, so the two reach a consumer
-            // through one vocabulary rather than two.
-            let projected = if unrepresentable.contains(identity) {
-                Err(CoverageReason::UnsupportedConstruct)
-            } else {
-                publication::project_callable(body, module, library, public)
-            };
-            match projected {
-                Ok((declaration, requirements)) => {
-                    admitted.insert(
-                        identity.clone(),
-                        AdmittedDeclaration {
-                            declaration,
-                            requirements,
-                        },
-                    );
-                }
-                Err(reason) => {
-                    declarations.insert(identity.clone(), DeclarationCoverage::Uncovered(reason));
-                }
-            }
-        }
-
-        project_nominals(module, library, public, &mut admitted, declarations);
-        project_enums(module, library, public, &mut admitted, declarations)?;
-    }
-    Ok(admitted)
-}
-
-/// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
-fn project_nominals(
-    module: &BodyIrModule,
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) {
-    // ---- Nominals: models and classes, whose members are addressed through them ----
-    for nominal in &module.nominal_declarations {
-        if !declarations.contains_key(&nominal.canonical) {
-            continue;
-        }
-        match publication::project_nominal(nominal, module, library, public) {
-            Ok((nominal, mut requirements)) => {
-                let implementations = module
-                    .trait_implementations
-                    .iter()
-                    .filter(|implementation| implementation.owner == nominal.canonical)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for implementation in &implementations {
-                    // A checked lazy default records dispatch eligibility, not a call. Its body is required only
-                    // when a consumer selects that exact slot; unrelated defaults cannot invalidate this layout.
-                    if implementation.implementation == implementation.method {
-                        continue;
-                    }
-                    requirements.insert(implementation.method.clone());
-                    requirements.insert(implementation.implementation.clone());
-                }
-                let identity = nominal.canonical.clone();
-                let declaration = if implementations.is_empty() {
-                    ExecutableDeclaration::Nominal(nominal)
-                } else {
-                    ExecutableDeclaration::NominalWithTraits(nominal, implementations)
-                };
-                admitted.insert(
-                    identity,
-                    AdmittedDeclaration {
-                        declaration,
-                        requirements,
-                    },
-                );
-            }
-            Err(reason) => {
-                declarations.insert(nominal.canonical.clone(), DeclarationCoverage::Uncovered(reason));
-            }
-        }
-    }
-
-    for identity in &module.trait_declarations {
-        if declarations.contains_key(identity) {
-            admitted.insert(
-                identity.clone(),
-                AdmittedDeclaration {
-                    declaration: ExecutableDeclaration::Trait(identity.clone()),
-                    requirements: BTreeSet::new(),
-                },
-            );
-        }
-    }
-}
-
-/// Project normal, fieldless, and value enums using the same checked-candidate boundary.
-fn project_enums(
-    module: &BodyIrModule,
-    library: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) -> Result<(), ExecutableRepresentationError> {
-    // ---- Enums: retain every checked variant required by the complete layout ----
-    for value in &module.enum_declarations {
-        if !declarations.contains_key(&value.canonical) {
-            continue;
-        }
-        match publication::project_enum(value, module, library, public) {
-            Ok((value, requirements)) => {
-                admitted.insert(
-                    value.canonical.clone(),
-                    AdmittedDeclaration {
-                        declaration: ExecutableDeclaration::Enum(value),
-                        requirements,
-                    },
-                );
-            }
-            Err(reason) => {
-                declarations.insert(value.canonical.clone(), DeclarationCoverage::Uncovered(reason));
-            }
-        }
-    }
-    //
-    // Every variant must have a retained checked identity. Publication of internal context does not make its
-    // variants importable. Neither kind carries requirements: a variant has no payload to depend on.
-    //
-    // Value enums additionally retain their checked native layout: the scalar registry cannot substitute for
-    // the carrier's derive selections or canonical member addresses.
-    for value in &module.fieldless_enum_declarations {
-        if admitted.contains_key(&value.canonical)
-            || !declarations.contains_key(&value.canonical)
-            || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
-        {
-            continue;
-        }
-        let mut value = value.clone();
-        stamp_declaration_id(&mut value.direct_declaration_id, &value.canonical, "enum")?;
-        for variant in &mut value.variants {
-            stamp_declaration_id(&mut variant.direct_declaration_id, &variant.canonical, "variant")?;
-        }
-        admitted.insert(
-            value.canonical.clone(),
-            AdmittedDeclaration {
-                declaration: ExecutableDeclaration::FieldlessEnum(value),
-                requirements: BTreeSet::new(),
-            },
-        );
-    }
-
-    for value in &module.value_enum_declarations {
-        if !declarations.contains_key(&value.canonical)
-            || !value.variants.iter().all(|variant| public.contains(&variant.canonical))
-        {
-            continue;
-        }
-        let Some(AdmittedDeclaration {
-            declaration: ExecutableDeclaration::Enum(layout),
-            requirements,
-        }) = admitted.remove(&value.canonical)
-        else {
-            declarations.insert(
-                value.canonical.clone(),
-                DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration),
-            );
-            continue;
-        };
-        let mut value = value.clone();
-        stamp_declaration_id(&mut value.direct_declaration_id, &value.canonical, "value enum")?;
-        for variant in &mut value.variants {
-            stamp_declaration_id(&mut variant.direct_declaration_id, &variant.canonical, "variant")?;
-        }
-        admitted.insert(
-            value.canonical.clone(),
-            AdmittedDeclaration {
-                declaration: ExecutableDeclaration::ValueEnumWithLayout(value, layout),
-                requirements,
-            },
-        );
-    }
-    Ok(())
-}
-
-/// Replace a declaration's source-local address with the package-scoped projection of its canonical identity.
-///
-/// `what` names the thing in the refusal, so an enum and its variants are distinguishable in a diagnostic that
-/// otherwise reports the same failure twice.
-fn stamp_declaration_id(
-    slot: &mut CompilerNodeId,
-    canonical: &CanonicalSymbolId,
-    what: &str,
-) -> Result<(), ExecutableRepresentationError> {
-    *slot = publication::declaration_id(canonical).map_err(|_| malformed(format!("{what} has no canonical owner")))?;
-    Ok(())
-}
-
-/// Drop admitted declarations whose own-package requirements are not themselves admitted, to a fixed point.
-///
-/// One pass is not enough: dropping a declaration can strand a second that required it. Repeating until nothing
-/// more is rejected makes the result independent of iteration order, which is what lets mutual public recursion
-/// resolve the same way every build.
-fn retain_only_satisfiable(
-    library: &str,
-    admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) {
-    loop {
-        let rejected = admitted
-            .iter()
-            .filter(|(_, entry)| {
-                entry
-                    .requirements
-                    .iter()
-                    .any(|required| owned_by(required, library) && !admitted.contains_key(required)
-                        && !matches!(declarations.get(required), Some(DeclarationCoverage::TypeContext { owner }) if admitted.contains_key(owner)))
-            })
-            .map(|(identity, _)| identity.clone())
-            .collect::<Vec<_>>();
-        if rejected.is_empty() {
-            break;
-        }
-        for identity in rejected {
-            admitted.remove(&identity);
-            declarations.insert(
-                identity,
-                DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable),
-            );
-        }
-    }
-}
-
-/// Point each admitted type's members at their owner.
-///
-/// A field or variant is not separately addressable: it is reached through the declaration that owns it. Recording
-/// the owner lets a consumer resolve a member identity without the package publishing a fragment per member.
-fn record_type_context_members(
-    admitted: &BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) {
-    let required_members: BTreeSet<_> = admitted.values().flat_map(|entry| entry.requirements.iter()).collect();
-    for entry in admitted.values() {
-        let value = match &entry.declaration {
-            ExecutableDeclaration::ValueEnum(value) | ExecutableDeclaration::ValueEnumWithLayout(value, _) => value,
-            _ => continue,
-        };
-        let crate::SymbolOrigin::Package { library, .. } = &value.canonical.origin else {
-            continue;
-        };
-        for required in &required_members {
-            if let Some(owner) =
-                publication::generated_value_getter_owner(required, std::slice::from_ref(value), library)
-            {
-                declarations.insert((*required).clone(), DeclarationCoverage::TypeContext { owner });
-            }
-        }
-    }
-    for (identity, entry) in admitted {
-        // Layouts own addressable members; bodies, traits, constants, aliases and storage are addressed directly.
-        let members: Vec<&CanonicalSymbolId> = match &entry.declaration {
-            ExecutableDeclaration::Nominal(value) | ExecutableDeclaration::NominalWithTraits(value, _) => {
-                value.field_identities.iter().collect()
-            }
-            ExecutableDeclaration::FieldlessEnum(value) => {
-                value.variants.iter().map(|variant| &variant.canonical).collect()
-            }
-            ExecutableDeclaration::ValueEnum(value) | ExecutableDeclaration::ValueEnumWithLayout(value, _) => {
-                value.variants.iter().map(|variant| &variant.canonical).collect()
-            }
-            ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
-            ExecutableDeclaration::Body(_)
-            | ExecutableDeclaration::DecoratedBody { .. }
-            | ExecutableDeclaration::InvocationDecoratedBody { .. }
-            | ExecutableDeclaration::Trait(_)
-            | ExecutableDeclaration::Constant(_) => Vec::new(),
-            ExecutableDeclaration::TypeAlias(_) | ExecutableDeclaration::Static(_) => Vec::new(),
-        };
-        for member in members {
-            declarations.insert(
-                member.clone(),
-                DeclarationCoverage::TypeContext {
-                    owner: identity.clone(),
-                },
-            );
-        }
-    }
-}
-
-/// Abstract public trait slots execute through their declaring trait and its concrete implementation records.
-fn record_trait_slots(
-    admitted: &BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) {
-    for (identity, entry) in admitted {
-        if !matches!(entry.declaration, ExecutableDeclaration::Trait(_)) {
-            continue;
-        }
-        for (member, coverage) in declarations.iter_mut() {
-            if member.kind == crate::SemanticSourceTargetKind::Method
-                && member.origin == identity.origin
-                && member.declaration_span.start >= identity.declaration_span.start
-                && member.declaration_span.end <= identity.declaration_span.end
-                && !admitted.contains_key(member)
-                && matches!(
-                    coverage,
-                    DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)
-                )
-            {
-                *coverage = DeclarationCoverage::TypeContext {
-                    owner: identity.clone(),
-                };
-            }
-        }
-    }
-}
-
-/// Encode the admitted fragments and the index that addresses them into the framed wire form.
-///
-/// The frame is version, then index length, then index, then payload. A consumer reads the version before anything
-/// else, so it can refuse an interpretation it does not support without having to parse the rest.
-fn encode_surface(
-    library: &str,
-    package_version: &str,
-    public: &BTreeSet<CanonicalSymbolId>,
-    admitted: BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
-    mut declarations: BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
-) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    // ---- Payloads: encode in canonical order across public and implementation declarations ----
-    let mut payload = Vec::new();
-    for (identity, entry) in admitted {
-        let encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
-        declarations.insert(
-            identity,
-            DeclarationCoverage::Covered {
-                offset: u64::try_from(payload.len()).map_err(|_| malformed("payload offset exceeds wire range"))?,
-                length: u64::try_from(encoded.len()).map_err(|_| malformed("fragment length exceeds wire range"))?,
-                requirements: entry.requirements.into_iter().collect(),
-            },
-        );
-        payload.extend(encoded);
-    }
-
-    // ---- Indexes: public membership stays identical to the finalized manifest ----
-    let implementation = declarations
-        .extract_if(.., |identity, _| !public.contains(identity))
-        .collect();
-    let index = SurfaceIndex {
-        library: library.to_owned(),
-        package_version: package_version.to_owned(),
-        declarations,
-        implementation,
-    };
-    // ---- Envelope: stable version prefix precedes all version-specific content ----
-    let encoded_index = postcard::to_allocvec(&index).map_err(|error| malformed(error.to_string()))?;
-    let mut bytes =
-        postcard::to_allocvec(&EXECUTABLE_REPRESENTATION_VERSION).map_err(|error| malformed(error.to_string()))?;
-    bytes.extend(
-        u64::try_from(encoded_index.len())
-            .map_err(|_| malformed("index length exceeds wire range"))?
-            .to_le_bytes(),
-    );
-    bytes.extend(encoded_index);
-    bytes.extend(payload);
-    Ok(bytes)
-}
-
-/// Normalize codec and contract errors without coupling this layer to package filesystem diagnostics.
-fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
-    ExecutableRepresentationError::Malformed { reason: reason.into() }
-}
-
-impl SurfaceIndex {
-    /// Validate duplicate-free canonical ownership, contiguous disjoint ranges, and payload bounds before selection.
-    pub fn validate(&self, payload_length: u64) -> Result<(), ExecutableRepresentationError> {
-        if self
-            .implementation
-            .keys()
-            .any(|identity| self.declarations.contains_key(identity))
-        {
-            return Err(malformed("public and implementation identities overlap"));
-        }
-        let mut next_offset = 0;
-        let entries: BTreeMap<_, _> = self.declarations.iter().chain(&self.implementation).collect();
-        for (identity, coverage) in entries {
-            if identity.scope_discriminant.is_some()
-                || !matches!(&identity.origin, crate::SymbolOrigin::Package { library, .. } if library == &self.library)
-            {
-                return Err(malformed("index identity does not belong to the declaring package"));
-            }
-            if let DeclarationCoverage::TypeContext { owner } = coverage
-                && (owner.origin != identity.origin
-                    || !(matches!(
-                        (&identity.kind, &owner.kind),
-                        (
-                            crate::SemanticSourceTargetKind::Field,
-                            crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Class
-                        ) | (
-                            crate::SemanticSourceTargetKind::Variant,
-                            crate::SemanticSourceTargetKind::Enum
-                        ) | (
-                            crate::SemanticSourceTargetKind::Method,
-                            crate::SemanticSourceTargetKind::Trait
-                        )
-                    ) || (identity.kind == crate::SemanticSourceTargetKind::Method
-                        && owner.kind == crate::SemanticSourceTargetKind::Enum
-                        && identity.namespace == crate::SymbolNamespace::Member
-                        && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
-                        && identity.declaration_name == "value"
-                        && identity.scope_discriminant == owner.scope_discriminant
-                        && identity.declaration_span == owner.declaration_span
-                        && owner.declaration_span.end > owner.declaration_span.start))
-                    || !matches!(self.execution_coverage(owner), Ok(DeclarationCoverage::Covered { .. })))
-            {
-                return Err(malformed(
-                    "public member context does not select a covered declaring type",
-                ));
-            }
-            if let DeclarationCoverage::Covered {
-                offset,
-                length,
-                requirements,
-            } = coverage
-            {
-                if *offset != next_offset || *length == 0 {
-                    return Err(malformed("fragment ranges overlap, contain gaps, or are empty"));
-                }
-                next_offset = offset
-                    .checked_add(*length)
-                    .ok_or_else(|| malformed("fragment range overflow"))?;
-                if requirements.windows(2).any(|pair| pair[0] >= pair[1]) {
-                    return Err(malformed("requirements are duplicated or unsorted"));
-                }
-            }
-        }
-        if next_offset != payload_length {
-            return Err(malformed("index does not match payload length"));
-        }
-        Ok(())
-    }
-
-    /// Decode a bounded index. The caller must already have accepted the stable envelope version.
-    pub fn decode(bytes: &[u8], payload_length: u64) -> Result<Self, ExecutableRepresentationError> {
-        let index: Self = postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
-        // Re-encoding checks map ordering and duplicates, which serde's BTreeMap decoder otherwise normalizes.
-        if postcard::to_allocvec(&index).map_err(|error| malformed(error.to_string()))? != bytes {
-            return Err(malformed("noncanonical or duplicate index entries"));
-        }
-        index.validate(payload_length)?;
-        Ok(index)
-    }
-
-    /// Inspect explicit coverage before any payload is decoded.
-    pub fn coverage(
-        &self,
-        identity: &CanonicalSymbolId,
-    ) -> Result<&DeclarationCoverage, ExecutableRepresentationError> {
-        self.declarations
-            .get(identity)
-            .ok_or_else(|| ExecutableRepresentationError::DeclarationNotCovered {
-                declaration: identity.declaration_name.clone(),
-            })
-    }
-
-    /// Inspect a dependency reached through a selected fragment; callers must separately authorize public roots.
-    pub fn execution_coverage(
-        &self,
-        identity: &CanonicalSymbolId,
-    ) -> Result<&DeclarationCoverage, ExecutableRepresentationError> {
-        self.declarations
-            .get(identity)
-            .or_else(|| self.implementation.get(identity))
-            .ok_or_else(|| ExecutableRepresentationError::DeclarationNotCovered {
-                declaration: identity.declaration_name.clone(),
-            })
-    }
-
-    /// Decode exactly the selected range and bind its payload identity back to the index and manifest identity.
-    pub fn decode_declaration(
-        &self,
-        identity: &CanonicalSymbolId,
-        bytes: &[u8],
-    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
-        let DeclarationCoverage::Covered { length, .. } = self.execution_coverage(identity)? else {
-            return Err(ExecutableRepresentationError::DeclarationNotCovered {
-                declaration: identity.declaration_name.clone(),
-            });
-        };
-        if u64::try_from(bytes.len()).ok() != Some(*length) {
-            return Err(malformed("selected fragment length differs from its index"));
-        }
-        let declaration: ExecutableDeclaration =
-            postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
-        if declaration.identity() != Some(identity) {
-            return Err(malformed("fragment identity differs from its index"));
-        }
-        Ok(declaration)
-    }
-}
-
 /// In-memory reader for already-loaded artifact bytes. File consumers use the same index with bounded range reads.
 #[derive(Debug, Clone)]
 pub struct SurfaceReader<'bytes> {
@@ -1033,1090 +379,5 @@ pub struct SurfaceReader<'bytes> {
     payload: &'bytes [u8],
 }
 
-impl<'bytes> SurfaceReader<'bytes> {
-    /// Refuse the stable prefix first, then decode only the bounded metadata index.
-    pub fn open(bytes: &'bytes [u8]) -> Result<Self, ExecutableRepresentationError> {
-        require_supported_version(bytes)?;
-        let (_, remainder) = postcard::take_from_bytes::<u32>(bytes).map_err(|error| malformed(error.to_string()))?;
-        let length_bytes: [u8; 8] = remainder
-            .get(..8)
-            .ok_or_else(|| malformed("missing index length"))?
-            .try_into()
-            .map_err(|_| malformed("invalid index length"))?;
-        let declared_index_length = u64::from_le_bytes(length_bytes);
-        if declared_index_length > MAX_SURFACE_INDEX_BYTES {
-            return Err(malformed("index length exceeds its bounded envelope"));
-        }
-        let index_length = usize::try_from(declared_index_length).map_err(|_| malformed("index too large"))?;
-        let end = 8usize
-            .checked_add(index_length)
-            .ok_or_else(|| malformed("index length overflow"))?;
-        let encoded_index = remainder
-            .get(8..end)
-            .ok_or_else(|| malformed("index extends beyond representation"))?;
-        let payload = remainder.get(end..).ok_or_else(|| malformed("missing payload"))?;
-        let index = SurfaceIndex::decode(
-            encoded_index,
-            u64::try_from(payload.len()).map_err(|_| malformed("payload too large"))?,
-        )?;
-        Ok(Self { index, payload })
-    }
-
-    /// Declared package coverage, inspectable without decoding executable payloads.
-    pub fn index(&self) -> &SurfaceIndex {
-        &self.index
-    }
-
-    /// Canonical identities with covered executable fragments; uncovered exports remain visible through the index.
-    pub fn covered_identities(&self) -> impl Iterator<Item = &CanonicalSymbolId> {
-        self.index.declarations.iter().filter_map(|(identity, coverage)| {
-            matches!(coverage, DeclarationCoverage::Covered { .. }).then_some(identity)
-        })
-    }
-
-    /// Whether the index explicitly covers this identity.
-    pub fn covers(&self, identity: &CanonicalSymbolId) -> bool {
-        matches!(
-            self.index.declarations.get(identity),
-            Some(DeclarationCoverage::Covered { .. })
-        )
-    }
-
-    /// Decode one public body. A type fragment is never treated as a callable.
-    pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
-        match self.fragment(identity)? {
-            ExecutableDeclaration::Body(body)
-            | ExecutableDeclaration::DecoratedBody { body, .. }
-            | ExecutableDeclaration::InvocationDecoratedBody { body, .. } => Ok(*body),
-            _ => Err(malformed(
-                "selected declaration is type context, not an executable body",
-            )),
-        }
-    }
-
-    /// Decode only one indexed fragment, preserving unrelated payloads as uninterpreted bytes.
-    pub fn fragment(
-        &self,
-        identity: &CanonicalSymbolId,
-    ) -> Result<ExecutableDeclaration, ExecutableRepresentationError> {
-        let DeclarationCoverage::Covered { offset, length, .. } = self.index.coverage(identity)? else {
-            return Err(ExecutableRepresentationError::DeclarationNotCovered {
-                declaration: identity.declaration_name.clone(),
-            });
-        };
-        let start = usize::try_from(*offset).map_err(|_| malformed("fragment offset exceeds host range"))?;
-        let length = usize::try_from(*length).map_err(|_| malformed("fragment length exceeds host range"))?;
-        let end = start
-            .checked_add(length)
-            .ok_or_else(|| malformed("fragment range overflow"))?;
-        self.index.decode_declaration(
-            identity,
-            self.payload
-                .get(start..end)
-                .ok_or_else(|| malformed("fragment outside payload"))?,
-        )
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    use super::{
-        CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
-        ExecutableRepresentationError, SurfaceReader, build_surface, decode_module,
-    };
-    use crate::body_ir::{
-        ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
-        NamedCallableTarget, ScopeId, Statement, StatementKind,
-    };
-    use crate::{
-        CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
-        SymbolNamespace, SymbolOrigin,
-    };
-
-    /// Distinct package identities remain stable even when input bodies are reordered.
-    fn identity(name: &str, ordinal: usize) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::OrdinaryLexical,
-            origin: SymbolOrigin::Package {
-                library: "probe".into(),
-                module_path: vec!["lib".into()],
-            },
-            declaration_name: name.into(),
-            kind: SemanticSourceTargetKind::Function,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(ordinal * 100, ordinal * 100 + 99),
-        }
-    }
-
-    /// Build a checked, empty unit function with a stable canonical identity and no callable signature proof; it has
-    /// executable coverage distinct from an uncovered export.
-    fn body(name: &str, ordinal: usize) -> Body {
-        let identity = identity(name, ordinal);
-        Body {
-            type_parameters: Vec::new(),
-            decl_id: CompilerNodeId::declaration_span(
-                "lib",
-                identity.declaration_span.start,
-                identity.declaration_span.end,
-            ),
-            direct_call_id: CompilerNodeId::declaration_span(
-                "lib",
-                identity.declaration_span.start,
-                identity.declaration_span.end,
-            ),
-            canonical: Some(identity.clone()),
-            name: name.into(),
-            span: identity.declaration_span,
-            return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
-            callable_representation: None,
-            named_type_identities: Default::default(),
-            locals: Vec::new(),
-            params: Vec::new(),
-            param_locals: Vec::new(),
-            scopes: Vec::new(),
-            block: Block {
-                scope: ScopeId(0),
-                stmts: Vec::new(),
-            },
-            runtime_requirements: Vec::new(),
-            panic_facts: Vec::new(),
-            is_async: false,
-            extern_delegation: None,
-        }
-    }
-
-    /// Synthetic module context used only for codec and public-closure invariants.
-    fn module(bodies: Vec<Body>) -> BodyIrModule {
-        BodyIrModule {
-            decorated_bindings: Vec::new(),
-            entrypoint_effects: Vec::new(),
-            string_conversion_contract: crate::body_ir::StringConversionContract::Unselected,
-            constant_declarations: Vec::new(),
-            type_alias_declarations: Vec::new(),
-            trait_declarations: Vec::new(),
-            trait_implementations: Vec::new(),
-            module_id: CompilerNodeId::module("lib"),
-            stdlib_delegations: Vec::new(),
-            native_union_declarations: Vec::new(),
-            enum_declarations: Vec::new(),
-            static_declarations: Vec::new(),
-            nominal_declarations: Vec::new(),
-            fieldless_enum_declarations: Vec::new(),
-            value_enum_declarations: Vec::new(),
-            bodies,
-        }
-    }
-
-    /// Build with an explicit public set, as the finalized manifest supplies at the real producer seam.
-    fn publish(
-        module: &BodyIrModule,
-        public: &BTreeSet<CanonicalSymbolId>,
-    ) -> Result<Vec<u8>, ExecutableRepresentationError> {
-        build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
-    }
-
-    /// A canonical call participates in closure even before any branch is executed.
-    fn call(target: CanonicalSymbolId) -> Statement {
-        Statement {
-            span: target.declaration_span,
-            kind: StatementKind::Call {
-                destination: None,
-                callee: Callee::Function(CallableTarget::Named(NamedCallableTarget {
-                    receiver_type: None,
-                    name: "arbitrary_alias".into(),
-                    direct_call_id: None,
-                    builtin: None,
-                    type_args: Vec::new(),
-                    binding: ArgumentBinding::UnresolvedPositional,
-                    canonical: Some(target),
-                })),
-                args: Vec::new(),
-                may_panic: false,
-            },
-        }
-    }
-
-    /// Prior omitted-field layouts and future versions refuse before either reader attempts positional decoding.
-    #[test]
-    fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
-        for version in [
-            EXECUTABLE_REPRESENTATION_VERSION - 1,
-            EXECUTABLE_REPRESENTATION_VERSION + 1,
-        ] {
-            let bytes = postcard::to_allocvec(&version)?;
-            assert!(matches!(
-                SurfaceReader::open(&bytes),
-                Err(ExecutableRepresentationError::UnsupportedVersion { found, supported })
-                    if found == version && supported == EXECUTABLE_REPRESENTATION_VERSION
-            ));
-            assert!(matches!(
-                decode_module(&bytes),
-                Err(ExecutableRepresentationError::UnsupportedVersion { found, supported })
-                    if found == version && supported == EXECUTABLE_REPRESENTATION_VERSION
-            ));
-        }
-        assert!(matches!(
-            SurfaceReader::open(&[255; 12]),
-            Err(ExecutableRepresentationError::Malformed { .. })
-        ));
-        Ok(())
-    }
-
-    /// A missing source field identity must not be mistaken for a compiler-proven structural projection.
-    #[test]
-    fn unresolved_named_fields_are_uncovered_and_synthesized_projections_remain_covered()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use crate::body_ir::{LocalId, Operand, OwnershipFact, Place, PlaceElem};
-        let mut unresolved = body("unresolved", 1);
-        let mut place = Place::from_local(LocalId(0));
-        place.projection.push(PlaceElem::field("private_secret", None));
-        unresolved.block.stmts.push(Statement {
-            span: unresolved.span,
-            kind: StatementKind::Return {
-                value: Some(Operand::place(place.clone(), OwnershipFact::Copy, false)),
-            },
-        });
-        let mut structural = body("structural", 2);
-        place.projection = vec![PlaceElem::structural_field("0")];
-        structural.block.stmts.push(Statement {
-            span: structural.span,
-            kind: StatementKind::Return {
-                value: Some(Operand::place(place, OwnershipFact::Copy, false)),
-            },
-        });
-        let bytes = publish(
-            &module(vec![unresolved, structural]),
-            &BTreeSet::from([identity("unresolved", 1), identity("structural", 2)]),
-        )?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(matches!(
-            reader.index().coverage(&identity("unresolved", 1))?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
-        ));
-        assert!(reader.covers(&identity("structural", 2)));
-        assert!(
-            !bytes
-                .windows(b"private_secret".len())
-                .any(|part| part == b"private_secret")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
-        let module = module(vec![body("public", 1), body("private_secret", 2)]);
-        let public = BTreeSet::from([identity("public", 1), identity("unlowered", 3)]);
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&identity("public", 1)));
-        assert!(matches!(
-            reader.index().coverage(&identity("unlowered", 3))?,
-            DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)
-        ));
-        assert!(
-            !bytes
-                .windows(b"private_secret".len())
-                .any(|part| part == b"private_secret")
-        );
-        assert_eq!(
-            reader.declaration(&identity("public", 1))?.direct_call_id.path(),
-            "pub::probe::lib#decl.100..199"
-        );
-        Ok(())
-    }
-
-    /// Missing and unsupported callees propagate uncovered status through dependent executable declarations.
-    #[test]
-    fn missing_and_unsupported_dependencies_are_uncovered_transitively() -> Result<(), Box<dyn std::error::Error>> {
-        let mut caller = body("caller", 1);
-        caller.block.stmts.push(call(identity("private_secret", 2)));
-        let mut dependent = body("dependent", 3);
-        dependent.block.stmts.push(call(identity("caller", 1)));
-        let mut unsupported = body("unsupported", 4);
-        unsupported.block.stmts.push(Statement {
-            span: unsupported.span,
-            kind: StatementKind::Unsupported {
-                description: "never serialized".into(),
-            },
-        });
-        let module = module(vec![caller, dependent, unsupported]);
-        let public = BTreeSet::from([
-            identity("caller", 1),
-            identity("dependent", 3),
-            identity("unsupported", 4),
-        ]);
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert_eq!(reader.covered_identities().count(), 0);
-        // The reason has to be asserted, not just the absence of coverage. `UnsupportedConstruct` is the one
-        // reason whose whole purpose is to reach a consumer distinctly, and without this a mutant mapping it to
-        // `UnresolvedReference` or `PrivateDependency` passes the test named after it.
-        assert!(matches!(
-            reader.index().coverage(&identity("unsupported", 4))?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
-        ));
-        assert!(matches!(
-            reader.index().coverage(&identity("caller", 1))?,
-            DeclarationCoverage::Uncovered(CoverageReason::PrivateDependency)
-        ));
-        assert!(matches!(
-            reader.index().coverage(&identity("dependent", 3))?,
-            DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable)
-        ));
-        assert!(
-            !bytes
-                .windows(b"private_secret".len())
-                .any(|part| part == b"private_secret")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn recursive_public_closure_is_order_independent() -> Result<(), Box<dyn std::error::Error>> {
-        let mut alpha = body("alpha", 1);
-        let mut beta = body("beta", 2);
-        alpha.block.stmts.push(call(identity("beta", 2)));
-        beta.block.stmts.push(call(identity("alpha", 1)));
-        let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
-        let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
-        let reverse = publish(&module(vec![beta, alpha]), &public)?;
-        assert_eq!(forward, reverse);
-        assert_eq!(SurfaceReader::open(&forward)?.covered_identities().count(), 2);
-        Ok(())
-    }
-
-    /// Internal recursive fragments retain deterministic ranges without becoming selectable public roots.
-    #[test]
-    fn recursive_private_closure_keeps_disjoint_ranges_and_public_roots() -> Result<(), Box<dyn std::error::Error>> {
-        let mut alpha = body("alpha", 1);
-        let mut beta = body("beta", 2);
-        alpha.block.stmts.push(call(identity("beta", 2)));
-        beta.block.stmts.push(call(identity("alpha", 1)));
-        let public = BTreeSet::from([identity("alpha", 1)]);
-        let forward = publish(&module(vec![alpha.clone(), beta.clone()]), &public)?;
-        let reverse = publish(&module(vec![beta, alpha]), &public)?;
-        assert_eq!(forward, reverse);
-        let reader = SurfaceReader::open(&forward)?;
-        let payload_length = u64::try_from(reader.payload.len())?;
-        assert_eq!(reader.covered_identities().count(), 1);
-        assert!(reader.index().implementation.contains_key(&identity("beta", 2)));
-        assert!(reader.fragment(&identity("beta", 2)).is_err());
-        let mut overlap = reader.index().clone();
-        let coverage = overlap.coverage(&identity("alpha", 1))?.clone();
-        overlap.implementation.insert(identity("alpha", 1), coverage);
-        assert!(matches!(
-            overlap.validate(payload_length),
-            Err(ExecutableRepresentationError::Malformed { .. })
-        ));
-        let mut ranges = reader.index().clone();
-        let Some(DeclarationCoverage::Covered { offset, .. }) = ranges.implementation.get_mut(&identity("beta", 2))
-        else {
-            return Err("private recursive body lacks a payload range".into());
-        };
-        *offset = 0;
-        assert!(matches!(
-            ranges.validate(payload_length),
-            Err(ExecutableRepresentationError::Malformed { .. })
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn private_default_dependency_is_not_hidden_by_an_empty_main_block() -> Result<(), Box<dyn std::error::Error>> {
-        let mut exported = body("exported", 1);
-        exported.params.push(CallableParam {
-            mutable: false,
-            kind: crate::IncanCallableParamKind::Normal,
-            local: crate::body_ir::LocalId(0),
-            name: "x".into(),
-            ty: IncanType::Primitive(IncanPrimitiveType::Int),
-            span: exported.span,
-            default: CallableParamDefault::Source(Box::new(crate::body_ir::DefaultComputation {
-                span: exported.span,
-                stmts: vec![call(identity("secret", 2))],
-                result: crate::body_ir::Operand::Constant(crate::body_ir::Constant::Int(1)),
-            })),
-        });
-        let bytes = publish(
-            &module(vec![exported, body("secret", 2)]),
-            &BTreeSet::from([identity("exported", 1)]),
-        )?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&identity("exported", 1)));
-        assert!(reader.index().implementation.contains_key(&identity("secret", 2)));
-        assert!(reader.index().coverage(&identity("secret", 2)).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn three_selected_fragments_ignore_unrelated_corrupt_payloads() -> Result<(), Box<dyn std::error::Error>> {
-        let bodies = (0..400)
-            .map(|index| body(&format!("f{index:03}"), index))
-            .collect::<Vec<_>>();
-        let public = bodies.iter().filter_map(|body| body.canonical.clone()).collect();
-        let mut bytes = publish(&module(bodies), &public)?;
-        let last = bytes.len().checked_sub(1).ok_or("surface cannot be empty")?;
-        bytes[last] ^= 255;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert_eq!(reader.covered_identities().count(), 400);
-        for index in [1, 2, 3] {
-            assert_eq!(
-                reader.declaration(&identity(&format!("f{index:03}"), index))?.name,
-                format!("f{index:03}")
-            );
-        }
-        assert!(reader.declaration(&identity("f399", 399)).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn index_refuses_overlaps_and_payload_identity_substitution() -> Result<(), Box<dyn std::error::Error>> {
-        let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
-        let bytes = publish(&module(vec![body("alpha", 1), body("beta", 2)]), &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        let mut index = reader.index().clone();
-        let Some(DeclarationCoverage::Covered { offset, .. }) = index.declarations.get_mut(&identity("beta", 2)) else {
-            return Err("covered beta missing".into());
-        };
-        *offset = 0;
-        assert!(index.validate(u64::try_from(reader.payload.len())?).is_err());
-        let wrong = postcard::to_allocvec(&ExecutableDeclaration::Body(Box::new(
-            reader.declaration(&identity("beta", 2))?,
-        )))?;
-        assert!(
-            reader
-                .index()
-                .decode_declaration(&identity("alpha", 1), &wrong)
-                .is_err()
-        );
-        Ok(())
-    }
-    /// A public scalar union alias retains its expanded semantic type without introducing a runtime body.
-    #[test]
-    fn public_union_alias_context_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-        let mut identity = identity("Answer", 2);
-        identity.kind = SemanticSourceTargetKind::TypeAlias;
-        let ty = IncanType::Generic {
-            base: incan_lang::lang::types::UNION_TYPE_NAME.into(),
-            args: vec![
-                IncanType::Primitive(IncanPrimitiveType::Int),
-                IncanType::Primitive(IncanPrimitiveType::Str),
-            ],
-        };
-        let mut module = module(Vec::new());
-        module
-            .type_alias_declarations
-            .push(crate::body_ir::TypeAliasDeclaration {
-                canonical: identity.clone(),
-                ty: ty.clone(),
-                named_type_identities: BTreeMap::new(),
-            });
-        let bytes = publish(&module, &BTreeSet::from([identity.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(matches!(reader.fragment(&identity)?, ExecutableDeclaration::TypeAlias(value) if value.ty == ty));
-        assert!(reader.declaration(&identity).is_err());
-        Ok(())
-    }
-
-    /// Public constants carry their checked immutable value and do not disclose a private sibling value.
-    #[test]
-    fn public_constant_fragments_preserve_checked_values() -> Result<(), Box<dyn std::error::Error>> {
-        let mut exported = identity("BASE", 2);
-        exported.kind = SemanticSourceTargetKind::Const;
-        let mut private = identity("SECRET", 3);
-        private.kind = SemanticSourceTargetKind::Const;
-        let mut module = module(Vec::new());
-        module.constant_declarations = vec![
-            crate::body_ir::ConstantDeclaration {
-                canonical: exported.clone(),
-                value: crate::body_ir::Constant::Int(42),
-            },
-            crate::body_ir::ConstantDeclaration {
-                canonical: private,
-                value: crate::body_ir::Constant::Str("private-value".into()),
-            },
-        ];
-        let bytes = publish(&module, &BTreeSet::from([exported.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(
-            matches!(reader.fragment(&exported)?, ExecutableDeclaration::Constant(value) if value.value == crate::body_ir::Constant::Int(42))
-        );
-        assert!(
-            !bytes
-                .windows(b"private-value".len())
-                .any(|part| part == b"private-value")
-        );
-        Ok(())
-    }
-
-    /// Abstract trait slots resolve through their public declaring trait without inventing callable bodies.
-    #[test]
-    fn public_abstract_trait_slot_resolves_to_trait_context() -> Result<(), Box<dyn std::error::Error>> {
-        let mut owner = identity("Reading", 2);
-        owner.kind = SemanticSourceTargetKind::Trait;
-        let mut slot = identity("get", 3);
-        slot.kind = SemanticSourceTargetKind::Method;
-        slot.namespace = SymbolNamespace::Member;
-        slot.declaration_span = HirSourceSpan::new(210, 225);
-        let mut module = module(Vec::new());
-        module.trait_declarations.push(owner.clone());
-        let bytes = publish(&module, &BTreeSet::from([owner.clone(), slot.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(matches!(reader.fragment(&owner)?, ExecutableDeclaration::Trait(value) if value == owner));
-        assert!(
-            matches!(reader.index().coverage(&slot)?, DeclarationCoverage::TypeContext { owner: selected } if selected == &owner)
-        );
-        assert!(reader.declaration(&slot).is_err());
-        Ok(())
-    }
-
-    /// An executable trait method retains its public declaring owner even when its body names no other slot.
-    #[test]
-    fn public_default_trait_body_requires_its_declaring_context() -> Result<(), Box<dyn std::error::Error>> {
-        let mut owner = identity("Reading", 2);
-        owner.kind = SemanticSourceTargetKind::Trait;
-        let mut slot = identity("touch", 3);
-        slot.kind = SemanticSourceTargetKind::Method;
-        slot.namespace = SymbolNamespace::Member;
-        slot.declaration_span = HirSourceSpan::new(210, 225);
-        let mut default = body("touch", 3);
-        default.canonical = Some(slot.clone());
-        default.span = slot.declaration_span;
-        let mut source = module(vec![default]);
-        source.trait_declarations.push(owner.clone());
-        let bytes = publish(&source, &BTreeSet::from([owner.clone(), slot.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&slot)? else {
-            return Err("default method has no executable coverage".into());
-        };
-        assert_eq!(requirements, &[owner.clone()]);
-        assert!(matches!(reader.fragment(&owner)?, ExecutableDeclaration::Trait(value) if value == owner));
-        let private_owner = publish(&source, &BTreeSet::from([slot.clone()]))?;
-        let private_reader = SurfaceReader::open(&private_owner)?;
-        assert!(private_reader.covers(&slot));
-        assert!(private_reader.index().implementation.contains_key(&owner));
-        assert!(private_reader.fragment(&owner).is_err());
-        Ok(())
-    }
-
-    /// Normal enum payload layouts round-trip through public fragments, and their variants resolve to the owner.
-    #[test]
-    fn public_normal_enum_payload_context_round_trips() -> Result<(), Box<dyn std::error::Error>> {
-        let mut owner = identity("Signal", 2);
-        owner.kind = SemanticSourceTargetKind::Enum;
-        let mut variant = identity("Ready", 3);
-        variant.kind = SemanticSourceTargetKind::Variant;
-        variant.namespace = SymbolNamespace::Member;
-        let value = crate::body_ir::EnumDeclaration {
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
-            canonical: owner.clone(),
-            name: "Signal".into(),
-            public: true,
-            type_parameters: Vec::new(),
-            variants: vec![crate::body_ir::EnumVariantDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span("lib", 300, 399),
-                canonical: variant.clone(),
-                name: "Ready".into(),
-                fields: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-            }],
-            derives: Vec::new(),
-            named_type_identities: BTreeMap::new(),
-        };
-        let mut module = module(Vec::new());
-        module.enum_declarations.push(value);
-        let bytes = publish(&module, &BTreeSet::from([owner.clone(), variant.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(
-            matches!(reader.fragment(&owner)?, ExecutableDeclaration::Enum(value) if value.variants[0].fields == vec![IncanType::Primitive(IncanPrimitiveType::Int)])
-        );
-        assert!(
-            matches!(reader.index().coverage(&variant)?, DeclarationCoverage::TypeContext { owner: selected } if selected == &owner)
-        );
-        let bytes = publish(&module, &BTreeSet::from([owner.clone()]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&owner));
-        assert!(reader.index().coverage(&variant).is_err());
-        assert!(reader.fragment(&variant).is_err());
-        Ok(())
-    }
-
-    /// Declared function binders remain portable; an undeclared variable cannot enter a published body.
-    #[test]
-    fn published_functions_cover_only_declared_type_parameters() -> Result<(), Box<dyn std::error::Error>> {
-        let mut declared = body("identity", 1);
-        declared.type_parameters = vec!["T".into()];
-        declared.return_type = IncanType::TypeVar("T".into());
-        let mut undeclared = body("unbound", 2);
-        undeclared.return_type = IncanType::TypeVar("T".into());
-        let bytes = publish(
-            &module(vec![declared, undeclared]),
-            &BTreeSet::from([identity("identity", 1), identity("unbound", 2)]),
-        )?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&identity("identity", 1)));
-        assert!(matches!(
-            reader.index().coverage(&identity("unbound", 2))?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
-        ));
-        Ok(())
-    }
-
-    /// A generic nominal layout and its receiver method share the owner's binders, with canonical use requirements.
-    #[test]
-    fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn std::error::Error>> {
-        let mut owner = identity("Holder", 2);
-        owner.kind = SemanticSourceTargetKind::Model;
-        owner.declaration_span = HirSourceSpan::new(200, 499);
-        let mut field = identity("value", 3);
-        field.kind = SemanticSourceTargetKind::Field;
-        field.namespace = SymbolNamespace::Member;
-        let mut method = body("get", 4);
-        let mut method_id = identity("get", 4);
-        method_id.kind = SemanticSourceTargetKind::Method;
-        method_id.namespace = SymbolNamespace::Member;
-        method.canonical = Some(method_id.clone());
-        method.return_type = IncanType::TypeVar("T".into());
-        let mut user = body("use_holder", 1);
-        user.return_type = IncanType::Generic {
-            base: "Holder".into(),
-            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-        };
-        let mut module = module(vec![method, user]);
-        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
-            trait_adoptions: Vec::new(),
-            native_item: String::new(),
-            class_inheritance: None,
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
-            canonical: owner.clone(),
-            name: "Holder".into(),
-            fields: vec!["value".into()],
-            field_identities: vec![field.clone()],
-            field_aliases: Vec::new(),
-            field_types: vec![IncanType::TypeVar("T".into())],
-            field_public: vec![true],
-            reflection_fields: None,
-            display_method: None,
-            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
-            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
-            reflection_metadata: None,
-            comparison_equality: None,
-            public: true,
-            has_field_defaults: false,
-            field_default_body: None,
-            method_partial_defaults: Vec::new(),
-            derives: Vec::new(),
-            named_type_identities: Default::default(),
-            type_parameters: vec!["T".into()],
-            type_parameter_count: 1,
-        });
-        let public = BTreeSet::from([owner.clone(), field, method_id.clone(), identity("use_holder", 1)]);
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&owner));
-        assert!(reader.covers(&method_id));
-        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("use_holder", 1))?
-        else {
-            return Err("generic nominal use is uncovered".into());
-        };
-        assert!(requirements.contains(&owner));
-        // An uncalled lazy protocol default contributes a dispatch relation, not an executable layout dependency.
-        let mut protocol = identity("UnusedProtocol", 6);
-        protocol.kind = SemanticSourceTargetKind::Trait;
-        let mut slot = identity("unavailable_default", 7);
-        slot.kind = SemanticSourceTargetKind::Method;
-        slot.namespace = SymbolNamespace::Member;
-        slot.declaration_span = HirSourceSpan::new(610, 625);
-        let mut unavailable = body("unavailable_default", 7);
-        unavailable.canonical = Some(slot.clone());
-        unavailable.span = slot.declaration_span;
-        unavailable.block.stmts.push(Statement {
-            kind: StatementKind::Unsupported {
-                description: "unavailable default".into(),
-            },
-            span: slot.declaration_span,
-        });
-        module.trait_declarations.push(protocol.clone());
-        module.bodies.push(unavailable);
-        module.nominal_declarations[0]
-            .trait_adoptions
-            .push(crate::body_ir::TraitAdoption {
-                trait_identity: protocol.clone(),
-                arguments: Vec::new(),
-                methods: Some(vec![slot.clone()]),
-            });
-        module.trait_implementations.push(crate::body_ir::TraitImplementation {
-            owner: owner.clone(),
-            method: slot.clone(),
-            implementation: slot.clone(),
-            type_arguments: Vec::new(),
-        });
-        let mut public = public;
-        public.extend([protocol, slot.clone()]);
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(
-            reader.covers(&owner),
-            "unused default must not invalidate its adopter layout"
-        );
-        assert!(matches!(
-            reader.index().coverage(&slot)?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
-        ));
-        let mut caller = body("requests_default", 8);
-        caller.block.stmts.push(call(slot.clone()));
-        module.bodies.push(caller);
-        public.insert(identity("requests_default", 8));
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(
-            !reader.covers(&identity("requests_default", 8)),
-            "calling the unavailable default must still refuse"
-        );
-        let mut missing = module.clone();
-        missing.trait_implementations[0].implementation = identity("missing_implementation", 9);
-        let bytes = publish(&missing, &public)?;
-        assert!(
-            !SurfaceReader::open(&bytes)?.covers(&owner),
-            "an actual missing implementation still invalidates its layout"
-        );
-        Ok(())
-    }
-
-    /// Class fields resolve through a covered class; a field cannot use an unrelated declaration kind as its owner.
-    #[test]
-    fn public_class_field_context_is_admitted() -> Result<(), Box<dyn std::error::Error>> {
-        let mut owner = identity("Counter", 2);
-        owner.kind = SemanticSourceTargetKind::Class;
-        let mut field = identity("value", 3);
-        field.kind = SemanticSourceTargetKind::Field;
-        let index = super::SurfaceIndex {
-            library: "probe".into(),
-            package_version: "0.1.0".into(),
-            implementation: BTreeMap::new(),
-            declarations: BTreeMap::from([
-                (
-                    owner.clone(),
-                    DeclarationCoverage::Covered {
-                        offset: 0,
-                        length: 1,
-                        requirements: Vec::new(),
-                    },
-                ),
-                (field, DeclarationCoverage::TypeContext { owner }),
-            ]),
-        };
-        index.validate(1)?;
-        Ok(())
-    }
-
-    /// Complete private fields support execution while absent checked layouts keep public callers uncovered.
-    #[test]
-    fn public_type_context_retains_private_fields_and_requires_checked_layouts()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut type_id = identity("Record", 2);
-        type_id.kind = SemanticSourceTargetKind::Model;
-        let mut field = identity("private_field", 3);
-        field.kind = SemanticSourceTargetKind::Field;
-        field.namespace = SymbolNamespace::Member;
-        let mut exported = body("exported", 1);
-        exported.return_type = IncanType::Named("Record".into());
-        let mut module = module(vec![exported]);
-        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
-            trait_adoptions: Vec::new(),
-            native_item: String::new(),
-            class_inheritance: None,
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
-            canonical: type_id.clone(),
-            name: "Record".into(),
-            fields: vec!["private_field".into()],
-            field_identities: vec![field.clone()],
-            field_types: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-            field_public: vec![false],
-            field_aliases: Vec::new(),
-            reflection_fields: None,
-            reflection_metadata: None,
-            comparison_equality: None,
-            public: false,
-            has_field_defaults: false,
-            field_default_body: None,
-            method_partial_defaults: Vec::new(),
-            display_method: None,
-            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
-            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
-            derives: vec![],
-            named_type_identities: Default::default(),
-            type_parameters: Vec::new(),
-            type_parameter_count: 0,
-        });
-        let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
-        let bytes = publish(&module, &public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&identity("exported", 1)));
-        assert!(reader.covers(&type_id));
-        assert!(reader.index().coverage(&field).is_err());
-        assert!(reader.fragment(&field).is_err());
-        let mut complete_public = public;
-        complete_public.insert(field.clone());
-        let bytes = publish(&module, &complete_public)?;
-        let reader = SurfaceReader::open(&bytes)?;
-        assert!(reader.covers(&identity("exported", 1)));
-        assert!(reader.covers(&type_id));
-        assert!(
-            matches!(reader.index().coverage(&field)?, DeclarationCoverage::TypeContext { owner } if owner == &type_id)
-        );
-        let nominal = module.nominal_declarations.first_mut().ok_or("public model absent")?;
-        nominal.field_types[0] = IncanType::Named("private_layout_secret".into());
-        let mut private_type = identity("private_layout_secret", 4);
-        private_type.kind = SemanticSourceTargetKind::Model;
-        nominal
-            .named_type_identities
-            .insert("private_layout_secret".into(), private_type);
-        let bytes = publish(&module, &complete_public)?;
-        assert!(!SurfaceReader::open(&bytes)?.covers(&type_id));
-        assert!(
-            !bytes
-                .windows(b"private_layout_secret".len())
-                .any(|part| part == b"private_layout_secret")
-        );
-        Ok(())
-    }
-
-    /// Foreign type bindings retain distinct declared origins, while unused private checker bindings stay absent.
-    #[test]
-    fn checked_nominal_type_bindings_are_pruned_and_contribute_public_requirements()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut first = identity("Product", 2);
-        first.kind = SemanticSourceTargetKind::Model;
-        first.origin = SymbolOrigin::Package {
-            library: "catalog".into(),
-            module_path: vec!["lib".into()],
-        };
-        let mut second = first.clone();
-        second.origin = SymbolOrigin::Package {
-            library: "other".into(),
-            module_path: vec!["lib".into()],
-        };
-        let mut exported = body("exported", 1);
-        exported.return_type = IncanType::Tuple(vec![
-            IncanType::Named("First".into()),
-            IncanType::Named("Second".into()),
-        ]);
-        exported.params.push(CallableParam {
-            mutable: false,
-            kind: crate::IncanCallableParamKind::Normal,
-            local: crate::body_ir::LocalId(0),
-            name: "product".into(),
-            ty: IncanType::Named("First".into()),
-            span: exported.span,
-            default: CallableParamDefault::Required,
-        });
-        exported.named_type_identities = std::collections::BTreeMap::from([
-            ("First".into(), first.clone()),
-            ("Second".into(), second.clone()),
-            ("unused_private_secret".into(), identity("unused_private_secret", 3)),
-        ]);
-        let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
-        let reader = SurfaceReader::open(&bytes)?;
-        let decoded = reader.declaration(&identity("exported", 1))?;
-        assert_eq!(
-            decoded.named_type_identities,
-            std::collections::BTreeMap::from([("First".into(), first.clone()), ("Second".into(), second.clone())])
-        );
-        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("exported", 1))?
-        else {
-            return Err("foreign typed body uncovered".into());
-        };
-        assert_eq!(
-            requirements.iter().cloned().collect::<BTreeSet<_>>(),
-            BTreeSet::from([first, second])
-        );
-        assert!(
-            !bytes
-                .windows(b"unused_private_secret".len())
-                .any(|part| part == b"unused_private_secret")
-        );
-        Ok(())
-    }
-
-    /// Every retained Result type identity is public-audited and rebased to the declaring package.
-    #[test]
-    fn result_type_identities_are_rebased_and_private_identity_payloads_are_not_published()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use crate::body_ir::{Constant, LocalId, Operand, Place, ResultVariant, ResultVariantKind, Rvalue};
-        let mut published_type = identity("Record", 2);
-        published_type.kind = SemanticSourceTargetKind::Model;
-        let mut source_type = published_type.clone();
-        source_type.origin = SymbolOrigin::Module(vec!["lib".into()]);
-        let mut exported = body("exported", 1);
-        exported.block.stmts.push(Statement {
-            span: exported.span,
-            kind: StatementKind::Assign {
-                place: Place::from_local(LocalId(0)),
-                rvalue: Rvalue::ResultVariant(ResultVariant {
-                    kind: ResultVariantKind::Ok,
-                    payload: Operand::Constant(Constant::Unit),
-                    ok_type: IncanType::Named("Record".into()),
-                    error_type: IncanType::Primitive(IncanPrimitiveType::Unit),
-                    canonical_types: std::collections::BTreeMap::from([(vec![0], source_type.clone())]),
-                }),
-            },
-        });
-        let mut input = module(vec![exported]);
-        input.nominal_declarations.push(crate::body_ir::NominalDeclaration {
-            trait_adoptions: Vec::new(),
-            native_item: String::new(),
-            class_inheritance: None,
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
-            canonical: published_type.clone(),
-            name: "Record".into(),
-            fields: vec![],
-            field_identities: vec![],
-            field_types: vec![],
-            field_public: vec![],
-            field_aliases: Vec::new(),
-            reflection_fields: None,
-            reflection_metadata: None,
-            comparison_equality: None,
-            public: false,
-            has_field_defaults: false,
-            field_default_body: None,
-            method_partial_defaults: Vec::new(),
-            display_method: None,
-            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
-            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
-            derives: vec![],
-            named_type_identities: Default::default(),
-            type_parameters: Vec::new(),
-            type_parameter_count: 0,
-        });
-        let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);
-        let bytes = publish(&input, &public)?;
-        let decoded = SurfaceReader::open(&bytes)?.declaration(&identity("exported", 1))?;
-        let Some(Statement {
-            kind:
-                StatementKind::Assign {
-                    rvalue: Rvalue::ResultVariant(variant),
-                    ..
-                },
-            ..
-        }) = decoded.block.stmts.first()
-        else {
-            return Err("Result type context disappeared".into());
-        };
-        assert_eq!(variant.canonical_types.get(&vec![0]), Some(&published_type));
-        let Some(Statement {
-            kind:
-                StatementKind::Assign {
-                    rvalue: Rvalue::ResultVariant(variant),
-                    ..
-                },
-            ..
-        }) = input.bodies.first_mut().and_then(|body| body.block.stmts.first_mut())
-        else {
-            return Err("source Result disappeared".into());
-        };
-        let mut private = identity("private_type_secret", 3);
-        private.kind = SemanticSourceTargetKind::Model;
-        variant.canonical_types.insert(vec![0], private);
-        let bytes = publish(&input, &public)?;
-        assert!(!SurfaceReader::open(&bytes)?.covers(&identity("exported", 1)));
-        assert!(
-            !bytes
-                .windows(b"private_type_secret".len())
-                .any(|bytes| bytes == b"private_type_secret")
-        );
-        Ok(())
-    }
-
-    /// Local binding identity is checker-session metadata; fragment-local slots retain execution identity instead.
-    #[test]
-    fn publication_removes_session_local_binding_discriminants() -> Result<(), Box<dyn std::error::Error>> {
-        let mut exported = body("exported", 1);
-        let mut local_identity = identity("local", 2);
-        local_identity.scope_discriminant = Some(crate::ScopeDiscriminant(917));
-        exported.locals.push(crate::body_ir::LocalDecl {
-            id: crate::body_ir::LocalId(0),
-            name: Some("local".into()),
-            identity: Some(local_identity),
-            ty: IncanType::Primitive(IncanPrimitiveType::Int),
-            origin: crate::body_ir::LocalOrigin::UserBinding,
-            scope: ScopeId(0),
-            span: exported.span,
-        });
-        let bytes = publish(&module(vec![exported]), &BTreeSet::from([identity("exported", 1)]))?;
-        let decoded = SurfaceReader::open(&bytes)?.declaration(&identity("exported", 1))?;
-        assert_eq!(decoded.locals.first().ok_or("local slot disappeared")?.identity, None);
-        assert_eq!(
-            decoded.locals.first().ok_or("local slot disappeared")?.id,
-            crate::body_ir::LocalId(0)
-        );
-        Ok(())
-    }
-    /// The frame's own layout is pinned, because a second reader parses it by hand.
-    ///
-    /// `SurfaceReader` reads the frame from a slice with postcard; the compiler's streaming reader cannot, and
-    /// reimplements postcard's varint framing to find where the version ends before it seeks. Nothing else
-    /// connects those two implementations, so this asserts the shape both rely on: a postcard `u32` version whose
-    /// encoding uses the 0x80 continuation bit, then an 8-byte little-endian index length, then the index, then
-    /// the payload. If postcard ever changes its integer encoding, this test fails here rather than on a real
-    /// artifact in the one reader that has no test of its own.
-    #[test]
-    fn the_frame_layout_the_streaming_reader_reimplements_is_pinned() -> Result<(), Box<dyn std::error::Error>> {
-        let module = module(vec![body("exported", 1)]);
-        let bytes = publish(&module, &BTreeSet::from([identity("exported", 1)]))?;
-
-        // The hand-rolled reader consumes version bytes while the continuation bit is set, at most five.
-        let version_length = bytes
-            .iter()
-            .take(5)
-            .position(|byte| byte & 128 == 0)
-            .ok_or("version prefix is not postcard varint framed")?
-            + 1;
-        let (decoded_version, remainder) = postcard::take_from_bytes::<u32>(&bytes)?;
-        assert_eq!(
-            decoded_version,
-            super::EXECUTABLE_REPRESENTATION_VERSION,
-            "the frame must open with the representation version"
-        );
-        assert_eq!(
-            bytes.len() - remainder.len(),
-            version_length,
-            "the hand-rolled varint scan and postcard must agree on where the version ends"
-        );
-
-        // Then eight little-endian bytes of index length, and the index must land inside the file.
-        let length_bytes: [u8; 8] = remainder.get(..8).ok_or("missing index length")?.try_into()?;
-        let index_length = u64::from_le_bytes(length_bytes);
-        assert!(index_length > 0, "a published surface carries an index");
-        assert!(
-            index_length <= super::MAX_SURFACE_INDEX_BYTES,
-            "a published index must fall inside the bound both readers enforce"
-        );
-        let payload_offset = u64::try_from(version_length)? + 8 + index_length;
-        assert!(
-            payload_offset <= u64::try_from(bytes.len())?,
-            "the streaming reader seeks to this offset; it must be inside the file"
-        );
-
-        // And both readers must agree on what the index says.
-        let reader = SurfaceReader::open(&bytes)?;
-        let decoded = super::SurfaceIndex::decode(
-            remainder
-                .get(8..usize::try_from(8 + index_length)?)
-                .ok_or("index truncated")?,
-            u64::try_from(bytes.len())? - payload_offset,
-        )?;
-        assert_eq!(
-            decoded.declarations.len(),
-            reader.index().declarations.len(),
-            "parsing the frame by offset and through the reader must yield the same index"
-        );
-        Ok(())
-    }
-}
+mod tests;

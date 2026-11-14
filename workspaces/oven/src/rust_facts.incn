@@ -1,0 +1,99 @@
+"""
+Bakery-owned Rust ABI extractions (#2542).
+
+The compiler extracts bounded Rust facts while it checks, identified by the request: the native generation, the
+extracting executable and the requested paths. Each extraction is a bakery record of its own, keyed by that identity,
+with one payload. The installed toolchain is never written.
+
+A description Oven prepares for a compile or check has a `<name>.rust-facts` directory beside it with two places:
+
+- `index`: one `identity<TAB>payload` line for each extraction the description's last run used, the payload a
+  read-only bakery file the compiler reads directly;
+- `staging/`: where a run writes each extraction the index lacks, as `<identity>.rustabi`, and appends every identity
+  it reads or writes to `used`.
+
+Before the description's next run, `refresh` seals what was staged, registers the identities the run used as the
+unit's current registration in the project, and rewrites the index from `used`. An extraction a newer run no longer
+uses leaves the bakery at the next `oven bakery gc`, unless another current registration uses it.
+"""
+
+from rust::std::fs import copy as copy_file
+from std.fs import Path
+from bakery import claim, fact_file, find, seal, staging as bakery_staging
+from bakery_roots import register_root
+from publication import publish
+
+# The one payload of an extraction record.
+const EXTRACTION: str = "facts.rustabi"
+# Every extraction record shares one name entry; records are found by identity.
+const NAME: str = "rust-facts"
+
+
+pub def refresh(store: Path, directory: Path, project: str) -> Result[None, str]:
+    """
+    Bake what the description's last run staged, and index what it used, before its next run.
+
+    1. Read the identities the last run used, and seal each extraction it staged as its own bakery record.
+    2. Register the used identities as the unit's current registration, replacing the previous run's.
+    3. Rewrite the index from those identities. A run that used nothing, such as a replayed check, keeps the index.
+    """
+    staging = directory.joinpath("staging")
+    used_list = staging.joinpath("used")
+    # 1. A staged file is complete: the compiler renames each one into place.
+    used = used_identities(used_list)?
+    for identity in used:
+        staged = staging.joinpath(f"{identity}.rustabi")
+        if staged.is_file():
+            bake(store, identity, staged)?
+    if len(used) == 0:
+        return Ok(None)
+    # 2. and 3. An identity whose extraction could not be staged has no record and stays out of the index.
+    mut lines: list[str] = []
+    mut registered: list[str] = []
+    for identity in used:
+        match find(store, identity)?:
+            None => pass
+            Some(fact) =>
+                match fact_file(store, fact, EXTRACTION):
+                    None => pass
+                    Some(payload) =>
+                        registered.append(identity)
+                        lines.append(f"{identity}\t{payload.0}")
+    # The extractions this run used are the unit's current registration; the ones a newer run no longer uses retire.
+    register_root(store, project, f"rust-facts\t{directory.name()}", registered)?
+    publish(directory.joinpath("index"), "".join([f"{line}\n" for line in lines]))?
+    used_list.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+    return Ok(None)
+
+
+def bake(store: Path, identity: str, staged: Path) -> Result[None, str]:
+    """Seal one staged extraction as the record of its request identity, once; an existing record is kept."""
+    held = claim(store, identity)?
+    if find(store, identity)? is None:
+        destination = bakery_staging(store, identity)?
+        copy_file(staged.0, destination.joinpath(EXTRACTION).0).map_err((error) => f"{staged.0}: {error}")?
+        _ = seal(store, identity, destination, "rust-facts", NAME, [], "rust ABI extraction")?
+    staged.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+    return Ok(None)
+
+
+def used_identities(used: Path) -> Result[list[str], str]:
+    """The distinct full identities in the run's `used` list, in first-use order; a missing list names none."""
+    mut identities: list[str] = []
+    if not used.is_file():
+        return Ok(identities)
+    text = used.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
+    for line in text.split("\n"):
+        if extraction_identity(line) and line not in identities:
+            identities.append(line)
+    return Ok(identities)
+
+
+def extraction_identity(value: str) -> bool:
+    """Whether `value` is a full lowercase SHA-256 request identity."""
+    if len(value) != 64:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true

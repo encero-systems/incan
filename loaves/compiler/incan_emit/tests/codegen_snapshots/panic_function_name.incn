@@ -1,6 +1,0 @@
-def panic(message: str) -> str:
-    return message
-
-
-def main() -> None:
-    println(panic("not the macro"))

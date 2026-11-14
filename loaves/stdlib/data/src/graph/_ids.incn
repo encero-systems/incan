@@ -1,0 +1,81 @@
+"""Graph-local legacy identifiers and shared operation errors."""
+
+from std.traits.error import Error
+
+
+@derive(Clone, Copy, Eq, Hash, Ord)
+pub type NodeId = newtype int:
+    """Stable handle for one node in a graph instance."""
+
+    pub def to_int(self) -> int:
+        """Return the runtime numeric representation."""
+        return self.0
+
+
+@derive(Clone, Copy, Eq, Hash, Ord)
+pub type EdgeId = newtype int:
+    """Stable handle for one edge in a graph instance."""
+
+    pub def to_int(self) -> int:
+        """Return the runtime numeric representation."""
+        return self.0
+
+
+pub model GraphError with Error:
+    """Error returned by invalid graph operations."""
+
+    pub detail: str
+
+    def message(self) -> str:
+        """Return the graph failure detail."""
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """Graph failures currently wrap no source error."""
+        return None
+
+
+pub def unknown_node(node: NodeId) -> GraphError:
+    """Build the shared unknown-node refusal."""
+    return GraphError(detail=f"graph node does not exist: {node.to_int()}")
+
+
+pub def unknown_edge(edge: EdgeId) -> GraphError:
+    """Build the shared unknown-edge refusal."""
+    return GraphError(detail=f"graph edge does not exist: {edge.to_int()}")
+
+
+pub def duplicate_edge(from_: NodeId, to: NodeId) -> GraphError:
+    """Build the shared duplicate-edge refusal."""
+    return GraphError(detail=f"graph edge already exists: {from_.to_int()} -> {to.to_int()}")
+
+
+pub def missing_edge(from_: NodeId, to: NodeId) -> GraphError:
+    """Build the shared missing-edge refusal."""
+    return GraphError(detail=f"graph edge does not exist: {from_.to_int()} -> {to.to_int()}")
+
+
+pub def wrong_graph_scope() -> GraphError:
+    """Build the shared graph-scope mismatch refusal."""
+    return GraphError(detail="graph key belongs to another graph instance")
+
+
+pub def contains_node_id(nodes: list[NodeId], node: NodeId) -> bool:
+    """Return whether `nodes` contains `node`."""
+    for candidate in nodes:
+        if candidate == node:
+            return true
+    return false
+
+
+pub def insert_sorted_node(mut nodes: list[NodeId], node: NodeId) -> None:
+    """Insert `node` once while retaining ascending numeric order."""
+    if contains_node_id(nodes, node):
+        return
+    nodes.append(node)
+    mut index = len(nodes) - 1
+    while index > 0 and nodes[index].to_int() < nodes[index - 1].to_int():
+        previous = nodes[index - 1]
+        nodes[index - 1] = nodes[index]
+        nodes[index] = previous
+        index -= 1

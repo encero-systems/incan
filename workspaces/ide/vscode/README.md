@@ -13,11 +13,11 @@ The extension includes support for the Incan Language Server, providing:
 - **Go-to-definition** - Jump to function, model, class, and trait definitions
 - **Autocomplete** - Keywords and symbols from your code
 
-**Requirements:** The `incan-lsp` binary must be installed and available in your PATH, or you can configure the path in settings.
+**Requirements:** Install `incan` and `incan-lsp` from the same release. The extension resolves `incan-lsp` from `incan.lsp.path`, then beside the `incan` found on PATH (including its symlink target), then directly on PATH.
 
-**Tip (development):** When your workspace is the Incan compiler repo, the extension will automatically prefer `target/debug/incan-lsp` (or `target/release/incan-lsp`) if present. This keeps diagnostics in sync with the syntax supported by your current checkout (e.g. `pub const`). Running `make build` at the repo root also symlinks `~/.cargo/bin/incan-lsp` (and `incan`) to `target/debug/...` on local machines, so other workspaces pick up the same binaries via PATH after you reload the window.
+**Tip (development):** Build the server with `incan build loaves/toolchain/incan-lsp --profile release` and set `incan.lsp.path` to `loaves/toolchain/incan-lsp/target/incan/rust/release/bin/incan-lsp` in that checkout. Workspace build directories do not override the release server.
 
-Run **Incan: Doctor** from the command palette to see which `incan` and `incan-lsp` binaries the extension resolved, whether configured paths exist and are executable, and whether `~/.cargo/bin/incan*` symlinks point at the expected checkout. The CLI counterpart is `incan tools doctor`.
+Run **Incan: Doctor** from the command palette to see which `incan` and `incan-lsp` binaries the extension resolved, whether configured paths exist and are executable, and each selected binary's symlink target.
 
 ### Syntax Highlighting
 
@@ -147,21 +147,21 @@ To enable language server features (diagnostics, hover, go-to-definition):
 
 ```bash
 cd /path/to/incan
-cargo build --release -p incan-lsp --bin incan-lsp
+incan build loaves/toolchain/incan-lsp --profile release
 ```
 
 ### 2. Add to PATH
 
 ```bash
 # Add to your shell profile (.bashrc, .zshrc, etc.)
-export PATH="$PATH:/path/to/incan/target/release"
+export PATH="/path/to/incan/loaves/toolchain/incan-lsp/target/incan/rust/release/bin:$PATH"
 ```
 
 Or configure the path directly in VS Code/Cursor settings:
 
 ```json
 {
-  "incan.lsp.path": "/path/to/incan/target/release/incan-lsp"
+  "incan.lsp.path": "/path/to/incan/loaves/toolchain/incan-lsp/target/incan/rust/release/bin/incan-lsp"
 }
 ```
 

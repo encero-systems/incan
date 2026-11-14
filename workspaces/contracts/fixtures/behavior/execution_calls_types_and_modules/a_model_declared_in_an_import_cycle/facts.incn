@@ -1,0 +1,19 @@
+"""Declare a model and close an import cycle with `counts` through functions alone."""
+
+from counts import base
+
+
+pub model Fact:
+    """One named fact."""
+
+    pub name: str
+
+
+pub def make(name: str) -> Fact:
+    """A fact named `name`."""
+    return Fact(name=name)
+
+
+pub def total() -> int:
+    """The base count of the other cycle member."""
+    return base()

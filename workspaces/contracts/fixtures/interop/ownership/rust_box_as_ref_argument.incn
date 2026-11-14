@@ -1,0 +1,22 @@
+# behavior: a value viewed through a Rust Box's as_ref is handed to a function taking the value itself, twice, and the box is still usable afterwards
+# expect-stdout:
+#   node leaf
+#   node leaf
+#   leaf
+
+from rust::std::boxed import Box
+
+
+model Node:
+    label: str
+
+
+def describe(node: Node) -> str:
+    return "node " + node.label
+
+
+def main() -> None:
+    child = Box.new(Node(label="leaf"))
+    println(describe(child.as_ref()))
+    println(describe(child.as_ref()))
+    println(child.as_ref().label)

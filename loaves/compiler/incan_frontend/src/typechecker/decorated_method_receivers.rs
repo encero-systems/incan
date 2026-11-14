@@ -33,13 +33,13 @@ fn callable_receiver_slot(shape: &ResolvedType) -> Option<&CallableParam> {
 pub(super) struct ReceiverPlanInputs {
     /// Declaration span of the module-level function whose body is being checked; `None` inside methods and outside
     /// bodies.
-    pub(super) current_function: Option<(usize, usize)>,
+    pub(super) current_function: Option<crate::ast::Span>,
     /// Every value a module-level function returns, keyed by the function's declaration span, so the plan learns which
     /// functions a decorator returns in a method's place.
-    returned_values: HashMap<(usize, usize), Vec<ReturnedValue>>,
+    returned_values: HashMap<crate::ast::Span, Vec<ReturnedValue>>,
     /// Spans of `mut` markers on copied-scalar parameters already refused, so an annotation resolved twice reports
     /// once.
-    pub(super) reported_marked_scalars: HashSet<(usize, usize)>,
+    pub(super) reported_marked_scalars: HashSet<crate::ast::Span>,
 }
 
 /// One value a module-level function returns.
@@ -66,9 +66,9 @@ enum ReceiverShapeSpelling {
 /// keyed by declaration span.
 #[derive(Debug, Default)]
 struct ReceiverPlan {
-    declarations: HashMap<(usize, usize), PlannedReceiverDeclaration>,
+    declarations: HashMap<crate::ast::Span, PlannedReceiverDeclaration>,
     /// Decorator declarations whose returns and uses of the accepted callable were already checked.
-    checked_decorators: HashSet<(usize, usize)>,
+    checked_decorators: HashSet<crate::ast::Span>,
 }
 
 /// One planned declaration: the position of its signature that holds the receiver and the references the chain makes.
@@ -84,7 +84,7 @@ struct PlannedReceiverDeclaration {
     display: String,
     /// Spans of the references that name the declaration inside decorator chains: a decorator on a method, or a
     /// `return` of the declaration in a planned decorator or factory.
-    chain_references: HashSet<(usize, usize)>,
+    chain_references: HashSet<crate::ast::Span>,
 }
 
 /// The decorated method and the decorator on it through which one chain link is planned.
@@ -293,7 +293,7 @@ impl TypeChecker {
         input: &ResolvedType,
         receiver: &DecoratedMethodReceiver,
     ) {
-        let key = (span.start, span.end);
+        let key = span;
         if !self
             .type_info
             .declarations
@@ -346,12 +346,12 @@ impl TypeChecker {
     }
 
     /// Return the declaration span of the function declared in this module that the reference at `span` resolved to.
-    fn local_function_declaration_span(&self, span: Span) -> Option<(usize, usize)> {
+    fn local_function_declaration_span(&self, span: Span) -> Option<crate::ast::Span> {
         let identity = self.type_info.resolved_identity(span)?;
         if identity.kind != SemanticSourceTargetKind::Function {
             return None;
         }
-        let declaration_span = (identity.declaration_span.start, identity.declaration_span.end);
+        let declaration_span = identity.declaration_span;
         self.type_info
             .declarations
             .function_bindings_by_span
@@ -372,11 +372,11 @@ impl TypeChecker {
     /// only from its checked body.
     pub(super) fn record_method_decorator_receiver_slots(&mut self, program: &Program) {
         // ---- Context: this module's functions, the names it calls directly, and its function decorators ----
-        let functions: HashMap<(usize, usize), &FunctionDecl> = program
+        let functions: HashMap<crate::ast::Span, &FunctionDecl> = program
             .declarations
             .iter()
             .filter_map(|decl| match &decl.node {
-                Declaration::Function(function) => Some(((decl.span.start, decl.span.end), function)),
+                Declaration::Function(function) => Some((decl.span, function)),
                 _ => None,
             })
             .collect();
@@ -385,17 +385,17 @@ impl TypeChecker {
             if let Expr::Call(callee, _, _) = expr
                 && matches!(callee.node, Expr::Ident(_))
             {
-                direct_callees.insert((callee.span.start, callee.span.end));
+                direct_callees.insert(callee.span);
             }
             false
         });
-        let function_decorators: HashMap<(usize, usize), &str> = functions
+        let function_decorators: HashMap<crate::ast::Span, &str> = functions
             .values()
             .flat_map(|function| {
                 function
                     .decorators
                     .iter()
-                    .map(move |decorator| ((decorator.span.start, decorator.span.end), function.name.as_str()))
+                    .map(move |decorator| (decorator.span, function.name.as_str()))
             })
             .collect();
 
@@ -454,7 +454,7 @@ impl TypeChecker {
         &mut self,
         decorator: &Spanned<Decorator>,
         site: &ChainSite<'_>,
-        functions: &HashMap<(usize, usize), &FunctionDecl>,
+        functions: &HashMap<crate::ast::Span, &FunctionDecl>,
         plan: &mut ReceiverPlan,
     ) {
         let Some(declaration_span) = self.local_function_declaration_span(decorator.span) else {
@@ -463,7 +463,7 @@ impl TypeChecker {
         let Some(function) = functions.get(&declaration_span).copied() else {
             return;
         };
-        let decorator_reference = (decorator.span.start, decorator.span.end);
+        let decorator_reference = decorator.span;
 
         // ---- Context: the decorator declarations in this chain link, with the reference that names each ----
         let mut decorating = Vec::new();
@@ -488,7 +488,7 @@ impl TypeChecker {
                     .and_then(|_| self.local_function_declaration_span(value.span))
                     .and_then(|span| functions.get(&span).map(|returned| (span, *returned)));
                 match returned_decorator {
-                    Some((span, returned)) => decorating.push((span, returned, (value.span.start, value.span.end))),
+                    Some((span, returned)) => decorating.push((span, returned, value.span)),
                     None => self.errors.push(errors::method_decorator_receiver_not_planned(
                         &format!(
                             "Decorator factory '@{}' cannot decorate `self` method '{}'",
@@ -525,7 +525,7 @@ impl TypeChecker {
     }
 
     /// Return the values a module-level function's body returns, in source order.
-    fn returned_values_of(&self, declaration_span: (usize, usize)) -> Vec<ReturnedValue> {
+    fn returned_values_of(&self, declaration_span: crate::ast::Span) -> Vec<ReturnedValue> {
         self.receiver_plan_inputs
             .returned_values
             .get(&declaration_span)
@@ -537,10 +537,10 @@ impl TypeChecker {
     /// this module is planned as the method's replacement, and anything else is refused.
     fn plan_decorator_returns(
         &mut self,
-        declaration_span: (usize, usize),
+        declaration_span: crate::ast::Span,
         decorator: &FunctionDecl,
         site: &ChainSite<'_>,
-        functions: &HashMap<(usize, usize), &FunctionDecl>,
+        functions: &HashMap<crate::ast::Span, &FunctionDecl>,
         plan: &mut ReceiverPlan,
     ) {
         let accepted = decorator.params.first().map(|param| param.node.name.as_str());
@@ -575,7 +575,7 @@ impl TypeChecker {
                         replacement,
                         MethodDecoratorReceiverRole::Replacement,
                         site,
-                        (value.span.start, value.span.end),
+                        value.span,
                     );
                 }
                 continue;
@@ -605,28 +605,28 @@ impl TypeChecker {
     /// body sees the owner type, so a call of it, or passing it on, would disagree with the generated signature.
     fn refuse_uses_of_the_decorated_callable(
         &mut self,
-        declaration_span: (usize, usize),
+        declaration_span: crate::ast::Span,
         decorator: &FunctionDecl,
         site: &ChainSite<'_>,
     ) {
         let Some(accepted) = decorator.params.first() else {
             return;
         };
-        let parameter = (accepted.span.start, accepted.span.end);
-        let returned: HashSet<(usize, usize)> = self
+        let parameter = accepted.span;
+        let returned: HashSet<crate::ast::Span> = self
             .returned_values_of(declaration_span)
             .iter()
             .filter(|value| value.name.as_deref() == Some(accepted.node.name.as_str()))
-            .map(|value| (value.span.start, value.span.end))
+            .map(|value| value.span)
             .collect();
-        let mut uses: Vec<(usize, usize)> = self
+        let mut uses: Vec<crate::ast::Span> = self
             .type_info
             .references
             .resolved_identities
             .iter()
             .filter(|(span, identity)| {
                 identity.kind == SemanticSourceTargetKind::Parameter
-                    && (identity.declaration_span.start, identity.declaration_span.end) == parameter
+                    && identity.declaration_span == parameter
                     && **span != parameter
             })
             .map(|(span, _)| *span)
@@ -634,7 +634,7 @@ impl TypeChecker {
             .collect();
         uses.sort_unstable();
         let name = &accepted.node.name;
-        for (start, end) in uses {
+        for span in uses {
             self.errors.push(errors::method_decorator_receiver_not_planned(
                 &format!("'{name}' cannot be used here"),
                 &format!(
@@ -645,7 +645,7 @@ impl TypeChecker {
                     "Return '{name}' unchanged, or make '{}' generic over the whole callable, `(F) -> F`",
                     decorator.name
                 ),
-                Span::new(start, end),
+                span,
             ));
         }
     }
@@ -657,11 +657,11 @@ impl TypeChecker {
     fn plan_receiver_declaration(
         &mut self,
         plan: &mut ReceiverPlan,
-        span: (usize, usize),
+        span: crate::ast::Span,
         function: &FunctionDecl,
         role: MethodDecoratorReceiverRole,
         site: &ChainSite<'_>,
-        reference: (usize, usize),
+        reference: crate::ast::Span,
     ) -> bool {
         let refused = match role {
             MethodDecoratorReceiverRole::Replacement => format!(
@@ -682,7 +682,7 @@ impl TypeChecker {
                         function.name
                     ),
                     "Use a separate function for each position in the chain",
-                    Span::new(reference.0, reference.1),
+                    reference,
                 ));
                 return false;
             }
@@ -701,7 +701,7 @@ impl TypeChecker {
                     "Remove `pub` from '{}', and give other modules a function of their own",
                     function.name
                 ),
-                Span::new(span.0, span.1),
+                span,
             ));
             return false;
         }
@@ -726,17 +726,17 @@ impl TypeChecker {
     fn refuse_receiver_uses_outside_the_chain(
         &mut self,
         plan: &ReceiverPlan,
-        direct_callees: &HashSet<(usize, usize)>,
-        function_decorators: &HashMap<(usize, usize), &str>,
+        direct_callees: &HashSet<crate::ast::Span>,
+        function_decorators: &HashMap<crate::ast::Span, &str>,
     ) {
-        let mut uses: Vec<((usize, usize), (usize, usize))> = self
+        let mut uses: Vec<(crate::ast::Span, crate::ast::Span)> = self
             .type_info
             .references
             .resolved_identities
             .iter()
             .filter(|(_, identity)| identity.kind == SemanticSourceTargetKind::Function)
             .filter_map(|(span, identity)| {
-                let declaration = (identity.declaration_span.start, identity.declaration_span.end);
+                let declaration = identity.declaration_span;
                 let local = self
                     .type_info
                     .declarations
@@ -783,10 +783,7 @@ impl TypeChecker {
                 ),
             };
             self.errors.push(errors::method_decorator_receiver_not_planned(
-                &refused,
-                &reason,
-                &hint,
-                Span::new(span.0, span.1),
+                &refused, &reason, &hint, span,
             ));
         }
     }
@@ -815,7 +812,7 @@ impl TypeChecker {
     fn receiver_shape_spelling(
         &self,
         function: &FunctionDecl,
-        span: (usize, usize),
+        span: crate::ast::Span,
         role: MethodDecoratorReceiverRole,
     ) -> ReceiverShapeSpelling {
         let Some(binding) = self.type_info.declarations.function_bindings_by_span.get(&span) else {

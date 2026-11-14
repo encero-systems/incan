@@ -9,7 +9,7 @@ use super::{
 use incan_semantics_core::body_ir::nominal_carrier_key;
 
 /// Previous per-expression projections restored after the constructor's supplied operands have been lowered.
-type PreviousTypes = BTreeMap<(usize, usize), Option<IncanType>>;
+type PreviousTypes = BTreeMap<crate::ast::Span, Option<IncanType>>;
 
 impl BodyBuilder<'_, '_> {
     /// Give an empty comparison literal the exact type of its checked field operand; nonempty values never gain an
@@ -196,10 +196,10 @@ fn retain_context(
     expected: &IncanType,
     facts: &TypeCheckInfo,
     identities: &BTreeMap<String, CanonicalSymbolId>,
-    overrides: &mut std::collections::HashMap<(usize, usize), IncanType>,
+    overrides: &mut std::collections::HashMap<crate::ast::Span, IncanType>,
     previous: &mut PreviousTypes,
 ) {
-    let span = (expression.span.start, expression.span.end);
+    let span = expression.span;
     let recorded = overrides
         .get(&span)
         .cloned()

@@ -1,0 +1,10 @@
+"""Supply a deliberately unsupported registration version."""
+
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Return a future schema to exercise producer admission."""
+    mut registration = VocabRegistration.new()
+    registration.metadata_version = 999
+    return registration

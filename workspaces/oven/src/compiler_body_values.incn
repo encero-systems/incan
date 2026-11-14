@@ -1,0 +1,161 @@
+"""Select and publish paired local/final body values through the compiler evaluation graph."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot
+from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
+from pub::internal_models.records import ReadReceipt, RecordKey
+from compiler_graph_records import (
+    PublishedEvaluation,
+    ReusableRecord,
+    publish_evaluation,
+    readers_of,
+    reusable_evaluation,
+    reusable_family_records,
+)
+
+
+pub model SelectedBodyValues:
+    """One owner's reusable local and final values, admitted from the same selected graph generation."""
+
+    pub local: bytes
+    pub final: bytes
+
+
+pub model PublishedBodyValues:
+    """The graph generation and evaluation identities produced for one completed body pair."""
+
+    pub snapshot: Snapshot
+    pub local: PublishedEvaluation
+    pub final: PublishedEvaluation
+
+
+pub model SelectedBodyRecord:
+    """One owner identity with its graph-admitted checker pair and final kernel Body IR frame."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+
+
+pub model SelectedBodyPage:
+    """One bounded, identity-addressed graph body page for lazy native-driver retrieval."""
+
+    pub key: str
+    pub value: bytes
+
+
+pub def select_body_values(
+    selected: Snapshot,
+    local: RecordKey,
+    final: RecordKey,
+    profile: str,
+) -> Result[Option[SelectedBodyValues], str]:
+    """
+    Select one owner's local and final values before checking, or preserve the full-source fallback as one miss.
+
+    A final value is never carried without its matching local predecessor. Each value independently revalidates its
+    completed read receipt against the same selected graph generation.
+    """
+    reusable_local = reusable_evaluation(selected, local, profile)?
+    reusable_final = reusable_evaluation(selected, final, profile)?
+    match (reusable_local, reusable_final):
+        (Some(local_value), Some(final_value)) =>
+            return Ok(Some(SelectedBodyValues(local=local_value.value, final=final_value.value)))
+        _ => return Ok(None)
+
+
+pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[SelectedBodyRecord], str]:
+    """Select complete checker pairs with final Body IR while invalidated owners stay on fresh production."""
+    locals = reusable_family_records(selected, "local", profile)?
+    finals = reusable_family_records(selected, "final", profile)?
+    bodies = reusable_family_records(selected, "body-ir", profile)?
+    mut selected_records: list[SelectedBodyRecord] = []
+    for local in locals:
+        match matching_record(finals, local):
+            Some(final) =>
+                match matching_record(bodies, local):
+                    Some(body) =>
+                        selected_records.append(
+                            SelectedBodyRecord(
+                                identity=local.key.identity,
+                                local=local.value,
+                                final=final.value,
+                                body_ir=body.value,
+                            ),
+                        )
+                    None => pass
+            None => pass
+    return Ok(selected_records)
+
+
+pub def select_body_inventory_except(
+    selected: Snapshot,
+    profile: str,
+    invalid: list[str],
+) -> Result[list[SelectedBodyRecord], str]:
+    """Select complete owner records except those reached by source changes prepared for this request."""
+    return Ok([record for record in select_body_inventory(selected, profile)? if record.identity not in invalid])
+
+
+pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
+    """Encode each graph-admitted checker pair and owner frame as one bounded, identity-addressed page."""
+    mut pages: list[SelectedBodyPage] = []
+    for record in records:
+        value = encode_graph_body_values(
+            [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
+        ).map_err((error) => f"selected body page refused: {error:?}")?
+        pages.append(SelectedBodyPage(key=hexlify(sha256.digest(record.identity.encode("utf-8"))), value=value))
+    return Ok(pages)
+
+
+pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select invalid local/final owners from reverse edges only, before any program check or producer activation."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family not in ["local", "final", "body-ir"]:
+            continue
+        if reusable_evaluation(selected, reader, profile)? is None:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
+
+
+pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family in ["local", "final", "body-ir"]:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
+
+
+pub def publish_body_values(
+    selected: Snapshot,
+    local_claim: str,
+    local_rank: ProducerRank,
+    local_value: bytes,
+    local_receipt: ReadReceipt,
+    final_claim: str,
+    final_rank: ProducerRank,
+    final_value: bytes,
+    final_receipt: ReadReceipt,
+) -> Result[PublishedBodyValues, str]:
+    """Publish one edited body's local then final producer outputs through the graph's witnessed authority."""
+    local = publish_evaluation(selected, local_claim, local_rank, local_value, local_receipt)?
+    final = publish_evaluation(local.snapshot, final_claim, final_rank, final_value, final_receipt)?
+    return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
+
+
+def matching_record(records: list[ReusableRecord], local: ReusableRecord) -> Option[ReusableRecord]:
+    """Find the final value whose complete logical owner key differs from the local key only by family."""
+    for record in records:
+        if (
+            record.key.identity == local.key.identity
+            and record.key.identity_profile == local.key.identity_profile
+            and record.key.origin == local.key.origin
+            and record.key.facet == local.key.facet
+            and record.key.context == local.key.context
+        ):
+            return Some(record)
+    return None

@@ -1,0 +1,344 @@
+"""Check or rewrite tracked text using the repository's explicit US English spelling contract."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.regex import Regex
+from check_support import git, read, repository_root, source_lines, write_stderr
+from english_spellings import spellings
+
+const HELP: str = """usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]
+                           [paths ...]
+
+Check tracked text for UK spellings; US English is the repository's standard
+(#1561).
+
+positional arguments:
+  paths          limit the scan to these tracked files
+
+options:
+  -h, --help     show this help message and exit
+  --root ROOT
+  --allow ALLOW  override the repository's scripts/check_us_english.allow
+  --fix          rewrite files in place instead of reporting"""
+
+
+model Options:
+    """The repository, exception file, rewrite flag and tracked-file selection."""
+
+    root: Path
+    allow: str = ""
+    fix: bool = false
+    paths: list[str] = []
+
+
+pub model Hit:
+    """An original source span, matched spelling and case-preserving replacement."""
+
+    pub start: int
+    pub end: int
+    pub word: str
+    pub replacement: str
+
+
+model ExceptionRule:
+    """A file scope and exact token or enclosing phrase that intentionally keeps its spelling."""
+
+    path: str
+    token: str
+
+
+def main() -> None:
+    """Run the audit and keep configuration failures distinct from spelling findings."""
+    match run():
+        Ok(code) =>
+            if code == 0:
+                exit(0)
+            exit(1)
+        Err(message) =>
+            write_stderr(f"us-english audit: {message}\n")
+            exit(2)
+
+
+def run() -> Result[int, str]:
+    """
+    Check or rewrite tracked files and return the original gate result.
+
+    1. Select tracked text and validate exceptions.
+    2. Find case-preserving replacements, applying only the unexempted spans in fix mode.
+    3. Print the finding or rewrite inventory.
+    """
+    # 1. Select inputs and validate configuration.
+    arguments: list[str] = [argument for argument in args()]
+    options = command_options(arguments[1:])
+    root = options.root.resolve().map_err((error) => error.message())?
+    mut allow_path = root.joinpath("scripts/check_us_english.allow")
+    if options.allow != "":
+        allow_path = Path(options.allow)
+    allowed = read_allowlist(allow_path)?
+    files = tracked_text_files(root, options.paths)?
+    table = spellings()
+    letters = letter_pattern()?
+    mut findings: list[str] = []
+    mut rewritten = 0
+
+    # 2. Scan each file and apply replacements at original source positions.
+    for relative in files:
+        if exempt_file(relative, allowed):
+            continue
+        path = root.joinpath(relative)
+        mut lines = read_verbatim(path)?.split("\n")
+        mut changed = 0
+        for index in range(len(lines)):
+            line = lines[index]
+            found = [hit for hit in line_hits(line, table, letters) if not exempt_hit(relative, line, hit, allowed)]
+            for hit in found:
+                findings.append(f"  {relative}:{index + 1}: {hit.word} → {hit.replacement}")
+            if options.fix and len(found) > 0:
+                lines[index] = replaced_line(line, found)
+                changed += len(found)
+        if changed > 0:
+            path.write_text("\n".join(lines), "utf-8", "strict", None).map_err((error) => error.message())?
+            rewritten += 1
+            println(f"{relative}: {changed}")
+
+    # 3. Print the complete result.
+    if options.fix:
+        println(f"us-english: rewrote {len(findings)} spellings in {rewritten} files")
+        return Ok(0)
+    if len(findings) > 0:
+        println(f"{len(findings)} UK spellings remain (US English is the standard, see AGENTS.md):")
+        for finding in findings:
+            println(finding)
+        return Ok(1)
+    println(f"us-english audit passed: {len(files)} files scanned")
+    return Ok(0)
+
+
+def command_options(arguments: list[str]) -> Options:
+    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    match parse_options(arguments):
+        Ok(options) => return options
+        Err(message) =>
+            usage = (
+                "usage: check_us_english.py [-h] [--root ROOT] [--allow ALLOW] [--fix]\n"
+                + "                           [paths ...]"
+            )
+            write_stderr(f"{usage}\ncheck_us_english.py: error: {message}\n")
+            exit(2)
+
+
+def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """Read --root, --allow, --fix and the optional tracked-file paths."""
+    mut options = Options(root=repository_root()?)
+    mut index = 0
+    mut positional = false
+    while index < len(arguments):
+        argument = arguments[index]
+        if not positional and (argument == "--help" or argument == "-h"):
+            println(HELP)
+            exit(0)
+        elif not positional and argument == "--":
+            positional = true
+        elif not positional and argument == "--fix":
+            options.fix = true
+        elif not positional and (argument == "--root" or argument == "--allow"):
+            index += 1
+            if index >= len(arguments):
+                return Err(f"argument {argument}: expected one argument")
+            if argument == "--root":
+                options.root = Path(arguments[index])
+            else:
+                options.allow = arguments[index]
+        elif not positional and argument.startswith("--root="):
+            options.root = Path(argument[len("--root="):])
+        elif not positional and argument.startswith("--allow="):
+            options.allow = argument[len("--allow="):]
+        elif not positional and argument.startswith("-"):
+            return Err(f"unrecognized arguments: {argument}")
+        else:
+            options.paths.append(argument)
+        index += 1
+    return Ok(options)
+
+
+def read_allowlist(path: Path) -> Result[list[ExceptionRule], str]:
+    """Require a path, token and nonempty reason for each configured exception."""
+    mut result: list[ExceptionRule] = []
+    lines = source_lines(read(path)?)?
+    for index in range(len(lines)):
+        line = lines[index]
+        if line.strip() == "" or line.strip().startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 3 or fields[0].strip() == "" or fields[1].strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected path, token and reason separated by tabs")
+        if "\t".join(fields[2:]).strip() == "":
+            return Err(f"{path.0}:{index + 1}: expected path, token and reason separated by tabs")
+        result.append(ExceptionRule(path=fields[0].strip(), token=fields[1].strip()))
+    return Ok(result)
+
+
+def tracked_text_files(root: Path, requested: list[str]) -> Result[list[str], str]:
+    """Select tracked nonbinary files with the original suffix and tree exclusions."""
+    nul = RustString.from_utf8(b"\x00").map_err((error) => error.to_string())?
+    mut wanted: list[str] = []
+    for name in requested:
+        resolved = Path(name).resolve().map_err((error) => error.message())?
+        wanted.append(resolved.0)
+    mut result: list[str] = []
+    for name in git(root, ["ls-files", "-z"])?.split(nul):
+        if skipped(name):
+            continue
+        path = root.joinpath(name)
+        if path.is_file() and not binary(path)?:
+            if len(requested) == 0 or path.0 in wanted:
+                result.append(name)
+    return Ok(result)
+
+
+def skipped(name: str) -> bool:
+    """Keep generated assets and the spelling guard's own vocabulary outside its input corpus."""
+    if name == "" or name.startswith("workspaces/docs-site/docs/shared/"):
+        return true
+    if name in [
+        "scripts/check_us_english.py", "scripts/test_check_us_english.py", "scripts/check_us_english.allow",
+        "scripts/check_us_english.incn", "scripts/test_check_us_english.incn", "scripts/english_spellings.incn",
+    ]:
+        return true
+    for suffix in [".lock", ".jsonl", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".woff", ".woff2", ".pdf"]:
+        if name.endswith(suffix):
+            return true
+    return false
+
+
+def binary(path: Path) -> Result[bool, str]:
+    """Recognize binary inputs by a zero byte in the original 8192-byte prefix."""
+    content = path.read_bytes().map_err((error) => error.message())?
+    for byte in content[:8192]:
+        if byte == 0:
+            return Ok(true)
+    return Ok(false)
+
+
+pub def hits(line: str, table: Dict[str, str]) -> Result[list[Hit], str]:
+    """Find nonoverlapping letter runs and CamelCase pieces using Python-compatible Unicode letter categories."""
+    return Ok(line_hits(line, table, letter_pattern()?))
+
+
+def letter_pattern() -> Result[Regex, str]:
+    """Compile the shared letter-run pattern once for a complete audit."""
+    return Regex("[\\p{L}\\p{Nl}\\p{No}]+").map_err((error) => error.message())
+
+
+def line_hits(line: str, table: Dict[str, str], letters: &Regex) -> list[Hit]:
+    """Find case-preserving spelling hits with the audit's already compiled pattern."""
+    mut result: list[Hit] = []
+    ascii = len(line.encode("utf-8")) == len(line)
+    for run in letters.find_iter(line):
+        text = run.as_str()
+        mut start = run.start()
+        if not ascii:
+            start = scalar_offset(line, run.start())
+        encoded = text.encode("utf-8")
+        mut piece = 0
+        for index in range(1, len(text)):
+            if camel_boundary(text, encoded, index):
+                append_hit(result, text[piece:index], start + piece, table)
+                piece = index
+        append_hit(result, text[piece:], start + piece, table)
+    return result
+
+
+def camel_boundary(text: str, encoded: bytes, index: int) -> bool:
+    """Use byte indexing for ASCII identifiers and Unicode casing for other letter runs."""
+    if len(encoded) == len(text):
+        return encoded[index - 1] >= 97 and encoded[index - 1] <= 122 and encoded[index] >= 65 and encoded[index] <= 90
+    return lowercase(text[index - 1]) and uppercase(text[index])
+
+
+def scalar_offset(text: str, bytes: int) -> int:
+    """Convert the regex engine's UTF-8 byte offset to the source string's Unicode scalar index."""
+    mut offset = 0
+    mut index = 0
+    for character in text:
+        if offset >= bytes:
+            break
+        offset += len(character.encode("utf-8"))
+        index += 1
+    return index
+
+
+def append_hit(mut result: list[Hit], word: str, start: int, table: Dict[str, str]) -> None:
+    """Keep only explicit spelling-table entries whose case pattern is recognized."""
+    if let Some(replacement) = respell(word, table):
+        result.append(Hit(start=start, end=start + len(word), word=word, replacement=replacement))
+
+
+pub def respell(word: str, table: Dict[str, str]) -> Option[str]:
+    """Own the selected shared-table replacement in the word's case; leave mixed case unchanged."""
+    if len(word) < 2:
+        return None
+    if let Some(value) = table.get(word.lower()):
+        replacement = str(value)
+        if lowercase(word):
+            return Some(replacement)
+        if uppercase(word):
+            return Some(replacement.upper())
+        if uppercase(word[0]) and lowercase(word[1:]):
+            return Some(replacement[0].upper() + replacement[1:])
+    return None
+
+
+def lowercase(text: str) -> bool:
+    """Require at least one cased character and no uppercase character."""
+    return text.lower() == text and text.upper() != text
+
+
+def uppercase(text: str) -> bool:
+    """Require at least one cased character and no lowercase character."""
+    return text.upper() == text and text.lower() != text
+
+
+def covers(rule: ExceptionRule, path: str) -> bool:
+    """Scope a rule to an exact path, wildcard or slash-bounded subtree."""
+    return rule.path == "*" or rule.path == path or (rule.path.endswith("/**") and path.startswith(rule.path[:-2]))
+
+
+def exempt_file(path: str, rules: list[ExceptionRule]) -> bool:
+    """Skip an entire file only when a matching path rule explicitly exempts every token."""
+    for rule in rules:
+        if covers(rule, path) and rule.token == "*":
+            return true
+    return false
+
+
+def exempt_hit(path: str, line: str, hit: Hit, rules: list[ExceptionRule]) -> bool:
+    """Require a matching word or exact enclosing phrase within a matching path scope."""
+    for rule in rules:
+        if not covers(rule, path):
+            continue
+        if rule.token == "*" or rule.token.lower() == hit.word.lower():
+            return true
+        for start in range(len(line) - len(rule.token) + 1):
+            if start <= hit.start and hit.end <= start + len(rule.token):
+                if line[start:start + len(rule.token)] == rule.token:
+                    return true
+    return false
+
+
+def read_verbatim(path: Path) -> Result[str, str]:
+    """Decode strict UTF-8 without translating CRLF before byte-preserving spelling replacements."""
+    data = path.read_bytes().map_err((error) => error.message())?
+    return RustString.from_utf8(data).map_err((error) => error.to_string())
+
+
+def replaced_line(line: str, found: list[Hit]) -> str:
+    """Replace original, ordered spans without moving later match positions or changing line endings."""
+    mut pieces: list[str] = []
+    mut cursor = 0
+    for hit in found:
+        pieces.append(line[cursor:hit.start] + hit.replacement)
+        cursor = hit.end
+    return "".join(pieces) + line[cursor:]

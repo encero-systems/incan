@@ -1,0 +1,9 @@
+[project]
+name = "refuses_dependency_crate"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+regex = { crate = "regex", version = "1" }

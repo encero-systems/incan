@@ -1,0 +1,70 @@
+"""Read, write and remove Oven files while retaining the operation and path in every failure."""
+
+from rust::std::fs import File, OpenOptions
+from std.fs import Path
+from std.json import JsonValue, parse
+from pub::incan_platform.trace import Operation
+from jec import begin, record, text_size
+from frozen_inputs import read as frozen_document
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """Read a file as strict UTF-8 text, naming the source when reading fails."""
+    clock = begin()
+    result = path.read_text("utf-8", "strict").map_err((error) => f"cannot read {path.0}: {error.message()}")
+    if clock is not None:
+        match result:
+            Ok(content) => record(Operation.FileRead, path.0, clock, text_size(content, clock))
+            Err(_) => record(Operation.FileRead, path.0, clock)
+    return result
+
+
+pub def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a strict UTF-8 file, naming the destination when writing fails."""
+    return path
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => f"cannot write {path.0}: {error.message()}")
+
+
+pub def open_stream(path: str) -> Result[File, str]:
+    """Append a request's console bytes, creating the sink without truncating earlier dependency diagnostics."""
+    mut options = OpenOptions.new()
+    options.append(true)
+    options.create(true)
+    return options.open(path).map_err((error) => f"cannot open {path}: {error}")
+
+
+pub def remove(path: Path) -> Result[None, str]:
+    """Remove a file, naming it when removal fails."""
+    return path.unlink().map_err((error) => f"cannot remove {path.0}: {error.message()}")
+
+
+pub def discard_file(path: Path) -> None:
+    """Remove a file that may already be gone. Tidying up never fails its caller, so a file that stays is ignored."""
+    _ = path.unlink()
+
+
+pub def make_directory(path: Path) -> Result[None, str]:
+    """Create a directory and its missing parents, naming the destination when creation fails."""
+    return path.mkdir(true, true).map_err((error) => f"cannot create directory {path.0}: {error.message()}")
+
+
+pub def read_json(path: Path) -> Result[JsonValue, str]:
+    """A JSON document from a file; a failure names the file."""
+    if let Some(document) = frozen_document(path)?:
+        return Ok(document)
+    text = read(path)?
+    clock = begin()
+    result = parse(text).map_err((error) => f"cannot parse JSON document {path.0}: {error.message()}")
+    record(Operation.JsonDecode, path.0, clock, text_size(text, clock))
+    return result
+
+
+pub def parse_json(text: str) -> Result[JsonValue, str]:
+    """A JSON document from text."""
+    return parse(text).map_err((error) => error.message())
+
+
+pub def json_text(document: JsonValue) -> Result[str, str]:
+    """A JSON document as compact text."""
+    return document.to_json().map_err((error) => error.message())

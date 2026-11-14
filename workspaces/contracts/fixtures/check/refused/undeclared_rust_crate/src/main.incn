@@ -1,0 +1,11 @@
+# behavior: a Rust crate outside a project's admitted dependency origins is refused (docs-14)
+# expect-diagnostic: INCAN-T0001
+
+"""A cached crate is unavailable unless the project declares it."""
+
+from rust::serde_json import Value
+
+
+def main() -> None:
+    """Name a crate absent from this project's dependencies."""
+    value = Value.Null

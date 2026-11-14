@@ -1,0 +1,91 @@
+"""Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
+
+from pub::incan_platform.probes import ProcessResource, parse_process_table
+from memory_budget import (
+    MIB,
+    Measurement,
+    budget_outcome,
+    measurements_report,
+    measurements_tsv,
+    parse_options,
+    process_tree,
+    require_budget,
+)
+
+
+def test_options_keep_runs_and_budget_explicit() -> Result[None, str]:
+    """Two operands and positive run and MiB choices parse in any option position."""
+    options = parse_options(["--runs", "1", "/usr/bin/true", "evidence", "--budget", "1536"])?
+    assert options.oven == "/usr/bin/true"
+    assert options.runs == 1
+    assert options.budget_bytes == 1536 * MIB
+    assert parse_options(["/usr/bin/true", "evidence"])?.runs == 3
+    return Ok(None)
+
+
+def test_options_refuse_missing_or_nonpositive_values() -> Result[None, str]:
+    """Missing operands, unknown options and nonpositive numeric choices fail closed."""
+    assert refusal(["/usr/bin/true"]) == "OVEN and OUT are required"
+    assert refusal(["/usr/bin/true", "out", "--fast"]) == "unknown option `--fast`"
+    assert refusal(["/usr/bin/true", "out", "--runs", "0"]) == "--runs needs a positive integer"
+    return Ok(None)
+
+
+def test_process_rows_and_tree_keep_only_current_descendants() -> Result[None, str]:
+    """Rows carry both footprint readings and the closure follows complete parent chains independent of row order."""
+    rows = parse_process_table(
+        "30\t20\t300\t330\t390\tworker\n10\t1\t100\t110\t150\toven\n20\t10\t200\t220\t260\tdriver\n40\t1\t400\t440\t480\tother\n",
+    )
+    tree = process_tree(rows, 10)
+    assert [row.pid for row in tree] == [30, 10, 20]
+    assert tree[0].footprint == 300
+    assert tree[0].lifetime_peak == 330
+    return Ok(None)
+
+
+def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
+    """The gate compares bytes while the human report alone renders MiB and whole seconds."""
+    under = measured("oven", 1, 2048 * MIB, 90_000)
+    over = measured("contracts", 2, 2048 * MIB + 1, 1_500)
+    assert budget_outcome(under.tree_peak_bytes, 2048 * MIB) == "under"
+    assert budget_outcome(over.tree_peak_bytes, 2048 * MIB) == "over"
+    tsv = measurements_tsv([under, over], 2048 * MIB)
+    assert tsv.startswith("command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n")
+    assert f"contracts\t2\t{2048 * MIB + 1}\tincan-rustc-driver\t{2048 * MIB + 1}\t{2048 * MIB}\n" in tsv
+    report = measurements_report([under, over], 2048 * MIB)
+    assert "oven\t1\t2048\tincan-rustc-driver\t2048\t90\tunder" in report
+    assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t1\tover" in report
+    assert require_budget([under], 2048 * MIB) == Ok(None)
+    assert budget_refusal([measured("oven", 1, 2048 * MIB + 1, 90_000)], 2048 * MIB) == "accepted"
+    assert budget_refusal([over], 2048 * MIB) == f"process-tree footprint budget exceeded: contracts run 2: {2048 * MIB + 1} > {2048 * MIB} bytes"
+    return Ok(None)
+
+
+def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
+    """Create one deterministic report row."""
+    return Measurement(
+        command=command,
+        run=run,
+        status=0,
+        tree_peak_bytes=peak,
+        peak_at_ms=wall_ms - 100,
+        peak_holder="incan-rustc-driver",
+        peak_holder_bytes=peak,
+        largest_process="incan-rustc-driver",
+        largest_process_peak_bytes=peak,
+        wall_ms=wall_ms,
+    )
+
+
+def refusal(arguments: list[str]) -> str:
+    """Return one option refusal for concise assertions."""
+    match parse_options(arguments):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def budget_refusal(results: list[Measurement], budget: int) -> str:
+    """Return one budget refusal for concise gate assertions."""
+    match require_budget(results, budget):
+        Ok(_) => return "accepted"
+        Err(message) => return message

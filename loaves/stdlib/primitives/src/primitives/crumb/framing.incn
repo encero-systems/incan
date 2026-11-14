@@ -1,0 +1,161 @@
+"""Exact U/Z and bounded L/F framing, independent of any Crumb record codec."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+pub class Reader:
+    """An owned input cursor; failed operations retain its position but not spent budget."""
+
+    data: bytes
+    offset: int = 0
+
+    @staticmethod
+    pub def from_bytes(data: bytes) -> Self:
+        """Take input bytes; returned payload slices are owned copies, not retained views."""
+        return Reader(data=data)
+
+    pub def position(self) -> int:
+        """Return the next unread byte offset."""
+        return self.offset
+
+    pub def remaining(self) -> int:
+        """Return unread input length without exposing the backing allocation."""
+        return len(self.data) - self.offset
+
+    pub def read_unsigned(mut self, mut budget: Budget) -> Result[bytes, CrumbError]:
+        """Read a shortest U value as exact encoded bytes, without imposing a numeric width."""
+        end = self._integer_end(budget)?
+        budget.charge_bytes(end - self.offset)?
+        result = self.data[self.offset:end]
+        self.offset = end
+        return Ok(result)
+
+    pub def read_length(mut self, mut budget: Budget) -> Result[u64, CrumbError]:
+        """Read L, which shares U's spelling but is limited to unsigned 64 bits."""
+        end = self._integer_end(budget)?
+        value = self._length(end)?
+        self.offset = end
+        return Ok(value)
+
+    pub def read_frame(mut self, mut budget: Budget) -> Result[bytes, CrumbError]:
+        """Read L-sized bytes, refusing before allocation if host size, input or budget is insufficient."""
+        end = self._integer_end(budget)?
+        value = self._length(end)?
+        converted: Option[int] = value.try_resize()
+        match converted:
+            None => return Err(CrumbError.limit("host length"))
+            Some(size) =>
+                if size > len(self.data) - end:
+                    return Err(CrumbError.truncated(len(self.data)))
+                budget.charge_bytes(size)?
+                result = self.data[end:end + size]
+                self.offset = end + size
+                return Ok(result)
+
+    def _integer_end(self, mut budget: Budget) -> Result[int, CrumbError]:
+        """Scan shortest framing under the shared budget without committing cursor movement."""
+        mut end = self.offset + 0
+        loop:
+            if end == len(self.data):
+                return Err(CrumbError.truncated(end))
+            budget.charge_bytes(1)?
+            budget.charge_elements(1)?
+            value = int(self.data[end])
+            end += 1
+            if value < 128:
+                if end - self.offset > 1 and value == 0:
+                    return Err(CrumbError.nonminimal(self.offset))
+                return Ok(end)
+
+    def _length(self, end: int) -> Result[u64, CrumbError]:
+        """Check the ten-group u64 limit before doing any wide arithmetic."""
+        count = end - self.offset
+        if count > 10 or (count == 10 and self.data[end - 1] > 1u8):
+            return Err(CrumbError.overflow(self.offset))
+        mut value: u64 = 0
+        mut index = end - 1
+        while index >= self.offset:
+            group: u64 = (self.data[index] & 127u8).saturating_resize()
+            value = value * 128u64 + group
+            index -= 1
+        return Ok(value)
+
+
+pub def encode_native_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode one native unsigned value as shortest U without decimal formatting."""
+    return encode_wide_unsigned(WideInteger.from_unsigned(value), budget)
+
+
+pub def encode_native_signed(value: i128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode one native signed value through Z without decimal formatting."""
+    return encode_wide_unsigned(WideInteger.from_signed(value).zigzag(budget)?, budget)
+
+
+pub def encode_integer(value: IntegerValue, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode a signed or unsigned logical integer through the shared mathematical Z mapping."""
+    match value:
+        IntegerValue.Signed(number) => return encode_native_signed(number, budget)
+        IntegerValue.Unsigned(number) =>
+            return encode_wide_unsigned(WideInteger.from_unsigned(number).zigzag(budget)?, budget)
+
+
+pub def encode_wide_unsigned(value: WideInteger, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode a nonnegative widened physical value as shortest U directly from its bits."""
+    if value.is_negative():
+        return Err(CrumbError.invalid_input("negative unsigned integer"))
+    width = value.bit_length(budget)?
+    if width == 0:
+        return _pack_groups([0], budget)
+    magnitude = value.bytes()
+    mut groups: list[int] = []
+    mut position = 0
+    while position < width:
+        budget.charge_elements(1)?
+        mut group = 0
+        for bit in range(7):
+            source = position + bit
+            if source < width:
+                byte = int(magnitude[source // 8])
+                group |= ((byte >> (source % 8)) & 1) << bit
+        groups.append(group)
+        position += 7
+    return _pack_groups(groups, budget)
+
+
+pub def decode_native_signed(groups: list[int], mut budget: Budget) -> Result[i128, CrumbError]:
+    """Decode one Z value into i128, refusing physical values outside the logical decimal domain."""
+    value = WideInteger.from_base128(groups, budget)?.unzigzag(budget)?.to_signed()
+    match value:
+        Some(number) => return Ok(number)
+        None => return Err(CrumbError.invalid_input("signed integer overflow"))
+
+
+pub def frame(data: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode F with exact byte length; charge the payload copy before creating it."""
+    prefix = encode_native_unsigned(len(data).wrapping_resize[u128](), budget)?
+    budget.charge_bytes(len(prefix))?
+    budget.charge_bytes(len(data))?
+    mut output: list[u8] = []
+    for byte in prefix:
+        output.append(byte.saturating_resize[u8]())
+    for byte in data:
+        output.append(byte.saturating_resize[u8]())
+    return Ok(output)
+
+
+def _pack_groups(groups: list[int], mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Frame seven-bit groups; each checked conversion preserves an exact octet."""
+    budget.charge_bytes(len(groups))?
+    mut output: list[u8] = []
+    for index in range(len(groups)):
+        mut value = groups[index] + 0
+        if index + 1 < len(groups):
+            value += 128
+        converted: Option[u8] = value.try_resize()
+        match converted:
+            Some(byte) => output.append(byte)
+            None => return Err(CrumbError.invalid_input("base-128 group"))
+    return Ok(output)

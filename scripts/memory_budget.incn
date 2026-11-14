@@ -1,0 +1,446 @@
+"""
+Measure cold release builds against the compiler's process-tree footprint budget.
+
+Run `incan run scripts/memory_budget.incn -- OVEN OUT [--runs N] [--budget MIB]`. Each run receives a fresh source
+clone, target and bakery plus a unique worker generation. The sampler records the concurrent footprint of the command
+and every descendant every 50 ms. `OUT/memory.tsv` is the stable machine record; `OUT/memory-report.txt`, per-run
+summaries, timelines and command logs retain the human evidence.
+
+The standard-package stand-in and contract runner must stay within the selected budget on every run. Oven remains a
+recorded non-gating workload because its single large source unit has a separate product decision.
+"""
+
+from rust::std::env import args
+from rust::std::fs import File, remove_dir_all
+from rust::std::process import Child, Command, Stdio, exit
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
+from std.fs import Path
+from pub::incan_platform.probes import ProcessResource, parse_process_table, process_table
+from check_support import repository_root, write_stderr
+
+pub const MIB: int = 1048576
+pub const DEFAULT_BUDGET_MIB: int = 2048
+pub const DEFAULT_RUNS: int = 3
+pub const INTERVAL_MS: u64 = 50
+const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
+const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
+
+
+pub model Options:
+    """The installed command, evidence directory, repetition count and footprint budget."""
+
+    pub oven: str
+    pub output: Path
+    pub runs: int
+    pub budget_bytes: int
+
+
+pub model MeasurementCommand:
+    """One named cold project build whose whole process tree is measured."""
+
+    pub name: str
+    pub arguments: list[str]
+
+
+pub model SeenProcess:
+    """The last identity and greatest kernel lifetime footprint observed for one descendant."""
+
+    pub pid: int
+    pub parent: int
+    pub name: str
+    pub first_ms: int
+    pub last_ms: int
+    pub lifetime_peak: int
+    pub sampled_peak: int
+
+
+pub model Measurement:
+    """One completed command run and the maxima its samples observed."""
+
+    pub command: str
+    pub run: int
+    pub status: int
+    pub tree_peak_bytes: int
+    pub peak_at_ms: int
+    pub peak_holder: str
+    pub peak_holder_bytes: int
+    pub largest_process: str
+    pub largest_process_peak_bytes: int
+    pub wall_ms: int
+
+
+def main() -> None:
+    """Parse the invocation, run every cold measurement and preserve a refusal without a partial success status."""
+    arguments = [str(argument) for argument in args()][1:]
+    match parse_options(arguments):
+        Ok(options) =>
+            match measure(options):
+                Ok(summary) =>
+                    println(summary)
+                    exit(0)
+                Err(message) =>
+                    write_stderr(f"memory-budget: {message}\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(f"memory-budget: {message}\n{USAGE}\n")
+            exit(2)
+
+
+pub def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """Parse two operands and positive `--runs` and `--budget` values in any option position."""
+    mut operands: list[str] = []
+    mut requested_runs: Option[int] = None
+    mut requested_budget_mib: Option[int] = None
+    mut pending = ""
+    for argument in arguments:
+        if pending != "":
+            value = positive(argument, pending)?
+            if pending == "--runs":
+                requested_runs = Some(value)
+            else:
+                requested_budget_mib = Some(value)
+            pending = ""
+        elif argument == "--runs" or argument == "--budget":
+            pending = argument
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            operands.append(argument)
+    if pending != "":
+        return Err(f"{pending} needs a positive integer")
+    if len(operands) != 2:
+        return Err("OVEN and OUT are required")
+    oven = Path(operands[0]).absolute().map_err((error) => error.message())?
+    output = Path(operands[1]).absolute().map_err((error) => error.message())?
+    runs = requested_runs.unwrap_or(DEFAULT_RUNS)
+    budget_mib = requested_budget_mib.unwrap_or(DEFAULT_BUDGET_MIB)
+    return Ok(Options(oven=oven.0, output=output, runs=runs, budget_bytes=budget_mib * MIB))
+
+
+pub def commands() -> list[MeasurementCommand]:
+    """The project, standard-package stand-in, contract runner and floor builds in stable report order."""
+    return [
+        MeasurementCommand(name="oven", arguments=["build", "workspaces/oven", "--profile", "release"]),
+        MeasurementCommand(
+            name="stdlib-primitives",
+            arguments=["build", "loaves/stdlib/primitives", "--profile", "release"],
+        ),
+        MeasurementCommand(name="contracts", arguments=["build", "workspaces/contracts", "--profile", "release"]),
+        MeasurementCommand(name="hello", arguments=["build", "examples/simple/hello.incn", "--profile", "release"]),
+    ]
+
+
+pub def measure(options: Options) -> Result[str, str]:
+    """
+    Run the complete measurement plan and write its stable records.
+
+    1. Resolve the exact committed source once.
+    2. Give every command run a fresh clone, target, bakery and worker generation.
+    3. Write the stable TSV and human table after every run succeeds.
+    4. Require every standard-package and contract-runner measurement to fit the selected budget.
+    """
+    root = repository_root()?
+    source = committed_source(root)?
+    options.output.mkdir(true, true).map_err((error) => error.message())?
+    mut results: list[Measurement] = []
+    for planned in commands():
+        for run in range(1, options.runs + 1):
+            results.append(measure_once(options, root, source, planned, run)?)
+    tsv = measurements_tsv(results, options.budget_bytes)
+    report = measurements_report(results, options.budget_bytes)
+    options.output.joinpath("memory.tsv").write_text(tsv, "utf-8", "strict", None).map_err((error) => error.message())?
+    options.output
+        .joinpath("memory-report.txt")
+        .write_text(report, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    require_budget(results, options.budget_bytes)?
+    return Ok(report)
+
+
+def measure_once(
+    options: Options,
+    root: Path,
+    source_commit: str,
+    planned: MeasurementCommand,
+    run: int,
+) -> Result[Measurement, str]:
+    """Prepare one cold source tree, sample the command, retain evidence and remove only that run's work tree."""
+    run_root = options.output.joinpath(f"memory-work/{planned.name}-{run}")
+    source = run_root.joinpath("source")
+    bakery = run_root.joinpath("bakery")
+    run_root.mkdir(true, true).map_err((error) => error.message())?
+    clone_source(root, source, source_commit)?
+    bakery.mkdir(true, true).map_err((error) => error.message())?
+    prefix = options.output.joinpath(f"memory-{planned.name}-{run}")
+    outcome = sample_command(options, planned, run, source, bakery, prefix)
+    cleanup = remove_dir_all(run_root.0).map_err((error) => f"cannot remove {run_root.0}: {error}")
+    match outcome:
+        Err(message) =>
+            cleanup?
+            return Err(message)
+        Ok(result) =>
+            cleanup?
+            if result.status != 0:
+                return Err(f"{planned.name} run {run} exited {result.status}; log: {prefix.0}.log")
+            return Ok(result)
+
+
+def sample_command(
+    options: Options,
+    planned: MeasurementCommand,
+    run: int,
+    source: Path,
+    bakery: Path,
+    prefix: Path,
+) -> Result[Measurement, str]:
+    """Start one build and sample its complete descendant tree until the root command exits."""
+    log = File.create(f"{prefix.0}.log").map_err((error) => f"{prefix.0}.log: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(options.oven)
+    for argument in planned.arguments:
+        command.arg(argument)
+    command.current_dir(source.0)
+    command.env("INCAN_BAKERY", bakery.0)
+    command.env("INCAN_MEMORY_RUN", f"{planned.name}-{run}-{epoch_millis()}")
+    command.env("INCAN_NO_BANNER", "1")
+    command.env("OVEN_OWNER", "off")
+    command.env("RUSTUP_TOOLCHAIN", "1.98.0")
+    for key in ["INCAN", "INCAN_STDLIB", "INCAN_SOURCE_ROOT", "RUSTC_BOOTSTRAP", "INCAN_LSP"]:
+        command.env_remove(key)
+    command.env("INCAN_STDLIB", source.joinpath("loaves/stdlib").0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    started = Instant.now()
+    child = command.spawn().map_err((error) => f"cannot start {planned.name}: {error}")?
+    return sample_child(planned.name, run, child, started, prefix)
+
+
+def sample_child(name: str, run: int, mut child: Child, started: Instant, prefix: Path) -> Result[Measurement, str]:
+    """Observe one child at 50 ms intervals and write its timeline, per-process maxima and summary."""
+    root = int(child.id())
+    mut timeline = "elapsed_ms\ttree_footprint\ttree_resident\tprocesses\tlargest_pid\tlargest_name\tlargest_footprint\n"
+    mut seen: Dict[int, SeenProcess] = {}
+    mut order: list[int] = []
+    mut tree_peak = 0
+    mut peak_at = 0
+    mut peak_holder = ""
+    mut peak_holder_bytes = 0
+    mut status = 1
+    while true:
+        finished = child.try_wait().map_err((error) => str(error))?
+        members = process_tree(process_table()?, root)
+        elapsed = int(started.elapsed().as_millis())
+        total, resident, largest = record_sample(members, elapsed, seen, order)
+        timeline += f"{elapsed}\t{total}\t{resident}\t{len(members)}\t{largest.pid}\t{largest.name}\t{largest.footprint}\n"
+        if total > tree_peak:
+            tree_peak = total
+            peak_at = elapsed
+            peak_holder = largest.name
+            peak_holder_bytes = largest.footprint
+        if let Some(outcome) = finished:
+            status = outcome.code().unwrap_or(1)
+            break
+        sleep(Duration.from_millis(INTERVAL_MS))
+    wall_ms = int(started.elapsed().as_millis())
+    largest_name, largest_peak = largest_lifetime(seen, order)
+    Path(prefix.0 + ".timeline.tsv").write_text(timeline, "utf-8", "strict", None).map_err((error) => error.message())?
+    write_processes(prefix, seen, order)?
+    result = Measurement(
+        command=name,
+        run=run,
+        status=status,
+        tree_peak_bytes=tree_peak,
+        peak_at_ms=peak_at,
+        peak_holder=peak_holder,
+        peak_holder_bytes=peak_holder_bytes,
+        largest_process=largest_name,
+        largest_process_peak_bytes=largest_peak,
+        wall_ms=wall_ms,
+    )
+    Path(prefix.0 + ".summary.txt")
+        .write_text(summary(result), "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(result)
+
+
+pub def process_tree(rows: list[ProcessResource], root: int) -> list[ProcessResource]:
+    """The root process and every row whose complete parent chain reaches it in this observation."""
+    mut members: set[int] = {root}
+    mut changed = true
+    while changed:
+        changed = false
+        for row in rows:
+            if row.parent in members and row.pid not in members:
+                members.add(row.pid)
+                changed = true
+    return [row for row in rows if row.pid in members]
+
+
+def record_sample(
+    members: list[ProcessResource],
+    elapsed: int,
+    mut seen: Dict[int, SeenProcess],
+    mut order: list[int],
+) -> tuple[int, int, ProcessResource]:
+    """Accumulate one concurrent tree sample and retain each member's last kernel lifetime peak."""
+    mut total = 0
+    mut resident = 0
+    mut largest = ProcessResource(pid=0, parent=0, footprint=0, lifetime_peak=0, resident=0, name="")
+    for member in members:
+        total += member.footprint
+        resident += member.resident
+        if member.footprint > largest.footprint:
+            largest = member
+        match seen.get(member.pid):
+            Some(known) =>
+                mut updated = known.clone()
+                updated.last_ms = elapsed
+                updated.lifetime_peak = member.lifetime_peak
+                if member.footprint > updated.sampled_peak:
+                    updated.sampled_peak = member.footprint
+                seen[member.pid] = updated
+            None =>
+                seen[member.pid] = SeenProcess(
+                    pid=member.pid,
+                    parent=member.parent,
+                    name=member.name,
+                    first_ms=elapsed,
+                    last_ms=elapsed,
+                    lifetime_peak=member.lifetime_peak,
+                    sampled_peak=member.footprint,
+                )
+                order.append(member.pid)
+    return (total, resident, largest)
+
+
+def largest_lifetime(seen: Dict[int, SeenProcess], order: list[int]) -> tuple[str, int]:
+    """Return the observed process with the greatest kernel lifetime footprint."""
+    mut name = ""
+    mut peak = 0
+    for pid in order:
+        if let Some(process) = seen.get(pid):
+            if process.lifetime_peak > peak:
+                name = process.name
+                peak = process.lifetime_peak
+    return (name, peak)
+
+
+def write_processes(prefix: Path, seen: Dict[int, SeenProcess], order: list[int]) -> Result[None, str]:
+    """Write first-seen order and both kernel and sampled maxima for every observed descendant."""
+    mut text = "pid\tparent\tname\tfirst_ms\tlast_ms\tlifetime_peak_footprint\tsampled_peak_footprint\n"
+    for pid in order:
+        if let Some(process) = seen.get(pid):
+            text += f"{process.pid}\t{process.parent}\t{process.name}\t{process.first_ms}\t{process.last_ms}\t{process.lifetime_peak}\t{process.sampled_peak}\n"
+    return Path(prefix.0 + ".processes.tsv")
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+pub def measurements_tsv(results: list[Measurement], budget_bytes: int) -> str:
+    """Render the stable six-column release evidence record."""
+    mut text = "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n"
+    for result in results:
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{budget_bytes}\n"
+    return text
+
+
+pub def measurements_report(results: list[Measurement], budget_bytes: int) -> str:
+    """Render the human table with tree peak, peak holder, wall time and informational budget outcome."""
+    mut text = "command\trun\tpeak_mib\tpeak_holder\tholder_mib\twall_seconds\tbudget\n"
+    for result in results:
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes // MIB}\t{result.peak_holder}\t{result.peak_holder_bytes // MIB}\t{result.wall_ms // 1000}\t{budget_outcome(
+            result.tree_peak_bytes,
+            budget_bytes,
+        )}\n"
+    return text
+
+
+pub def budget_outcome(peak_bytes: int, budget_bytes: int) -> str:
+    """Return `under` only when the sampled tree peak does not exceed the selected budget."""
+    if peak_bytes <= budget_bytes:
+        return "under"
+    return "over"
+
+
+pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[None, str]:
+    """Refuse any standard-package or contract-runner measurement above the process-tree footprint budget."""
+    mut exceeded: list[str] = []
+    for result in results:
+        if result.command in GATED_COMMANDS and result.tree_peak_bytes > budget_bytes:
+            exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {budget_bytes} bytes")
+    if len(exceeded) > 0:
+        return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
+    return Ok(None)
+
+
+def summary(result: Measurement) -> str:
+    """Render one run's complete scalar evidence for attribution and retained diagnostics."""
+    mut text = f"command\t{result.command}\n"
+    text += f"run\t{result.run}\n"
+    text += f"exit_status\t{result.status}\n"
+    text += f"wall_ms\t{result.wall_ms}\n"
+    text += f"interval_ms\t{INTERVAL_MS}\n"
+    text += f"tree_peak_footprint_bytes\t{result.tree_peak_bytes}\n"
+    text += f"tree_peak_footprint_mib\t{result.tree_peak_bytes // MIB}\n"
+    text += f"tree_peak_at_ms\t{result.peak_at_ms}\n"
+    text += f"tree_peak_holder\t{result.peak_holder}\n"
+    text += f"tree_peak_holder_mib\t{result.peak_holder_bytes // MIB}\n"
+    text += f"largest_process\t{result.largest_process}\n"
+    text += f"largest_process_lifetime_peak_mib\t{result.largest_process_peak_bytes // MIB}\n"
+    return text
+
+
+def clone_source(root: Path, destination: Path, commit: str) -> Result[None, str]:
+    """Create one shared, detached source clone at the exact measured commit."""
+    checkout_status = Command
+        .new("git")
+        .args(["clone", "--shared", "--no-checkout", root.0, destination.0])
+        .stdout(Stdio.null())
+        .stderr(Stdio.null())
+        .status()
+        .map_err((error) => f"cannot clone measured source: {error}")?
+    if not checkout_status.success():
+        return Err("cannot clone measured source")
+    status = Command
+        .new("git")
+        .args(["-C", destination.0, "checkout", "--detach", commit])
+        .stdout(Stdio.null())
+        .stderr(Stdio.null())
+        .status()
+        .map_err((error) => f"cannot select measured source: {error}")?
+    if not status.success():
+        return Err("cannot select measured source")
+    return Ok(None)
+
+
+def committed_source(root: Path) -> Result[str, str]:
+    """Resolve the full HEAD commit used for every detached measurement clone."""
+    output = Command
+        .new("git")
+        .args(["-C", root.0, "rev-parse", "HEAD"])
+        .output()
+        .map_err((error) => f"cannot resolve measured source: {error}")?
+    if not output.status.success():
+        return Err("cannot resolve measured source")
+    return Ok(str(RustString.from_utf8(output.stdout).map_err((error) => str(error))?).strip())
+
+
+def positive(value: str, option: str) -> Result[int, str]:
+    """Parse one positive decimal option value."""
+    if value == "":
+        return Err(f"{option} needs a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{option} needs a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{option} needs a positive integer")
+    return Ok(parsed)
+
+
+def epoch_millis() -> int:
+    """Milliseconds since the Unix epoch, or zero when the wall clock predates it."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => return int(now.as_millis())
+        Err(_) => return 0

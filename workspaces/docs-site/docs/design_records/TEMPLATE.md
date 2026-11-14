@@ -11,6 +11,8 @@ sources:
 
 # DD-NNNN: Short decision title
 
+<!-- A design record states decisions, boundaries, consequences and non-goals, in under about 1,000 words. Change it only when a decision changes, in a sentence or two. Mechanism detail belongs in commit messages and rustdoc, never in the record. -->
+
 ## Context
 
 Explain why the project needs a durable decision.

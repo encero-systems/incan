@@ -1,0 +1,15 @@
+# behavior: a failing published std.testing helper reports FAILED and preserves its assertion message
+# expect-stdout-contains:
+#   test_helper_failure.incn::test_helper_fails FAILED
+# expect-stderr-contains:
+#   helper assertion failed
+# expect-exit: 1
+
+"""Published helpers resolve to the test unit's explicitly linked standard package."""
+
+from std.testing import assert_true
+
+
+def test_helper_fails() -> None:
+    """Observe the linked helper's failure rather than only successful assertion paths."""
+    assert_true(false, "helper assertion failed")

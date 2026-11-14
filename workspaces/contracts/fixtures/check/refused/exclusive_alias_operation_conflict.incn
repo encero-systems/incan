@@ -1,0 +1,16 @@
+# behavior: an exclusive alias still takes shared read access until its enclosing operation consumes it (#2500).
+# expect-diagnostic: INCAN-T0126
+
+def replace(mut value: BorrowedMut[str]) -> int:
+    value = "changed"
+    return len(value)
+
+
+def invalid(mut value: BorrowedMut[str]) -> None:
+    mut view: BorrowedMut[str] = value
+    println(view, replace(view))
+
+
+def main() -> None:
+    mut text = "original"
+    invalid(text)

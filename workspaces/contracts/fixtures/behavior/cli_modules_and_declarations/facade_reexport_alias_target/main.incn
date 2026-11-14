@@ -1,0 +1,13 @@
+# behavior: a facade re-exports functions whose modules import same-named builders under an alias, and the re-exported calls resolve and run (InQL #57)
+# expect-stdout:
+#   orders
+#   true
+#   false
+
+from functions import col, count, count_expr
+
+
+def main() -> None:
+    println(col("orders").name)
+    println(count_expr(col("orders")).has_expr)
+    println(count().has_expr)

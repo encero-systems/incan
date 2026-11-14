@@ -1,0 +1,24 @@
+# behavior: a loop over an explicit borrowed input reads each item, and the input is changed only after the loop ends (#2500).
+# expect-stdout:
+#   6
+#   [6]
+
+def total(values: Borrowed[list[int]]) -> int:
+    mut sum = 0
+    for value in values:
+        sum += value
+    return sum
+
+
+def collapse(mut values: BorrowedMut[list[int]]) -> None:
+    mut sum = 0
+    for value in values:
+        sum += value
+    values = [sum]
+
+
+def main() -> None:
+    mut values = [1, 2, 3]
+    println(total(values))
+    collapse(values)
+    println(values)

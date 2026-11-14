@@ -1,0 +1,195 @@
+"""
+The wire protocol between a command and its project owner (`incan.owner/1`).
+
+One JSON document per frame, in each direction: eight ASCII decimal digits giving the payload's length in bytes, then
+the payload, at most `MAX_FRAME` bytes. A request is answered by exactly one reply; progress, diagnostics and the
+completed executable's path travel in the reply's own fields, never mixed into one another. The client sends what it
+resolved (command, entry, profile, features), never a unit description.
+"""
+
+from rust::std::string import String as RustString
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import Connection
+from json_fields import boolean, field, strings, text_field
+
+
+pub const PROTOCOL: str = "incan.owner/1"
+
+
+pub model Request:
+    """What a command asks of its owner."""
+
+    # `run`, `build` or `test` prepare an executable; `status`, `idle` and `stop` are lifecycle requests.
+    pub command: str
+    pub generation: str
+    # The entry source, absolute.
+    pub path: str = ""
+    pub profile: str = "debug"
+    pub features: list[str] = []
+    pub default_features: bool = true
+    pub all_features: bool = false
+
+    pub def to_json(self) -> JsonValue:
+        """The request as it travels."""
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(PROTOCOL),
+                "command": JsonValue.string(self.command),
+                "generation": JsonValue.string(self.generation),
+                "path": JsonValue.string(self.path),
+                "profile": JsonValue.string(self.profile),
+                "features": JsonValue.array([JsonValue.string(name) for name in self.features]),
+                "default_features": JsonValue.bool(self.default_features),
+                "all_features": JsonValue.bool(self.all_features),
+            },
+        )
+
+
+pub model Reply:
+    """What an owner answers."""
+
+    # `done` (the request ran; `exit` says how it ended), `fallback` (the owner does not serve this input; run it in
+    # the command), `refused` (the request was not valid), `retiring` (the owner is exiting).
+    pub status: str
+    pub generation: str = ""
+    pub pid: int = 0
+    pub exit: int = 0
+    # The executable a `done` run, build or test request completed.
+    pub binary: str = ""
+    # What the compiler printed for the request, kept apart.
+    pub stdout: str = ""
+    pub stderr: str = ""
+    # The lines of Oven's reasoning for the request.
+    pub trace: list[str] = []
+    pub reason: str = ""
+
+    pub def to_json(self) -> JsonValue:
+        """The reply as it travels."""
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(PROTOCOL),
+                "status": JsonValue.string(self.status),
+                "generation": JsonValue.string(self.generation),
+                "pid": JsonValue.int(self.pid),
+                "exit": JsonValue.int(self.exit),
+                "binary": JsonValue.string(self.binary),
+                "stdout": JsonValue.string(self.stdout),
+                "stderr": JsonValue.string(self.stderr),
+                "trace": JsonValue.array([JsonValue.string(line) for line in self.trace]),
+                "reason": JsonValue.string(self.reason),
+            },
+        )
+
+
+pub def prepares_executable(command: str) -> bool:
+    """Whether a command asks the owner for an executable, rather than for something about the owner itself."""
+    return command in ["run", "build", "test"]
+
+
+pub def send_document(mut connected: Connection, document: JsonValue) -> Result[None, str]:
+    """Send one document as one frame, its payload the document's JSON text in UTF-8."""
+    payload = document.to_json().map_err((error) => error.message())?.encode("utf-8")
+    return connected.send(payload)
+
+
+pub def receive_document(mut connected: Connection) -> Result[JsonValue, str]:
+    """Read one frame and its document; a payload that is not UTF-8 JSON refuses it."""
+    payload = connected.receive()?
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the frame is not UTF-8")
+
+
+pub def send_quietly(mut connected: Connection, document: JsonValue) -> None:
+    """Send a document whose delivery nobody checks: a peer that has gone away needs no answer."""
+    _ = send_document(connected, document)
+
+
+pub def discard_reply(mut connected: Connection) -> None:
+    """Read and drop the peer's answer to a message for which only the peer's presence mattered."""
+    _ = connected.receive()
+
+
+pub def request_of(document: JsonValue) -> Result[Request, str]:
+    """
+    A request document; the first field that is missing or of another kind refuses it.
+
+    1. The document carries this protocol's schema.
+    2. Every field of the request is present and of its kind.
+    """
+    # 1. A document of another schema is not a request at all.
+    check_schema(document, "request")?
+    # 2. Fields are read in the order the request declares them, so the first bad one is the one named.
+    return Ok(
+        Request(
+            command=text_of(document, "command")?,
+            generation=text_of(document, "generation")?,
+            path=text_of(document, "path")?,
+            profile=text_of(document, "profile")?,
+            features=strings_of(document, "features")?,
+            default_features=flag_of(document, "default_features")?,
+            all_features=flag_of(document, "all_features")?,
+        ),
+    )
+
+
+pub def reply_of(document: JsonValue) -> Result[Reply, str]:
+    """
+    A reply document; the first field that is missing or of another kind refuses it.
+
+    1. The document carries this protocol's schema.
+    2. Every field of the reply is present and of its kind.
+    """
+    # 1. A document of another schema is not a reply at all.
+    check_schema(document, "reply")?
+    # 2. Fields are read in the order the reply declares them, so the first bad one is the one named.
+    return Ok(
+        Reply(
+            status=text_of(document, "status")?,
+            generation=text_of(document, "generation")?,
+            pid=number(document, "pid")?,
+            exit=number(document, "exit")?,
+            binary=text_of(document, "binary")?,
+            stdout=text_of(document, "stdout")?,
+            stderr=text_of(document, "stderr")?,
+            trace=strings_of(document, "trace")?,
+            reason=text_of(document, "reason")?,
+        ),
+    )
+
+
+def check_schema(document: JsonValue, kind: str) -> Result[None, str]:
+    """Refuse a document that is not a `kind` of this protocol."""
+    if text_of(document, "schema")? != PROTOCOL:
+        return Err(f"not a {kind} of {PROTOCOL}")
+    return Ok(None)
+
+
+def text_of(document: JsonValue, name: str) -> Result[str, str]:
+    """A string field of a document."""
+    return text_field(document, name, []).map_err(refusal)
+
+
+def strings_of(document: JsonValue, name: str) -> Result[list[str], str]:
+    """A field of a document that is an array of strings."""
+    return strings(field(document, name, []).map_err(refusal)?, [name]).map_err(refusal)
+
+
+def flag_of(document: JsonValue, name: str) -> Result[bool, str]:
+    """A boolean field of a document."""
+    return boolean(field(document, name, []).map_err(refusal)?, [name]).map_err(refusal)
+
+
+def number(document: JsonValue, name: str) -> Result[int, str]:
+    """A whole-number field of a document."""
+    match document.get(name):
+        Some(value) =>
+            match value.as_int():
+                Some(whole) => return Ok(whole)
+                None => return Err(f"`{name}` is not a whole number")
+        None => return Err(f"no `{name}`")
+
+
+def refusal(failed: list[str]) -> str:
+    """The field path that failed, as text."""
+    return f"`{'.'.join(failed)}` is missing or of another kind"

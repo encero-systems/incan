@@ -1,0 +1,239 @@
+"""Canonical stored-type selectors from checked types and their retained producer declarations."""
+
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    NumericTypeId,
+    CanonicalSymbolId,
+    SymbolOrigin,
+    SemanticSourceTargetKind,
+)
+from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, nominal_carrier_key
+from rust::incan_semantics_core::record_identity import RecordPackageIdentity
+from std.primitives.hash import sha256
+from std.primitives import hexlify
+from native_type_identity import ConstructorIndex, named_positions
+from nominal_instances import nominal_symbol
+from table_views import borrowed_at
+from type_parameters import substitute
+
+
+pub def stored_type(module: &BodyIrModule, constructors: &ConstructorIndex, ty: &RustType) -> Option[str]:
+    """
+    Spell N without reading diagnostic type names or expanding a nominal's fields.
+
+    Missing persistent identities and unsupported storage propagate through the entire containing type. Recursive
+    records remain finite because their selector names the declaration and its arguments, not its stored fields.
+    """
+    return type_selector(module, constructors, ty, [])
+
+
+def type_selector(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    ty: &RustType,
+    unwrapping: list[str],
+) -> Option[str]:
+    """Resolve one checked type; only transparent newtypes recurse into a declaration's storage."""
+    match ty:
+        RustType.Primitive(primitive) => return primitive_selector(primitive)
+        RustType.Decimal(precision=precision, scale=scale) => return Some(f"decimal<{precision},{scale}>")
+        RustType.Tuple(elements) => return composite_selector(module, constructors, "tuple", elements, unwrapping)
+        RustType.Named(name) => return nominal_selector(module, constructors, str(name), [], unwrapping)
+        RustType.Generic(base=base, args=arguments) =>
+            if ty.is_union():
+                return composite_selector(module, constructors, "union", arguments, unwrapping)
+            name = str(base)
+            if name in ["List", "FrozenList", "$FrozenList"]:
+                return composite_selector(module, constructors, "list", arguments, unwrapping)
+            if name in ["Set", "FrozenSet", "$FrozenSet"]:
+                return composite_selector(module, constructors, "set", arguments, unwrapping)
+            if name in ["Dict", "FrozenDict", "$FrozenDict"]:
+                return composite_selector(module, constructors, "map", arguments, unwrapping)
+            if name == "Tuple":
+                return composite_selector(module, constructors, "tuple", arguments, unwrapping)
+            if name == "Option":
+                return composite_selector(module, constructors, "option", arguments, unwrapping)
+            return nominal_selector(module, constructors, name, arguments, unwrapping)
+        _ => return None
+
+
+def primitive_selector(primitive: Primitive) -> Option[str]:
+    """Map the checked builtin vocabulary, refusing target-dependent integer widths."""
+    match primitive:
+        Primitive.Bool => return Some("boolean")
+        Primitive.Int => return Some("i64")
+        Primitive.Float => return Some("fp64")
+        Primitive.Str | Primitive.FrozenStr => return Some("string")
+        Primitive.Bytes | Primitive.FrozenBytes => return Some("binary")
+        Primitive.Unit => return Some("tuple<>")
+        Primitive.Numeric(kind) =>
+            match kind:
+                NumericTypeId.Bool => return Some("boolean")
+                NumericTypeId.I8 => return Some("i8")
+                NumericTypeId.I16 => return Some("i16")
+                NumericTypeId.I32 => return Some("i32")
+                NumericTypeId.I64 => return Some("i64")
+                NumericTypeId.I128 => return Some("i128")
+                NumericTypeId.U8 => return Some("u8")
+                NumericTypeId.U16 => return Some("u16")
+                NumericTypeId.U32 => return Some("u32")
+                NumericTypeId.U64 => return Some("u64")
+                NumericTypeId.U128 => return Some("u128")
+                NumericTypeId.F32 => return Some("fp32")
+                NumericTypeId.F64 => return Some("fp64")
+                NumericTypeId.ISize | NumericTypeId.USize => return None
+    return None
+
+
+def selectors(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    arguments: &list[RustType],
+    unwrapping: list[str],
+) -> Option[list[str]]:
+    """Retain all argument selectors in declared order, or decline the complete enclosing type."""
+    mut names: list[str] = []
+    for argument in arguments:
+        match type_selector(module, constructors, argument, unwrapping):
+            Some(name) => names.append(name)
+            None => return None
+    return Some(names)
+
+
+def composite_selector(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    kind: str,
+    arguments: &list[RustType],
+    unwrapping: list[str],
+) -> Option[str]:
+    """Apply the canonical container grammar; unions sort by spelling digest, then spelling on a collision."""
+    match selectors(module, constructors, arguments, unwrapping):
+        None => return None
+        Some(names) =>
+            if kind == "union":
+                keyed = [(hexlify(sha256.digest(name.encode("utf-8"))), name) for name in names]
+                ordered = [pair[1] for pair in sorted(keyed)]
+                return Some("union<" + ",".join(ordered) + ">")
+            return Some(kind + "<" + ",".join(names) + ">")
+
+
+
+def selected_carrier(base: str, arguments: list[RustType]) -> str:
+    """Select the concrete carrier without replacing the template name needed for provider lookup."""
+    if len(arguments) == 0:
+        return base
+    return nominal_symbol(base, arguments)
+
+
+def nominal_selector(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    base: str,
+    arguments: list[RustType],
+    unwrapping: list[str],
+) -> Option[str]:
+    """Select a canonical retained carrier, never an equal display name or an import binding."""
+    carrier = selected_carrier(base, arguments)
+    match constructors.owners.get(carrier):
+        Some(position) =>
+            declaration = borrowed_at(module.nominal_declarations, int(position.clone()))
+            if declaration.carrier_name() == carrier:
+                return retained_nominal_selector(module, constructors, declaration, unwrapping)
+        None => pass
+    for position in named_positions(constructors, carrier):
+        declaration = borrowed_at(module.nominal_declarations, position)
+        if declaration.carrier_name() == carrier:
+            return retained_nominal_selector(module, constructors, declaration, unwrapping)
+    # A checked use may refer to a published generic template whose native carrier stays provider-owned.
+    match constructors.generic_owners.get(base):
+        Some(position) =>
+            declaration = borrowed_at(module.nominal_declarations, int(position.clone()))
+            if len(declaration.type_parameters) != len(arguments):
+                return None
+            if declaration.canonical.kind == SemanticSourceTargetKind.Newtype:
+                if carrier in unwrapping or len(declaration.field_types) != 1:
+                    return None
+                match substitute(declaration.field_types[0], declaration.type_parameters, arguments):
+                    Ok(inner) => return type_selector(module, constructors, inner, unwrapping + [carrier])
+                    Err(_reason) => return None
+            if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+                return None
+            return declared_selector(
+                module, constructors, "record", declaration.canonical, declaration.record_package_identity,
+                arguments, unwrapping,
+            )
+        None => pass
+    for position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, position)
+        if declaration.carrier_name() == carrier:
+            return declared_selector(
+                module, constructors, "enum", declaration.canonical, declaration.record_package_identity,
+                declaration.native_type_arguments, unwrapping,
+            )
+        if nominal_carrier_key(declaration.canonical) == Some(base) and len(declaration.type_parameters) == len(arguments):
+            return declared_selector(
+                module, constructors, "enum", declaration.canonical, declaration.record_package_identity,
+                arguments, unwrapping,
+            )
+    return None
+
+
+def retained_nominal_selector(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    declaration: &NominalDeclaration,
+    unwrapping: list[str],
+) -> Option[str]:
+    """Use a retained closed model or transparent newtype; an open template has no closed selector."""
+    if len(declaration.type_parameters) != len(declaration.native_type_arguments):
+        return None
+    carrier = declaration.carrier_name()
+    if declaration.canonical.kind == SemanticSourceTargetKind.Newtype:
+        if carrier in unwrapping or len(declaration.field_types) != 1:
+            return None
+        return type_selector(module, constructors, declaration.field_types[0], unwrapping + [carrier])
+    if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+        return None
+    return declared_selector(
+        module, constructors, "record", declaration.canonical, declaration.record_package_identity,
+        declaration.native_type_arguments, unwrapping,
+    )
+
+
+def declared_selector(
+    module: &BodyIrModule,
+    constructors: &ConstructorIndex,
+    kind: str,
+    identity: &CanonicalSymbolId,
+    package: &Option[RecordPackageIdentity],
+    arguments: &list[RustType],
+    unwrapping: list[str],
+) -> Option[str]:
+    """Hash only the producer namespace and canonical declaration path, then append closed type selectors."""
+    match package:
+        None => return None
+        Some(namespace) =>
+            mut path: list[str] = []
+            match identity.origin:
+                SymbolOrigin.Module(parts) =>
+                    for part in parts:
+                        path.append(str(part))
+                SymbolOrigin.Package(library=_library, module_path=parts) =>
+                    for part in parts:
+                        path.append(str(part))
+                _ => return None
+            path.append(str(identity.declaration_name))
+            mut hasher = sha256.new()
+            for component in [str(namespace.registry_id), str(namespace.scoped_name), ".".join(path)]:
+                hasher.update(component.encode("utf-8"))
+                hasher.update(b"\x00")
+            digest = hexlify(hasher.finalize_bytes())
+            selector = kind + "@" + digest[:12]
+            match selectors(module, constructors, arguments, unwrapping):
+                None => return None
+                Some(names) =>
+                    if len(names) == 0:
+                        return Some(selector)
+                    return Some(selector + "<" + ",".join(names) + ">")

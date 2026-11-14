@@ -1,0 +1,40 @@
+"""Return native owners inside nested source carriers without losing their defaulted type arguments."""
+
+from rust::std::convert import AsRef
+from rust::std::sync import Arc
+
+
+pub model Index:
+    """Keep a source-owned mapping behind a native Arc."""
+
+    pub owners: dict[str, int]
+
+
+pub def make_index() -> Result[tuple[Arc[Index], list[int]], str]:
+    """Return an Arc and its companion table through a Result."""
+    owner = Arc.new(Index(owners={"first": 7}))
+    return Ok((owner, [9]))
+
+
+pub def optional_index() -> Result[Option[Arc[Index]], str]:
+    """Retain native defaults inside an optional Result payload."""
+    owner = Arc.new(Index(owners={"first": 11}))
+    return Ok(Some(owner))
+
+
+pub def listed_index() -> Result[list[Arc[Index]], str]:
+    """Retain native defaults inside a list Result payload."""
+    owner = Arc.new(Index(owners={"first": 13}))
+    return Ok([owner])
+
+
+pub def mapped_index() -> Result[dict[str, Arc[Index]], str]:
+    """Retain native defaults inside a dictionary Result payload."""
+    owner = Arc.new(Index(owners={"first": 17}))
+    return Ok({"entry": owner})
+
+
+pub def owner_value(owner: &Arc[Index]) -> int:
+    """Read the retained source mapping through a borrowed native owner."""
+    index: &Index = owner.as_ref()
+    return index.owners["first"]

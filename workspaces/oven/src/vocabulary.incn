@@ -1,0 +1,250 @@
+"""Build Incan vocabulary entries and retain producer registrations by native unit identity."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.json import JsonValue, parse
+from files import json_text, read, read_json, write
+from json_fields import required_text
+from observation import file_digest, observe
+from graph_queries import nested
+from publication import publish
+from rust_target import decoded
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import compile_prepared_unit
+from unit_freshness import Key, fingerprint, unit_key
+from bakery import bakery, claim, find, seal, staging, view
+from bakery_roots import register_root
+from unit_publication import record_payload, record_verified_payload
+from vocabulary_policy import admit_vocabulary
+from compile_time_trust import cover_loaf, missing_stop
+
+
+pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Return the unit with its producer's registered descriptors, without executing consumer registrations.
+
+    1. Build a separate native unit that calls the declared entry's library_vocab export.
+    2. Reuse descriptors while that unit's complete input identity is unchanged.
+    3. Otherwise run registration and retain its versioned payload for ordinary library publication.
+    """
+    admitted = admit_vocabulary(described)?
+    if admitted.vocabulary or admitted.vocab_entry == None:
+        return Ok(admitted)
+    # 1. The wrapper imports the authored entry, so the compiler checks its export and complete import closure.
+    mut unit = admitted
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    entry = entry_module(unit)?
+    wrapper = directory.joinpath("main.incn")
+    write_changed(wrapper, registration_main(entry))?
+    mut registration = unit
+    registration.source = wrapper.0
+    registration.source_root = unit.project_root
+    registration.package = unit.package
+    registration.kind = "program"
+    registration.program_entries = []
+    registration.vocabulary = true
+    registration.vocab = None
+    key = unit_key(registration, toolchain)?
+    output = directory.joinpath("register")
+    metadata = directory.joinpath("registration.json")
+    # 2. Descriptors are a bakery unit bound to native inputs, source imports and the produced descriptor's identity.
+    store = bakery()?
+    identity = fingerprint(["incan.vocabulary-registration/1", key.digest])?
+    held = claim(store, identity)?
+    if key.refusal == "":
+        if view_registration(store, identity, directory)?:
+            unit.vocab = Some(metadata.0)
+            return Ok(unit)
+    if unit.package not in unit.covered_by:
+        match cover_loaf(unit.package, Some(unit.project_root), None, unit.project_root, unit.unattended)?:
+            Some(label) => unit.covered_by[unit.package] = label
+            None =>
+                if unit.package not in unit.not_prepared_loaves:
+                    unit.not_prepared_loaves.append(unit.package)
+                if unit.trust_stop == "":
+                    unit.trust_stop = missing_stop(unit.package, unit.project_root)
+                return Ok(unit)
+    code = compile_prepared_unit(registration, toolchain, output, Some(key))?
+    if code != 0:
+        return Err(f"vocabulary entry for {unit.package} was refused (exit {code})")
+    record_payload(output, key.digest, key.provenance, key.refusal)?
+    # 3. Run only at the producer and carry the existing VocabMetadata payload into its library manifest.
+    payload = run_registration(output)?
+    mut worker = JsonValue.null()
+    if not nested(payload, "desugarer").is_null():
+        worker_unit = worker_description(registration, entry, directory)?
+        worker_key = unit_key(worker_unit, toolchain)?
+        executable = directory.joinpath("desugar")
+        worker_code = compile_prepared_unit(worker_unit, toolchain, executable, Some(worker_key))?
+        if worker_code != 0:
+            contract = "vocabulary entry must export pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]"
+            return Err(f"{contract} ({worker_unit.package}; compiler {Path(toolchain.driver).name()})")
+        worker = worker_metadata(executable, worker_key, nested(nested(payload, "desugarer"), "abi_version"))?
+    prepared = JsonValue.object(
+        {"crate_path": JsonValue.string(entry.replace(".", "/") + ".incn"), "package_name": JsonValue.string(
+            unit.package,
+        ), "unit_identity": JsonValue.string(wire_digest(key)?), "metadata": payload, "worker": worker},
+    )
+    publish(metadata, json_text(prepared)?)?
+    if key.refusal == "":
+        bake_registration(store, identity, directory, unit)?
+    unit.vocab = Some(metadata.0)
+    return Ok(unit)
+
+
+def view_registration(store: Path, identity: str, directory: Path) -> Result[bool, str]:
+    """View baked descriptors, and their worker when there is one, into `directory`; false when not baked."""
+    match find(store, identity)?:
+        None => return Ok(false)
+        Some(fact) =>
+            for file in fact.files:
+                view(store, fact, file.path, directory.joinpath(file.path))?
+            return Ok(true)
+
+
+def bake_registration(store: Path, identity: str, directory: Path, unit: UnitDescription) -> Result[None, str]:
+    """Bake the produced descriptors and worker, so every later ask in any project views them."""
+    staged = staging(store, identity)?
+    for artifact in registration_artifacts(directory.joinpath("registration.json"), directory):
+        artifact.copy(staged.joinpath(artifact.name()), true, true).map_err((error) => f"cannot copy {error.message()}")?
+    fact = seal(store, identity, staged, "vocabulary", f"vocabulary\t{unit.package}", [], "vocabulary registration")?
+    register_root(store, unit.project_root, f"vocabulary\t{unit.package}", [identity])?
+    for file in fact.files:
+        view(store, fact, file.path, directory.joinpath(file.path))?
+    return Ok(None)
+
+
+pub def stage_vocabulary(unit: UnitDescription, directory: Path) -> Result[None, str]:
+    """Install a prepared worker beside the library artifacts that publish its relative path."""
+    match unit.vocab:
+        None => return Ok(None)
+        Some(metadata) =>
+            source = Path(metadata).parent().joinpath("desugar")
+            if source.is_file():
+                directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+                output = directory.joinpath("vocab-worker")
+                source.copy(output, true, true).map_err((error) => f"cannot copy {error.message()}")?
+                worker = read_json(Path(metadata))?.require("worker").map_err((error) => error.message())?
+                before = observe(output)?.stamp
+                payload = file_digest(output)?
+                expected = required_text(worker, "sha256")?
+                if payload != expected:
+                    return Err("native vocabulary worker payload changed during admission")
+                identity = "sha256:" + required_text(worker, "unit_identity")?
+                record_verified_payload(output, identity, payload, before, [unit.project_root])?
+    return Ok(None)
+
+
+pub def published_workers(unit: UnitDescription, directory: Path) -> Result[list[Path], str]:
+    """Name the independently baked workers carried by a library, preserving their own producer identities."""
+    if let Some(path) = unit.vocab:
+        prepared = read_json(Path(path))?
+        worker = prepared.require("worker").map_err((error) => error.message())?
+        if not worker.is_null():
+            return Ok([directory.joinpath("vocab-worker")])
+    return Ok([])
+
+
+def registration_artifacts(metadata: Path, directory: Path) -> list[Path]:
+    """Bind descriptor reuse to the generated worker too, when one has been built."""
+    worker = directory.joinpath("desugar")
+    if worker.is_file():
+        return [metadata, worker]
+    return [metadata]
+
+
+def worker_description(registration: UnitDescription, entry: str, directory: Path) -> Result[UnitDescription, str]:
+    """Generate the typed host-worker adapter as a separate native program unit."""
+    wrapper = directory.joinpath("worker.incn")
+    write_changed(wrapper, worker_main(entry))?
+    mut worker = registration
+    worker.source = wrapper.0
+    worker.vocab_desugarer = true
+    return Ok(worker)
+
+
+def worker_metadata(executable: Path, key: Key, schema_version: JsonValue) -> Result[JsonValue, str]:
+    """Publish executable identity with the syntax schema declared by the producer's std.vocab."""
+    identity = wire_digest(key)?
+    before = observe(executable)?.stamp
+    bytes = executable.read_bytes().map_err((error) => f"cannot read {error.message()}")?
+    payload = hexlify(sha256.digest(bytes))
+    record_verified_payload(executable, key.digest, payload, before, key.provenance)?
+    return Ok(
+        JsonValue.object(
+            {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": schema_version, "relative_path": JsonValue.string(
+                "vocab-worker",
+            ), "sha256": JsonValue.string(payload), "unit_identity": JsonValue.string(identity)},
+        ),
+    )
+
+
+def wire_digest(key: Key) -> Result[str, str]:
+    """Encode the canonical SHA-256 identity in the existing native-vocabulary wire format's bare digest field."""
+    if key.refusal != "":
+        return Err(key.refusal)
+    return Ok(key.digest.replace("sha256:", ""))
+
+
+def worker_main(entry: str) -> str:
+    """Generate the worker main without exposing protocol plumbing to the vocabulary author."""
+    return ("\"\"\"Run the producer vocabulary desugarer.\"\"\"\n\n" + f"from {entry} import desugar\n" + "from std.vocab import run_desugar_worker\n\n\n" + "def main() -> Result[None, str]:\n" + "    \"\"\"Serve structured requests until the compiler closes input.\"\"\"\n" + "    return run_desugar_worker(desugar)\n")
+
+
+def entry_module(unit: UnitDescription) -> Result[str, str]:
+    """Require an existing Incan module inside the Loaf, including after symlink resolution."""
+    match unit.vocab_entry:
+        None => return Err("missing [vocab] entry")
+        Some(declared) =>
+            root = Path(unit.project_root).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+            entry = root.joinpath(declared).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+            if not entry.0.startswith(root.0 + "/") or not entry.is_file() or not entry.0.endswith(".incn"):
+                return Err("[vocab] entry must name an Incan module inside the Loaf")
+            relative = entry.0[len(root.0) + 1:-5]
+            for part in relative.split("/"):
+                if not valid_module_name(part):
+                    return Err(f"[vocab] entry has an invalid module name: {part}")
+            return Ok(relative.replace("/", "."))
+
+
+def valid_module_name(name: str) -> bool:
+    """Whether a path component can be written as an Incan import identifier."""
+    if name == "" or name[0] in "0123456789":
+        return false
+    for character in name:
+        if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+            return false
+    return true
+
+
+def registration_main(entry: str) -> str:
+    """Generate only a native entry adapter; registration semantics remain in the authored Incan module."""
+    header = "\"\"\"Run the producer vocabulary registration.\"\"\"\n\n"
+    producer = f"from {entry} import library_vocab\n\n\n"
+    contract = "from std.vocab import VocabRegistration, registration_metadata\n\n\n"
+    body = ("def main() -> Result[None, str]:\n" + "    \"\"\"Write the existing versioned vocabulary metadata.\"\"\"\n" + "    registration: VocabRegistration = library_vocab()\n" + "    text = registration_metadata(registration).to_json().map_err((error) => error.message())?\n" + "    println(text)\n" + "    return Ok(None)\n")
+    return header + producer + contract + body
+
+
+def run_registration(output: Path) -> Result[JsonValue, str]:
+    """Capture one producer registration without ambient environment access and require a valid JSON payload."""
+    mut command = Command.new(output.0)
+    _ = command.env_clear()
+    captured = command.output().map_err((error) => f"cannot run vocabulary registration: {error}")?
+    if not captured.status.success():
+        return Err(f"vocabulary registration failed: {captured.status}")
+    text = decoded(captured.stdout)
+    return parse(text).map_err((error) => f"invalid vocabulary registration: {error.message()}")
+
+
+def write_changed(path: Path, content: str) -> Result[None, str]:
+    """Keep generated input identities stable when their bytes have not changed."""
+    if path.is_file():
+        previous = read(path)?
+        if previous == content:
+            return Ok(None)
+    return write(path, content)

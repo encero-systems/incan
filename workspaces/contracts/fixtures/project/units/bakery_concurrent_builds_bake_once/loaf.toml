@@ -1,0 +1,6 @@
+[project]
+name = "bakery_concurrent_builds_bake_once"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

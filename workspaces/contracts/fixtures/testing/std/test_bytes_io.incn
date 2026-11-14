@@ -1,0 +1,14 @@
+# behavior: a test reads back the bytes a std.io BytesIO buffer was created with
+# expect-stdout-contains:
+#   test_bytes_io.incn::test_bytes_io_holds_its_initial_bytes PASSED
+
+"""A std.io BytesIO buffer under `incan test`."""
+
+from std.io import BytesIO
+from std.testing import assert_eq
+
+
+def test_bytes_io_holds_its_initial_bytes() -> None:
+    """The buffer's value is the bytes it was created with."""
+    buffer = BytesIO(b"oven")
+    assert_eq(buffer.getvalue(), b"oven")

@@ -1,0 +1,6 @@
+# behavior: enum variants whose RFC 165 six-byte identities collide are refused and name both variants
+# expect-diagnostic: INCAN-T0128
+
+enum CollidingVariants:
+    fieldbbea15ef9eff
+    field3d4624c2d3a2

@@ -33,13 +33,13 @@ pub mod dependencies;
 pub mod authority;
 pub mod body_ir;
 mod body_ir_identity;
-pub mod closure_digest;
 pub mod emitted_symbol;
 pub mod executable_representation;
 mod facts;
 mod hir;
 pub mod namespace;
 pub mod receipts;
+pub mod record_identity;
 pub mod semantic_digest;
 pub mod stable_identity;
 mod types;
@@ -60,8 +60,8 @@ pub use hir::{
 };
 pub use types::{
     AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
-    AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, RuntimeBuiltinType,
-    function_type, generic, rust_tuple_arity,
+    AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanInputAccess, IncanPrimitiveType, IncanType,
+    RuntimeBuiltinType, RuntimeCarrier, function_type, generic, native_array_type, rust_tuple_arity,
 };
 
 /// Stable feature key used by parser handoff and semantics dispatch.
@@ -78,8 +78,6 @@ pub enum SurfaceFeatureKey {
 /// Canonical decorator-feature identities used by semantics packs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoratorFeature {
-    RustExtern,
-    RustAllow,
     RustDerive,
     /// Checked C ABI binding descriptor.
     CBinding,
@@ -92,6 +90,8 @@ pub enum DecoratorFeature {
     Requires,
     Describe,
     ProviderOperation,
+    /// Lifecycle metadata for a declaration that moved from public to private visibility.
+    MadePrivate,
     StdlibDecoratorFunction,
 }
 
@@ -385,9 +385,8 @@ impl<'a> SurfaceSemanticsRegistry<'a> {
 /// Map a core decorator id to canonical decorator feature.
 pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
     match id {
-        DecoratorId::RustExtern => DecoratorFeature::RustExtern,
-        DecoratorId::RustAllow => DecoratorFeature::RustAllow,
         DecoratorId::RustDerive => DecoratorFeature::RustDerive,
+        DecoratorId::Marker => DecoratorFeature::TestingMarker,
         DecoratorId::CBinding => DecoratorFeature::CBinding,
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
@@ -396,5 +395,6 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::Requires => DecoratorFeature::Requires,
         DecoratorId::Describe => DecoratorFeature::Describe,
         DecoratorId::ProviderOperation => DecoratorFeature::ProviderOperation,
+        DecoratorId::MadePrivate => DecoratorFeature::MadePrivate,
     }
 }

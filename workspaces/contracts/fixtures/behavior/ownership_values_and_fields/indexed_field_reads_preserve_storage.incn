@@ -1,0 +1,111 @@
+# behavior: indexed field reads preserve selected values, source dependencies, nested fields, evaluation order and independent owned/frozen results (#2801, #2845, #2884).
+# expect-stdout:
+#   indexed field reads passed
+
+model Entry:
+    pub metadata: list[str]
+    pub tag: int
+
+
+model Dictionary:
+    pub entries: list[Entry]
+
+
+model FrozenLeaf:
+    """A non-Copy record inside immutable static storage."""
+
+    pub label: FrozenStr
+
+
+model FrozenEntry:
+    """Static handle reads preserve the same backing values across list projections."""
+
+    pub text: FrozenStr
+    pub data: FrozenBytes
+    pub records: FrozenList[FrozenLeaf]
+    pub tags: FrozenSet[FrozenStr]
+    pub counts: FrozenDict[FrozenStr, int]
+
+
+const RECORDS: FrozenList[FrozenLeaf] = [FrozenLeaf(label="nested")]
+const TAGS: FrozenSet[FrozenStr] = {"tag"}
+const COUNTS: FrozenDict[FrozenStr, int] = {"tag": 3}
+
+
+class Counter:
+    pub calls: int
+
+    pub def next(mut self) -> int:
+        self.calls += 1
+        return -1
+
+
+model ViewDetail:
+    pub label: str
+
+
+model ViewEntry:
+    pub value: str
+    pub labels: list[str]
+    pub detail: ViewDetail
+
+
+class Table:
+    pub values: list[ViewEntry]
+
+    pub def view(self) -> Borrowed[list[ViewEntry]] from self.values:
+        return self.values
+
+
+def selected(dictionary: Dictionary, index: int) -> int:
+    return dictionary.entries[index].tag
+
+
+def temporary_entries() -> list[Entry]:
+    return [Entry(metadata=["temporary"], tag=17)]
+
+
+def selected_metadata(entries: list[Entry]) -> list[str]:
+    return entries[0].metadata
+
+
+def returned_view_reads() -> None:
+    table = Table(
+        values=[ViewEntry(value="returned", labels=["owned"], detail=ViewDetail(label="nested"))],
+    )
+    values = table.view()
+    assert values[0].value == "returned"
+    assert values[0].labels == ["owned"]
+    assert values[0].detail.label == "nested"
+    assert table.values[0].value == "returned"
+
+
+def main() -> None:
+    returned_view_reads()
+    dictionary = Dictionary(entries=[Entry(metadata=["first"], tag=7), Entry(metadata=["last"], tag=11)])
+    assert selected(dictionary, 0) == 7
+    assert selected(dictionary, -1) == 11
+    assert temporary_entries()[0].tag == 17
+    mut counter = Counter(calls=0)
+    assert dictionary.entries[counter.next()].tag == 11
+    assert counter.calls == 1
+    nested = [[(Entry(metadata=["nested"], tag=23), 9)]]
+    assert nested[0][0].0.tag == 23
+    mut copied = selected_metadata(dictionary.entries)
+    copied.append("independent")
+    assert dictionary.entries[0].metadata == ["first"]
+    assert copied == ["first", "independent"]
+    assert dictionary.entries[1].tag == 11
+    frozen = [FrozenEntry(text="retained", data=b"AB", records=RECORDS, tags=TAGS, counts=COUNTS)]
+    assert str(frozen[0].text) == "retained"
+    assert frozen[0].data[1] == 66
+    assert len(frozen[0].records) == 1
+    assert str(frozen[0].records[0].label) == "nested"
+    assert "tag" in frozen[0].tags
+    assert frozen[0].counts["tag"] == 3
+    assert len(RECORDS) == 1
+    assert len(frozen[counter.next()].records) == 1
+    assert counter.calls == 2
+    assert frozen[counter.next()].tags == TAGS
+    assert counter.calls == 3
+    println("indexed field reads passed")

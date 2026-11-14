@@ -1,0 +1,276 @@
+"""Validate the durable contracts behind the Incapunk documentation components."""
+
+from rust::std::process import exit
+from std.fs import Path
+from std.json import JsonValue, parse
+from docs_check_support import site_root, read, require, matches, distinct, quoted_list
+
+const POOLS: FrozenList[str] = [
+    "tip", "hint", "info", "warning", "neutral", "easter-egg", "javascript", "python", "rust",
+    "composed-failure", "seasonal-october", "system", "success",
+]
+const CSS_HOOKS: FrozenList[str] = [
+    ".inc-route-grid", ".inc-step-rail", ".inc-learning-panel", ".inc-book-progress", ".inc-prev-next",
+    ".inc-release-summary", ".inc-incus-slot--active", ".inc-oven-route", ".inc-oven-proof-story",
+    ".inc-oven-mechanic", ".inc-oven-evidence", ".rfc-index-filter",
+]
+
+
+def main() -> Result[None, str]:
+    """
+    Check component assets, behavior, styles and representative pages.
+
+    1. Check manifest assets and the exact generated JavaScript serialization.
+    2. Check runtime, style, navigation and representative component contracts.
+    3. Report every finding or the successful inventory.
+    """
+    site = site_root()?
+    docs = site.joinpath("docs")
+    mut errors: list[str] = []
+    # 1. Check the asset manifest and its generated JavaScript.
+    count = check_manifest(docs, errors)?
+    # 2. Check component behavior and presentation boundaries.
+    check_runtime(docs, errors)?
+    check_style(docs, errors)?
+    check_navigation(site, errors)?
+    check_pages(docs, errors)?
+    # 3. Report the complete contract result.
+    if len(errors) > 0:
+        println("Incapunk component contract failed:")
+        for error in errors:
+            println(f"- {error}")
+        exit(1)
+    println(f"Incapunk component contract passed ({count} assets, 11 representative pages)")
+    return Ok(None)
+
+
+def check_manifest(docs: Path, mut errors: list[str]) -> Result[int, str]:
+    """Check complete, nonoverlapping semantic pools and exact generated JavaScript bytes."""
+    source = read(docs.joinpath("shared/incapunk/incus-library/manifest.json"))?
+    manifest = parse(source).map_err((error) => error.message())?
+    pools = manifest.get("pools").unwrap_or(JsonValue.object({}))
+    sprites = manifest.get("sprites").unwrap_or(JsonValue.array([])).as_array().unwrap_or([])
+    keys = object_key_order(source, "pools")?
+    missing: list[str] = [name for name in POOLS if name not in keys]
+    require(errors, len(missing) == 0, f"missing semantic Incus pools: {quoted_list(sorted(missing))}")
+    for category in POOLS:
+        paths = pools.get(category).unwrap_or(JsonValue.array([]))
+        require(errors, not paths.is_empty(), f"Incus pool '{category}' is empty")
+    mut all_paths: list[str] = []
+    mut seasonal: list[str] = []
+    mut ordinary: list[str] = []
+    for category in keys:
+        paths = pools.get(category).unwrap_or(JsonValue.null())
+        require(errors, paths.is_array(), f"Incus pool '{category}' is not a list")
+        for value in paths.as_array().unwrap_or([]):
+            path = value.as_str().unwrap_or("")
+            all_paths.append(path)
+            require(errors, asset_path(docs, path).is_file(), f"missing Incus asset: {path}")
+            if category == "seasonal-october":
+                seasonal.append(path)
+            else:
+                ordinary.append(path)
+    require(errors, len(all_paths) == len(distinct(all_paths)),
+        "an Incus asset appears in more than one semantic pool")
+    mut included: list[str] = []
+    for sprite in sprites:
+        if sprite.get("included").unwrap_or(JsonValue.bool(False)).as_bool().unwrap_or(False):
+            if let Some(path) = sprite.get("path"):
+                included.append(path.as_str().unwrap_or(""))
+    require(errors, sorted(distinct(included)) == sorted(distinct(all_paths)),
+        "manifest sprite records and semantic pools contain different included assets")
+    require(errors, len(seasonal) > 0, "seasonal-october pool is empty")
+    require(errors, len([path for path in seasonal if "zombie" not in path]) == 0,
+        "seasonal-october contains a non-zombie asset")
+    require(errors, len([path for path in seasonal if path in ordinary]) == 0,
+        "October-only assets also appear in an ordinary pool")
+    expected = "window.INCAN_INCUS_POOLS = Object.freeze(" + render_pools(pools, keys)? + ");\n"
+    actual = read(docs.joinpath("shared/incapunk/incus-library/manifest.js"))?
+    require(errors, actual == expected, "manifest.js is not the exact generated serialization of manifest.json pools")
+    return Ok(len(all_paths))
+
+
+def asset_path(docs: Path, path: str) -> Path:
+    """Remove one site-root slash before resolving an asset below the docs tree."""
+    if path.startswith("/"):
+        return docs.joinpath(path[1:])
+    return docs.joinpath(path)
+
+
+def object_key_order(source: str, member: str) -> Result[list[str], str]:
+    """Retain JSON member order, which the standard dynamic JSON value intentionally sorts."""
+    mut keys: list[str] = []
+    mut index = 0
+    mut depth = 0
+    mut selected = -1
+    mut pending = False
+    while index < len(source):
+        character = source[index]
+        if character == "\"":
+            end = string_end(source, index)
+            mut next = end
+            while next < len(source) and source[next].strip() == "":
+                next += 1
+            if next < len(source) and source[next] == ":":
+                key = parse(source[index:end]).map_err((error) => error.message())?.as_str().unwrap_or("")
+                if depth == 1 and key == member:
+                    pending = True
+                elif depth == selected and key not in keys:
+                    keys.append(key)
+            index = end
+            continue
+        if character == "{" or character == "[":
+            depth += 1
+            if pending:
+                selected = depth
+                pending = False
+        elif character == "}" or character == "]":
+            if depth == selected:
+                return Ok(keys)
+            depth -= 1
+        index += 1
+    return Ok(keys)
+
+
+def string_end(source: str, start: int) -> int:
+    """Find a JSON string's closing quote while stepping over escaped characters."""
+    mut index = start + 1
+    while index < len(source):
+        if source[index] == "\\":
+            index += 2
+        elif source[index] == "\"":
+            return index + 1
+        else:
+            index += 1
+    return len(source)
+
+
+def render_pools(pools: JsonValue, keys: list[str]) -> Result[str, str]:
+    """Serialize pools with two-space indentation and the source object's insertion order."""
+    if len(keys) == 0:
+        return Ok("{}")
+    mut entries: list[str] = []
+    for key in keys:
+        label = JsonValue.string(key).to_json().map_err((error) => error.message())?
+        value = pools.get(key).unwrap_or(JsonValue.null()).to_pretty_json().map_err((error) => error.message())?
+        lines = value.split("\n")
+        mut rendered = f"  {label}: {lines[0]}"
+        for line in lines[1:]:
+            rendered += "\n  " + line
+        entries.append(rendered)
+    return Ok("{\n" + ",\n".join(entries) + "\n}")
+
+
+def check_runtime(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Preserve accessible image ownership, seasonal selection and deterministic low-stakes surprises."""
+    runtime = read(docs.joinpath("_snippets/javascripts/incan_docs_components.js"))?
+    require(errors, 'image.alt = "";' in runtime, "Incus images must have empty alternative text")
+    require(errors, 'image.setAttribute("aria-hidden", "true");' in runtime,
+        "Incus images must be hidden from assistive technology")
+    append = matches("const selected = slots\\[[^\\]]+\\];[\\s\\S]+?selected\\.appendChild\\(image\\);", runtime)?
+    require(errors, append and occurrences(runtime, "appendChild(image)") == 1,
+        "runtime must have exactly one selected-slot Incus append path")
+    require(errors, "new Date().getMonth() === 9" in runtime,
+        "October-only selection is missing or uses the wrong month")
+    require(errors, '["tip", "hint", "info", "neutral"].includes(category)' in runtime,
+        "playful Easter eggs must remain limited to low-stakes Incus slots")
+    require(errors, 'hash(`${window.location.pathname}:easter-egg`) % 7 === 0' in runtime,
+        "low-stakes Incus slots no longer have their deterministic one-in-seven Easter egg")
+    require(errors, 'version.textContent = "dev docs";' in runtime and '/(^|\\/)dev(\\/|$)/' in runtime,
+        "development deployments no longer replace the stable release badge with a docs-channel identity")
+    motion = read(docs.joinpath("_snippets/javascripts/incan_home_motion.js"))?
+    require(errors, 'document.querySelector(".inc-hero__flow")' in motion
+        and 'hero.querySelector(".inc-hero__flow")' not in motion,
+        "homepage compiler flow must be resolved outside the hero container")
+    return Ok(None)
+
+
+def check_style(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Require reusable style hooks, animation boundaries and pointer-safe image clearance."""
+    css = read(docs.joinpath("shared/incapunk/incapunk.css"))?
+    require(errors, "!important" not in css, "incapunk.css contains !important")
+    require(errors, matches("\\.md-typeset \\.inc-incus-slot__image\\s*\\{[^}]*pointer-events:\\s*none;", css)?,
+        "Incus image selector must not capture pointer events")
+    require(errors, matches("\\.md-typeset \\.inc-incus-slot--active\\s*\\{[^}]*padding-right:\\s*"
+        + "calc\\(var\\(--incus-slot-width\\) \\+ var\\(--incus-slot-gap\\)\\);", css)?,
+        "active Incus slots do not reserve horizontal content clearance")
+    require(errors, "@keyframes incan-wordmark-sheen" in css and "@keyframes incan-wordmark-glow" in css
+        and "@keyframes incan-wordmark-arrive" in css and ".inc-hero__brand::before" in css
+        and 'mask: url("wordmark_small_001.png")' in css,
+        "homepage wordmark no longer has its arrival, glow, and masked sheen animations")
+    for hook in CSS_HOOKS:
+        require(errors, hook in css, f"missing reusable CSS hook: {hook}")
+    return Ok(None)
+
+
+def check_navigation(site: Path, mut errors: list[str]) -> Result[None, str]:
+    """Require the supported palette, manifest-before-runtime load order and final Incus navigation entry."""
+    navigation = read(site.joinpath("mkdocs.yml"))?
+    require(errors, "scheme: slate" in navigation, "the supported docs palette must remain dark")
+    require(errors, "scheme: default" not in navigation, "the unsupported light palette was reintroduced")
+    manifest = position(navigation, "shared/incapunk/incus-library/manifest.js")
+    runtime = position(navigation, "_snippets/javascripts/incan_docs_components.js")
+    require(errors, manifest >= 0 and manifest < runtime,
+        "Incus manifest.js must load before the component runtime")
+    parts = navigation.split("  - Project:")
+    require(errors, "  - Project:".join(parts[1:]).strip().endswith("- Meet Incus: project/incus.md"),
+        "Meet Incus must be the final Project navigation entry")
+    return Ok(None)
+
+
+def check_pages(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Check representative page markers, the homepage link and the generated RFC filter controls."""
+    homepage = read(docs.joinpath("index.md"))?
+    require(errors, 'href="project/incus/"' in homepage, "homepage observer does not link to Meet Incus")
+    require(errors, 'aria-label="Meet Incus"' in homepage, "homepage observer link has no accessible name")
+    oven = read(docs.joinpath("tooling/explanation/oven_alpha.md"))?
+    require(errors, 'class="inc-oven-route__grid" markdown="1"' not in oven,
+        "Oven route cards must remain direct grid children rather than Markdown paragraphs")
+    require(errors, '<ol class="inc-oven-proof-story"' in oven and occurrences(oven, "<li><span>") == 3,
+        "Oven publication story must expose publisher, seal, and consumer stages")
+    css = read(docs.joinpath("shared/incapunk/incapunk.css"))?
+    require(errors, ".inc-motion-capable .inc-hero__flow .inc-flow-step" in css
+        and ".inc-motion-capable .inc-hero .inc-flow-step" not in css,
+        "reduced-motion handling must target the compiler flow outside the hero")
+    for path, markers in representative_pages():
+        page = read(docs.joinpath(path))?
+        for marker in markers:
+            require(errors, marker in page, f"{path} is missing component marker '{marker}'")
+    table = read(docs.joinpath("_snippets/tables/rfcs_index.md"))?
+    require(errors, "rfc-index-filter" in table and "data-rfc-filter" in table,
+        "generated RFC index snippet is missing its filter controls")
+    return Ok(None)
+
+
+def representative_pages() -> list[tuple[str, list[str]]]:
+    """List representative pages and their component markers in the original contract order."""
+    return [
+        ("start_here/index.md", ["inc-route-grid"]),
+        ("start_here/coming_from_python.md", ["inc-bridge-note", 'data-incus-category="python"']),
+        ("start_here/coming_from_rust.md", ["inc-bridge-note", 'data-incus-category="rust"']),
+        ("language/tutorials/book/index.md", ["inc-book-progress", "inc-chapter-grid"]),
+        ("language/tutorials/book/01_hello_world.md", ["inc-book-progress", "inc-learning-panel--exercise",
+            "inc-learning-panel--solution", "inc-learning-panel--complete", "inc-prev-next"]),
+        ("tooling/tutorials/getting_started.md", [
+            "inc-step-rail", "inc-learning-panel--result", "inc-learning-panel--complete"]),
+        ("language/tutorials/build_your_first_api.md", [
+            "inc-step-rail", "inc-learning-panel--result", "inc-learning-panel--complete"]),
+        ("release_notes/0_4.md", ["inc-release-summary", "inc-learning-panel--warning"]),
+        ("RFCs/index.md", ["inc-route-grid"]),
+        ("project/incus.md", ['id="meet-incus-title"']),
+        ("tooling/explanation/oven_alpha.md", ["inc-oven-route__grid", "inc-oven-capabilities", "inc-oven-proof-story",
+            "inc-oven-mechanic--commands", "inc-oven-evidence__grid", 'id="current-alpha-boundary"']),
+    ]
+
+
+def occurrences(text: str, token: str) -> int:
+    """Count nonoverlapping literal markers."""
+    return len(text.split(token)) - 1
+
+
+def position(text: str, token: str) -> int:
+    """Return a first literal marker's character position, or minus one when absent."""
+    for index in range(len(text) - len(token) + 1):
+        if text[index:index + len(token)] == token:
+            return index
+    return -1

@@ -1,8 +1,0 @@
-[project]
-name = "retained_lock_host_api"
-private = true
-
-[dependencies]
-incan_driver = { loaf = "incan_driver", path = "../../../../loaves/compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_decorators", "std_testing"] }
-oven_model = { loaf = "oven_model", path = "../../../../loaves/oven/oven_model" }
-incan_provider = { loaf = "incan_provider", path = "../../../../loaves/compiler/incan_provider", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }

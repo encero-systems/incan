@@ -1,0 +1,13 @@
+"""Use the producer's native Eq and Hash implementations from a consumer's collection."""
+
+from pub::records import Record, record
+from rust::std::collections import HashSet
+
+
+pub def check_hashing() -> None:
+    """Observe insertion and duplicate elimination using the library's native traits."""
+    mut seen = HashSet.new[Record]()
+    println(seen.insert(record(7)))
+    println(seen.insert(record(7)))
+    println(seen.insert(record(9)))
+    println(seen.len())

@@ -1,0 +1,116 @@
+"""
+The compiled registry units a packed toolchain ships: those reachable from a crate that a Loaf of the checkout it was
+built from declares. Units an earlier home carried forward, which no Loaf names any more, stay behind.
+"""
+
+from std.fs import Path
+from home import standard_packages
+from registry_units import RegistryUnit
+from intake import read_manifest_snapshot
+from loaf_identity import crate_name
+from manifest_intent import intent_from_snapshot
+
+
+pub def shipped_entries(units: list[RegistryUnit], checkout: Path) -> Result[set[str], str]:
+    """
+    The entries of `units` that a toolchain packed from `checkout` ships.
+
+    1. Collect every crate the checkout's Loaves declare.
+    2. Start from each unit of a declared crate.
+    3. Add every unit those link, transitively.
+    """
+    # 1. Declarations are read from the manifests, never from the registry the home carried forward.
+    declared = declared_crates(checkout)?
+    # 2. A unit is a root when its crate is declared, whatever version or features it was built with.
+    mut linked: Dict[str, list[str]] = {}
+    mut pending: list[str] = []
+    for unit in units:
+        if unit.entry == "":
+            continue
+        linked[unit.entry] = unit.dependencies
+        if crate_name(unit.loaf) in declared:
+            pending.append(unit.entry)
+    # 3. A root ships with everything it links.
+    mut shipped: set[str] = set()
+    while len(pending) > 0:
+        entry = pending.pop()
+        if entry in shipped:
+            continue
+        shipped.add(entry)
+        if entry in linked:
+            for dependency in linked[entry]:
+                pending.append(dependency)
+    return Ok(shipped)
+
+
+pub def ships(unit: RegistryUnit, shipped: set[str]) -> bool:
+    """Whether a packed toolchain ships `unit`; a unit without a recorded entry is always kept."""
+    return unit.entry == "" or unit.entry in shipped
+
+
+pub def ships_search(directory: str, shipped: set[str]) -> bool:
+    """Whether a search directory ships: a registry entry's directory only when its entry does."""
+    parts = directory.split("entries/sha256-")
+    if len(parts) < 2:
+        return true
+    digest = parts[1].split("/")[0]
+    return f"sha256:{digest}" in shipped
+
+
+pub def packed_checkout() -> Result[Option[Path], str]:
+    """
+    The checkout the standard packages were built from: the nearest directory above one of them with `.git`. An
+    installed toolchain's standard packages lie in no checkout, so repacking it has no declarations to prune by.
+    """
+    packages = standard_packages()?
+    if len(packages) == 0:
+        return Ok(None)
+    mut directory = Path(packages[0].root)
+    loop:
+        if directory.joinpath(".git").exists():
+            return Ok(Some(directory))
+        parent = directory.parent()
+        if parent.0 == directory.0:
+            return Ok(None)
+        directory = parent
+
+
+def declared_crates(checkout: Path) -> Result[set[str], str]:
+    """Every crate a Loaf under `checkout` declares, by its package name with `-` as `_`."""
+    mut declared: set[str] = set()
+    mut pending = [checkout]
+    while len(pending) > 0:
+        directory = pending.pop()
+        for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+            name = entry.name()
+            if name.startswith(".") or name == "target":
+                continue
+            if entry.is_dir():
+                pending.append(entry)
+            elif name == "loaf.toml":
+                for package in manifest_crates(directory)?:
+                    declared.add(package)
+    return Ok(declared)
+
+
+def manifest_crates(project: Path) -> Result[list[str], str]:
+    """The registry crates one admitted project intent declares; a workspace-only manifest declares none."""
+    snapshot = read_manifest_snapshot(project).map_err((error) => error.message())?
+    root = snapshot.parsed.as_table().map_err((error) => error.message())?
+    if "project" not in root:
+        return Ok([])
+    intent = match intent_from_snapshot(snapshot):
+        Err(_) => return Ok([])
+        Ok(admitted) => admitted
+
+    mut crates: list[str] = []
+    for request in intent.rust_inputs:
+        if request.path is None:
+            if let Some(identity) = request.loaf:
+                crates.append(crate_name(identity))
+    for environment in sorted([name for name in intent.environment_rust_inputs.keys()]):
+        for request in intent.environment_rust_inputs[environment]:
+            if request.path is None:
+                if let Some(identity) = request.loaf:
+                    crates.append(crate_name(identity))
+    return Ok(crates)

@@ -1,0 +1,589 @@
+"""Public graph command contracts, including warm-query equality and wire-format agreement."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from std.hash import file_digest
+from std.json import JsonValue
+from rust::std::fs import OpenOptions, Permissions, metadata, rename, set_permissions
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt, symlink
+from compare import compare
+from files import (
+    items,
+    json_text,
+    optional_text as string_field,
+    parse_json,
+    read,
+    read_bytes,
+    remove,
+    required,
+    required_text,
+    string_of,
+    write,
+    write_bytes,
+)
+from header import Header
+from run import Outcome, invoke
+from graph_context_contract import check_context
+from graph_relocation_contract import check_relocation
+from graph_mcp_contract import check_mcp
+from graph_lsp_contract import check_lsp
+from graph_process_contract import check_process
+from graph_document import GraphDocument, check_reader, document
+from graph_preparation_contract import check_registry_preparation, check_source_preparation
+
+
+pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list[str], str]:
+    """
+    Run the declared inspections twice, compare warm answers, and compare their observable output.
+
+    1. Resolve the fixture path and run each inspection twice; the warm answer must equal the first.
+    2. Their answers together, with the project path removed, meet the header's expectations.
+    3. When every inspection succeeded, the exported documents are checked too.
+    """
+    # Resolve once so graph file records, git history and editor URIs share the same project identity.
+    project = selected.resolve().map_err((error) => error.message())?
+    mut stdout = ""
+    mut stderr = ""
+    mut code: Option[int] = Some(0)
+    mut failures: list[str] = []
+    # 1. Every declared inspection runs twice, and its warm second answer must equal the first.
+    existing = library_artifacts(project)?
+    for invocation in header.items("graph-commands"):
+        arguments = ["inspect", "codegraph"] + invocation.split(" ")
+        outcome = invoke(incan, arguments, project)?
+        repeated = invoke(incan, arguments, project)?
+        failures = failures + inspection_failures(invocation, outcome, repeated)
+        stdout += outcome.stdout.replace(f"{project.0}/", "")
+        stderr += outcome.stderr
+        if outcome.code != Some(0):
+            code = outcome.code
+    # 2. The answers together, with the project path removed, meet the header's expectations.
+    for failure in compare("graph", header, Outcome(stdout=stdout, stderr=stderr, code=code)):
+        failures.append(failure)
+    if len(failures) > 0 and stderr.strip() != "":
+        failures.append(stderr)
+    # 3. Only when every inspection succeeded are the exported documents checked as well.
+    if code == Some(0):
+        check_registry_preparation(incan, project)?
+        check_source_preparation(incan, project)?
+        for failure in check_documents(incan, project, existing)?:
+            failures.append(failure)
+    return Ok(failures)
+
+
+def inspection_failures(invocation: str, outcome: Outcome, repeated: Outcome) -> list[str]:
+    """What is wrong with one inspection: an import hit without identity or path, or a warm answer that differs."""
+    mut failures: list[str] = []
+    for line in outcome.stdout.split("\n"):
+        if line.startswith("import  "):
+            failures.append(f"an import hit has no identity or source path: {invocation}")
+    if repeated.stdout != outcome.stdout or repeated.code != outcome.code:
+        failures.append(f"warm inspection differs: {invocation}")
+    return failures
+
+
+def declaration_identities(document: GraphDocument) -> Result[list[str], str]:
+    """Compare only declaration identities across a position-only source edit; spans must change independently."""
+    records = document.records
+    check_expansion_sites(records)?
+    meanings = required(records[0], "declaration_digests")?
+    mut identities: list[str] = []
+    for record in records:
+        if required_text(record, "record")? != "declaration":
+            continue
+        # Published standard graphs may retain declarations whose executable signature is unproven.
+        # Position edits in this fixture must preserve its own declarations and those of its local providers.
+        if string_field(record.get("span").unwrap_or(JsonValue.null()), "file").startswith("@std/"):
+            continue
+        stable = required(record, "stable_identity")?
+        if stable.is_null():
+            return Err("a checked fixture declaration has no stable identity")
+        key = string_field(record, "stable_key")
+        if stable.get("signature").unwrap_or(JsonValue.null()).is_null():
+            if key != "":
+                return Err("a declaration without a proved signature has a portable identity key")
+            continue
+        if not key.startswith("symbol:"):
+            return Err("a checked fixture declaration has no portable identity key")
+        meaning = required(meanings, key)?
+        digest = record.get("semantic_digest").unwrap_or(JsonValue.null())
+        if json_text(meaning)? != json_text(digest)?:
+            return Err("a declaration digest is not indexed by its own identity")
+        identities.append(key)
+    return Ok(sorted(identities))
+
+
+def check_expansion_sites(records: list[JsonValue]) -> Result[None, str]:
+    """The vocabulary fixture retains both generated helper calls and references at one authored range."""
+    package = records[0].get("package").unwrap_or(JsonValue.null())
+    if string_field(package, "name") != "vocabulary_graph":
+        return Ok(None)
+    for kind in ["call", "reference"]:
+        mut sites: Dict[str, list[str]] = {}
+        mut repeated = false
+        for record in records:
+            if string_field(record, "record") != kind:
+                continue
+            identity = record.get("canonical_identity").unwrap_or(JsonValue.null())
+            if string_field(identity, "declaration_name") != "helper":
+                continue
+            if record.get("target_id").unwrap_or(JsonValue.null()).is_null():
+                return Err(f"a generated {kind} has no checked target")
+            span = json_text(record.get("span").unwrap_or(JsonValue.null()))?
+            identifier = string_field(record, "id")
+            mut retained = sites.get(span).unwrap_or([])
+            if identifier not in retained:
+                retained.append(identifier)
+            sites[span] = retained
+            if len(retained) >= 2:
+                repeated = true
+        if not repeated:
+            return Err(f"generated {kind} records sharing one authored range were lost")
+    return Ok(None)
+
+
+def check_documents(incan: str, project: Path, existing: list[str]) -> Result[list[str], str]:
+    """
+    JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement.
+
+    1. The JSONL export answers identity queries consistently, built no Incan library, and links its Rust facts.
+    2. The JSON export holds the same records as the JSONL one, including records not retained for assertions.
+    3. A source edit changes the export's spans, not its declaration identities; broken source is exported as an
+       unchecked unit, and refused with `--strict`.
+    4. A unit that fails checking costs its siblings nothing, and a published provider graph is read as published.
+    """
+    # 1. Read complete independent records, retaining only assertions and a digest of the whole stream.
+    check_reader(project)?
+    original = document(incan, project, "jsonl")?
+    original_records = original.records
+    snapshot = string_field(original_records[0], "snapshot_id")
+    if not snapshot.startswith("snapshot:"):
+        return Err("an export has no content-addressed snapshot identity")
+    fresh = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    if fresh.code != Some(0) or snapshot_stale(fresh.stdout)?:
+        return Err("an unchanged snapshot is stale")
+    check_identity_queries(incan, project, original)?
+    check_context(incan, project)?
+    check_mcp(incan, project)?
+    if library_artifacts(project)? != existing:
+        return Err("graph inspection created or changed a compiled Incan library")
+    check_rust_links(original)?
+    # 2. Both formats have the same canonical digest, without either becoming a whole-document JSON tree.
+    json = document(incan, project, "json")?
+    mut failures: list[str] = []
+    if original.digest != json.digest:
+        failures.append("JSON and JSONL exports disagree")
+    # 3. A source edit changes the export's spans but not its declaration identities, and broken source is unchecked.
+    failures = failures + check_source_edits(incan, project, original, snapshot)?
+    # 4. A failing unit costs its siblings nothing, and a published provider graph is read as it was published.
+    check_tolerant_export(incan, project)?
+    check_published_graph(incan, project)?
+    check_lsp(incan, project)?
+    check_process(incan, project)?
+    check_relocation(incan, project)?
+    return Ok(failures)
+
+
+def check_source_edits(incan: str, project: Path, original: GraphDocument, snapshot: str) -> Result[list[str], str]:
+    """
+    Edit the project's source and restore it: a moved line reuses no stale span and keeps declaration identities, and
+    broken source is exported as an unchecked unit with a warning, while `--strict` refuses it.
+    """
+    mut source = project.joinpath("src").joinpath("lib.rs")
+    if not source.is_file():
+        source = project.joinpath("src").joinpath("main.incn")
+    before = read(source)?
+    mut failures: list[str] = []
+    check_comment_freshness(incan, project, source, before)?
+    write(source, f"{prefix_comment(source)} source positions are provenance\n{before}")?
+    moved = document(incan, project, "jsonl")?
+    stale = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    if stale.code != Some(0) or not snapshot_stale(stale.stdout)?:
+        return Err("changed source did not invalidate the snapshot")
+    if original.digest == moved.digest:
+        failures.append("source edit reused stale source spans")
+    if declaration_identities(original)? != declaration_identities(moved)?:
+        failures.append("line movement changed a declaration identity")
+    if "def read_item(item: Item) -> int:" in before:
+        if body_meanings(original) != body_meanings(moved):
+            failures.append("a position-only edit changed checked nominal body meaning")
+        write(source, before.replace("\n\nmodel Item:", "\n\n# nominal declaration moved\nmodel Item:"))?
+        shifted = document(incan, project, "jsonl")?
+        if body_meanings(original) != body_meanings(shifted):
+            failures.append("moving a nominal declaration changed checked body meaning")
+        write(source, before.replace("def read_item(item: Item) -> int:", "def read_item(item: Other) -> int:"))?
+        changed = document(incan, project, "jsonl")?
+        if body_meanings(original) == body_meanings(changed):
+            failures.append("a real nominal type edit kept every checked body digest")
+        if declaration_identities(original)? == declaration_identities(changed)?:
+            failures.append("a real source signature change retained every declaration identity")
+    write(source, "this is invalid in both languages {")?
+    invalid = document(incan, project, "jsonl")?
+    refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
+    write(source, before)?
+    if refused.code == Some(0):
+        failures.append("strict export of broken source reused a checked cached graph")
+    if "is unchecked" not in invalid.stderr or invalid.digest == original.digest:
+        failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
+    return Ok(failures)
+
+
+def body_meanings(document: GraphDocument) -> Dict[str, str]:
+    """Index every exported checked body by its edit-stable source declaration key."""
+    mut meanings: Dict[str, str] = {}
+    for record in document.records:
+        digest = string_field(record, "semantic_digest")
+        if string_field(record, "record") == "declaration" and digest != "":
+            meanings[string_field(record, "stable_key")] = digest
+    return meanings
+
+
+def prefix_comment(source: Path) -> str:
+    """Use the selected source language's comment token for a position-only edit."""
+    if source.name().endswith(".rs"):
+        return "//"
+    return "#"
+
+
+def library_artifacts(project: Path) -> Result[list[str], str]:
+    """Record ordinary library observations; executable vocabulary providers are an inspection prerequisite."""
+    mut result: list[str] = []
+    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        if executed_vocabulary(artifact)?:
+            continue
+        name = f"{artifact.0}"
+        info = metadata(artifact.0).map_err((error) => str(error))?
+        identity = f"{name}:{info.dev()}:{info.ino()}:{info.size()}"
+        clock = f"{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+        result.append(f"{identity}:{clock}")
+    return Ok(sorted(result))
+
+
+def executed_vocabulary(artifact: Path) -> Result[bool, str]:
+    """A published vocabulary worker requires its provider's executable body before the consumer can be checked."""
+    package = artifact.name()[:-len(".incnbody")]
+    manifest = parse_json(read(artifact.parent().joinpath(f"{package}.incnlib"))?)?
+    vocabulary = manifest.get("vocab").unwrap_or(JsonValue.null())
+    return Ok(not vocabulary.get("desugarer_artifact").unwrap_or(JsonValue.null()).is_null())
+
+
+def check_comment_freshness(incan: str, project: Path, source: Path, before: str) -> Result[None, str]:
+    """Equal-size comment edits with a restored modification time must expire the retained source snapshot."""
+    mut prefix = "#"
+    if source.name().endswith(".rs"):
+        prefix = "//"
+    write(source, f"{before}\n{prefix} snapshot a\n")?
+    records = document(incan, project, "jsonl")?.records
+    snapshot = string_field(records[0], "snapshot_id")
+    replace_with_time_preserved(source, f"{before}\n{prefix} snapshot b\n")?
+    status = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
+    write(source, before)?
+    if status.code != Some(0) or not snapshot_stale(status.stdout)?:
+        return Err("an equal-size comment edit left the source snapshot fresh")
+    return Ok(None)
+
+
+def snapshot_stale(document: str) -> Result[bool, str]:
+    """Read the public snapshot-status flag without accepting absent or malformed responses."""
+    return required(parse_json(document)?, "stale")?.expect_bool().map_err((error) => error.message())
+
+
+def replace_with_time_preserved(path: Path, content: str) -> Result[None, str]:
+    """Replace source bytes in place and restore mtime, leaving ctime as the evidence of an equal-size edit."""
+    modified = metadata(f"{path.0}").map_err((error) => str(error))?.modified().map_err((error) => str(error))?
+    write(path, content)?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(f"{path.0}").map_err((error) => str(error))?
+    file.set_modified(modified).map_err((error) => str(error))?
+    return Ok(None)
+
+
+def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
+    """
+    A unit that fails checking is named in one warning and contributes only unchecked facts, never costing the others.
+
+    1. Add a function that does not type check to the context unit, and ask four questions about it.
+    2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
+    3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    """
+    source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    # 1. A function that does not type check is added to the context unit, and four questions are asked about it.
+    before = read(source)?
+    write(source, before + "\n\npub def refused() -> int:\n    return \"not an int\"\n")?
+    query = ["inspect", "codegraph", ".", "--query", "defs"]
+    sibling = invoke(incan, query + ["checked_helper"], project)?
+    broken = invoke(incan, query + ["contextual_helper"], project)?
+    repeated = invoke(incan, query + ["contextual_helper"], project)?
+    strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
+    write(source, before)?
+    # 2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
+    warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
+    if sibling.code != Some(0) or "graph_checked::main::checked_helper" not in sibling.stdout:
+        return Err(f"a failing sibling unit changed a checked answer: {sibling.stderr}")
+    if "(unchecked)" in sibling.stdout:
+        return Err(f"a failing sibling unit changed a checked answer: {sibling.stderr}")
+    if len(warnings) != 1 or "graph_context is unchecked" not in warnings[0]:
+        return Err(f"a failing unit was not named by exactly one warning line: {sibling.stderr}")
+    # 3. The failing unit's facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    if broken.code != Some(0) or "contextual_helper" not in broken.stdout or "(unchecked)" not in broken.stdout:
+        return Err(f"an unchecked unit's parseable facts were not marked: {broken.stdout}{broken.stderr}")
+    if repeated.stdout != broken.stdout or repeated.stderr != broken.stderr or repeated.code != broken.code:
+        return Err("a warm query dropped or changed the unchecked warning")
+    if strict.code == Some(0) or "graph_context" not in strict.stderr:
+        return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
+    return Ok(None)
+
+
+def check_identity_queries(incan: str, project: Path, document: GraphDocument) -> Result[None, str]:
+    """Unique short names and their full exported IDs select the same checked callers, across package boundaries."""
+    records = document.records
+    declarations = [record for record in records if string_field(record, "record") == "declaration"]
+    if len(declarations) > 0:
+        check_definition_selection(incan, project, string_field(declarations[0], "id"))?
+    for declaration in declarations:
+        match declaration.get("span"):
+            Some(span) =>
+                if not string_field(span, "file").startswith(f"{project.0}/"):
+                    continue
+            None => continue
+        name = string_field(declaration, "name")
+        if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
+            continue
+        identifier = string_field(declaration, "id")
+        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        if short.stdout == "":
+            continue
+        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
+            return Err(f"full declaration ID and short name select different callers: {name}")
+    return Ok(None)
+
+
+def check_definition_selection(incan: str, project: Path, identifier: str) -> Result[None, str]:
+    """An exact structured definition request bounds both its records and its digest metadata by the hit limit."""
+    arguments = ["inspect", "codegraph", ".", "--query", "defs", identifier, "--format", "json", "--limit"]
+    for limit in [0, 1]:
+        result = invoke(incan, arguments + [str(limit)], project)?
+        if result.code != Some(0):
+            return Err(f"a structured definition query failed: {result.stderr}")
+        records = items(parse_json(result.stdout)?)?
+        digests = required(records[0], "declaration_digests")?.expect_object().map_err((error) => error.message())?
+        if len(records) != limit + 1 or len(digests) > limit:
+            return Err("a structured definition answer contains unselected records or digest metadata")
+        remaining = required(records[0], "remaining_hits")?.expect_int().map_err((error) => error.message())?
+        if remaining != 1 - limit:
+            return Err("a structured definition answer lost its exact truncation count")
+    return Ok(None)
+
+
+def check_published_graph(incan: str, project: Path) -> Result[None, str]:
+    """
+    A provider ships a portable binary graph only when requested; consumers read it despite unbuilt source edits.
+
+    1. An ordinary build omits the graph; an explicit request publishes a version-one portable graph.
+    2. A consumer reads the published graph, though the provider's source has since become invalid.
+    3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
+    4. A provider with no published graph is exported once, and the export is stable.
+    5. A linked directory view is replaced without modifying its referent.
+    """
+    provider = project.joinpath("deps").joinpath("checked")
+    source = provider.joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    bakery = project.joinpath("target").joinpath("graph-contract-bakery")
+    environment = [f"INCAN_BAKERY={bakery.0}"]
+    selection = ["--query", "defs", "checked_helper", "--format", "json"]
+    checked = invoke(incan, ["inspect", "codegraph", provider.0] + selection, project, environment)?
+    if checked.code != Some(0):
+        return Err(f"provider inspection failed: {checked.stderr}")
+    checked_digest = helper_digest(checked.stdout)?
+    # 1. Native compilation does not pay for inspection until publication is explicitly requested.
+    built = invoke(incan, ["build", source.0], project, environment)?
+    if built.code != Some(0):
+        return Err(f"provider build failed: {built.stderr}")
+    if len(published_graphs(project, provider)) != 0:
+        return Err("an ordinary provider build collected an unrequested graph")
+    native_before = library_artifacts(provider)?
+    requested = invoke(incan, ["build", source.0, "--codegraph"], project, environment)?
+    if requested.code != Some(0):
+        return Err(f"provider graph publication failed: {requested.stderr}")
+    if library_artifacts(provider)? != native_before:
+        return Err("requesting a graph recompiled an unchanged native library")
+    consumer = invoke(incan, ["build", "src/main.incn"], project, environment)?
+    if consumer.code != Some(0):
+        return Err(f"consumer preparation failed: {consumer.stderr}")
+    publications = published_graphs(project, provider)
+    if len(publications) == 0:
+        return Err("provider build published no graph")
+    check_binary_graph(read_bytes(publications[0])?, project)?
+    compiled = invoke(incan, ["inspect", "codegraph", "."] + selection, project, environment)?
+    if compiled.code != Some(0) or helper_digest(compiled.stdout)? != checked_digest:
+        return Err("the inspected cross-module library body differs from its compiled publication")
+    # 2. A consumer reads the published graph, though the provider's source has since become invalid.
+    arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
+    original = invoke(incan, arguments, project, environment)?
+    before = read(source)?
+    write(source, "invalid dependency source {")?
+    published = invoke(incan, arguments, project, environment)?
+    if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
+        return Err(f"published dependency graph was rechecked from source: {published.stderr}")
+    write(source, before)?
+    # 3. Views are restored automatically; stored damage requires explicit verified re-admission.
+    bodies = library_artifacts(project)?
+    stored = stored_payload(bakery, publications[0])?
+    for graph in publications:
+        write_bytes(graph, b"\x7f\x00\x00\x00")?
+    restored = invoke(incan, arguments, project, environment)?
+    if restored.code != Some(0) or restored.stdout != original.stdout:
+        return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
+    if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
+        return Err("a corrupt view in target/ was not restored from the published graph")
+    if library_artifacts(project)? != bodies:
+        return Err("graph-view repair changed an unaffected compiled body")
+    replacement = project.joinpath("verified-graph-replacement")
+    write_bytes(replacement, read_bytes(stored)?)?
+    corrupt_fact(stored)?
+    refused = invoke(incan, arguments, project, environment)?
+    if refused.code == Some(0) or "store integrity error" not in refused.stderr:
+        return Err(f"stored damage was not reported: {refused.stderr}")
+    # Repair belongs to the project surface: the same `incan`, started as `oven`.
+    repaired = invoke(
+        incan,
+        ["bakery", "repair-payload", stored.name(), replacement.0],
+        project,
+        environment,
+        Some("oven"),
+    )?
+    if repaired.code != Some(0):
+        return Err(f"verified graph re-admission failed: {repaired.stderr}")
+    restored_fact = invoke(incan, arguments, project, environment)?
+    if restored_fact.code != Some(0) or restored_fact.stdout != original.stdout:
+        return Err(f"re-admitted graph differs from its publication: {restored_fact.stderr}")
+    # 4. A provider with no published graph is exported once, and a second export gives the same answer.
+    for graph in publications:
+        remove(graph)?
+    legacy = invoke(incan, arguments, project, environment)?
+    if library_artifacts(project)? != bodies:
+        return Err("missing graph-view repair changed an unaffected compiled body")
+    repeated = invoke(incan, arguments, project, environment)?
+    stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
+    if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
+        return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
+    # 5. A linked directory is itself damaged; repair must never follow it into another directory.
+    check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
+    return Ok(None)
+
+
+def check_linked_view(
+    incan: str,
+    project: Path,
+    graph: Path,
+    arguments: list[str],
+    expected: str,
+    environment: list[str],
+) -> Result[None, str]:
+    """A linked library directory is rebuilt as a real view without repairing files in its referent."""
+    directory = graph.parent()
+    temporary = TemporaryDirectory
+        .try_new_with("graph-view-", "", Some(directory.parent()))
+        .map_err((error) => error.message())?
+    referent = temporary.path().joinpath("original")
+    rename(directory.0, referent.0).map_err((error) => str(error))?
+    symlink(referent.0, directory.0).map_err((error) => str(error))?
+    bodies = library_artifacts(referent)?
+    remove(referent.joinpath(graph.name()))?
+    restored = invoke(incan, arguments, project, environment)?
+    if restored.code != Some(0) or restored.stdout != expected:
+        return Err(f"linked library view could not be restored: {restored.stderr}")
+    if directory.is_symlink() or referent.joinpath(graph.name()).is_file():
+        return Err("graph repair followed a linked directory and changed its referent")
+    if library_artifacts(referent)? != bodies:
+        return Err("graph repair changed compiled bodies in a linked directory's referent")
+    return Ok(None)
+
+
+def helper_digest(document: str) -> Result[str, str]:
+    """Read a proved helper digest and portable identity from either source inspection or its publication."""
+    for record in items(parse_json(document)?)?:
+        if string_field(record, "record") != "declaration" or string_field(record, "name") != "checked_helper":
+            continue
+        digest = string_field(record, "semantic_digest")
+        if not digest.startswith("sha256:"):
+            return Err("the checked library helper has no proved semantic digest")
+        return Ok(string_field(record, "stable_key") + ":" + digest)
+    return Err("the library graph omitted its checked helper")
+
+
+def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
+    """A published graph starts with the version-one header and never contains the physical project root."""
+    if data[:4] != b"\x01\x00\x00\x00":
+        return Err("compiled Loaf has no version-one binary graph")
+    needle = project.0.encode("utf-8")
+    for offset in range(len(data) - len(needle) + 1):
+        if data[offset:offset + len(needle)] == needle:
+            return Err("compiled Loaf graph contains a physical project root")
+    return Ok(None)
+
+
+def published_graphs(project: Path, provider: Path) -> list[Path]:
+    """Find the consumer and provider copies so corruption cannot fall through to an intact publication."""
+    mut graphs: list[Path] = []
+    for root in [project, provider]:
+        directory = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
+        graph = directory.joinpath("debug").joinpath("graph_checked.incngraph")
+        if graph.is_file():
+            graphs.append(graph)
+    return graphs
+
+
+def check_rust_links(document: GraphDocument) -> Result[None, str]:
+    """
+    Resolved Rust targets and navigable caller owners link to declarations, including dependency methods and closure
+    expressions.
+
+    1. Collect the Rust declarations and the crates they belong to.
+    2. Every Rust call has a declaration as its owner, and one that resolves into a represented crate has a declaration
+       as its target.
+    """
+    records = document.records
+    # 1. The Rust declarations are collected, with the crates they belong to.
+    mut declarations: Dict[str, bool] = {}
+    mut crates: list[str] = []
+    for record in records:
+        if string_field(record, "record") != "declaration" or string_field(record, "language") != "rust":
+            continue
+        declarations[string_field(record, "id")] = true
+        stable = required(record, "stable_identity")?
+        path = items(required(required(stable, "origin")?, "path")?)?
+        if len(path) > 0:
+            root = string_of(path[0])?
+            if root not in crates:
+                crates.append(root)
+    # 2. Every Rust call is owned by a declaration, and one resolving into a represented crate targets a declaration.
+    for record in records:
+        if string_field(record, "record") != "call" or string_field(record, "language") != "rust":
+            continue
+        owner = string_field(record, "owner_id")
+        if owner != "" and owner not in declarations:
+            return Err(f"Rust call has no navigable declaration owner: {owner}")
+        callee = string_field(record, "callee")
+        for root in crates:
+            if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
+                return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
+    return Ok(None)
+
+
+def stored_payload(store: Path, view: Path) -> Result[Path, str]:
+    """The selected bakery payload a view was cloned from, named by the digest of its bytes."""
+    digest = hexlify(file_digest(view, "sha256").map_err((error) => f"{view.0}: {error.message()}")?)
+    return Ok(store.joinpath("payloads").joinpath(digest[:2]).joinpath(digest))
+
+
+def corrupt_fact(path: Path) -> Result[None, str]:
+    """Overwrite a stored payload past its read-only permission, as a stray tool would."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return write_bytes(path, b"\x7f\x00\x00\x00")

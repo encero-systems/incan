@@ -1,0 +1,28 @@
+# behavior: a public class keeps a private backing field readable through its own method beside a public field readable directly
+# expect-stdout:
+#   3
+#   id:int
+
+"""Class field visibility should preserve private backing state."""
+
+
+pub class LazyFrame:
+    _cursor: int
+    pub schema: str
+
+    @staticmethod
+    pub def create(cursor: int, schema: str) -> LazyFrame:
+        return LazyFrame(_cursor=cursor, schema=schema)
+
+    pub def cursor(self) -> int:
+        return self._cursor
+
+
+def schema(frame: LazyFrame) -> str:
+    return frame.schema
+
+
+def main() -> None:
+    frame = LazyFrame.create(3, "id:int")
+    println(frame.cursor())
+    println(schema(frame))

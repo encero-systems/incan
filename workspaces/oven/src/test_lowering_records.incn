@@ -1,0 +1,320 @@
+"""Real record-scoped lowering reuse through the installed native driver."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import write
+from scratch import scratch_directory
+from engine_client import service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from observation import observe
+from unit_freshness import fingerprint
+
+
+pub def test_lowering_record_worked_example() -> Result[None, str]:
+    """Body edits and moves reuse callers; a callee signature edit invalidates their plans and matches cold output."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("hello.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+    initial = lowering_example_run_with_fingerprints(binary, source, store, "hello")?
+    initial_fingerprints = native_fingerprints(root)?
+    assert proof_count(initial, "plan_function_evaluations")? == 3
+    write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+    edited = lowering_example_run_with_fingerprints(binary, source, store, "hullo")?
+    edited_fingerprints = native_fingerprints(root)?
+    assert fingerprint_for(edited_fingerprints, "greeting")? != fingerprint_for(initial_fingerprints, "greeting")?
+    assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
+    assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
+    assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
+    assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
+    assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
+    commented = lowering_example_run(binary, source, store, "hullo")?
+    comment_diagnostic = commented.to_json().map_err((error) => error.message())?
+    assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
+    assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
+    assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
+    assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
+    stop_example_engine(binary, store)?
+    signature = root.joinpath("signature-source")
+    signature.mkdir(true, true).map_err((error) => error.message())?
+    linked = root.joinpath("signature")
+    linked.symlink_to(signature).map_err((error) => error.message())?
+    verify_signature_edit(binary, linked)?
+    return verify_rust_closure_debug_reproducibility(binary, root.joinpath("rust-closure"))
+
+
+pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str]:
+    """A local Rust source edit rebuilds its native unit, while an unchanged request does no work."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return verify_rust_source_edit_rebuild(binary, scratch.path())
+
+
+def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
+    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("hello.incn")
+    store = root.joinpath("store")
+    write(source, "def value() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(value())\n")?
+    _ = lowering_example_run(binary, source, store, "1")?
+    write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
+    warm = lowering_example_run(binary, source, store, "one")?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 3, diagnostic
+    assert proof_count(warm, "plan_function_reuses")? == 0, diagnostic
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath("target/incan/release/bin/hello").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "one")?
+    assert plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?, "warm and cold native plans differ"
+    assert executable == root.joinpath("target/incan/release/bin/hello").read_bytes().map_err((error) => error.message())?, "warm and cold executables differ"
+    return stop_example_engine(binary, cold_store)
+
+
+def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str]:
+    """Build a three-layer local dependency and require exact work after editing only its Rust source."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        provider.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"rust_edit_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(
+        provider.joinpath("src/lib.incn"),
+        "from rust::rust_edit_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
+    )?
+    native = provider.joinpath("rust/src/lib.rs")
+    write(native, "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nrust_edit_provider = { path = \"../provider\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::rust_edit_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
+    )?
+    store = root.joinpath("store")
+    _ = rust_source_probe_build(binary, app, store)?
+    executable = app.joinpath("target/incan/debug/bin/rust_edit_app")
+    require_probe_output(executable, "42")?
+    write(native, "pub fn native_value() -> i64 {\n    43\n}\n")?
+    edited = rust_source_probe_build(binary, app, store)?
+    edited_diagnostic = edited.to_json().map_err((error) => error.message())?
+    require_probe_output(executable, "43")?
+    assert proof_count(edited, "source_reads")? == 1, edited_diagnostic
+    assert proof_count(edited, "source_listings")? == 0, edited_diagnostic
+    assert proof_count(edited, "body_evaluations")? == 0, edited_diagnostic
+    assert proof_count(edited, "unit_evaluations")? == 1, edited_diagnostic
+    assert proof_count(edited, "native_bakes")? == 1, edited_diagnostic
+    unchanged = rust_source_probe_build(binary, app, store)?
+    unchanged_diagnostic = unchanged.to_json().map_err((error) => error.message())?
+    assert proof_count(unchanged, "source_reads")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "source_listings")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
+    return stop_example_engine(binary, store)
+
+
+def require_probe_output(executable: Path, expected: str) -> Result[None, str]:
+    """Run the linked probe and require its exact source-selected value."""
+    outcome = Command.new(executable.0).output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or output != expected + "\n" or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return Ok(None)
+
+
+def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one debug probe through records lowering and return its measured proof report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result[None, str]:
+    """A debug edit linked through an Incan library and local Rust library must reproduce its cold executable."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        provider.joinpath("loaf.toml"),
+        "[project]\nname = \"debug_repro_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"debug_repro_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(
+        provider.joinpath("src/lib.incn"),
+        "from rust::debug_repro_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
+    )?
+    write(provider.joinpath("rust/src/lib.rs"), "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"debug_repro_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\ndebug_repro_provider = { path = \"../provider\" }\n",
+    )?
+    source = app.joinpath("src/main.incn")
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value())\n")?
+    warm_store = root.joinpath("warm-store")
+    _ = debug_probe_build(binary, app, warm_store)?
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value() + 1)\n")?
+    warm_report = debug_probe_build(binary, app, warm_store)?
+    diagnostic = warm_report.to_json().map_err((error) => error.message())?
+    assert proof_count(warm_report, "native_bakes")? == 1, diagnostic
+    executable = app.joinpath("target/incan/debug/bin/debug_repro_app")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    app.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = debug_probe_build(binary, app, cold_store)?
+    cold = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, cold_store)?
+    assert warm == cold, "warm and cold debug executables with a Rust library differ"
+    return Ok(None)
+
+
+def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one real debug probe through records lowering and return its measured proof report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"debug reproducibility probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop one disposable records engine after its final request."""
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="lowering example completed")))
+        .map_err((refusal) => refusal.detail)?
+    stopped = channel.receive().map_err((refusal) => refusal.detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("lowering example did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+    """Run one real engine request and require both successful native output and its measured proof."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
+        .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def lowering_example_run_with_fingerprints(
+    binary: str,
+    source: Path,
+    store: Path,
+    expected: str,
+) -> Result[JsonValue, str]:
+    """Run one native request while asking the adapter for per-definition tracked-input evidence."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
+        .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
+        .env("INCAN_NATIVE_FINGERPRINT_REPORT", source.parent().joinpath("native.fingerprints").0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def command_proof(output: bytes) -> Result[JsonValue, str]:
+    """Decode the first line emitted by `--engine-report`, leaving the following program stdout independent."""
+    text = from_utf8(output).map_err((error) => str(error))?
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return Err("records command emitted no proof report")
+    return parse(lines[0]).map_err((error) => error.message())
+
+
+def proof_count(report: JsonValue, name: str) -> Result[int, str]:
+    """Read one required producer counter without accepting an absent or nonnumeric field."""
+    return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def native_fingerprints(root: Path) -> Result[list[str], str]:
+    """Read the adapter's one-line-per-definition tracked-input report."""
+    text = root.joinpath("native.fingerprints").read_text("utf-8", "strict").map_err((error) => error.message())?
+    return Ok([line for line in text.split("\n") if line != ""])
+
+
+def fingerprint_for(rows: list[str], function: str) -> Result[str, str]:
+    """Select one function's complete tracked fingerprint without accepting duplicates."""
+    matches = [row.split("\t")[2] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
+    if len(matches) != 1:
+        return Err(f"native fingerprint report has {len(matches)} rows for {function}: {rows}")
+    return Ok(matches[0])
+
+
+def partition_for(rows: list[str], function: str) -> Result[str, str]:
+    """Select one function's fixed native partition without accepting duplicates."""
+    matches = [row.split("\t")[3] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
+    if len(matches) != 1:
+        return Err(f"native fingerprint report has {len(matches)} partitions for {function}: {rows}")
+    return Ok(matches[0])

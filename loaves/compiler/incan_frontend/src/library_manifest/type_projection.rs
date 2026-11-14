@@ -59,9 +59,17 @@ impl VisitTypeRefs for TypeRef {
                 params.visit_type_refs(visit);
                 return_type.visit_type_refs(visit);
             }
-            Self::TypeToken { inner } | Self::Ref { inner } | Self::MutParam { inner } => inner.visit_type_refs(visit),
+            Self::Ownership { inner, .. }
+            | Self::TypeToken { inner }
+            | Self::Ref { inner }
+            | Self::MutParam { inner } => inner.visit_type_refs(visit),
             Self::Tuple { elements } => elements.visit_type_refs(visit),
-            Self::Named { .. } | Self::TypeParam { .. } | Self::SelfType | Self::RustPath { .. } | Self::Unknown => {}
+            Self::Named { .. }
+            | Self::Trait { .. }
+            | Self::TypeParam { .. }
+            | Self::SelfType
+            | Self::RustPath { .. }
+            | Self::Unknown => {}
         }
     }
 }
@@ -99,8 +107,8 @@ type_fields! {
     ParamDefaultCallSignatureExport => [params, return_type];
     ParamDefaultCallArgExport => [value];
     ParamDefaultDictEntryExport => [key, value];
-    FunctionExport => [type_params, params, return_type];
-    MethodExport => [type_params, params, return_type];
+    FunctionExport => [type_params, params, return_type, ownership];
+    MethodExport => [type_params, params, return_type, ownership];
     FieldExport => [ty, default];
     PropertyExport => [return_type];
     FieldRequirementExport => [ty];
@@ -118,9 +126,9 @@ type_fields! {
     StaticExport => [ty];
     CheckedApiMetadataPackage => [modules];
     CheckedApiMetadata => [declarations];
-    ApiFunction => [decorators, type_params, params, return_type];
-    ApiMethod => [decorators, type_params, params, return_type];
-    ApiCallableMetadata => [type_params, params, return_type];
+    ApiFunction => [decorators, type_params, params, return_type, ownership];
+    ApiMethod => [decorators, type_params, params, return_type, ownership];
+    ApiCallableMetadata => [type_params, params, return_type, ownership];
     ApiProjectedFunction => [callable, decorators];
     ApiModel => [decorators, type_params, trait_adoptions, fields, properties, methods];
     ApiClass => [decorators, type_params, trait_adoptions, fields, properties, methods];
@@ -167,6 +175,7 @@ impl VisitTypeRefs for ParamDefaultExport {
                 args.visit_type_refs(visit);
                 signature.visit_type_refs(visit);
             }
+            Self::MethodCall { args, .. } => args.visit_type_refs(visit),
             Self::Int(_)
             | Self::Float(_)
             | Self::Bool(_)
@@ -359,59 +368,6 @@ pub fn with_self_owned_native_unions<T: VisitTypeRefs>(mut value: T, provider_cr
     value
 }
 
-/// Bind native carriers through the existing admitted provider graph before projecting a compiler-owned API copy.
-///
-/// The original producer members stay immutable. Only the non-serialized physical projection is routed for emission;
-/// its owner is selected by the admitted artifact, never inferred from a generated wrapper spelling.
-pub fn with_checked_native_unions<T: VisitTypeRefs>(
-    mut value: T,
-    library: &str,
-    plan: Option<&crate::provider::ProviderPlan>,
-    routes: Option<&std::collections::HashMap<String, String>>,
-) -> Result<T, String> {
-    let mut failure = None;
-    value.visit_type_refs(&mut |ty| {
-        if failure.is_some() {
-            return;
-        }
-        let TypeRef::NativeUnion(native) = ty else {
-            return;
-        };
-        if native.checked_projection.is_some() {
-            return;
-        }
-        let Some(plan) = plan else {
-            failure = Some(format!(
-                "native union `{}` has no admitted provider plan",
-                native.rust_name
-            ));
-            return;
-        };
-        let (mut bound, route) = match plan.public_native_union_projection(library, native) {
-            Ok(projection) => projection,
-            Err(error) => {
-                failure = Some(error);
-                return;
-            }
-        };
-        let owner_path = crate::rust_type_display::provider_bridge_route(library, route);
-        let rust_owner = format!("::{}", owner_path.join("::"));
-        let members = match with_checked_native_unions(bound.members.clone(), library, Some(plan), routes) {
-            Ok(members) => with_checked_type_routes(members, routes),
-            Err(error) => {
-                failure = Some(error);
-                return;
-            }
-        };
-        attach_owner_projection(&mut bound, library, rust_owner, members);
-        *native = bound;
-    });
-    match failure {
-        Some(error) => Err(error),
-        None => Ok(value),
-    }
-}
-
 /// Attach one source module's checked nominal bindings to its consumer-only native conversion projections.
 pub fn with_native_nominal_origins<T: VisitTypeRefs>(
     mut value: T,
@@ -430,72 +386,13 @@ pub fn with_native_nominal_origins<T: VisitTypeRefs>(
     value
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{VisitTypeRefs, with_checked_type_origins};
-    use crate::api_metadata::{
-        DecoratorArgMetadata, DecoratorCallArgMetadata, DecoratorMetadata, DecoratorValue, SourceSpan,
-    };
-    use crate::library_manifest::TypeRef;
-
-    /// Structured decorator values and nested call type arguments retain the same checked nominal origin.
-    #[test]
-    fn decorator_argument_types_preserve_checked_nominal_origins() {
-        let origin = crate::library_manifest::NominalTypeOriginExport {
-            provider: crate::provider::ProviderIdentity {
-                name: "catalog".into(),
-                version: "1.2.3".into(),
-                digest: "a".repeat(64),
-                feature_projection: Default::default(),
-            },
-            canonical: crate::library_manifest::CanonicalIdentityExport {
-                namespace: crate::library_manifest::CanonicalIdentityNamespaceExport::OrdinaryLexical,
-                origin: crate::library_manifest::CanonicalIdentityOriginExport::Package {
-                    library: "catalog".into(),
-                    module_path: vec!["lib".into()],
-                },
-                declaration_name: "Product".into(),
-                kind: "model".into(),
-                declaration_span: crate::library_manifest::CanonicalIdentitySpanExport { start: 0, end: 20 },
-            },
-        };
-        let leaf = TypeRef::Named {
-            name: "Product".into(),
-            origin: None,
-        };
-        let metadata = DecoratorMetadata {
-            path: vec!["marker".into()],
-            source_name: "marker".into(),
-            anchor: SourceSpan { start: 0, end: 1 },
-            type_args: vec![],
-            decorated_callable: None,
-            args: vec![DecoratorArgMetadata::Named {
-                name: "value".into(),
-                value: DecoratorValue::List {
-                    items: vec![
-                        DecoratorValue::Type { ty: leaf.clone() },
-                        DecoratorValue::Call {
-                            callee: vec!["wrap".into()],
-                            type_args: vec![leaf.clone()],
-                            args: vec![DecoratorCallArgMetadata::PositionalUnpack {
-                                value: DecoratorValue::Type { ty: leaf },
-                            }],
-                        },
-                    ],
-                },
-            }],
-        };
-        let mut projected = with_checked_type_origins(
-            metadata,
-            &std::collections::BTreeMap::from([("Product".into(), origin.clone())]),
-        );
-        let mut seen = 0;
-        projected.visit_type_refs(&mut |leaf| {
-            if let TypeRef::Named { origin: actual, .. } = leaf {
-                assert_eq!(actual.as_ref(), Some(&origin));
-                seen += 1;
+impl VisitTypeRefs for super::ownership::OwnershipExport {
+    /// Ownership metadata uses the same nominal origin and route visitor as the callable signature.
+    fn visit_type_refs(&mut self, visit: &mut impl FnMut(&mut TypeRef)) {
+        if let Self::Checked(contract) = self {
+            for mode in &mut contract.modes {
+                mode.underlying.visit_type_refs(visit);
             }
-        });
-        assert_eq!(seen, 3);
+        }
     }
 }

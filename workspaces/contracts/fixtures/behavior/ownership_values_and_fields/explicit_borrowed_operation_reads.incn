@@ -1,0 +1,57 @@
+# behavior: borrowed operands remain live until consumption while completed formatted values are independent (#2500).
+# expect-stdout:
+#   left 7
+#   before 7
+#   operation reads passed
+
+def observe(value: Borrowed[str]) -> int:
+    """Observe an alias and its source without replacing either with an independent local."""
+    let view: Borrowed[str] = value
+    assert view == value
+    rendered = f"{view}"
+    assert rendered == value
+    return len(view)
+
+
+def update(mut value: BorrowedMut[str]) -> int:
+    """A completed observation releases its child read loan before the parent writes again."""
+    mut view: BorrowedMut[str] = value
+    length = len(view)
+    view = f"{view}!"
+    return length
+
+
+def replace(mut value: BorrowedMut[str]) -> int:
+    """Replace only the explicitly selected source."""
+    value = "changed"
+    return len(value)
+
+
+def disjoint(mut left: BorrowedMut[str], mut right: BorrowedMut[str]) -> None:
+    """A read from one source can coexist with mutation of another."""
+    println(left, replace(right))
+    assert left == "left"
+    assert right == "changed"
+
+
+def completed_value(mut value: BorrowedMut[str]) -> None:
+    """Formatting completes an owned result before the later operand replaces its source."""
+    println(f"{value}", replace(value))
+
+
+def main() -> None:
+    """Exercise actual native borrowed text, aliases, formatting, and separate mutable inputs."""
+    mut text = "alpha"
+    assert observe(text) == 5
+    assert text == "alpha"
+    assert update(text) == 5
+    assert text == "alpha!"
+    mut left = "left"
+    mut right = "right"
+    disjoint(left, right)
+    assert left == "left"
+    assert right == "changed"
+    mut completed = "before"
+    completed_value(completed)
+    assert completed == "changed"
+    println("operation reads passed")

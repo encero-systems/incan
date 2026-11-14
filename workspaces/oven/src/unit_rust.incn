@@ -1,0 +1,591 @@
+"""Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
+
+from rust::incan_loaf_names import artifact_stem, native_crate_name
+from std.fs import Path
+from std.json import JsonValue
+from std.toml import TomlValue
+from bakery import (
+    bakery,
+    claim,
+    find,
+    forget_view,
+    view_directory,
+    lookup,
+    reached,
+    seal,
+    prior_size,
+    staging,
+    unit_identity,
+    unit_name,
+)
+from bakery_roots import register_root
+from features import FeatureRequest
+from json_fields import array, strings
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
+from rust_activation import DependencyDomain
+from rust_units import build_dependencies, closure_search
+from rust_build import BuiltUnit, RustBuild, facet_bindings, incan_artifacts
+from rust_registry import read_registry_units, registry_selection, selected_registry
+from rust_manifest import rust_facet
+from registry_units import RegistryUnits
+from rust_target import target_configuration
+from search_index import search_index
+from sysroot_access import declared_libraries, runtime_sysroot
+from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
+from standalone_rust import bind_published, standalone_crates
+from registry_metadata import bound_entries
+from unit import UnitDescription, UnitLoaf, describe
+from observation import trace
+from intake import ManifestReader
+from native_closure_input import NativeClosureInput
+from unit_compiler import compile_prepared_unit
+from callable_products import retain_callable_products
+from unit_freshness import Key, artifact_files, unit_key
+from unit_publication import record_payload
+from compiler_facts import admit_fact
+from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
+from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
+
+
+pub def describe_native(
+    source: Path,
+    profile: str,
+    request: FeatureRequest,
+    unattended: bool = false,
+) -> Result[UnitDescription, str]:
+    """Describe the source and prepare the exact native inputs checking and compilation share."""
+    mut unit = describe(source, profile, request)?
+    unit.unattended = unattended
+    return prepare_native(unit, toolchain_for(unit)?, unattended)
+
+
+pub def toolchain_for(unit: UnitDescription) -> Result[Toolchain, str]:
+    """Reuse the graph's validated generation; projectless units select one only after source validation."""
+    match unit.selected_toolchain:
+        Some(known) => return Ok(known)
+        None => return load_toolchain()
+
+
+pub def compile_incan_library(
+    source: str,
+    profile: str,
+    features: list[str],
+    output: str,
+    bindings: list[Tuple[str, str]],
+    loaves: list[Tuple[str, str]],
+    search: list[str],
+    toolchain: Toolchain,
+    compiler: str,
+    reader: ManifestReader,
+    unattended: bool,
+) -> Result[i32, str]:
+    """
+    Prepare one activated Incan provider after the shared graph prepared all its dependencies.
+
+    1. Describe the provider with its already selected features and profile.
+    2. Bind the graph's exact artifacts without selecting or compiling dependencies again, granting import authority
+       to the provider's own Rust facet.
+    3. Compile or reuse the library at the consumer's selected artifact path.
+    """
+    # 1. Defaults have already contributed to the local graph's closure.
+    selected = FeatureRequest(features=features, default_features=false)
+    mut unit = describe(Path(source), profile, selected, reader, Some(toolchain))?
+    unit.unattended = unattended
+    unit.kind = "library"
+    # 2. A provider sees the same selected artifacts as every other consumer in this graph.
+    unit.loaves = rebase_loaves(unit.loaves, loaves)
+    own = rust_facet(unit.project_root, false, reader)?
+    unit.externs = []
+    for alias, artifact in bindings:
+        native = NativeCrate(name=alias, path=artifact)
+        if own.kind != "" and alias == own.crate_name:
+            unit = add_rust_root(unit, native)?
+        else:
+            unit = add_extern(unit, native)?
+    unit.search = search
+    ready = prepare_linked(unit, toolchain)?
+    # 3. The ordinary library stamp preserves a current artifact for either language's consumer.
+    return compile_library_unit(ready, toolchain, Path(output), compiler)
+
+
+def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) -> list[UnitLoaf]:
+    """Preserve declared aliases while binding every selected source provider to the graph's single artifact."""
+    mut result: list[UnitLoaf] = []
+    for loaf in declared:
+        mut directory = loaf.dir
+        if loaf.is_dependency():
+            for name, prepared in providers:
+                if name == loaf.name:
+                    directory = prepared
+        result.append(
+            UnitLoaf(
+                key=loaf.key,
+                name=loaf.name,
+                dir=directory,
+                standard=loaf.standard,
+                toolchain_provided=loaf.toolchain_provided,
+                source_root=loaf.source_root,
+            ),
+        )
+    return result
+
+
+pub def compile_library_unit(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str = "",
+) -> Result[i32, str]:
+    """Prepare private callable products for ordinary libraries, then publish through the complete native key."""
+    ready = with_callable_products(library, toolchain)
+    return compile_retained_library(ready, toolchain, output, compiler)
+
+
+def compile_retained_library(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str,
+) -> Result[i32, str]:
+    """
+    Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.
+    The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
+
+    Compiler consumers bind its artifacts through the bakery's store-owned filename layout (`library_directory`),
+    so a native closure never depends on a project's mutable view.
+
+    1. Key the library; a sealed fact of its identity is viewed and no compiler starts.
+    2. Otherwise claim the identity, and view a fact another command sealed meanwhile.
+    3. Stage its vocabulary worker and compile it into a staging directory of the fact.
+    4. Require every published artifact, including a worker its manifest names, before sealing the fact.
+    """
+    # 1. Both source and native inputs contribute to the ordinary library key.
+    directory = output.parent()
+    key = unit_key(library, toolchain, compiler)?
+    if key.refusal != "":
+        return compile_unbaked(library, toolchain, output, key)
+    store = bakery()?
+    identity = unit_identity(key)
+    register_root(store, library.project_root, f"library\t{library.package}", [identity])?
+    label = f"unit {library.package} library"
+    if let Some(fact) = find(store, identity)?:
+        view_directory(store, fact, directory)?
+        trace(f"{label}: reused")
+        return Ok(0)
+    # 2. A concurrent bake of the same identity is waited for, not repeated.
+    held = claim(store, identity)?
+    if let Some(fact) = find(store, identity)?:
+        view_directory(store, fact, directory)?
+        trace(f"{label}: reused (built meanwhile by another command)")
+        return Ok(0)
+    # 3. A failed compilation publishes nothing.
+    staged = staging(store, identity, prior_size(store, unit_name(library)))?
+    stage_vocabulary(library, staged)?
+    compiled = compile_prepared_unit(
+        library,
+        toolchain,
+        staged.joinpath(output.name()),
+        Some(key),
+        library_reason(store, library),
+    )?
+    if compiled != 0:
+        _ = staged.remove_tree()
+        return Ok(compiled)
+    # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
+    #    belongs to the completed set; a partial set is never sealed.
+    for artifact in artifact_files(staged, library.package)?:
+        if not artifact.is_file():
+            _ = staged.remove_tree()
+            return Err(f"compiler did not publish {directory.joinpath(artifact.name()).0}")
+    # 5. Each owned payload carries its producer identity into the fact; a borrowed worker keeps its own.
+    borrowed = [worker.0 for worker in published_workers(library, staged)?]
+    for artifact in artifact_files(staged, library.package)?:
+        if artifact.0 not in borrowed:
+            record_payload(artifact, key.digest, key.provenance)?
+    reaches = reached(store, [loaf.dir for loaf in library.loaves])?
+    fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
+    view_directory(store, fact, directory)?
+    return Ok(0)
+
+
+def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+    """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
+    directory = output.parent()
+    forget_view(directory)?
+    stage_vocabulary(library, directory)?
+    compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
+    if compiled != 0:
+        return Ok(compiled)
+    borrowed = [worker.0 for worker in published_workers(library, directory)?]
+    for artifact in artifact_files(directory, library.package)?:
+        if not artifact.is_file():
+            return Err(f"compiler did not publish {artifact.0}")
+        if artifact.0 not in borrowed:
+            record_payload(artifact, "", key.provenance, key.refusal)?
+    return Ok(0)
+
+
+def library_reason(store: Path, library: UnitDescription) -> str:
+    """Why a library is baked: nothing was baked under its name yet, or what was is for other inputs."""
+    match lookup(store, unit_name(library)):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
+    return "no stored build"
+
+
+pub def prepare_native(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    unattended: bool = false,
+) -> Result[UnitDescription, str]:
+    """
+    Prepare exact artifacts for one selected unit, preserving its kind and activated root features.
+
+    1. Prepare the shared local graph, or resolve a standalone unit's declared Rust imports.
+    2. Bind the selected artifacts and toolchain inputs to the unit.
+    """
+    # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
+    mut unit = described
+    unit.unattended = unattended or unit.unattended
+    if Path(unit.project_root).joinpath("loaf.toml").is_file():
+        unit = resolve_dependencies(unit, toolchain)?
+    else:
+        for native in standalone_crates(unit, toolchain)?:
+            unit = add_rust_root(unit, native)?
+    # 2. No source graph is selected again while the prepared unit is linked.
+    return prepare_linked(unit, toolchain)
+
+
+pub def prepare_linked(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    checking_interfaces: list[str] = [],
+    registry: Option[RegistryUnits] = None,
+) -> Result[UnitDescription, str]:
+    """
+    Bind exact native inputs and register a producer vocabulary after shared dependency preparation is complete.
+    A supplied registry is reused only for the generation's search index, without changing the unit's selected roots.
+
+    The description names the toolchain generation's search index and lists only the directories beyond it: its Loaves'
+    and those their native closures add. A closure published before the index existed also lists the toolchain's own
+    directories, which are left out here.
+
+    1. Name the search index and bind the toolchain's ABI caches, crates, declared libraries and available Loaves.
+    2. Link each Loaf, collecting the directories beyond the toolchain's that its closure searches.
+    3. Keep each such directory once and register a producer vocabulary.
+    """
+    # 1. Every unit of the toolchain generation names the same index.
+    mut unit = described
+    unit.search_index = Some(search_index(toolchain, registry)?)
+    unit.rust_abi = toolchain.rust_abi
+    unit = with_toolchain_crates(unit, toolchain)
+    unit = with_declared_libraries(unit, toolchain)?
+    unit.loaves = [loaf for loaf in unit.loaves if standard_available(loaf)]
+    # 2. Only what lies beyond the toolchain's own directories is collected, so the list stays the size of the unit's.
+    indexed = members(toolchain.search)
+    toolchain_crates = [native.name for native in toolchain.externs]
+    mut directories = [directory for directory in unit.search if directory not in indexed]
+    loaves = unit.loaves
+    for loaf in loaves:
+        # Checking-only exports supply a manifest, never a claim to an executable native artifact.
+        if loaf.name in checking_interfaces and not loaf_library(loaf).is_file():
+            continue
+        linked, searched = link_loaf(unit, loaf, toolchain_crates, toolchain.native_closures)?
+        unit = linked
+        for directory in searched:
+            if directory not in indexed:
+                directories.append(directory)
+    # 3. The directories are sorted and distinct, as the compiler merges them with the index.
+    unit.search = unique(directories)
+    for cache in unit.rust_abi:
+        admit_fact(Path(cache))?
+    ready = prepare_vocabulary(unit, toolchain)?
+    return Ok(with_callable_products(ready, toolchain))
+
+
+def with_callable_products(unit: UnitDescription, toolchain: Toolchain) -> UnitDescription:
+    """Attach one stable checked-product selection after every semantic input has been prepared."""
+    if unit.checked_context is not None:
+        return unit
+    match retain_callable_products(unit, toolchain):
+        Ok(retained) => return retained
+        Err(reason) =>
+            trace(f"{unit.package}: private callable products unavailable: {reason}")
+            return unit
+
+
+def members(values: list[str]) -> set[str]:
+    """The distinct values of a list, for membership tests."""
+    mut result: set[str] = set()
+    for value in values:
+        result.add(value)
+    return result
+
+
+def standard_available(loaf: UnitLoaf) -> bool:
+    """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
+    if not loaf.standard:
+        return true
+    interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
+    return loaf_library(loaf).is_file() and interface.is_file()
+
+
+def loaf_library(loaf: UnitLoaf) -> Path:
+    """A Loaf's compiled library, using the shared native-name projection in its artifact directory."""
+    linked = native_crate_name(loaf.name)
+    return Path(loaf.dir).joinpath(f"lib{linked}.rlib")
+
+
+def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> UnitDescription:
+    """The unit with the toolchain's native crates bound; a crate that ships an interface also joins its Loaves."""
+    mut unit = described
+    for native in toolchain.externs:
+        if native.name not in [item.name for item in unit.externs]:
+            unit.externs.append(native)
+        directory = Path(native.path).parent()
+        if native.name != unit.package and directory.joinpath(f"{native.name}.incnlib").is_file():
+            if native.name not in [loaf.name for loaf in unit.loaves]:
+                unit.loaves.append(
+                    UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
+                )
+    return unit
+
+
+def with_declared_libraries(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    The unit with the toolchain libraries its Loaf declares (`[build] sysroot-dependencies`) bound under their crate
+    names, which its `rust::` imports may then name. A unit that links them also records the resolved sysroot its
+    executables load them from.
+    """
+    mut unit = described
+    for library in declared_libraries(unit.toolchain_access, toolchain)?:
+        unit = add_extern(unit, library)?
+        if library.name not in unit.rust_crates:
+            unit.rust_crates = sorted(unit.rust_crates + [library.name])
+    if len(unit.toolchain_access.sysroot_dependencies) > 0:
+        unit.runtime_sysroot = runtime_sysroot(toolchain)?
+    return Ok(unit)
+
+
+def link_loaf(
+    described: UnitDescription,
+    loaf: UnitLoaf,
+    toolchain_crates: list[str],
+    readings: NativeClosureInput,
+) -> Result[tuple[UnitDescription, list[str]], str]:
+    """
+    The unit linking one of its Loaves, with its library and macro crates bound, and the directories to search for it:
+    the Loaf's own and those its native closure searches. The native closure is read once for both.
+
+    During bootstrap only already compiled standard packages may be linked.
+    """
+    linked = native_crate_name(loaf.name)
+    library = loaf_library(loaf)
+    if loaf.standard and not library.is_file():
+        return Ok((described, []))
+    unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
+    closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
+    if not closure.is_file():
+        return Ok((unit, [loaf.dir]))
+    document = readings.read(closure)?
+    exposed = expose_macro_crates(unit, closure, document, toolchain_crates)?
+    return Ok((exposed, [loaf.dir] + closure_search(closure, document)?))
+
+
+def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Activate the complete local graph once, compile each provider, and bind the selected direct aliases.
+
+    1. A project with no local Loaves, Rust facet or Rust crates has nothing to resolve.
+    2. Activate both languages' edges and read the toolchain's registry units when the graph links them.
+    3. Compile the local units the edges reach.
+    4. Bind the project's own crate, then the aliases of its local and registry edges.
+    """
+    mut unit = unit
+    # 1. A project with no local source or Rust inputs needs no dependency preparation.
+    declared = rust_facet(unit.project_root, false, unit.manifests)?
+    if not needs_local_preparation(unit, declared.kind):
+        return Ok(unit)
+    # 2. The edges are activated for the features the unit already has, against the toolchain's compiled registry.
+    rustc = rust_compiler(toolchain)
+    configuration = target_configuration(rustc)?
+    demand = LocalDemand(
+        project=unit.project_root,
+        domain=DependencyDomain.Target,
+        features=unit.active_features,
+        defaults=false,
+    )
+    mut facets = unit.facets
+    if len(facets) == 0:
+        facets = local_facets(demand, configuration, {}, unit.manifests)?
+    registry = registry_for_unit(unit, facets, toolchain)?
+    local_trust = decide(facets, unit.project_root, unit.unattended, unit.manifests)?
+    decision = combine_trust(local_trust, decide_registry(registry, unit.project_root, unit.unattended)?)
+    unit.covered_by = decision.covered_by
+    unit.trust_stop = decision.stop()
+    if len(decision.missing) > 0:
+        return Ok(with_prepared_loaves(unit, decision.missing))
+    # 3. The local units the edges reach are compiled, each once, before the unit that links them.
+    request = RustBuild(
+        project=unit.project_root,
+        profile=unit.profile,
+        rustc=rustc,
+        registry=registry,
+        features=unit.active_features,
+        default_features=false,
+        incan_compiler=Some(compile_incan_library),
+        toolchain_search=toolchain.search,
+        toolchain=Some(toolchain),
+        manifests=unit.manifests,
+        unattended=unit.unattended,
+        covered_by=unit.covered_by,
+    )
+    built = build_dependencies(request, facets)?
+    # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.
+    #    The registry's directories are in the toolchain's search index.
+    mut result = unit
+    for key in sorted([key for key in built.keys()]):
+        result.search = result.search + [built[key].directory] + built[key].search
+    result.loaves = rebase_loaves(result.loaves, incan_artifacts(built))
+    own_key = f"{unit.project_root}@target"
+    if own_key in built:
+        own = built[own_key]
+        result = add_rust_root(result, NativeCrate(name=own.crate_name, path=own.artifact))?
+    for facet in facets:
+        if facet.project == unit.project_root and facet.domain == DependencyDomain.Target:
+            result = bind_edges(result, facet, built, registry)?
+    return Ok(result)
+
+
+def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> UnitDescription:
+    """Mark dependencies unavailable after the trust cut while retaining their source binding descriptions."""
+    mut ready = unit
+    mut not_prepared = [item.loaf for item in missing]
+    for loaf in ready.loaves:
+        if not loaf.is_dependency():
+            continue
+        interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
+        if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
+            not_prepared.append(loaf.name)
+    ready.not_prepared_loaves = sorted(not_prepared)
+    return ready
+
+
+def registry_for_unit(
+    unit: UnitDescription,
+    facets: list[LocalFacet],
+    toolchain: Toolchain,
+) -> Result[RegistryUnits, str]:
+    """Bind the unit's authored Rust roots to Loaf-offered artifacts without importing private ambient dependencies."""
+    mut registry = linked_registry(facets, toolchain, unit.manifests, unit.project_root)?
+    mut roots: list[str] = []
+    for facet in facets:
+        if facet.project != unit.project_root or facet.domain != DependencyDomain.Target:
+            continue
+        for record in facet.registry:
+            name = registry_selection(record)?.loaf.split("/")[-1].replace("-", "_")
+            if name not in roots:
+                roots.append(name)
+    registry = bind_published(registry, unit, toolchain, roots)?
+    return selected_registry(registry, facets, unit.profile)
+
+
+def linked_registry(
+    facets: list[LocalFacet],
+    toolchain: Toolchain,
+    reader: ManifestReader,
+    project: str,
+) -> Result[RegistryUnits, str]:
+    """
+    The toolchain's compiled registry units when the graph links any: a facet with a registry edge, or a Rust crate
+    rustc compiles against the registry's directories. A graph of Incan Loaves alone reads no registry closure; the
+    directories its native closures need are in the toolchain's search index.
+    """
+    for facet in facets:
+        if len(facet.registry) > 0 or rust_facet(facet.project, false, reader)?.kind != "":
+            return read_registry_units(Path(toolchain.registry_units), project, reader)
+    return Ok(RegistryUnits(units=[], search=[]))
+
+
+def needs_local_preparation(unit: UnitDescription, kind: str) -> bool:
+    """Whether the shared graph must prepare a local Loaf, the root's Rust facet, or declared Rust crates."""
+    return kind != "" or len(unit.rust_crates) > 0 or len([loaf for loaf in unit.loaves if loaf.is_dependency()]) > 0
+
+
+def bind_edges(
+    unit: UnitDescription,
+    facet: LocalFacet,
+    built: Dict[str, BuiltUnit],
+    registry: RegistryUnits,
+) -> Result[UnitDescription, str]:
+    """Bind the alias of each local and registry edge of the unit's own facet to the library built for it."""
+    mut result = unit
+    for binding in facet_bindings(facet, built, registry)?:
+        result = add_extern(result, binding)?
+    return Ok(result)
+
+
+pub def add_rust_root(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescription, str]:
+    """
+    Bind a selected Rust import root to both its artifact and its compiler metadata authority.
+
+    A package's own native facet is an authored import root just like a declared Rust dependency. Merely linking its
+    artifact leaves its imported types and associated functions absent from the compiler's metadata extraction.
+    Ambient runtime support must continue to use `add_extern`, which deliberately does not grant import authority.
+    """
+    mut result = add_extern(unit, native)?
+    if native.name not in result.rust_crates:
+        result.rust_crates.append(native.name)
+    return Ok(result)
+
+
+pub def add_extern(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescription, str]:
+    """Bind an alias once, accepting relocated copies only when their complete artifact bytes agree."""
+    for current in unit.externs:
+        if current.name == native.name:
+            if not same_native_artifact(current.path, native.path)?:
+                return Err(f"Rust crate `{native.name}` names conflicting artifacts: {current.path} and {native.path}")
+            return Ok(unit)
+    mut result = unit
+    result.externs.append(native)
+    return Ok(result)
+
+
+def same_native_artifact(selected: str, candidate: str) -> Result[bool, str]:
+    """Match the driver's exact-artifact boundary: paths may relocate, but filenames and crate hashes are no proof."""
+    if selected == candidate:
+        return Ok(true)
+    retained = Path(selected).read_bytes().map_err((error) => f"{selected}: {error.message()}")?
+    incoming = Path(candidate).read_bytes().map_err((error) => f"{candidate}: {error.message()}")?
+    return Ok(retained == incoming)
+
+
+def expose_macro_crates(
+    unit: UnitDescription,
+    closure: Path,
+    document: JsonValue,
+    toolchain_crates: list[str],
+) -> Result[UnitDescription, str]:
+    """
+    Bind the Rust crates a reached Loaf's attribute macros expand against, from its native closure `document`.
+
+    rustc expands an attribute macro in the crate that applies it, so the crates the macro's output names must be this
+    unit's direct externs. A Loaf that exports such a macro lists them in its native closure; the toolchain's own
+    crates, named by `toolchain_crates`, are already bound for every unit and stay as they are.
+    """
+    mut result = unit
+    match document.get("macro_externs"):
+        None => return Ok(result)
+        Some(listed) =>
+            entries = array(listed, ["macro_externs"]).map_err((_) => f"{closure.0}: macro_externs is not a list")?
+            malformed = f"{closure.0}: a macro extern is not a name and a path"
+            for entry in entries:
+                pair = strings(entry, ["macro_externs"]).map_err((_) => malformed)?
+                if len(pair) != 2:
+                    return Err(malformed)
+                if pair[0] in toolchain_crates:
+                    continue
+                result = add_extern(result, NativeCrate(name=pair[0], path=located(closure.parent(), pair[1])))?
+            return Ok(result)

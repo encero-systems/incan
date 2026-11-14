@@ -1,0 +1,12 @@
+# behavior: a module-qualified type spelling that names no declaration of the module is refused at check time (#1437)
+# expect-diagnostic: INCAN-T0001
+
+import errors
+
+
+pub def result() -> Result[None, errors.Missing]:
+    return Ok(None)
+
+
+def main() -> None:
+    pass

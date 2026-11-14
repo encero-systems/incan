@@ -1,12 +1,16 @@
 [project]
 name = "incan_mir_lowering"
-version = "0.6.0-dev.7"
+version = "0.6.0-dev.8"
 
 [dependencies]
-incan_mir_plan = { loaf = "incan_mir_plan", path = "../incan_mir_plan" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
+serde_json = { loaf = "crates-io/serde_json", version = "1" }
+incan_mir_plan = { path = "../incan_mir_plan" }
+internal_models = { path = "../internal_models" }
 
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_platform = { path = "../../platform" }
 
 [build]
 rust-edition = "2024"

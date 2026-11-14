@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 8b33636baae8daf37c73c40575bd714381380e8fb8abb884013093e57478b1fd # shrinks to func = "def is(a: int) -> int:\n    return a\n"

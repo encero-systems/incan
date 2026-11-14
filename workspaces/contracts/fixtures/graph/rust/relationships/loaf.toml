@@ -1,0 +1,10 @@
+[project]
+name = "rust_relationships"
+version = "0.1.0"
+
+[rust]
+type = "lib"
+edition = "2024"
+
+[dependencies]
+graph_provider = { loaf = "graph_provider", path = "deps/provider" }

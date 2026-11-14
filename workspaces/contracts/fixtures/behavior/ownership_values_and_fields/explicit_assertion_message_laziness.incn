@@ -1,0 +1,36 @@
+# behavior: a successful assertion skips its side-effectful message, including an ownership transfer that applies only on failure, and retains both borrowed and owned sources afterward (#2500).
+# expect-stdout:
+#   14
+#   lazy assertion passed
+
+def consume(value: Owned[str]) -> str:
+    """Transfer an assertion message into its failure text."""
+    return value
+
+def diagnostic(mut calls: BorrowedMut[int], value: Borrowed[str]) -> str:
+    """A failure-only message has an observable effect and returns an independent string."""
+    calls += 1
+    return f"diagnostic {calls}: {value}"
+
+
+def width(value: Borrowed[str], mut calls: BorrowedMut[int]) -> int:
+    """A successful assertion must skip the message and preserve its later source reads."""
+    assert len(value) > 0, diagnostic(calls, value)
+    return len(value)
+
+
+def inspect(value: Borrowed[str]) -> int:
+    """Retain the stored message when the failure-only transfer is skipped."""
+    message = "input is empty"
+    assert len(value) > 0, consume(message)
+    return len(message)
+
+
+def main() -> None:
+    mut calls = 0
+    text = "payload"
+    println(inspect(text))
+    assert width(text, calls) == 7
+    assert calls == 0
+    assert text == "payload"
+    println("lazy assertion passed")

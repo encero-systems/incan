@@ -1,0 +1,998 @@
+"""Lower calls through bound callables, type parameters, locals, closures, and function pointers."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    CalleeKind,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import validate_source_input_call
+from layout_types import native_source_type, stored_field_type
+from derived_methods import is_std_callable_call
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    IncanType as RustType,
+    SymbolOrigin,
+    canonical_module_identity,
+)
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustArgumentBinding,
+    BoundArgument as RustBoundArgument,
+    ArgumentElement as RustArgumentElement,
+    Body as RustBody,
+    CallableParamDefault,
+    NamedCallableTarget as RustNamedCallableTarget,
+    LocalCallableTarget as RustLocalCallableTarget,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    MethodTarget,
+    PlaceOperand as RustPlaceOperand,
+    ValidatedConstructor as RustValidatedConstructor,
+)
+from classes import frame_type, function_name, indexed_static_type_arguments
+from string_conversion import string_conversion_callee
+from traits import (
+    associated_body_index,
+    close_trait_dispatch_arguments,
+    is_lazy_method_body,
+    static_receiver_target,
+    validate_static_receiver,
+)
+from derived_defaults import is_derived_default, lower_derived_default
+from defaults import evaluate_default
+from reflection import lower_static_field_metadata
+from model_values import is_json_deserialize_method, lower_model_from_json
+from value_enums import value_enum_from_value_owner
+from text_plan import owned_literal
+from frame import (
+    place_type,
+    Builder,
+    temporary,
+    forget_owned,
+    drop_owned,
+    track_rvalue_moves,
+    forget_moved_arguments,
+    terminate_call,
+    external_call,
+    read_place,
+)
+from collections import is_owned_collection
+from async_ import construct_future, is_future
+from type_parameters import instantiate, substitute, request_instance
+from generic_callables import owned_callable_slots
+from closures import (
+    callable_copy_type,
+    callable_signature,
+    return_representation,
+    closure_arguments,
+    closure_constructor,
+    borrowed_callable_forwarder,
+    pointer_forwarder,
+)
+from partial_callables import partial_flags, partial_call_operands
+from lowering import BodyIrModule
+from checked_values import place_read, scalar_place
+from operators import operand_type
+from statements import is_nominal_type
+from closure_lifting import synthesize
+from calls import instantiated_external_call, lower_loaf_call, ordered_arguments
+from value_enum_methods import lower_value_enum_from_value, lower_value_enum_ordinal_encoding
+from call_arguments import ordered_slot_operands
+from model_construction import model_field_operand
+from program_context import body_at
+from builtin_calls import lower_builtin
+from list_values import value_operand
+from list_methods import call_destination
+from carrier_operands import boundary_plan_operand
+
+
+pub def lower_callable_bound_call(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Call a function or closure received through a standard callable bound, as legacy calls its `Fn` value.
+
+    The checker selects the callable trait's `__call__` for `func(value)` on a type parameter bounded by it; a closed
+    instance holding a function item, pointer or closure calls that value with the remaining arguments. Any other
+    receiver, a nominal callable object included, keeps its ordinary method dispatch.
+    """
+    if not is_std_callable_call(target) or len(arguments) == 0:
+        return Ok(false)
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    held = scalar_place(builder, read.place, span)?
+                    match callable_signature(place_type(builder.locals, held)):
+                        Ok(_signature) => pass
+                        Err(_error) => return Ok(false)
+                    call_callable_place(builder, read, target.binding, arguments, 1, destination, span)?
+                    return Ok(true)
+                _ => return Ok(false)
+        None => return Ok(false)
+
+
+pub def lower_named_target(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
+    if lower_static_field_metadata(builder, target, arguments, destination, span)?:
+        return Ok(None)
+    match target.builtin:
+        Some(builtin) =>
+            if len(target.type_args) != 0:
+                return Err("unsupported Body IR builtin type arguments")
+            return lower_builtin(builder, builtin, arguments, destination, span)
+        None => pass
+    if lower_validated_constructor(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if is_derived_default(target):
+        return lower_derived_default(module, builder, target, destination, span)
+    if is_json_deserialize_method(target):
+        return lower_model_from_json(module, builder, target, arguments, destination, span)
+    match string_conversion_callee(module, builder, target, span)?:
+        Some((callee, result)) =>
+            operands = ordered_slot_operands(builder, target.binding, arguments, [PlanType.String], span, 0, true, false)?
+            mut output = temporary(builder, result, span)
+            match destination:
+                Some(place) => output = scalar_place(builder, place, span)?
+                None => pass
+            if place_type(builder.locals, output) != result:
+                return Err("unsupported Body IR string conversion Result destination")
+            return lower_callable_result(builder, callee, operands, output, result, span)
+        None => pass
+    if lower_value_enum_ordinal_encoding(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    match value_enum_from_value_owner(module, target)?:
+        Some(owner) => return lower_value_enum_from_value(builder, owner, arguments, destination, span)
+        None => pass
+    selected = static_receiver_target(
+        builder.constructors,
+        module,
+        target,
+        builder.trait_environment,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
+    match selected.canonical:
+        None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
+        Some(identity) =>
+            mut candidate = associated_body_index(module, selected, builder)?
+            match candidate:
+                None => candidate = builder.program.body_indices.unique(identity)
+                Some(_index) => pass
+            match candidate:
+                None => return lower_loaf_call(module, builder, selected, arguments, destination, span)
+                Some(index) =>
+                    body = module.bodies[index]
+                    if len(body.type_parameters) != 0:
+                        return lower_type_parameter_call(module, builder, selected, body, arguments, destination, span)
+                    if len(selected.type_args) != 0:
+                        return Err("unsupported Body IR type arguments on a function without type parameters")
+                    _ = validate_static_receiver(
+                        builder.constructors,
+                        module,
+                        selected,
+                        builder.trait_environment,
+                        builder.type_parameters,
+                        builder.type_arguments,
+                    )?
+                    if is_lazy_method_body(module, body):
+                        empty_arguments: list[RustType] = []
+                        request_instance(builder.instances, body, empty_arguments, [], false)
+                    return lower_local_call(module, builder, selected, body, arguments, destination, span)
+
+
+def lower_validated_constructor(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Construct one checked `Validate` model, then return its exact validator body's `Result`."""
+    match validated_model_owner(builder, target)?:
+        None => return Ok(false)
+        Some((owner, model_type)) =>
+            declaration = builder.nominals[owner]
+            match declaration.validated_constructor:
+                None => return Err("invalid Body IR validated constructor without a retained contract")
+                Some(contract) =>
+                    required = validated_required_operands(builder, owner, contract, target.binding, arguments, span)?
+                    fields = validated_model_fields(module, builder, owner, contract, required, span)?
+                    value = temporary(builder, model_type, span)
+                    construction = RvalueKind.Model(owner, fields)
+                    track_rvalue_moves(builder, construction)
+                    builder.emit(plan_assign(value, construction, span))
+                    builder.owned.append(value.local)
+                    match validated_method_body(module, builder, owner, contract.validator)?:
+                        Some(body) =>
+                            receiver_type = frame_type(
+                                builder.constructors,
+                                builder.nominals,
+                                builder.enums,
+                                body.locals[0],
+                                builder.intrinsics,
+                            )?
+                            require_validated_receiver(owner, receiver_type)?
+                            receiver = temporary(builder, receiver_type, span)
+                            builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
+                            callee = CalleeKind.Planned(function_name(module, body))
+                            emit_selected_body_call(
+                                module,
+                                builder,
+                                body,
+                                callee,
+                                [read_place(receiver, true, span)],
+                                destination,
+                                span,
+                            )?
+                        None =>
+                            lower_compiled_validator(
+                                module,
+                                builder,
+                                owner,
+                                contract.validator,
+                                value,
+                                destination,
+                                span,
+                            )?
+                    return Ok(true)
+
+
+def validated_model_owner(
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+) -> Result[Option[tuple[int, PlanType]], str]:
+    """Resolve a generated constructor only through its checked receiver layout and retained exact identity."""
+    match target.canonical:
+        None => return Ok(None)
+        Some(identity) =>
+            if not builder.constructors.validated_constructors.contains(identity):
+                return Ok(None)
+            if len(target.type_args) != 0:
+                return Err("unsupported Body IR type arguments on a validated constructor")
+            match target.receiver_type:
+                None => return Err("invalid Body IR validated constructor without a receiver type")
+                Some(receiver) =>
+                    closed: RustType = substitute(receiver, builder.type_parameters, builder.type_arguments)?
+                    model_type = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        closed,
+                        builder.intrinsics,
+                    )?
+                    match model_type:
+                        PlanType.Model(owner, _name) =>
+                            match builder.nominals[owner].validated_constructor:
+                                Some(contract) =>
+                                    if contract.constructor != identity.clone():
+                                        return Err("invalid Body IR validated constructor owner")
+                                None => return Err("invalid Body IR validated constructor receiver")
+                            return Ok(Some((owner, model_type)))
+                        _ => return Err("invalid Body IR validated constructor receiver type")
+
+
+def validated_required_operands(
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Bind the generated constructor's written arguments to its required canonical field slots."""
+    match binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("invalid Body IR defaults on validated constructor parameters")
+            return bound_validated_operands(builder, owner, contract, bindings, elements, span)
+        RustArgumentBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("invalid Body IR defaults on validated constructor parameters")
+            return bound_validated_operands(builder, owner, contract, bindings, elements, span)
+        RustArgumentBinding.UnresolvedPositional =>
+            if len(elements) != len(contract.required_fields):
+                return Err("invalid Body IR validated constructor arity")
+            mut operands: list[Operand] = []
+            for position in range(len(elements)):
+                match elements[position].as_one():
+                    Some(value) =>
+                        operands.append(
+                            model_field_operand(builder, owner, int(contract.required_fields[position]), value, span)?,
+                        )
+                    None => return Err("unsupported Body IR spread validated constructor argument")
+            return Ok(operands)
+
+
+def bound_validated_operands(
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    bindings: &list[RustBoundArgument],
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Order a resolved written-argument map by generated constructor parameter slot."""
+    count = len(contract.required_fields)
+    if len(bindings) != count or len(elements) != count:
+        return Err("invalid Body IR validated constructor binding")
+    mut operands: list[Operand] = []
+    for parameter in range(count):
+        mut written = -1
+        for position in range(len(bindings)):
+            if int(bindings[position].slot) == parameter:
+                if written >= 0:
+                    return Err("invalid Body IR duplicate validated constructor binding")
+                written = position
+        if written < 0:
+            return Err("invalid Body IR incomplete validated constructor binding")
+        match elements[written].as_one():
+            Some(value) =>
+                field = int(contract.required_fields[parameter])
+                operands.append(model_field_operand(builder, owner, field, value, span)?)
+            None => return Err("unsupported Body IR spread validated constructor argument")
+    return Ok(operands)
+
+
+def validated_model_fields(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    required: list[Operand],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Fill required fields from constructor arguments and every remaining field from its declaration default."""
+    declaration = builder.nominals[owner]
+    mut fields: list[Operand] = []
+    mut required_position = 0
+    for slot in range(len(declaration.fields)):
+        if (
+            required_position < len(contract.required_fields)
+            and int(contract.required_fields[required_position]) == slot
+        ):
+            fields.append(required[required_position])
+            required_position += 1
+            continue
+        match declaration.field_default_body:
+            None => return Err("invalid Body IR validated constructor missing field defaults")
+            Some(defaults) =>
+                if slot >= len(defaults.params):
+                    return Err("invalid Body IR validated constructor default slot")
+                match defaults.params[slot].default:
+                    CallableParamDefault.Source(_computation) => pass
+                    _ => return Err("invalid Body IR validated constructor unavailable field default")
+                ty = stored_field_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    declaration,
+                    slot,
+                    builder.intrinsics,
+                )?
+                fields.append(evaluate_default(module, builder, defaults, slot, ty, span, true)?)
+    if required_position != len(required):
+        return Err("invalid Body IR validated constructor required field map")
+    return Ok(fields)
+
+
+def validated_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    identity: RustCanonicalSymbolId,
+) -> Result[Option[RustBody], str]:
+    """Select one local validator body, leaving a compiled dependency validator to its retained callable."""
+    mut selected = -1
+    for index in builder.program.body_indices.candidates(identity.clone()):
+        body = body_at(module.bodies, index)
+        if body.canonical != Some(identity.clone()) or len(body.params) != 1 or len(body.locals) == 0 or body.is_async:
+            continue
+        if len(body.type_parameters) != 0:
+            continue
+        match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
+            Ok(PlanType.ModelRef(candidate, _name)) =>
+                if candidate != owner:
+                    continue
+            _ => continue
+        if selected >= 0:
+            return Err("invalid Body IR validated constructor with multiple validator bodies")
+        selected = index
+    if selected < 0:
+        return Ok(None)
+    return Ok(Some(body_at(module.bodies, selected).clone()))
+
+
+def require_validated_receiver(owner: int, receiver_type: PlanType) -> Result[None, str]:
+    """Require the validator receiver to borrow the exact model layout constructed by the generated method."""
+    match receiver_type:
+        PlanType.ModelRef(selected, _name) =>
+            if selected == owner:
+                return Ok(None)
+            return Err("invalid Body IR Validate receiver owner")
+        _ => return Err("invalid Body IR Validate receiver type")
+
+
+def lower_compiled_validator(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    identity: RustCanonicalSymbolId,
+    value: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a dependency model's compiled validator through its producer-authenticated callable record."""
+    mut selected = -1
+    for position in range(len(module.loaf_callables)):
+        candidate = module.loaf_callables[position]
+        if candidate.canonical != identity:
+            continue
+        if selected >= 0:
+            return Err("invalid Body IR validated constructor with multiple compiled validators")
+        selected = position
+    if selected < 0:
+        return Err("unsupported Body IR validated constructor without one validator body or callable")
+    callable = module.loaf_callables[selected]
+    if len(callable.parameters) != 1 or len(callable.type_parameters) != 0:
+        return Err("unsupported Body IR compiled Validate signature")
+    receiver_type = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        callable.parameters[0],
+        builder.intrinsics,
+    )?
+    require_validated_receiver(owner, receiver_type)?
+    receiver = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
+    mut result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        callable.return_type,
+        builder.intrinsics,
+    )?
+    match callable.declaration_frame():
+        Some(frame) => result = return_representation(frame, result)?
+        None => return Err("invalid Body IR compiled Validate declaration frame")
+    output = call_destination(builder, destination, result, span)?
+    match callable.rust_path():
+        None => return Err("invalid Body IR compiled Validate native identity")
+        Some(path) =>
+            return instantiated_external_call(
+                builder,
+                path,
+                [],
+                [receiver_type],
+                result,
+                [read_place(receiver, true, span)],
+                output,
+                span,
+            )
+
+
+def lower_type_parameter_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    body: &RustBody,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
+    _ = validate_static_receiver(
+        builder.constructors,
+        module,
+        target,
+        builder.trait_environment,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
+    closed = checked_type_arguments(builder, indexed_static_type_arguments(builder.constructors, target)?)?
+    typed_body = instantiate(body, closed, [])?
+    owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?
+    mut concrete_body = typed_body
+    if len(owned) != 0:
+        concrete_body = instantiate(body, closed, owned)?
+    request_instance(builder.instances, body, closed, owned, false)
+    return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)
+
+
+pub def checked_type_arguments(mut builder: Builder, arguments: list[RustType]) -> Result[list[RustType], str]:
+    """Close checked call arguments in their trait scope and method scope, then require admitted carriers."""
+    mut closed: list[RustType] = []
+    retained = close_trait_dispatch_arguments(builder.trait_environment, arguments)
+    for argument in retained:
+        match substitute(argument, builder.type_parameters, builder.type_arguments):
+            Err(reason) => return Err(f"{reason} in checked call arguments of {builder.name}")
+            Ok(concrete) =>
+                _ = native_source_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    concrete,
+                    builder.intrinsics,
+                )?
+                closed.append(concrete.clone())
+    return Ok(closed)
+
+
+def lower_local_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    body: &RustBody,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a canonical retained body; local span identities must agree when present."""
+    match target.direct_call_id:
+        None =>
+            # Publication removes source-local call ids even within one package fragment. Its exact validated
+            # canonical target selected this unique body; source modules still require their local span proof.
+            match body.canonical:
+                Some(identity) =>
+                    match identity.origin:
+                        SymbolOrigin.Module(_path) =>
+                            if canonical_module_identity(identity) == Some(builder.module_identity):
+                                return Err("unsupported Body IR local NamedCallableTarget without direct identity")
+                        SymbolOrigin.Package(library=_library, module_path=_path) => pass
+                        _ => return Err("unsupported Body IR unproven NamedCallableTarget")
+                None => return Err("unsupported Body IR unproven NamedCallableTarget")
+        Some(call_id) =>
+            if call_id != body.direct_call_id:
+                return Err("Body IR call identity disagrees with target body")
+    operands = ordered_arguments(module, builder, target.binding, arguments, body, span)?
+    if body.is_async:
+        match destination:
+            Some(place) =>
+                output = scalar_place(builder, place, span)?
+                return construct_future(module, builder, body, operands, output, span)
+            None => return Err("unsupported Body IR async call without carrier")
+    return emit_local_call(module, builder, body, operands, destination, span)
+
+
+def emit_local_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    body: &RustBody,
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
+    callee = CalleeKind.Planned(function_name(module, body))
+    return emit_selected_body_call(module, builder, body, callee, operands, destination, span)
+
+
+pub def emit_selected_body_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    body: RustBody,
+    callee: CalleeKind,
+    operands: list[Operand],
+    destination: Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
+    validate_source_input_call(module, builder, body)?
+    declared = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        body.return_type,
+        builder.intrinsics,
+        builder.file,
+    )?
+    result_type = return_representation(body, declared)?
+    output = call_destination(builder, destination, result_type, span)?
+    return lower_callable_result(builder, callee, operands, output, result_type, span)
+
+
+pub def lower_callable_result(
+    mut builder: Builder,
+    callee: CalleeKind,
+    operands: list[Operand],
+    output: Place,
+    result_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Replace an owned return through its checked destination carrier, preserving unwind cleanup.
+
+    1. Materialize owned results in their declared return carrier.
+    2. Apply the ordinary checked value-boundary conversions before dropping the old destination.
+    3. Transfer the converted owner to the destination; trivial results use their destination directly.
+    """
+    mut owned_closure = false
+    match result_type:
+        PlanType.Closure(_signature) =>
+            # The destination's function type takes the returned closure's own boxed representation.
+            if output.projection != Projection.Whole:
+                return Err("unsupported Body IR projected closure result")
+            builder.locals[output.local].ty = result_type
+            owned_closure = true
+        _ => pass
+    if (
+        result_type == PlanType.String
+        or is_nominal_type(result_type)
+        or is_owned_collection(result_type)
+        or owned_closure
+        or is_future(result_type)
+    ):
+        # 1. Materialize the result in its declared return carrier.
+        result = temporary(builder, result_type, span)
+        terminate_call(builder, callee, operands, result, span)
+        builder.owned.append(result.local)
+        # 2. Convert the checked boundary before replacing the old destination.
+        target_type = place_type(builder.locals, output)
+        value = boundary_plan_operand(builder, read_place(result, true, span), target_type, span)?
+        drop_owned(builder, output.local, span)
+        # 3. Transfer exactly the selected owner to its destination.
+        forget_moved_arguments(builder, [value])
+        builder.emit(plan_assign(output, RvalueKind.Use(value), span))
+        builder.owned.append(output.local)
+    else:
+        terminate_call(builder, callee, operands, output, span)
+    return Ok(None)
+
+
+pub def lower_callable_value(
+    mut builder: Builder,
+    target: &RustLocalCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
+    return call_callable_place(builder, target.operand, target.binding, arguments, 0, destination, span)
+
+
+pub def call_callable_place(
+    mut builder: Builder,
+    held: &RustPlaceOperand,
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    first: int,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call the function item, pointer or closure a local holds, binding the arguments from position `first` on.
+
+    A direct call passes every argument; a call through a callable bound's method passes the receiver first.
+    """
+    callable = scalar_place(builder, held.place, span)?
+    signature = callable_signature(place_type(builder.locals, callable))?
+    if len(signature) == 0:
+        return Err("invalid Body IR callable signature without return type")
+    mut operands: list[Operand] = []
+    match partial_flags(builder, callable.local):
+        Some(flags) =>
+            # A partial's supplied flags follow its written arguments, so it binds from the first argument only.
+            if first != 0:
+                return Err("unsupported Body IR partial called through a callable bound")
+            operands = partial_call_operands(builder, binding, arguments, signature.clone(), flags, span)?
+        None =>
+            mut parameters: list[PlanType] = []
+            for index in range(len(signature) - 1):
+                parameters.append(signature[index])
+            operands = ordered_slot_operands(builder, binding, arguments, parameters, span, first)?
+    result = signature[-1]
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) => output = scalar_place(builder, place, span)?
+        None => output = temporary(builder, result, span)
+    match place_type(builder.locals, callable):
+        PlanType.ClosureOnce(_held) =>
+            if held.fact != OwnershipFact.Move or not held.last_use:
+                return Err("unsupported Body IR consuming callable requires a moved last-use invocation")
+            return call_closure_once(builder, callable, signature, operands, output, span)
+        PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        PlanType.BorrowingClosure(_held) =>
+            call_closure(builder, callable, signature, operands, output, span)?
+            if held.last_use and callable.local > builder.parameter_count:
+                drop_owned(builder, callable.local, span)
+            return Ok(None)
+        PlanType.BorrowingClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
+        _ => pass
+    value = place_read(builder, held.place, held.fact, span)?
+    return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
+
+
+def call_closure_once(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Transfer an owned callable environment once, preserving packed argument and result ownership."""
+    elements = closure_arguments(signature)?
+    packed = temporary(builder, PlanType.CallableArguments(elements), span)
+    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
+    forget_owned(builder, callable.local)
+    return lower_callable_result(
+        builder,
+        CalleeKind.CallClosureOnce(signature),
+        [read_place(callable, true, span), read_place(packed, true, span)],
+        output,
+        signature[-1],
+        span,
+    )
+
+
+pub def call_closure(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Pack the call's inputs into one tuple and invoke the borrowed callable object."""
+    elements = closure_arguments(signature)?
+    packed = temporary(builder, PlanType.CallableArguments(elements), span)
+    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
+    receiver = callable_object(builder, callable, signature, span)?
+    mut callee = CalleeKind.CallClosure(signature)
+    match place_type(builder.locals, callable):
+        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) =>
+            callee = CalleeKind.CallBorrowingClosure(signature)
+        _ => pass
+    return lower_callable_result(
+        builder,
+        callee,
+        [receiver, read_place(packed, true, span)],
+        output,
+        signature[-1],
+        span,
+    )
+
+
+pub def callable_object(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow an owned closure, or copy a received view, as the shared callable object a call takes."""
+    match place_type(builder.locals, callable):
+        PlanType.ClosureRef(_held) => return Ok(read_place(callable, false, span))
+        PlanType.BorrowingClosureRef(_held) => return Ok(read_place(callable, false, span))
+        PlanType.Closure(_held) =>
+            view = temporary(builder, PlanType.ClosureRef(signature), span)
+            builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
+            return Ok(read_place(view, false, span))
+        PlanType.BorrowingClosure(_held) =>
+            view = temporary(builder, PlanType.BorrowingClosureRef(signature), span)
+            builder.emit(plan_assign(view, RvalueKind.ClosureObject(callable), span))
+            return Ok(read_place(view, false, span))
+        _ => return Err("unsupported Body IR callable without an object representation")
+
+
+pub def callable_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    signature: list[PlanType],
+    span: SourceSpan,
+    borrowing: bool = false,
+) -> Result[Operand, str]:
+    """Adapt a callable to the parameter's shared view or call-owned lending envelope."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            match partial_flags(builder, place.local):
+                Some(_flags) => return Err("unsupported Body IR partial passed to a closure-holding parameter")
+                None => pass
+            source = place_type(builder.locals, place)
+            if callable_signature(source)? != signature:
+                return Err("invalid Body IR callable argument signature")
+            match source:
+                PlanType.FunctionItem(_name, _held) =>
+                    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+                    builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(place, false, span)), span))
+                    owner = pointer_callable_owner(builder, pointer, signature, span)?
+                    if borrowing:
+                        return borrowed_callable_argument(builder, owner, signature, span)
+                    return callable_object(builder, owner, signature, span)
+                PlanType.FunctionPointer(_held) =>
+                    owner = pointer_callable_owner(builder, place, signature, span)?
+                    if borrowing:
+                        return borrowed_callable_argument(builder, owner, signature, span)
+                    return callable_object(builder, owner, signature, span)
+                _ =>
+                    if borrowing:
+                        return borrowed_callable_argument(builder, place, signature, span)
+                    return callable_object(builder, place, signature, span)
+        _ => return Err("unsupported Body IR constant passed to a closure-holding parameter")
+
+
+def borrowed_callable_argument(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Move a call-owned envelope that lends the source callable for the callee's calls."""
+    mut borrowing_source = false
+    match place_type(builder.locals, callable):
+        (PlanType.BorrowingClosure(_held) | PlanType.BorrowingClosureRef(_held)) => borrowing_source = true
+        (PlanType.Closure(_held) | PlanType.ClosureRef(_held)) => pass
+        _ => return Err("unsupported Body IR borrowing callable argument")
+    source = callable_object(builder, callable, signature, span)?
+    mut capture = PlanType.ClosureRef(signature)
+    if borrowing_source:
+        capture = PlanType.BorrowingClosureRef(signature)
+    name = f"__incan_borrowed_callable_{builder.name}_{len(builder.synthesized)}"
+    synthesize(builder, borrowed_callable_forwarder(name, signature, borrowing_source, span)?)
+    constructor = f"{name}_new"
+    synthesize(builder, closure_constructor(constructor, name, [capture], signature, false, span, borrowing=true))
+    boxed = temporary(builder, PlanType.BorrowingClosure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(constructor), [source], boxed, span)
+    builder.owned.append(boxed.local)
+    return Ok(read_place(boxed, true, span))
+
+
+def pointer_callable_owner(
+    mut builder: Builder,
+    pointer: Place,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Own a forwarding environment so either a borrowed argument or a union payload retains the function value."""
+    _ = closure_arguments(signature)?
+    name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
+    synthesize(builder, pointer_forwarder(name, signature, span))
+    constructor = f"{name}_new"
+    synthesize(
+        builder,
+        closure_constructor(constructor, name, [PlanType.FunctionPointer(signature)], signature, false, span),
+    )
+    boxed = temporary(builder, PlanType.Closure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
+    builder.owned.append(boxed.local)
+    return Ok(boxed)
+
+
+pub def carrier_callable_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Fill an environment-owning payload selected by the retained union declaration, preserving captured values."""
+    mut owner = -1
+    match target:
+        PlanType.Enum(index, _name) => owner = index
+        _ => return Ok(value)
+    if owner < len(builder.enums):
+        return Ok(value)
+    declaration = builder.intrinsics[owner - len(builder.enums)]
+    source = operand_type(builder, value)?
+    if declaration.carrier != Carrier.Declared or not callable_copy_type(source):
+        return Ok(value)
+    signature = callable_signature(source)?
+    for variant in declaration.variants:
+        if variant.fields != [PlanType.Closure(signature)]:
+            continue
+        return owned_callable_value(builder, value, signature, span)
+    return Ok(value)
+
+
+pub def owned_callable_value(
+    mut builder: Builder,
+    value: Operand,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Retain a function item's forwarding environment at any environment-owning value boundary."""
+    source = operand_type(builder, value)?
+    if source == PlanType.Closure(signature):
+        return Ok(value)
+    if not callable_copy_type(source) or callable_signature(source)? != signature:
+        return Err("unsupported Body IR callable ownership conversion")
+    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    match source:
+        PlanType.FunctionItem(_item, _held) => builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(value), span))
+        _ => builder.emit(plan_assign(pointer, RvalueKind.Use(value), span))
+    boxed = pointer_callable_owner(builder, pointer, signature, span)?
+    return Ok(read_place(boxed, true, span))
+
+
+def callable_address(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Expose the address of the exact checked pointer, reifying an item without replacing its signature."""
+    mut pointer = value
+    match operand_type(builder, value)?:
+        PlanType.FunctionItem(_name, signature) =>
+            held = temporary(builder, PlanType.FunctionPointer(signature), span)
+            builder.emit(plan_assign(held, RvalueKind.ReifyFunction(value), span))
+            pointer = read_place(held, false, span)
+        PlanType.FunctionPointer(_signature) => pass
+        _ => return Err("unsupported Body IR callable-name receiver without a retained function pointer")
+    address = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(address, RvalueKind.FunctionAddress(pointer), span))
+    return Ok(read_place(address, false, span))
+
+
+pub def register_callable_item(mut builder: Builder, value: Operand, name: str, span: SourceSpan) -> Result[None, str]:
+    """Register an authenticated named read before a decorator or ordinary argument can observe its name."""
+    address = callable_address(builder, value, span)?
+    module = owned_literal(builder, builder.module_identity, span)
+    label = owned_literal(builder, name, span)
+    forget_owned(builder, module.local)
+    forget_owned(builder, label.local)
+    output = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        "incan_native_runtime::register_callable_name",
+        [PlanType.String, PlanType.USize, PlanType.String],
+        PlanType.Unit,
+        [read_place(module, true, span), address, read_place(label, true, span)],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+pub def lower_callable_name(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Resolve a registered declaration name independently of the pointer's argument and result signature."""
+    if not builder.callable_name_dynamic_profile:
+        return Err("unsupported Body IR callable-name lookup across registration modules")
+    if len(arguments) != 1:
+        return Err("invalid Body IR callable-name operand count")
+    match arguments[0].as_one():
+        Some(value) =>
+            callback = value_operand(builder, value, span)?
+            address = callable_address(builder, callback, span)?
+            module = owned_literal(builder, builder.module_identity, span)
+            forget_owned(builder, module.local)
+            output = call_destination(builder, destination, PlanType.String, span)?
+            external_call(
+                builder,
+                "incan_native_runtime::callable_name",
+                [PlanType.String, PlanType.USize],
+                PlanType.String,
+                [read_place(module, true, span), address],
+                output,
+                span,
+            )
+            return Ok(None)
+        None => return Err("unsupported Body IR callable-name spread operand")

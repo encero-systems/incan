@@ -1,0 +1,6 @@
+from pub::selected import combined
+
+
+pub def value() -> int:
+    """Use the shared library with the graph's complete feature selection."""
+    return combined()

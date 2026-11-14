@@ -1,0 +1,114 @@
+"""Bounded owned byte assembly for binary encodings and their indexed cells."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_native_unsigned
+
+
+pub class EncodingBuffer:
+    """Private output while writing; callers receive bytes only after the complete operation succeeds."""
+
+    data: list[u8]
+
+    @staticmethod
+    pub def create() -> Self:
+        """Start an empty operation-local buffer with no externally exposed partial view."""
+        return EncodingBuffer(data=[])
+
+    pub def length(self) -> int:
+        """Return the currently accumulated byte length for checked offsets and frames."""
+        return len(self.data)
+
+    pub def append(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
+        """Charge the copy and check host addition before modifying the buffer."""
+        if len(value) > 9223372036854775807 - len(self.data):
+            return Err(CrumbError.limit("encoding buffer length"))
+        budget.charge_bytes(len(value))?
+        for byte in value:
+            self.data.append(byte.saturating_resize[u8]())
+        return Ok(None)
+
+    pub def octet(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
+        """Append exactly one checked byte; no silently truncated tag or bitmap is permitted."""
+        if value < 0 or value > 255:
+            return Err(CrumbError.invalid_input("encoding octet"))
+        budget.charge_bytes(1)?
+        self.data.append(value.saturating_resize[u8]())
+        return Ok(None)
+
+    pub def count(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
+        """Host-sized nonnegative lengths are a representable subset of the exact unsigned L domain."""
+        if value < 0:
+            return Err(CrumbError.invalid_input("negative encoding length"))
+        return self.append(encode_native_unsigned(value.wrapping_resize[u128](), budget)?, budget)
+
+    pub def frame(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
+        """Append the shortest length and exact payload under one shared request budget."""
+        self.count(len(value), budget)?
+        return self.append(value, budget)
+
+    pub def offset(mut self, value: int, width: int, mut budget: Budget) -> Result[None, CrumbError]:
+        """Write a nonnegative little-endian offset only if it fits its selected width."""
+        if value < 0 or not valid_offset_width(width):
+            return Err(CrumbError.invalid_input("encoding offset"))
+        if offset_width(value)? > width:
+            return Err(CrumbError.invalid_input("encoding offset width"))
+        mut remaining = value + 0
+        for _ in range(width):
+            self.octet(remaining % 256, budget)?
+            remaining = remaining // 256
+        return Ok(None)
+
+    pub def finish(self, mut budget: Budget) -> Result[bytes, CrumbError]:
+        """Copy the completed output to an independent owned result within the same allowance."""
+        budget.charge_bytes(len(self.data))?
+        return Ok(self.data.clone())
+
+
+pub def offset_width(length: int) -> Result[int, CrumbError]:
+    """Choose the smallest permitted width, including one byte for the zero final offset."""
+    if length < 0:
+        return Err(CrumbError.invalid_input("negative encoding offset"))
+    if length <= 255:
+        return Ok(1)
+    if length <= 65535:
+        return Ok(2)
+    if length <= 4294967295:
+        return Ok(4)
+    return Ok(8)
+
+
+pub def valid_offset_width(width: int) -> bool:
+    """Recognize the four fixed offset widths without allocating a comparison collection."""
+    return width == 1 or width == 2 or width == 4 or width == 8
+
+
+pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Build width, count+1 offsets and cells; the containing layout owns count and bitmap."""
+    budget.charge_elements(len(cells))?
+    mut total = 0
+    for cell in cells:
+        if len(cell) > 9223372036854775807 - total:
+            return Err(CrumbError.limit("indexed cell length"))
+        total += len(cell)
+    width = offset_width(total)?
+    offset_table_length(len(cells), width)?
+    mut output = EncodingBuffer.create()
+    output.octet(width, budget)?
+    mut position = 0
+    output.offset(position, width, budget)?
+    for cell in cells:
+        position += len(cell)
+        output.offset(position, width, budget)?
+    for cell in cells:
+        output.append(cell, budget)?
+    return output.finish(budget)
+
+
+pub def offset_table_length(count: int, width: int) -> Result[int, CrumbError]:
+    """Check count+1 and multiplication before allocating or addressing a fixed-width offset table."""
+    if count < 0 or not valid_offset_width(width):
+        return Err(CrumbError.invalid_input("offset table dimensions"))
+    if count > 9223372036854775807 // width - 1:
+        return Err(CrumbError.limit("offset table length"))
+    return Ok((count + 1) * width)

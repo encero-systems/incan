@@ -33,7 +33,7 @@ def main() -> None:
 
 This still has a static shape. `User` is a declared model. `load_user` is fallible, and `main` handles both success and error explicitly. `greeting` does not accept just anything that happens to have a `name` field. The compiler can reason about the program before it runs.
 
-What is missing is also intentional: no `&User`, no lifetime parameter, no `Result<User, E>` ceremony beyond the part that communicates real API meaning, and no user-authored `.clone()` or `.as_ref()` just to satisfy generated Rust in normal code.
+What is missing is also intentional: no `&User`, no lifetime parameter, no `Result<User, E>` ceremony beyond the part that communicates real API meaning, and no user-authored `.clone()` or `.as_ref()` just to satisfy the Rust compiler in normal code.
 
 ## What Rust intuition gets right
 
@@ -99,9 +99,9 @@ def archive_user(user: User) -> ArchivedUser:
     return ArchivedUser.from_user(user)
 ```
 
-The `print_user` method only reads. The `rename_user` method mutates, so the receiver says `mut self`. The `archive_user` function returns a new value from the supplied user. Incan is not pretending those operations are the same. It is letting the source code describe the operation in Incan terms, then letting the compiler choose the generated Rust shape.
+The `print_user` method only reads. The `rename_user` method mutates, so the receiver says `mut self`. The `archive_user` function returns a new value from the supplied user. Incan is not pretending those operations are the same. It is letting the source code describe the operation in Incan terms, then letting the compiler choose the native ownership shape.
 
-The compiler-side duckborrowing planner decides when generated Rust should move, borrow, mutably borrow, clone, call `.into()`, or materialize owned `String` storage. The contributor docs describe it as "the backend ownership-planning layer that lets Incan keep value-oriented source semantics while emitting valid, predictable Rust."[^incan-duckborrowing]
+The compiler-side duckborrowing planner decides when compiled code moves, borrows, mutably borrows, clones, calls `.into()`, or materializes owned `String` storage. It lets Incan keep value-oriented source semantics while producing valid, predictable native code.
 
 For user code, the rule of thumb is:
 
@@ -110,7 +110,7 @@ For user code, the rule of thumb is:
 - rely on ordinary `Result`, `Option`, traits, models, and signatures for the real API contract
 - treat manual `.clone()`, `.as_ref()`, `.to_string()`, and `.into()` workarounds in ordinary Incan code as a smell unless you are intentionally shaping a Rust interop boundary
 
-Duckborrowing is not "clone until Rust accepts it". The compiler should preserve moves when it can prove a value is consumed, borrow at Rust interop boundaries where the Rust API expects references, and add `Clone` bounds only when backend-inserted cloning actually requires them.
+Duckborrowing is not "clone until Rust accepts it". The compiler should preserve moves when it can prove a value is consumed, borrow at Rust interop boundaries where the Rust API expects references, and add `Clone` bounds only when compiler-inserted cloning actually requires them.
 
 ### Decorated methods
 
@@ -312,12 +312,10 @@ If the answer is yes, Incan is worth considering on its own terms.
 - [Rust interop](../how-to/rust_interop.md)
 - [Models and classes](models_and_classes/index.md)
 - [Derives and traits](derives_and_traits.md)
-- [Duckborrowing](../../contributing/explanation/duckborrowing.md)
 - [Decorators and callable values (how-to)](../how-to/decorators.md)
 
 [^rust-ownership]: The Rust Book: [What Is Ownership?](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
 [^rust-borrowing]: The Rust Book: [References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html).
 [^rust-traits]: The Rust Book: [Defining Shared Behavior with Traits](https://doc.rust-lang.org/book/ch10-02-traits.html).
 [^rust-result]: The Rust Book: [Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html).
-[^incan-duckborrowing]: Incan contributor docs: [Duckborrowing](../../contributing/explanation/duckborrowing.md).
 [^incan-rust-interop]: Incan docs: [Rust interop](../how-to/rust_interop.md).

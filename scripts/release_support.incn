@@ -1,0 +1,995 @@
+"""Shared release and installed-verification contracts, evidence models, and process execution."""
+
+from rust::std::cell import RefCell
+from rust::std::fs import File
+from rust::std::ops import DerefMut
+from rust::std::process import Child, Command, ExitStatus, Stdio, id
+from rust::std::rc import Rc
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest, sha256
+from std.json import JsonValue
+from std.regex import Regex
+
+pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.8"
+pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.8"
+pub const FAMILIES: FrozenList[str] = [
+    "behavior",
+    "check",
+    "library",
+    "interop",
+    "testing",
+    "project",
+    "format",
+    "graph",
+]
+pub const STANDARD_PACKAGES: FrozenList[str] = [
+    "primitives",
+    "testing",
+    "async",
+    "system",
+    "codecs",
+    "compression",
+    "web",
+    "data",
+    "observability",
+    "vocab",
+    "interop",
+]
+
+
+pub model ReleaseOptions:
+    """Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout."""
+
+    pub source_sha: str
+    pub output: Path
+    pub keep_trees: bool
+    pub prove_fixed_point: bool
+    pub jobs: int
+    pub timeout_seconds: int
+
+
+pub model VerificationOptions:
+    """Installed-verification evidence directory, worker count, and per-command timeout."""
+
+    pub output: Path
+    pub jobs: int
+    pub timeout_seconds: int
+
+
+@derive(Clone, Eq)
+pub model Counts:
+    """Contract outcomes parsed from one complete eight-family runner log."""
+
+    pub passed: int
+    pub failed: int
+    pub pending: int
+
+
+pub model BaselineReport:
+    """A complete census and the committed baseline keys it preserves."""
+
+    pub counts: Counts
+    pub baseline_keys: int
+    pub lost_passes: list[str]
+    pub result_keys: list[str]
+    pub result_statuses: Dict[str, str]
+
+
+pub model ReleaseSpan:
+    """One open release invocation span, identified within its process-owned trace stream."""
+
+    pub id: str
+
+
+model ReleaseTraceState:
+    """Mutable invocation stream state shared by every phase and step handle in one release process."""
+
+    path: Path
+    started: Instant
+    process: int
+    inherited_parent: str
+    next_id: int = 1
+    active_phase: str = ""
+
+
+pub model ReleaseTrace:
+    """
+    Own one process's release trace and its active phase parent.
+
+    The stream uses the compiler invocation schema so the existing Where the Time Went parser can combine release
+    orchestration and compiler spans without a release-only adapter. Each process owns one file, every step attaches to
+    the phase active when it starts, and phase transitions close the previous phase before opening the next.
+    """
+
+    state: Rc[RefCell[ReleaseTraceState]]
+
+    @staticmethod
+    pub def open(directory: Path) -> Result[ReleaseTrace, str]:
+        """Create one process-owned invocation stream and publish its clock origin before any spans."""
+        return Ok(ReleaseTrace(state=open_release_trace_state(directory, "", "scripts/release.incn")?))
+
+    @staticmethod
+    pub def linked(directory: Path, parent: str, executable: str) -> Result[ReleaseTrace, str]:
+        """Create one process-owned stream whose root spans attach to a span in another process."""
+        if parent == "":
+            return Err("a linked release trace needs a parent span identity")
+        return Ok(ReleaseTrace(state=open_release_trace_state(directory, parent, executable)?))
+
+    pub def phase(self, name: str) -> Result[None, str]:
+        """Close the preceding release phase and open one root phase span."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        if state.active_phase != "":
+            trace_write_end(state, state.active_phase)?
+        span = trace_begin(state, name, state.inherited_parent)?
+        state.active_phase = span.id
+        return Ok(None)
+
+    pub def begin(self, name: str) -> Result[ReleaseSpan, str]:
+        """Open one step below the active phase or the inherited cross-process parent."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        mut parent = str(state.inherited_parent)
+        if state.active_phase != "":
+            parent = state.active_phase
+        return trace_begin(state, name, parent)
+
+    pub def finish(self, span: ReleaseSpan) -> Result[None, str]:
+        """Close one previously opened step span."""
+        mut held = self.state.as_ref().borrow_mut()
+        return trace_write_end(held.deref_mut(), span.id)
+
+    pub def complete(self) -> Result[None, str]:
+        """Close the final process-owned phase without closing an inherited parent span."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        if state.active_phase != "":
+            trace_write_end(state, state.active_phase)?
+            state.active_phase = ""
+        return Ok(None)
+
+
+def open_release_trace_state(
+    directory: Path,
+    parent: str,
+    executable: str,
+) -> Result[Rc[RefCell[ReleaseTraceState]], str]:
+    """Open one unique invocation stream and return its private shared state."""
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    epoch = epoch_nanoseconds()?
+    process = int(id())
+    path = directory.joinpath(f"{process}-{epoch}.jsonl")
+    mut parent_value = JsonValue.null()
+    if parent != "":
+        parent_value = JsonValue.string(parent)
+    process_record = JsonValue.object(
+        {"schema": JsonValue.string("incan.invocations/1"), "kind": JsonValue.string("process"), "pid": JsonValue.int(
+            process,
+        ), "epoch_ns": JsonValue.int(epoch), "parent": parent_value, "executable": JsonValue.string(executable), "thread": JsonValue.string(
+            "main",
+        ), "time_ns": JsonValue.int(0)},
+    )
+    path
+        .write_text(process_record.to_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(
+        Rc.new(
+            RefCell.new(ReleaseTraceState(path=path, started=Instant.now(), process=process, inherited_parent=parent)),
+        ),
+    )
+
+
+def trace_begin(mut state: &mut ReleaseTraceState, name: str, parent: str) -> Result[ReleaseSpan, str]:
+    """Allocate and publish one begin record with an optional release-phase parent."""
+    identifier = f"release:{state.process}:{state.next_id}"
+    state.next_id += 1
+    mut parent_value = JsonValue.null()
+    if parent != "":
+        parent_value = JsonValue.string(parent)
+    trace_write(
+        state,
+        JsonValue.object(
+            {"kind": JsonValue.string("begin"), "id": JsonValue.string(identifier), "parent": parent_value, "function": JsonValue.string(
+                name,
+            ), "file": JsonValue.string("scripts/release.incn"), "line": JsonValue.null(), "fields": JsonValue.object({})},
+        ),
+    )?
+    return Ok(ReleaseSpan(id=identifier))
+
+
+def trace_write_end(state: &mut ReleaseTraceState, identifier: str) -> Result[None, str]:
+    """Publish one end record for an existing release span identity."""
+    return trace_write(state, JsonValue.object({"kind": JsonValue.string("end"), "id": JsonValue.string(identifier)}))
+
+
+def trace_write(state: &mut ReleaseTraceState, value: JsonValue) -> Result[None, str]:
+    """Append one invocation record with this process's shared monotonic clock."""
+    mut record = value.expect_object().map_err((error) => error.message())?
+    record["pid"] = JsonValue.int(state.process)
+    record["thread"] = JsonValue.string("main")
+    record["time_ns"] = JsonValue.int(int(state.started.elapsed().as_nanos()))
+    mut text = state.path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += JsonValue.object(record).to_json().map_err((error) => error.message())? + "\n"
+    return state.path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub model Step:
+    """One timed child process with isolated environment changes and durable output."""
+
+    pub name: str
+    pub executable: str
+    pub arguments: list[str]
+    pub environment: Dict[str, str]
+    pub remove_environment: list[str]
+    pub directory: Option[Path]
+    pub log: Path
+    pub timeout_seconds: int
+    pub trace: Option[ReleaseTrace] = None
+
+
+pub model ReservedStep:
+    """One child process and the bytes its complete process tree reserves while running."""
+
+    pub child: Step
+    pub reservation: int
+
+
+model RunningStep:
+    """One active reserved child and the evidence needed to time and stop it."""
+
+    position: int
+    name: str
+    reservation: int
+    timeout_seconds: int
+    started: Instant
+    child: Rc[RefCell[Child]]
+    trace: Option[ReleaseTrace]
+    span: Option[ReleaseSpan]
+
+
+pub model BackgroundStep:
+    """One child retained across release phases until its explicit join or cancellation."""
+
+    pub name: str
+    pub log: Path
+    pub started: Instant
+    pub child: Rc[RefCell[Child]]
+    pub trace: Option[ReleaseTrace]
+    pub span: Option[ReleaseSpan]
+
+
+pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
+    """Parse release identity, retention, proof, and process budgets without reading process state."""
+    mut positional: list[str] = []
+    mut keep_trees = false
+    mut prove = false
+    mut jobs = 4
+    mut timeout = 600
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--keep-trees":
+            keep_trees = true
+            index += 1
+        elif argument == "--prove-fixed-point":
+            prove = true
+            index += 1
+        elif argument == "--jobs" or argument == "--timeout":
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} needs a positive integer")
+            value = positive(arguments[index + 1], argument)?
+            if argument == "--jobs":
+                jobs = value
+            else:
+                timeout = value
+            index += 2
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            positional.append(argument)
+            index += 1
+    if len(positional) != 2:
+        return Err("usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
+    if not full_sha(positional[0]):
+        return Err("SHA must be a full lowercase source commit")
+    return Ok(
+        ReleaseOptions(
+            source_sha=positional[0],
+            output=Path(positional[1]),
+            keep_trees=keep_trees,
+            prove_fixed_point=prove,
+            jobs=jobs,
+            timeout_seconds=timeout,
+        ),
+    )
+
+
+pub def parse_verification_options(arguments: list[str]) -> Result[VerificationOptions, str]:
+    """Parse `OUT [--jobs N] [--timeout SECONDS]` for an already installed toolchain."""
+    mut positional: list[str] = []
+    mut jobs = 2
+    mut timeout = 120
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--jobs" or argument == "--timeout":
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} needs a positive integer")
+            value = positive(arguments[index + 1], argument)?
+            if argument == "--jobs":
+                jobs = value
+            else:
+                timeout = value
+            index += 2
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            positional.append(argument)
+            index += 1
+    if len(positional) != 1:
+        return Err("usage: verify_installation.incn OUT [--jobs N] [--timeout SECONDS]")
+    return Ok(VerificationOptions(output=Path(positional[0]), jobs=jobs, timeout_seconds=timeout))
+
+
+pub def check_baseline(baseline: str, log: str) -> Result[BaselineReport, str]:
+    """Require a complete eight-family census and every committed baseline key to remain `PASS`."""
+    valid = Regex("^(behavior|check|library|interop|testing|project|format|graph)/[a-z_][a-z0-9_]*/[a-z_][a-z0-9_]*$").map_err(
+        (error) => error.message(),
+    )?
+    baseline_keys = parse_baseline_keys(baseline, valid)?
+    results, families, counts, totals = parse_results(log, valid)?
+    if totals is None:
+        return Err("expected one final total; runner log is incomplete")
+    expected = totals.unwrap_or(Counts(passed=-1, failed=-1, pending=-1))
+    if expected != counts:
+        return Err("final total disagrees with case results")
+    for family in FAMILIES:
+        if family not in families:
+            return Err(f"family absent: {family}")
+    mut lost: list[str] = []
+    for key in baseline_keys:
+        if key not in results or results[key] != "PASS":
+            mut status = "MISSING"
+            if key in results:
+                status = results[key]
+            lost.append(f"{key} -> {status}")
+    if len(lost) > 0:
+        return Err("lost PASS " + "; lost PASS ".join(lost))
+    return Ok(
+        BaselineReport(
+            counts=counts,
+            baseline_keys=len(baseline_keys),
+            lost_passes=lost,
+            result_keys=sorted([key for key in results.keys()]),
+            result_statuses=results,
+        ),
+    )
+
+
+pub def baseline_summary(report: BaselineReport) -> str:
+    """Render the stable one-line installed-verification baseline summary."""
+    return (
+        f"release: {report.counts.passed} PASS, {report.counts.failed} FAIL, {report.counts.pending} PEND; " + f"{report.baseline_keys} baseline keys, {len(
+            report.lost_passes,
+        )} lost PASS"
+    )
+
+
+pub def require_candidate_census(reference: &BaselineReport, candidate: &BaselineReport) -> Result[None, str]:
+    """Require one installed candidate census to retain the seed inventory and every seed PASS outcome."""
+    if reference.result_keys != candidate.result_keys:
+        return Err("candidate case keys differ from the integration census")
+    for key in reference.result_keys:
+        if reference.result_statuses[key] == "PASS" and candidate.result_statuses[key] != "PASS":
+            return Err(f"candidate lost integration PASS: {key}")
+    return Ok(None)
+
+
+pub def counts_json(counts: Counts) -> JsonValue:
+    """Encode contract counts for release and verification receipts."""
+    return JsonValue.object(
+        {"pass": JsonValue.int(counts.passed), "fail": JsonValue.int(counts.failed), "pending": JsonValue.int(
+            counts.pending,
+        )},
+    )
+
+
+pub def release_receipt(
+    source_sha: str,
+    host: str,
+    outcome: str,
+    phase: str,
+    exit_code: int,
+    elapsed_seconds: int,
+    tree_bytes: JsonValue,
+    artifacts: Dict[str, JsonValue],
+    compiler_build: str,
+    contracts: JsonValue,
+    oven_tests: JsonValue,
+    baseline_parity: JsonValue,
+) -> JsonValue:
+    """Build the stable `incan.release-rehearsal/1` receipt without reading process or filesystem state."""
+    return JsonValue.object(
+        {"schema": JsonValue.string("incan.release-rehearsal/1"), "source_sha": JsonValue.string(source_sha), "host": JsonValue.string(
+            host,
+        ), "outcome": JsonValue.string(outcome), "phase": JsonValue.string(phase), "exit_code": JsonValue.int(exit_code), "elapsed_seconds": JsonValue.int(
+            elapsed_seconds,
+        ), "tree_bytes": tree_bytes, "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(
+            compiler_build,
+        ), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
+    )
+
+
+pub def digest(path: Path) -> Result[str, str]:
+    """Return a file's lowercase SHA-256 digest."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+
+
+pub def reference_cache_identity(
+    seed_oven: Path,
+    seed_lsp: Path,
+    seed_manifest: Path,
+    contracts_tree: str,
+    stdlib_tree: str,
+) -> Result[str, str]:
+    """Hash every seed component and committed source tree that determine reference outcomes."""
+    mut hasher = sha256.new()
+    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree, stdlib_tree]:
+        encoded = value.encode("utf-8")
+        hasher.update(f"{len(encoded)}:".encode("utf-8"))
+        hasher.update(encoded)
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def reference_cache_root(seed_home: Path) -> Path:
+    """Keep reusable reference evidence inside the caller-owned seed home cache boundary."""
+    return seed_home.joinpath("cache/release-reference")
+
+
+pub def store_reference_log(log: Path, cached: Path) -> Result[None, str]:
+    """Move one complete census log into its cache entry, then clone it back for the release receipt."""
+    cached.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = log.move(cached).map_err((error) => error.message())?
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def reuse_reference_log(cached: Path, log: Path) -> Result[None, str]:
+    """Clone one validated cached census log into the release evidence directory."""
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def release_rust_cache_root(seed_home: Path) -> Path:
+    """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
+    return seed_home.joinpath("cache/release-rust")
+
+
+pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
+    """Compare complete file bytes without delegating to an external command."""
+    if not left.is_file() or not right.is_file():
+        return Err(f"cannot compare missing files: {left.0}, {right.0}")
+    return Ok(digest(left)? == digest(right)?)
+
+
+pub def verification_program(source: Path) -> Result[Path, str]:
+    """Select the installed verifier from the detached verification source so its binary resolves that checkout."""
+    program = source.joinpath("scripts/verify_installation.incn")
+    if not program.is_file():
+        return Err(f"verification source has no installed verifier: {program.0}")
+    return Ok(program)
+
+
+pub def tree_bytes(root: Path) -> Result[int, str]:
+    """Measure the logical bytes in regular files under one tree with one descendant walk."""
+    if not root.exists():
+        return Ok(0)
+    mut total = 0
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        if entry.is_symlink() or not entry.is_file():
+            continue
+        total += entry.stat().and_then((value) => value.size()).map_err((error) => error.message())?
+    return Ok(total)
+
+
+pub def reclaim_paths(paths: list[Path]) -> Result[int, str]:
+    """Remove only caller-selected release scratch roots and return their measured logical bytes."""
+    mut reclaimed = 0
+    for path in paths:
+        if not path.exists() and not path.is_symlink():
+            continue
+        reclaimed += tree_bytes(path)?
+        path.remove_tree().map_err((error) => f"cannot remove release scratch {path.0}: {error.message()}")?
+    return Ok(reclaimed)
+
+
+pub def record_tree_sample(root: Path, evidence: Path, label: str) -> Result[int, str]:
+    """Measure one release-tree checkpoint, append it to evidence, and retain the largest observed sample."""
+    measured = tree_bytes(root)?
+    mut samples = ""
+    if evidence.is_file():
+        samples = evidence.read_text("utf-8", "strict").map_err((error) => error.message())?
+    samples += f"{label}\t{measured}\n"
+    evidence.write_text(samples, "utf-8", "strict", None).map_err((error) => error.message())?
+    peak = evidence.parent().joinpath("tree-peak.txt")
+    mut largest = 0
+    if peak.is_file():
+        largest = int(peak.read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+    if measured > largest:
+        peak.write_text(f"{measured}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(measured)
+
+
+pub def tree_digest(root: Path) -> Result[str, str]:
+    """Hash one tree's relative directory names and complete regular-file contents in stable order."""
+    if not root.is_dir():
+        return Err(f"cannot digest missing tree: {root.0}")
+    prefix = root.0 + "/"
+    mut entries = sorted([entry.0 for entry in root.rglob("*").map_err((error) => error.message())?])
+    mut hasher = sha256.new()
+    for value in entries:
+        if not value.startswith(prefix):
+            return Err(f"tree entry escapes its root: {value}")
+        entry = Path(value)
+        relative = value[len(prefix):]
+        encoded = relative.encode("utf-8")
+        if entry.is_dir():
+            hasher.update(f"d{len(encoded)}:".encode("utf-8"))
+            hasher.update(encoded)
+        elif entry.is_file():
+            hasher.update(f"f{len(encoded)}:".encode("utf-8"))
+            hasher.update(encoded)
+            hasher.update(file_digest(entry, "sha256").map_err((error) => error.message())?)
+        else:
+            return Err(f"tree contains an unsupported entry: {value}")
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def shared_relocated_sysroot(source: Path, cache: Path) -> Result[Path, str]:
+    """Create or verify one content-addressed read-only Rust home and return it for reuse."""
+    identity = tree_digest(source)?
+    home = cache.joinpath(identity)
+    toolchains = home.joinpath("toolchains")
+    destination = toolchains.joinpath(source.name())
+    source_update = source.parent().parent().joinpath("update-hashes").joinpath(source.name())
+    cached_update = home.joinpath("update-hashes").joinpath(source.name())
+    if not source_update.is_file():
+        return Err(f"source Rust home has no update hash: {source_update.0}")
+    if home.exists():
+        if not valid_relocated_home(home, source.name()):
+            return Err(f"cached relocated Rust home has unexpected entries: {home.0}")
+        if tree_digest(destination)? != identity:
+            return Err(f"cached relocated tree digest disagrees with {identity}: {destination.0}")
+        if not same_bytes(source_update, cached_update)?:
+            return Err(f"cached relocated Rust update hash disagrees: {cached_update.0}")
+    else:
+        toolchains.mkdir(true, true).map_err((error) => error.message())?
+        _ = source.copy(destination, true, true).map_err((error) => error.message())?
+        cached_update.parent().mkdir(true, true).map_err((error) => error.message())?
+        _ = source_update.copy(cached_update, true, true).map_err((error) => error.message())?
+        home
+            .joinpath("settings.toml")
+            .write_text("version = \"12\"\n\n[overrides]\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        if tree_digest(destination)? != identity:
+            return Err(f"new relocated tree digest disagrees with {identity}: {destination.0}")
+    make_tree_readonly(home)?
+    return Ok(home)
+
+
+def valid_relocated_home(home: Path, sysroot_name: str) -> bool:
+    """Recognize the minimal Rustup home that selects exactly one copied sysroot without requiring a write."""
+    settings = home.joinpath("settings.toml")
+    expected_settings = "version = \"12\"\n\n[overrides]\n"
+    match settings.read_text("utf-8", "strict"):
+        Err(_) => return false
+        Ok(found) =>
+            return (
+                found == expected_settings
+                and only_children(home, ["settings.toml", "toolchains", "update-hashes"])
+                and only_children(home.joinpath("toolchains"), [sysroot_name])
+                and only_children(home.joinpath("update-hashes"), [sysroot_name])
+            )
+
+
+def only_children(parent: Path, names: list[str]) -> bool:
+    """Whether `parent` contains exactly the expected direct children."""
+    match parent.iterdir():
+        Ok(children) => return sorted([child.name() for child in children]) == sorted(names)
+        Err(_) => return false
+
+
+def make_tree_readonly(root: Path) -> Result[None, str]:
+    """Remove write permission from every cached entry after its content identity is verified."""
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        entry.chmod(true).map_err((error) => error.message())?
+    root.chmod(true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def log_tail(path: Path, limit: int = 30) -> str:
+    """Return the final lines of one UTF-8 phase log, or a diagnostic when the log cannot be read."""
+    match path.read_text("utf-8", "replace"):
+        Ok(text) =>
+            lines = text.split("\n")
+            mut start = 0
+            if len(lines) > limit:
+                start = len(lines) - limit
+            return "\n".join(lines[start:])
+        Err(error) => return f"cannot read failing log {path.0}: {error.message()}"
+
+
+pub def run_step(step: Step) -> Result[int, str]:
+    """Run one child with file-backed streams, kill it at its deadline, and return its exact status code."""
+    step.log.parent().mkdir(true, true).map_err((error) => error.message())?
+    log = File.create(step.log.0).map_err((error) => f"{step.log.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(step.executable)
+    for argument in step.arguments:
+        command.arg(argument)
+    for key in sorted([key for key in step.environment.keys()]):
+        command.env(key, step.environment[key])
+    for key in step.remove_environment:
+        command.env_remove(key)
+    if let Some(directory) = step.directory:
+        command.current_dir(directory.0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    mut child = command.spawn().map_err((error) => f"cannot start {step.name}: {error}")?
+    started = Instant.now()
+    span = begin_step_trace(step.trace, step.name)?
+    loop:
+        match child.try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
+            Some(status) =>
+                finish_step_trace(step.trace, span)?
+                return Ok(status_code(status))
+            None =>
+                if started.elapsed().as_secs() >= step.timeout_seconds:
+                    _ = child.kill()
+                    _ = child.wait()
+                    finish_step_trace(step.trace, span)?
+                    return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
+                sleep(Duration.from_millis(20))
+
+
+pub def start_background_step(step: Step) -> Result[BackgroundStep, str]:
+    """Start one described step and retain its log and child for a later release-phase join."""
+    name = str(step.name)
+    log = step.log.clone()
+    child = start_step(step)?
+    span = begin_step_trace(step.trace, name)?
+    return Ok(
+        BackgroundStep(
+            name=name,
+            log=log,
+            started=Instant.now(),
+            child=Rc.new(RefCell.new(child)),
+            trace=step.trace,
+            span=span,
+        ),
+    )
+
+
+pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Result[tuple[int, float], str]:
+    """Join one background step under its caller-owned deadline and return status plus wall duration."""
+    loop:
+        match step.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
+            Some(status) =>
+                finish_step_trace(step.trace, step.span)?
+                return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
+            None =>
+                if timeout_seconds > 0 and step.started.elapsed().as_secs() >= timeout_seconds:
+                    _ = step.child.borrow_mut().kill()
+                    _ = step.child.borrow_mut().wait()
+                    finish_step_trace(step.trace, step.span)?
+                    return Err(f"{step.name} timed out after {timeout_seconds}s; log: {step.log.0}")
+                sleep(Duration.from_millis(20))
+
+
+pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
+    """Stop and reap a background step when an earlier release phase has already refused the run."""
+    _ = step.child.borrow_mut().kill()
+    _ = step.child.borrow_mut().wait().map_err((error) => f"cannot reap {step.name}: {error}")?
+    finish_step_trace(step.trace, step.span)?
+    return Ok(None)
+
+
+pub def run_reserved_steps(
+    planned: list[ReservedStep],
+    jobs: int,
+    memory: int,
+    timings: Path,
+) -> Result[list[int], str]:
+    """
+    Run every child within count and memory budgets, retain each wall duration, and return failed positions.
+
+    A reservation larger than the available memory still runs when it is the only active child. Unknown memory, encoded
+    as zero, leaves the positive job count as the bound. Every child keeps its own file-backed output through `Step`.
+    """
+    reservations = [item.reservation for item in planned]
+    mut waiting = [index for index in range(len(planned))]
+    mut active: list[RunningStep] = []
+    mut failed: list[int] = []
+    while len(waiting) > 0 or len(active) > 0:
+        chosen = reserved_admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        for index in chosen:
+            child = start_step(planned[index].child)?
+            trace = planned[index].child.trace.clone()
+            span = begin_step_trace(trace, planned[index].child.name)?
+            active.append(
+                RunningStep(
+                    position=index,
+                    name=planned[index].child.name,
+                    reservation=reservations[index],
+                    timeout_seconds=planned[index].child.timeout_seconds,
+                    started=Instant.now(),
+                    child=Rc.new(RefCell.new(child)),
+                    trace=trace,
+                    span=span,
+                ),
+            )
+        waiting = [index for index in waiting if index not in chosen]
+        mut running: list[RunningStep] = []
+        for item in active:
+            match item.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {item.name}: {error}")?:
+                Some(status) =>
+                    finish_step_trace(item.trace, item.span)?
+                    append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
+                    if not status.success():
+                        failed.append(item.position)
+                None =>
+                    if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                        _ = item.child.borrow_mut().kill()
+                        _ = item.child.borrow_mut().wait()
+                        finish_step_trace(item.trace, item.span)?
+                        append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
+                        failed.append(item.position)
+                    else:
+                        running.append(item)
+        if len(running) == len(active):
+            sleep(Duration.from_millis(20))
+        active = running
+    return Ok(sorted(failed))
+
+
+pub def reserved_admitted(
+    reservations: list[int],
+    waiting: list[int],
+    held: list[int],
+    jobs: int,
+    memory: int,
+) -> list[int]:
+    """Select waiting children that fit beside held reservations without exceeding count or memory budgets."""
+    mut count = len(held)
+    mut reserved = 0
+    for reservation in held:
+        reserved += reservation
+    mut chosen: list[int] = []
+    for index in waiting:
+        if count >= jobs:
+            break
+        if count == 0 or memory == 0 or reserved + reservations[index] <= memory:
+            chosen.append(index)
+            count += 1
+            reserved += reservations[index]
+    return chosen
+
+
+def start_step(step: Step) -> Result[Child, str]:
+    """Start one fully described step with its stdout and stderr sharing the durable step log."""
+    step.log.parent().mkdir(true, true).map_err((error) => error.message())?
+    log = File.create(step.log.0).map_err((error) => f"{step.log.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(step.executable)
+    for argument in step.arguments:
+        command.arg(argument)
+    for key in sorted([key for key in step.environment.keys()]):
+        command.env(key, step.environment[key])
+    for key in step.remove_environment:
+        command.env_remove(key)
+    if let Some(directory) = step.directory:
+        command.current_dir(directory.0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    return command.spawn().map_err((error) => f"cannot start {step.name}: {error}")
+
+
+pub def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
+    """Open a step span only when its caller supplied a release trace."""
+    match trace:
+        Some(selected) => return Ok(Some(selected.begin(name)?))
+        None => return Ok(None)
+
+
+pub def finish_step_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
+    """Close a step span only when both halves of its optional trace context exist."""
+    match (trace, span):
+        (Some(selected), Some(opened)) => return selected.finish(opened)
+        _ => return Ok(None)
+
+
+pub def require_step(step: Step) -> Result[None, str]:
+    """Require one timed child to exit successfully while preserving its complete log."""
+    code = run_step(step)?
+    if code != 0:
+        return Err(f"{step.name} failed with status {code}; log: {step.log.0}")
+    return Ok(None)
+
+
+pub def append_timing(path: Path, phase: str, elapsed_seconds: float) -> Result[None, str]:
+    """Append one phase duration to the release's stable TSV evidence."""
+    mut text = ""
+    if path.is_file():
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += f"{phase}\t{elapsed_seconds}\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def append_timing_file(destination: Path, source: Path) -> Result[None, str]:
+    """Append a completed worker's timing rows after its exclusive writer has exited."""
+    mut text = destination.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return destination.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def reference_census_jobs(release_jobs: int) -> int:
+    """Give the overlapped seed census at most half the release workers while always admitting one."""
+    if release_jobs <= 2:
+        return 1
+    return release_jobs // 2
+
+
+pub def reference_worker_arguments(
+    source: Path,
+    output: Path,
+    seed_home: Path,
+    seed_lsp: Path,
+    release_jobs: int,
+    timeout_seconds: int,
+) -> list[str]:
+    """Describe the internal Incan worker that owns the complete seed census and its private timings."""
+    return [
+        "run",
+        source.joinpath("scripts/release.incn").0,
+        "--",
+        "--reference-census",
+        source.0,
+        output.0,
+        seed_home.0,
+        seed_lsp.0,
+        str(reference_census_jobs(release_jobs)),
+        str(timeout_seconds),
+    ]
+
+
+pub def append_bytes(path: Path, tree: str, bytes: int) -> Result[None, str]:
+    """Append one measured tree size to the release's stable TSV evidence."""
+    mut text = ""
+    if path.is_file():
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += f"bytes/{tree}\t{bytes}\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def write_json(path: Path, value: JsonValue) -> Result[None, str]:
+    """Write pretty JSON with one trailing newline."""
+    text = value.to_pretty_json().map_err((error) => error.message())? + "\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def full_sha(value: str) -> bool:
+    """Return whether `value` is one full lowercase hexadecimal Git object id."""
+    if len(value) != 40:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def epoch_nanoseconds() -> Result[int, str]:
+    """Read one Unix clock origin for an invocation-compatible process record."""
+    return SystemTime
+        .now()
+        .duration_since(UNIX_EPOCH)
+        .map((duration) => int(duration.as_nanos()))
+        .map_err((error) => str(error))
+
+
+def positive(value: str, option: str) -> Result[int, str]:
+    """Parse one positive decimal option value."""
+    if value == "":
+        return Err(f"{option} needs a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{option} needs a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{option} needs a positive integer")
+    return Ok(parsed)
+
+
+def parse_baseline_keys(text: str, valid: Regex) -> Result[list[str], str]:
+    """Parse unique non-comment baseline keys and reject an empty baseline."""
+    mut keys: list[str] = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line == "" or line.startswith("#"):
+            continue
+        if not valid.is_match(line):
+            return Err(f"invalid baseline key: {line}")
+        if line in keys:
+            return Err(f"duplicate baseline key: {line}")
+        keys.append(line)
+    if len(keys) == 0:
+        return Err("baseline is empty")
+    return Ok(keys)
+
+
+def parse_results(text: str, valid: Regex) -> Result[tuple[Dict[str, str], set[str], Counts, Option[Counts]], str]:
+    """Parse unique case verdicts, represented families, counted verdicts, and the single final total."""
+    mut results: Dict[str, str] = {}
+    mut families: set[str] = set()
+    mut passed = 0
+    mut failed = 0
+    mut pending = 0
+    mut total: Option[Counts] = None
+    for raw in text.split("\n"):
+        fields = raw.split(" ")
+        if len(fields) >= 2 and fields[0] in ["PASS", "FAIL", "PEND"]:
+            status, key = fields[0], fields[1]
+            if not valid.is_match(key):
+                return Err(f"invalid result key: {key}")
+            if key in results:
+                return Err(f"duplicate result key: {key}")
+            results[key] = status
+            families.add(key.split("/")[0])
+            if status == "PASS":
+                passed += 1
+            elif status == "FAIL":
+                failed += 1
+            else:
+                pending += 1
+        elif raw.startswith("total: "):
+            if total is not None:
+                return Err("expected one final total; runner log has several")
+            total = parse_total(raw)?
+    return Ok((results, families, Counts(passed=passed, failed=failed, pending=pending), total))
+
+
+def parse_total(line: str) -> Result[Counts, str]:
+    """Parse the runner's exact `total: N passed, N failed, N pending` spelling."""
+    fields = line.replace(",", "").split(" ")
+    if (
+        len(fields) != 7
+        or fields[0] != "total:"
+        or fields[2] != "passed"
+        or fields[4] != "failed"
+        or fields[6] != "pending"
+    ):
+        return Err(f"invalid final total: {line}")
+    return Ok(
+        Counts(
+            passed=positive_or_zero(fields[1])?,
+            failed=positive_or_zero(fields[3])?,
+            pending=positive_or_zero(fields[5])?,
+        ),
+    )
+
+
+def positive_or_zero(value: str) -> Result[int, str]:
+    """Parse one nonnegative decimal count."""
+    if value == "":
+        return Err("count is empty")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"invalid count: {value}")
+    return Ok(int(value))
+
+
+def status_code(status: ExitStatus) -> int:
+    """Return a process status code, using 128 when the host reports only signal termination."""
+    match status.code():
+        Some(code) => return int(code)
+        None => return 128

@@ -1,0 +1,150 @@
+"""Select optimization flags for native units and frame the flags the Incan compiler receives."""
+
+from rust::std::process import id
+from rust::std::env import current_dir
+from rust::std::env::consts import OS
+from std.environ import get_or
+from std.fs import Path
+
+pub const SOURCE_PREFIX: str = "source"
+pub const TOOLCHAIN_PREFIX: str = "toolchain"
+pub const WORKSPACE_PREFIX: str = "workspace"
+pub const DARWIN_UUID_SALT: str = "incan.native.uuid/1"
+
+
+model CodegenProfile:
+    """Effective native compiler flags for each authored unit language."""
+
+    incan_flags: list[str]
+    rust_flags: list[str]
+
+
+def selected_profile(profile: str) -> CodegenProfile:
+    """One profile table preserves each unit language's optimization, assertions and debug-information policy."""
+    profiles = {"debug": CodegenProfile(incan_flags=["opt-level=0", "debug-assertions=no"], rust_flags=["debuginfo=0"]), "release": CodegenProfile(
+        incan_flags=["opt-level=3"],
+        rust_flags=["opt-level=3", "debuginfo=0"],
+    )}
+    if profile in profiles:
+        return profiles[profile]
+    return CodegenProfile(incan_flags=["opt-level=0"], rust_flags=["debuginfo=0"])
+
+
+pub def native_arguments(profile: str) -> list[str]:
+    """Bind optimization into the unit identity while preserving the native driver's debug assertion policy."""
+    return [f"-C{argument}" for argument in selected_profile(profile).incan_flags]
+
+
+pub def rust_arguments(profile: str) -> list[str]:
+    """Frame the selected profile's Rust flags for a direct rustc invocation."""
+    mut arguments: list[str] = []
+    for option in selected_profile(profile).rust_flags:
+        arguments = arguments + ["-C", option]
+    return arguments
+
+
+pub def native_executable_arguments(profile: str) -> list[str]:
+    """Strip release executable provenance without changing a library profile or its installed artifact identity."""
+    mut arguments = native_arguments(profile)
+    if profile == "release":
+        arguments.append("-Cstrip=debuginfo")
+        if OS == "macos":
+            arguments.append("-Clink-arg=-Wl,-reproducible")
+            arguments.append("-Clink-arg=-Wl,-no_adhoc_codesign")
+    return arguments
+
+
+pub def rust_executable_arguments(profile: str) -> list[str]:
+    """Frame direct rustc additions that strip release executable provenance without changing library profiles."""
+    mut arguments: list[str] = []
+    if profile == "release":
+        arguments.extend(["-C", "strip=debuginfo"])
+        if OS == "macos":
+            arguments.extend(["-C", "link-arg=-Wl,-reproducible"])
+            arguments.extend(["-C", "link-arg=-Wl,-no_adhoc_codesign"])
+    return arguments
+
+
+pub def rust_iteration_enabled(profile: str, setting: str) -> bool:
+    """Enable debug iteration by default; `1` opts release in and `0` disables iteration for any profile."""
+    return (profile in ["debug", "release"] and setting == "1") or (profile == "debug" and setting == "")
+
+
+pub def rust_metadata(profile: str, context: str) -> str:
+    """
+    Keep a Rust iteration unit's symbol namespace stable across edits and distinct from qualified artifacts.
+
+    The stable context identifies the crate, domain, features and artifact role. Freshness still covers every source
+    and linked input. Qualification keeps the conservative identity-derived namespace unchanged.
+    """
+    if rust_iteration_enabled(profile, get_or("INCAN_RUST_INCREMENTAL", "")):
+        return f"metadata=incan-iteration-{context}"
+    return "metadata=incan-unit"
+
+
+pub def rust_incremental_arguments(directory: Path, arguments: list[str]) -> list[str]:
+    """
+    Attach local scratch only at the hand-written Rust codegen boundary, after identity is complete.
+
+    Neither the directory nor the flag enters freshness, store records or bundles. Generated native invocations use
+    identity-derived metadata and cannot opt in through this boundary, even when the environment requests iteration.
+    """
+    for argument in arguments:
+        if argument.startswith("metadata=incan-iteration-"):
+            return ["-C", f"incremental={directory.0}"]
+    return []
+
+
+pub def driver_arguments(profile: str, executable: bool = false) -> list[str]:
+    """Frame the selected unit arguments for the compiler's existing `--rustc-arg` boundary."""
+    mut forwarded: list[str] = []
+    mut selected = native_arguments(profile)
+    if executable:
+        selected = native_executable_arguments(profile)
+    for argument in selected:
+        forwarded.append("--rustc-arg")
+        forwarded.append(argument)
+    return forwarded
+
+
+pub def unit_metadata(identity: str) -> str:
+    """Derive symbol identity from code-generation inputs; only a unit without such inputs stays process-local."""
+    if identity == "":
+        return f"metadata=incan-local-{id()}"
+    return "metadata=incan-unit-" + identity.replace("sha256:", "")
+
+
+pub def remap_arguments(
+    project: str,
+    dependencies: list[Tuple[str, str]] = [],
+    sysroot: str = "",
+) -> Result[list[str], str]:
+    """Keep compiler source filenames independent of the checkout and selected toolchain locations."""
+    working = current_dir().map_err((error) => f"native compiler working directory: {error}")?
+    mut mappings: list[Tuple[str, str]] = [
+        (working.to_string_lossy().into_owned(), str(WORKSPACE_PREFIX)),
+        (project, str(SOURCE_PREFIX)),
+    ]
+    for name, root in dependencies:
+        mappings.append((root, f"{SOURCE_PREFIX}/loaves/{name}"))
+    if sysroot != "":
+        mappings.append((sysroot, str(TOOLCHAIN_PREFIX)))
+    mut arguments: list[str] = []
+    for root, logical in mappings:
+        arguments.extend(["--remap-path-prefix", f"{root}={logical}"])
+    return Ok(arguments)
+
+
+pub def compiled_arguments(
+    profile: str,
+    identity: str,
+    project: str,
+    executable: bool = false,
+    dependencies: list[Tuple[str, str]] = [],
+    sysroot: str = "",
+) -> Result[list[str], str]:
+    """Use one effective unit profile and symbol identity for Oven and direct native source producers."""
+    mut arguments = driver_arguments(profile, executable) + ["--rustc-arg", "-C" + unit_metadata(identity)]
+    for argument in remap_arguments(project, dependencies, sysroot)?:
+        arguments.extend(["--rustc-arg", argument])
+    return Ok(arguments)

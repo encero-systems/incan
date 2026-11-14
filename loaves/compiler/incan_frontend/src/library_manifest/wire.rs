@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
-    LibraryExportView, LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, ModelExport,
+    LibraryExports, LibraryManifest, LibraryManifestError, LibraryRustAbi, MadePrivateTypeExport, ModelExport,
     NewtypeExport, PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport,
     TypeAliasExport, VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
     legacy_library_contract_metadata,
@@ -20,6 +20,8 @@ pub struct RawLibraryManifest {
     pub(super) incan_version: String,
     pub(super) manifest_format: u32,
     pub(super) exports: RawLibraryExports,
+    #[serde(default)]
+    pub(super) made_private_types: Vec<MadePrivateTypeExport>,
     #[serde(default)]
     pub(super) vocab: Option<RawVocabExports>,
     pub(super) soft_keywords: RawSoftKeywordExports,
@@ -55,29 +57,6 @@ pub(super) struct RawLibraryExports {
     pub(super) statics: Vec<StaticExport>,
 }
 
-impl RawLibraryExports {
-    /// Borrow the wire export lists as the shared public-surface view.
-    ///
-    /// Validation runs on the wire form before it is loaded, so it answers eligibility questions here rather than on
-    /// `LibraryExports`; routing through the same view keeps the provider's own build and every consumer's frontend
-    /// agreeing on what the package exports.
-    pub(super) fn view(&self) -> LibraryExportView<'_> {
-        LibraryExportView {
-            aliases: &self.aliases,
-            partials: &self.partials,
-            models: &self.models,
-            classes: &self.classes,
-            functions: &self.functions,
-            traits: &self.traits,
-            enums: &self.enums,
-            type_aliases: &self.type_aliases,
-            newtypes: &self.newtypes,
-            consts: &self.consts,
-            statics: &self.statics,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct RawSoftKeywordExports {
     #[serde(default)]
@@ -86,6 +65,8 @@ pub(super) struct RawSoftKeywordExports {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct RawVocabExports {
+    pub(super) metadata_version: u32,
+    pub(super) unit_identity: String,
     pub(super) crate_path: String,
     pub(super) package_name: String,
     #[serde(default)]
@@ -102,12 +83,28 @@ impl RawVocabExports {
     /// Preserve the single vocabulary wire shape for library publication and producer identity encoding.
     pub(super) fn from_semantic(vocab: &VocabExports) -> Self {
         Self {
+            metadata_version: vocab.metadata_version,
+            unit_identity: vocab.unit_identity.clone(),
             crate_path: vocab.crate_path.clone(),
             package_name: vocab.package_name.clone(),
             keyword_registrations: vocab.keyword_registrations.clone(),
             dsl_surfaces: vocab.dsl_surfaces.clone(),
             provider_manifest: vocab.provider_manifest.clone(),
             desugarer_artifact: vocab.desugarer_artifact.clone(),
+        }
+    }
+
+    /// Move the private vocabulary transport into the public semantic value used by compiler consumers.
+    pub(super) fn into_semantic(self) -> VocabExports {
+        VocabExports {
+            metadata_version: self.metadata_version,
+            unit_identity: self.unit_identity,
+            crate_path: self.crate_path,
+            package_name: self.package_name,
+            keyword_registrations: self.keyword_registrations,
+            dsl_surfaces: self.dsl_surfaces,
+            provider_manifest: self.provider_manifest,
+            desugarer_artifact: self.desugarer_artifact,
         }
     }
 }
@@ -119,7 +116,13 @@ impl RawLibraryManifest {
             name: semantic.name.clone(),
             version: semantic.version.clone(),
             incan_version: semantic.incan_version.clone(),
-            manifest_format: semantic.manifest_format,
+            manifest_format: if semantic.manifest_format == super::LIBRARY_MANIFEST_FORMAT
+                && semantic.has_explicit_ownership_contracts()
+            {
+                super::OWNERSHIP_MANIFEST_FORMAT
+            } else {
+                semantic.manifest_format
+            },
             exports: RawLibraryExports {
                 aliases: semantic.exports.aliases.clone(),
                 partials: semantic.exports.partials.clone(),
@@ -133,6 +136,7 @@ impl RawLibraryManifest {
                 consts: semantic.exports.consts.clone(),
                 statics: semantic.exports.statics.clone(),
             },
+            made_private_types: semantic.made_private_types.clone(),
             vocab: semantic.vocab.as_ref().map(RawVocabExports::from_semantic),
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
@@ -162,14 +166,8 @@ impl RawLibraryManifest {
                 consts: self.exports.consts,
                 statics: self.exports.statics,
             },
-            vocab: self.vocab.map(|vocab| VocabExports {
-                crate_path: vocab.crate_path,
-                package_name: vocab.package_name,
-                keyword_registrations: vocab.keyword_registrations,
-                dsl_surfaces: vocab.dsl_surfaces,
-                provider_manifest: vocab.provider_manifest,
-                desugarer_artifact: vocab.desugarer_artifact,
-            }),
+            made_private_types: self.made_private_types,
+            vocab: self.vocab.map(RawVocabExports::into_semantic),
             soft_keywords: SoftKeywordExports {
                 activations: self.soft_keywords.activations,
             },

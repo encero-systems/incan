@@ -1,0 +1,314 @@
+"""Owner lifecycle contracts: one starter, stale state recovered, retained answers guarded, and retirement."""
+
+from std.fs import Path
+from std.environ import get_or
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from rust::std::string import String as RustString
+from std.json import JsonValue
+from pub::incan_platform.ipc import Connection, listen
+from files import read, remove, write
+from owner_endpoint import Endpoint, attach, bindable, endpoint_for, greeted, socket_prefix, timeout_for
+from compiler_worker import slot_endpoint
+from owner_protocol import Reply, Request
+from owner_state import Owner, unchanged, watch
+from scratch import scratch_directory
+from intake import ManifestReader
+from rust_target import deployment_configuration
+from home import home
+
+
+def endpoint_in(directory: Path) -> Endpoint:
+    """An endpoint whose files live in `directory`."""
+    return Endpoint(
+        generation="g",
+        directory=directory.0,
+        socket=directory.joinpath("o.sock").0,
+        lock=directory.joinpath("o.lock").0,
+        ready=directory.joinpath("o.ready").0,
+        mailbox=directory.joinpath("o.trace").0,
+    )
+
+
+def leave_stale(path: str) -> Result[None, str]:
+    """Bind a socket and let the listener go, as a crashed owner does: the socket file stays, nothing listens."""
+    # The listener is dropped at once; the socket file it bound stays behind.
+    _ = listen(path, true)?
+    return Ok(None)
+
+
+def absent(found: Result[Option[Connection], str]) -> bool:
+    """Whether an attempt to connect found no owner."""
+    match found:
+        Err(_) => return false
+        Ok(connected) => return connected is None
+
+
+def refused_attach(found: Result[Option[Connection], str]) -> bool:
+    """Whether an attempt to connect was refused with an error."""
+    match found:
+        Err(_) => return true
+        Ok(_) => return false
+
+
+def refused_greeting(found: Result[None, str]) -> bool:
+    """Whether a readiness greeting was refused."""
+    match found:
+        Err(_) => return true
+        Ok(_) => return false
+
+
+def ready_greeting(generation: str) -> Result[JsonValue, str]:
+    """The greeting an owner of `generation` sends when it listens."""
+    return Ok(Reply(status="ready", generation=generation, pid=1).to_json())
+
+
+pub def test_startup_is_arbitrated_and_stale_state_recovers() -> Result[None, str]:
+    """No owner is none; a stale socket is removed; a file in its place is kept; one starter holds the lock."""
+    scratch = scratch_directory()?
+    endpoint = endpoint_in(scratch.path())
+    assert absent(attach(endpoint))
+    check_stale_socket_is_removed(endpoint)?
+    check_foreign_file_is_kept(endpoint)?
+    check_one_starter_holds_the_lock(endpoint)?
+    check_greetings_are_validated()
+    check_deployment_configuration()
+    assert timeout_for("run") == 0
+    assert timeout_for("stop") == 5
+    return Ok(None)
+
+
+def check_deployment_configuration() -> None:
+    """A deployment selection cannot share an owner with another value, absence or another Apple platform's input."""
+    absent = deployment_configuration([("OVEN_TRACE", "-")])
+    empty = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "")])
+    first = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "11.0")])
+    second = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "14.0")])
+    platform = deployment_configuration([("IPHONEOS_DEPLOYMENT_TARGET", "14.0")])
+    assert absent == []
+    assert empty != absent and first != empty and first != second and second != platform
+    assert deployment_configuration([("OVEN_TRACE", "changed"), ("MACOSX_DEPLOYMENT_TARGET", "11.0")]) == first
+
+
+def check_stale_socket_is_removed(endpoint: Endpoint) -> Result[None, str]:
+    """A socket nobody listens at is no owner, and attaching removes it."""
+    leave_stale(endpoint.socket)?
+    assert Path(endpoint.socket).exists()
+    assert absent(attach(endpoint))
+    assert not Path(endpoint.socket).exists()
+    return Ok(None)
+
+
+def check_foreign_file_is_kept(endpoint: Endpoint) -> Result[None, str]:
+    """An ordinary file where the socket belongs is refused and left alone; a live listener is an owner."""
+    write(Path(endpoint.socket), "not a socket")?
+    assert refused_attach(attach(endpoint))
+    assert read(Path(endpoint.socket))? == "not a socket"
+    remove(Path(endpoint.socket))?
+    # The listener stays up until this function returns, so the attach below finds a live owner.
+    mut listener = listen(endpoint.socket, true)?
+    assert not absent(attach(endpoint))
+    return Ok(None)
+
+
+def check_one_starter_holds_the_lock(endpoint: Endpoint) -> Result[None, str]:
+    """Of two starters, the first gets the lock and the second does not."""
+    first = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+    match first:
+        None =>
+            assert false, "the first starter did not get the lock"
+        Some(held) =>
+            # `held` is the first starter's lock, kept while the second starter tries.
+            second = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+            match second:
+                Some(_) =>
+                    assert false, "two starters held the lock at once"
+                None => pass
+    return Ok(None)
+
+
+def check_greetings_are_validated() -> None:
+    """Only a `ready` greeting of the expected generation is accepted."""
+    assert refused_greeting(greeted(ready_greeting("other"), "g"))
+    assert refused_greeting(greeted(Ok(Reply(status="done", generation="g", pid=1).to_json()), "g"))
+    assert refused_greeting(greeted(Err("closed"), "g"))
+    assert not refused_greeting(greeted(ready_greeting("g"), "g"))
+
+
+pub def test_the_owner_serves_one_generation_and_retires() -> Result[None, str]:
+    """Another generation or a bad path is refused; stop retires; idle retires only when idle long enough."""
+    mut owner = Owner(generation="g", last_served=1000)
+    assert owner.handle(Request(command="status", generation="other"), 600).status == "refused"
+    assert owner.handle(Request(command="status", generation="g"), 600).status == "done"
+    assert owner.handle(Request(command="stop", generation="g"), 600).status == "retiring"
+    assert owner.handle(Request(command="idle", generation="g"), 600).status == "retiring"
+    owner.last_served = 99999999999
+    assert owner.handle(Request(command="idle", generation="g"), 600).status == "done"
+    assert owner.handle(Request(command="dance", generation="g"), 600).status == "refused"
+    relative = owner.handle(Request(command="run", generation="g", path="src/main.incn"), 600)
+    assert relative.status == "refused"
+    assert "absolute" in relative.reason
+    missing = owner.handle(Request(command="run", generation="g", path="/no/such/main.incn"), 600)
+    assert missing.status == "refused"
+    return Ok(None)
+
+
+pub def test_retained_answers_are_guarded_by_the_files_they_came_from() -> Result[None, str]:
+    """An edited, created or removed file ends a retained answer; an untouched one keeps it."""
+    scratch = scratch_directory()?
+    manifest = scratch.path().joinpath("loaf.toml")
+    lock = scratch.path().joinpath("oven.lock")
+    write(manifest, "[project]\nname = \"a\"\n")?
+    guard = watch([manifest.0, lock.0])
+    assert unchanged(guard)
+    write(manifest, "[project]\nname = \"bb\"\n")?
+    assert not unchanged(guard)
+    renewed = watch([manifest.0, lock.0])
+    write(lock, "")?
+    assert not unchanged(renewed)
+    again = watch([manifest.0, lock.0])
+    remove(lock)?
+    assert not unchanged(again)
+    return Ok(None)
+
+
+pub def test_a_deep_home_still_has_a_bindable_endpoint() -> Result[None, str]:
+    """
+    However deep the directory an owner or compiler worker belongs to, its socket path stays short enough to bind,
+    a live listener there is an owner, and two directories never share a socket. A home reached through `..` still
+    admits its standard Loaves when running hello.
+    """
+    scratch = scratch_directory()?
+    mut deep = scratch.path()
+    while len(deep.0) <= 160:
+        deep = deep.joinpath("a-directory-nested-deeper-than-a-socket-path-may-be")
+    prefix = socket_prefix(deep.0)?
+    socket = f"{prefix}c-0123456789abcdef.sock"
+    bindable(socket)?
+    assert not socket.startswith(deep.0)
+    assert socket_prefix(deep.0)? == prefix
+    assert socket_prefix(scratch.path().0)? != prefix
+    worker = slot_endpoint(deep, "0123456789abcdef", 0)?
+    bindable(worker.socket)?
+    bindable(worker.ready)?
+    endpoint = Endpoint(
+        generation="g",
+        directory=deep.0,
+        socket=socket,
+        lock=deep.joinpath("o.lock").0,
+        ready=f"{prefix}o.ready",
+        mailbox=deep.joinpath("o.trace").0,
+    )
+    mut listener = listen(endpoint.socket, true)?
+    assert not absent(attach(endpoint))
+    remove(Path(endpoint.socket))?
+    hello_through_parent(scratch.path())?
+    return Ok(None)
+
+
+def hello_through_parent(scratch: Path) -> Result[None, str]:
+    """The same installed home keeps its admission evidence through a parent-segment spelling."""
+    installed = home()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{installed.0}/bin/incan")
+    missing = scratch.joinpath("new-home/nested")
+    # Resident owners belong to `oven`: the same program, started under that name (RFC 118).
+    stopped = Command
+        .new(binary)
+        .arg0("oven")
+        .arg("owner")
+        .arg("stop")
+        .env("INCAN_HOME", missing.0)
+        .output()
+        .map_err((error) => str(error))?
+    assert stopped.status.success()
+    assert not missing.exists()
+    app = scratch.joinpath("hello")
+    app.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"hello\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"main.incn\"\n",
+    )?
+    write(app.joinpath("main.incn"), "def main() -> None:\n    println(\"hello\")\n")?
+    for spelling in [installed.0, installed.joinpath("..").joinpath(installed.name()).0]:
+        result = Command
+            .new(binary)
+            .arg("run")
+            .arg(app.joinpath("main.incn").0)
+            .env("INCAN_HOME", spelling)
+            .env("INCAN_NO_BANNER", "1")
+            .env("OVEN_OWNER", "off")
+            .output()
+            .map_err((error) => str(error))?
+        output = RustString.from_utf8(result.stdout).map_err((error) => str(error))?
+        error = RustString.from_utf8(result.stderr).map_err((error) => str(error))?
+        assert result.status.success(), str(error)
+        assert str(output) == "hello\n"
+    return Ok(None)
+
+
+pub def test_an_owner_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
+    """
+    An owner whose socket path is removed, or whose home is deleted, exits within seconds, long before its idle limit;
+    one left alone retires at its idle limit. None of them needs its socket to be dialed.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{home()?.0}/bin/incan")
+    socketless = scratch.path().joinpath("socketless")
+    homeless = scratch.path().joinpath("homeless")
+    idle = scratch.path().joinpath("idle")
+    first = started_owner(binary, socketless, "600")?
+    second = started_owner(binary, homeless, "600")?
+    third = started_owner(binary, idle, "4")?
+    leftovers = [owner_socket(homeless)?, owner_socket(idle)?]
+    remove(Path(owner_socket(socketless)?))?
+    homeless.remove_tree().map_err((error) => error.message())?
+    # Every owner is waited for, or killed, before any assertion, so a failure leaves none behind.
+    socket_gone = exits_within(first, 5)?
+    home_gone = exits_within(second, 5)?
+    idle_over = exits_within(third, 10)?
+    assert socket_gone, "an owner outlived its socket path"
+    assert home_gone, "an owner outlived its home"
+    assert idle_over, "an owner outlived its idle limit"
+    # An owner that retired on its own removed the socket it bound.
+    for socket in leftovers:
+        assert not Path(socket).exists(), socket
+    return Ok(None)
+
+
+def owner_socket(owner_home: Path) -> Result[str, str]:
+    """The socket of the test owner of `owner_home`, in the user's endpoint directory as a real owner's is."""
+    return Ok(f"{socket_prefix(owner_home.joinpath("owners").0)?}g.sock")
+
+
+def started_owner(binary: str, owner_home: Path, idle: str) -> Result[Child, str]:
+    """Start the installed command as the owner of `owner_home`, idle for at most `idle` seconds, once it is ready."""
+    owners = owner_home.joinpath("owners")
+    socket = owner_socket(owner_home)?
+    ready = f"{socket_prefix(owners.0)?}g.ready"
+    mut listener = listen(ready, false)?
+    mut command = Command.new(binary)
+    command.arg("--internal-owner").arg(socket).arg("g").arg(ready).arg(idle)
+    command.env("INCAN_HOME", owner_home.0).env("OVEN_TRACE", owners.joinpath("g.trace").0)
+    command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
+    mut child = command.spawn().map_err((error) => f"cannot start {binary}: {error}")?
+    for poll in range(2500):
+        match listener.poll()?:
+            Some(_) =>
+                remove(Path(ready))?
+                return Ok(child)
+            None => sleep(Duration.from_millis(2))
+    _ = child.kill()
+    return Err("the owner was not ready in time")
+
+
+def exits_within(mut child: Child, seconds: int) -> Result[bool, str]:
+    """Whether `child` exits within `seconds`; one that does not is killed, so no test leaves an owner behind."""
+    for poll in range(seconds * 20):
+        match child.try_wait().map_err((error) => str(error))?:
+            Some(_) => return Ok(true)
+            None => sleep(Duration.from_millis(50))
+    _ = child.kill()
+    _ = child.wait()
+    return Ok(false)

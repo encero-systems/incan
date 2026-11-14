@@ -1,0 +1,9 @@
+"""Supply the enum and constant the library root's checked body uses."""
+
+pub const NUMBER: int = 11
+
+
+pub enum Choice:
+    """Carry the value returned by the library helper."""
+
+    Value(int)

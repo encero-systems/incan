@@ -1,0 +1,9 @@
+[project]
+name = "native_named_payload"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+messages = { loaf = "messages", path = "rust/messages" }

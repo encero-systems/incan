@@ -45,11 +45,7 @@ impl BodyBuilder<'_, '_> {
         let ast::Expr::Field(base, name) = &partial.target.node else {
             return Err("partial callable with a non-function-name target".to_owned());
         };
-        if !self
-            .type_info
-            .resolved_identity(base.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-        {
+        if !self.is_module_namespace_span(base.span) {
             return Err("partial callable without a checked module receiver".to_owned());
         }
         let identity = self
@@ -57,7 +53,19 @@ impl BodyBuilder<'_, '_> {
             .resolved_identity(partial.target.span)
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
             .ok_or("module function value without a checked canonical function")?;
-        let Some(ResolvedType::Function(params, result)) = self.type_info.expr_type(partial.target.span) else {
+        let callable = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get(&partial.target.span)
+            .map(|application| {
+                crate::resolved_type_subst::substitute_resolved_type(
+                    &application.callable_type,
+                    &application.type_bindings,
+                )
+            })
+            .or_else(|| self.type_info.expr_type(partial.target.span).cloned());
+        let Some(ResolvedType::Function(params, result)) = callable else {
             return Err("module function value without a checked callable signature".to_owned());
         };
         if params.iter().any(|parameter| {
@@ -69,8 +77,8 @@ impl BodyBuilder<'_, '_> {
             name: name.clone(),
             binding: FunctionBindingInfo {
                 is_async: false,
-                params: params.clone(),
-                return_type: (**result).clone(),
+                params,
+                return_type: *result,
                 identity: Some(identity.clone()),
             },
             constructor: None,
@@ -156,11 +164,7 @@ impl BodyBuilder<'_, '_> {
             .local_function_declarations
             .get(source_name)
             .and_then(|candidates| match candidates.as_slice() {
-                [span] => Some(CompilerNodeId::declaration_span(
-                    self.module_identity,
-                    span.start,
-                    span.end,
-                )),
+                [span] => Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                 _ => None,
             });
         let defaults = self.function_default_sources.get(source_name).cloned();
@@ -222,7 +226,8 @@ impl BodyBuilder<'_, '_> {
             let Some(name) = &parameter.name else {
                 continue;
             };
-            let ty = super::variadics::parameter_storage_type(self.checked_type(&parameter.ty), parameter.kind);
+            let ty = super::input_access::value_type(self, target.binding.identity.as_ref(), index, &parameter.ty);
+            let ty = super::variadics::parameter_storage_type(ty, parameter.kind);
             let previous = self.bindings.get(name).copied();
             let local = self.declare_new_local_with_reads(name.clone(), ty.clone(), frame.scope, span, 1);
             self.locals[local.index()].origin = bir::LocalOrigin::Parameter;
@@ -241,7 +246,7 @@ impl BodyBuilder<'_, '_> {
                     None => bir::CallableParamDefault::Required,
                 },
             };
-            frame.parameters.push(bir::CallableParam {
+            let mut projected = bir::CallableParam {
                 local,
                 kind: super::parameter_types::source_parameter_kind(parameter.kind),
                 name: name.clone(),
@@ -249,8 +254,14 @@ impl BodyBuilder<'_, '_> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: parameter.is_mut,
-            });
-            if parameter.is_mut {
+                input_access: incan_semantics_core::IncanInputAccess::Inferred,
+                native_owned: super::parameter_types::native_collection_parameter(&parameter.ty, self.type_info),
+            };
+            super::input_access::apply(&mut projected, self.type_info, target.binding.identity.as_ref(), index);
+            frame.parameters.push(projected);
+            if frame.parameters.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if parameter.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.argument_locals.push(local);
@@ -368,6 +379,7 @@ impl BodyBuilder<'_, '_> {
                 params: frame.parameters,
                 captured_operands: frame.captured_operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     function_item: false,
                     consumes_environment: false,
                     original_callable: None,

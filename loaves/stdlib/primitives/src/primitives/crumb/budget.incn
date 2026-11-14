@@ -1,0 +1,106 @@
+"""One mutable allowance shared by all nested work in a Crumb request."""
+
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from crate.primitives.crumb.errors import CrumbError
+
+
+model BudgetState:
+    """Mutable counters retained behind every shared budget handle."""
+
+    bytes_left: int
+    elements_left: int
+    depth_limit: int
+    active_depth: int = 0
+
+
+def _empty_state() -> BudgetState:
+    """Return the temporary state used while an allowance is moved out of its cell."""
+    return BudgetState(bytes_left=0, elements_left=0, depth_limit=0)
+
+
+def _take(state: Rc[RefCell[BudgetState]]) -> BudgetState:
+    """Move one allowance out of its cell so Incan can inspect and update its fields."""
+    return state.replace(_empty_state())
+
+
+def _restore(state: Rc[RefCell[BudgetState]], current: BudgetState) -> None:
+    """Put an allowance moved out by `_take` back into its shared cell."""
+    _ = state.replace(current)
+
+
+pub class Budget:
+    """Caller-selected byte, work and nesting limits; failures never refund consumed work."""
+
+    state: Rc[RefCell[BudgetState]]
+
+    @staticmethod
+    pub def create(bytes: int, elements: int, depth: int) -> Result[Self, CrumbError]:
+        """Create nonnegative allowances; there is no format-wide default budget."""
+        if bytes < 0 or elements < 0 or depth < 0:
+            return Err(CrumbError.invalid_input("budget"))
+        return Ok(
+            Budget(
+                state=Rc.new(
+                    RefCell.new(
+                        BudgetState(bytes_left=bytes, elements_left=elements, depth_limit=depth),
+                    ),
+                ),
+            ),
+        )
+
+    pub def charge_bytes(mut self, count: int) -> Result[None, CrumbError]:
+        """Charge bytes before reading or allocating, using subtraction-safe comparisons."""
+        if count < 0:
+            return Err(CrumbError.invalid_input("byte count"))
+        mut state = _take(self.state.clone())
+        if count > state.bytes_left:
+            _restore(self.state.clone(), state)
+            return Err(CrumbError.limit("bytes"))
+        state.bytes_left -= count
+        _restore(self.state.clone(), state)
+        return Ok(None)
+
+    pub def charge_elements(mut self, count: int) -> Result[None, CrumbError]:
+        """Charge logical elements or bounded arithmetic steps before performing them."""
+        if count < 0:
+            return Err(CrumbError.invalid_input("element count"))
+        mut state = _take(self.state.clone())
+        if count > state.elements_left:
+            _restore(self.state.clone(), state)
+            return Err(CrumbError.limit("elements"))
+        state.elements_left -= count
+        _restore(self.state.clone(), state)
+        return Ok(None)
+
+    pub def enter(mut self) -> Result[None, CrumbError]:
+        """Enter one nested value, refusing before the depth counter can exceed its limit."""
+        mut state = _take(self.state.clone())
+        if state.active_depth >= state.depth_limit:
+            _restore(self.state.clone(), state)
+            return Err(CrumbError.limit("depth"))
+        state.active_depth += 1
+        _restore(self.state.clone(), state)
+        return Ok(None)
+
+    pub def leave(mut self) -> Result[None, CrumbError]:
+        """Balance one successful enter; an unmatched leave is an application error."""
+        mut state = _take(self.state.clone())
+        if state.active_depth == 0:
+            _restore(self.state.clone(), state)
+            return Err(CrumbError.invalid_input("unmatched depth leave"))
+        state.active_depth -= 1
+        _restore(self.state.clone(), state)
+        return Ok(None)
+
+    pub def snapshot(self) -> Self:
+        """Return an independent allowance for a codec object that must retain its own mutable state."""
+        state = _take(self.state.clone())
+        copied = BudgetState(
+            bytes_left=state.bytes_left,
+            elements_left=state.elements_left,
+            depth_limit=state.depth_limit,
+            active_depth=state.active_depth,
+        )
+        _restore(self.state.clone(), state)
+        return Budget(state=Rc.new(RefCell.new(copied)))

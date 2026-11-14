@@ -1,0 +1,9 @@
+# behavior: a module named `lib`, the host language's reserved library root filename, imports and runs beside the entrypoint
+# expect-stdout:
+#   from lib
+
+from lib import from_lib
+
+
+def main() -> None:
+    println(from_lib())

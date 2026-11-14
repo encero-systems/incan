@@ -1,0 +1,6 @@
+from rust::child_alias import answer
+
+
+def main() -> None:
+    """Resolve an extern whose published library path contains an equals sign."""
+    println(answer())

@@ -1,0 +1,76 @@
+"""Validate Loaf package identities at the manifest boundary."""
+
+# Compatible registries may define policy for every syntactically valid scope; intake reserves none.
+pub const RESERVED_SCOPES: FrozenList[str] = []
+# Registry-owned adoption scopes retain exact upstream package spellings, including underscores.
+const ADOPTED_SCOPES: FrozenList[str] = ["crates-io"]
+
+
+pub def is_adopted_scope(scope: str) -> bool:
+    """Whether `scope` holds packages adopted from another ecosystem and therefore cannot be trusted wholesale."""
+    return scope in ADOPTED_SCOPES
+
+
+pub def validate_loaf_identity(identity: str) -> Result[None, str]:
+    """
+    Require RFC 125's package-name grammar without folding authored text.
+
+    An identity has one optional scope, and each component is 1 through 64 lowercase ASCII letters, digits or
+    hyphens, beginning with a letter or digit. Unscoped local names and names under an adoption scope retain
+    underscores so existing local Loaves and exact upstream package names are not folded.
+    """
+    parts = identity.split("/")
+    if len(parts) < 1 or len(parts) > 2:
+        return Err("Loaf identity must be `<name>` or `<scope>/<name>`")
+    mut underscores = len(parts) == 1
+    if len(parts) == 2 and parts[0] in ADOPTED_SCOPES:
+        underscores = true
+    for part in parts:
+        if len(part) < 1 or len(part) > 64:
+            return Err("Loaf identity components must contain 1 through 64 characters")
+        if not ascii_lower_or_digit(part[0]):
+            return Err("Loaf identity components must start with a lowercase ASCII letter or digit")
+        for character in part:
+            if not ascii_lower_or_digit(character) and character != "-" and not (underscores and character == "_"):
+                return Err("Loaf identity components must match [a-z0-9][a-z0-9-]*")
+    return Ok(None)
+
+
+pub def validate_project_identity(identity: str) -> Result[None, str]:
+    """
+    Require a local project identity without applying a registry's publication-length policy to a bare root name.
+
+    A scoped project is a publishable Loaf identity and follows that complete grammar. An unscoped local root keeps
+    existing long fixture and generated names, while capitals and other noncanonical characters remain refused.
+    """
+    if "/" in identity:
+        return validate_loaf_identity(identity)
+    if len(identity) == 0:
+        return Err("Loaf identity must not be empty")
+    if not ascii_lower_or_digit(identity[0]):
+        return Err("Loaf identity components must start with a lowercase ASCII letter or digit")
+    for character in identity:
+        if not ascii_lower_or_digit(character) and character != "-" and character != "_":
+            return Err("Loaf identity components must match [a-z0-9][a-z0-9-]*")
+    return Ok(None)
+
+
+def ascii_lower_or_digit(character: str) -> bool:
+    """Whether one character belongs to the non-hyphen part of the package-name grammar."""
+    return character in "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+pub def crate_name(identity: str) -> str:
+    """Derive a default Rust crate name from the last Loaf-name component, replacing hyphens with underscores."""
+    parts = identity.split("/")
+    return parts[len(parts) - 1].replace("-", "_")
+
+
+pub def validate_registry_identity(identity: str) -> Result[None, str]:
+    """Require the declared root-key SHA-256 spelling without contacting a registry or normalizing it."""
+    if len(identity) != 71 or not identity.startswith("sha256:"):
+        return Err("registry-id must be sha256: followed by 64 lowercase hexadecimal digits")
+    for character in identity[7:]:
+        if character not in "0123456789abcdef":
+            return Err("registry-id must be sha256: followed by 64 lowercase hexadecimal digits")
+    return Ok(None)

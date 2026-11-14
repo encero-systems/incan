@@ -1,0 +1,15 @@
+"""Foundational lowercase hexadecimal encoding without I/O or application policy."""
+
+from rust::std::string import String as RustString
+
+
+pub def hexlify(data: bytes) -> str:
+    """Encode bytes as lowercase hexadecimal text, with two characters per byte."""
+    digits = b"0123456789abcdef"
+    mut encoded: list[u8] = []
+    for byte in data:
+        value = int(byte)
+        encoded.append(digits[value // 16].saturating_resize[u8]())
+        encoded.append(digits[value % 16].saturating_resize[u8]())
+    # The digit table yields only ASCII, so this conversion cannot replace any bytes.
+    return RustString.from_utf8_lossy(encoded).into_owned()

@@ -1,0 +1,9 @@
+[project]
+name = "explicit_carried_views_propagate_and_recover"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+drop_probe = { loaf = "drop_probe", path = "rust/drop_probe" }

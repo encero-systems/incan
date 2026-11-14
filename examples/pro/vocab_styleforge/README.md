@@ -2,9 +2,7 @@
 
 Conformance example for a CSS-shaped descriptor-gated embedded fragment (RFC 081, `#1023`).
 
-This example is meant to be read from the Incan consumer surface first. The Rust companion crate exists to
-describe the accepted `Style` and `SelectorDeclarationValue` submode grammars to the compiler; it does not claim
-CSS compatibility of any kind.
+Read the Incan consumer first. Its Incan vocabulary entry registers the `Style` and `SelectorDeclarationValue` submodes; it does not claim CSS compatibility.
 
 The consumer writes:
 
@@ -40,16 +38,10 @@ The important parts are:
 This example proves the parser-to-typechecker-to-lowering contract: the fragment parses through its own dedicated
 submode grammar, produces a typed `EmbeddedFragmentExpr` artifact with real source spans, and that artifact reaches
 Body IR successfully. It does **not** register a desugarer or lowering hook, so it has no runtime meaning yet --
-RFC 081 explicitly assigns that responsibility to the owning DSL's own desugarer or lowering hook (`#1023`'s
-scope is the mechanism, not a concrete CSS-in-Rust runtime). Building this consumer with `incan build` will
-therefore stop at Rust emission with a clear, explicit refusal (`cannot emit Rust code for a descriptor-gated
-embedded fragment: no owning DSL lowering hook is registered for it yet`) rather than silently emitting nothing or
-guessing at semantics. `incan check` against the consumer proves the parser/typechecker contract without needing a
-lowering hook.
+`incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
 
 Files worth reading in order:
 
 - `consumer/src/main.incn` - the user-facing DSL surface.
-- `producer/loaf.toml` - points the producer library at its vocab companion crate.
-- `producer/vocab_companion/src/lib.rs` - registers the `style:`/`spacing:` blocks and their embedded-fragment
-  descriptors.
+- `producer/loaf.toml` - declares `[vocab] entry`.
+- `producer/src/vocab.incn` - registers the `style:` and `spacing:` fragment descriptors through `std.vocab`.

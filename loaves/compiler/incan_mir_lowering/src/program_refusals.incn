@@ -1,0 +1,287 @@
+"""Collect the named refusals of a program's bodies and contexts."""
+
+from pub::incan_mir_plan import ExternalFunction, Function, ModelDeclaration, EnumDeclaration, StaticCell
+from layout_types import native_source_type
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import Body as RustBody
+from classes import function_name, body_module_identity
+from generators import generator_shape, generator_constructor
+from program_context import ProgramContext, body_at
+from native_type_identity import (
+    ConstructorIndex,
+    constructor_index_with_packages as index_constructors,
+    with_generic_constructor_arities,
+)
+from rust::std::sync import Arc
+from rust::std::collections import BTreeMap
+from nominal_instances import NominalInstance
+from table_views import borrowed_at
+from decorator_caches import DecoratorFrame
+from unions import collect_unions
+from type_parameters import Instance, merge_instance_requests
+from runtime_requirements import RuntimeRetention, RefusalPlanning
+from lowering import BodyIrModule, initial_plan_roots, layout_tables, plan_contexts, source_file_index
+from checked_values import location
+from program_entries import no_emitted_frames, ordinary_body
+from static_storage import lower_computed_statics
+from frame_instances import lower_instances, merge_externals
+from function_frames import frame_parameters, lower_function
+
+
+pub def program_refusals(
+    modules: list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    progress: bool,
+    selection: str,
+    kind: str,
+    package_versions: BTreeMap[str, str],
+    overflow_checks: bool,
+) -> RefusalPlanning:
+    """
+    Collect every body's first refusal rather than only the program's first, for the direct-route census.
+
+    The declaration context is prepared as `unit_plan` prepares it, and a refusal there is the only one reported,
+    because no body lowers without that context. Each ordinary body then lowers independently, so a refusal in one body
+    never hides another body's, and checked type-parameter instances follow once every body has been tried. Each
+    refusal names the body it came from. The plan itself is discarded. With `progress`, stdout names each body before
+    lowering starts, so a long-running census identifies its current boundary without process sampling.
+    A nonempty `selection` checks only ordinary bodies with that exact name; it does not compile their dependencies.
+    """
+    if len(modules) == 0 or entry < 0 or entry >= len(modules):
+        return RefusalPlanning.Complete(["invalid Body IR project entry"])
+    if len(sources) != len(modules) or len(files) != len(modules):
+        return RefusalPlanning.Complete(["invalid Body IR project source provenance"])
+    match body_refusals(modules, sources, files, entry, progress, selection, kind, package_versions, overflow_checks):
+        Ok(refusals) => return refusals
+        Err(error) => return RefusalPlanning.Complete([error])
+
+
+def body_refusals(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    progress: bool,
+    selection: str,
+    kind: str,
+    package_versions: BTreeMap[str, str],
+    overflow_checks: bool,
+) -> Result[RefusalPlanning, str]:
+    """
+    Prepare the declaration context exactly as `unit_plan` does, refusing as it refuses, then lower each ordinary
+    body on its own and record the first refusal of every body that refuses.
+
+    The bodies lowered and the comparison bridge instances scheduled are the ones compilation selects: both read
+    `ordinary_body` and `comparison_bridge_instances`.
+    """
+    source_files = source_file_index(modules, files)?
+    empty_templates = index_constructors([], source_files, package_versions)
+    source_context, template_constructors, owners, specialized_context, nominal_instances, _template_references = plan_contexts(
+        modules,
+        sources,
+        files,
+        entry,
+        false,
+        source_files,
+        package_versions,
+        borrowed_at(modules, entry),
+        empty_templates,
+    )?
+    mut context = specialized_context
+    mut constructor_table, unions, initial_intrinsics = layout_tables(
+        context,
+        files[entry],
+        source_files,
+        package_versions,
+    )?
+    constructors = Arc.new(with_generic_constructor_arities(constructor_table, template_constructors))
+    mut intrinsics = initial_intrinsics
+    mut models: list[ModelDeclaration] = []
+    mut enums: list[EnumDeclaration] = []
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
+    initial_program = initial_plan_roots(
+        constructors,
+        context,
+        files[entry],
+        intrinsics,
+        nominal_instances,
+        kind,
+        unions,
+        overflow_checks,
+        false,
+        models,
+        enums,
+        functions,
+        externals,
+        instances,
+    )?
+    mut program = initial_program
+    mut refusals: list[str] = []
+    mut selected_count = 0
+    mut emitted_frames = no_emitted_frames()
+    mut index = 0
+    for module_position in range(len(owners)):
+        checked_owner = owners[module_position]
+        # Each module borrows the bodies in place rather than copying every one.
+        for position in range(len(context.bodies)):
+            body = body_at(context.bodies, position)
+            match body_module_identity(body):
+                Ok(owner) =>
+                    if owner != checked_owner:
+                        continue
+                Err(error) =>
+                    refusals.append(f"{body.name}: {error}")
+                    continue
+            if not ordinary_body(context, body, emitted_frames, kind):
+                continue
+            # A frame reached again is skipped as compilation skips it, whether or not its first lowering refused.
+            emitted_frames.record(body, position)
+            if selection != "" and str(body.name) != selection:
+                continue
+            selected_count += 1
+            if progress:
+                println(f"census body: {body.name}")
+            match lower_function(
+                context,
+                program,
+                body,
+                unions,
+                sources[index],
+                files[index],
+                intrinsics,
+                [],
+                DecoratorFrame.Normal,
+            ):
+                Ok((function, runtime, pending, synthesized)) =>
+                    merge_instance_requests(instances, pending)
+                    functions.append(function)
+                    functions.extend(synthesized)
+                    match merge_externals(externals, runtime):
+                        Ok(_) => pass
+                        Err(error) => refusals.append(f"{body.name}: {error}")
+                Err(error) => refusals.append(f"{body.name}: {error}")
+        index += 1
+    if selection != "":
+        finish_selected_census(selection, selected_count, progress, refusals)
+        return Ok(RefusalPlanning.Complete(refusals))
+    match append_context_refusals(
+        template_constructors,
+        context,
+        source_context,
+        program,
+        unions,
+        sources,
+        files,
+        owners,
+        intrinsics,
+        functions,
+        externals,
+        instances,
+        nominal_instances,
+        refusals,
+    ):
+        RuntimeRetention.NeedsRuntime(requests) => return Ok(RefusalPlanning.NeedsRuntime(requests))
+        RuntimeRetention.Complete => pass
+    return Ok(RefusalPlanning.Complete(refusals))
+
+
+def finish_selected_census(selection: str, selected_count: int, progress: bool, mut refusals: list[str]) -> None:
+    """Report a selected-body pass and diagnose a selection that matched no ordinary body."""
+    if selected_count == 0:
+        refusals.append(f"selected declaration has no ordinary function body: {selection}")
+    if progress:
+        println("census complete: selected ordinary bodies only; no artifact compiled")
+
+
+def append_context_refusals(
+    template_constructors: &ConstructorIndex,
+    mut context: &mut BodyIrModule,
+    templates: &BodyIrModule,
+    mut program: ProgramContext,
+    unions: list[RustType],
+    sources: list[str],
+    files: list[str],
+    owners: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    nominal_instances: list[NominalInstance],
+    mut refusals: list[str],
+) -> RuntimeRetention:
+    """Collect static-initialization and instance refusals after ordinary bodies have contributed their requests."""
+    match lower_computed_statics(
+        context,
+        program,
+        unions,
+        sources,
+        files,
+        owners,
+        intrinsics,
+        functions,
+        externals,
+        instances,
+    ):
+        Ok(_cells) => pass
+        Err(error) => refusals.append(f"computed static: {error}")
+    mut retained_nominals = nominal_instances
+    mut instance_cells: list[StaticCell] = []
+    match lower_instances(
+        template_constructors,
+        context,
+        templates,
+        program,
+        instances,
+        unions,
+        sources,
+        files,
+        owners,
+        functions,
+        externals,
+        intrinsics,
+        retained_nominals,
+        instance_cells,
+    ):
+        Ok(RuntimeRetention.NeedsRuntime(requests)) => return RuntimeRetention.NeedsRuntime(requests)
+        Ok(RuntimeRetention.Complete) => pass
+        Err(error) => refusals.append(f"type-parameter instance: {error}")
+    return RuntimeRetention.Complete
+
+
+pub def append_generator_constructor(
+    constructors: &ConstructorIndex,
+    mut functions: list[Function],
+    module: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[None, str]:
+    """Retain the canonical lazy constructor beside its separately named producer in either entrypoint."""
+    if not body.is_generator():
+        return Ok(None)
+    ty = native_source_type(
+        constructors,
+        module.nominal_declarations,
+        module.enum_declarations,
+        collect_unions(module),
+        body.return_type,
+        intrinsics,
+    )?
+    match generator_shape(ty):
+        Some((leaf, depth)) =>
+            functions.append(
+                generator_constructor(
+                    function_name(module, body),
+                    frame_parameters(constructors, module, body, source, file, intrinsics)?,
+                    leaf,
+                    depth,
+                    location(body.span, source, file),
+                ),
+            )
+            return Ok(None)
+        None => return Err("unsupported Body IR generator return type")

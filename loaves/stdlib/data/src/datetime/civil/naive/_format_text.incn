@@ -1,0 +1,315 @@
+"""Text primitives behind civil `strftime` and `strptime`: directives, padded numbers, and month and weekday names."""
+
+from std.datetime.error import DateTimeError
+from crate.datetime.civil.naive._calendar import _DAYS_PER_WEEK, _MONTHS_PER_YEAR
+
+
+pub model _ParsedNumber:
+    pub value: int
+    pub next: int
+
+
+pub def _read_directive(format: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start + 1
+    if index >= len(format):
+        return Err(DateTimeError(detail="unexpected end of strftime format"))
+    modifier = format[index:index + 1]
+    if modifier == "-" or modifier == "_" or modifier == "0" or modifier == ":":
+        index += 1
+        if index >= len(format):
+            return Err(DateTimeError(detail="unexpected end of strftime format"))
+    return Ok(_ParsedNumber(value=index, next=index + 1))
+
+
+pub def _expand_format_aliases(format: str) -> Result[str, DateTimeError]:
+    mut out = ""
+    mut index = 0
+    while index < len(format):
+        if format[index:index + 1] != "%":
+            out += format[index:index + 1]
+            index += 1
+        else:
+            parsed = _read_directive(format, index)?
+            directive = format[parsed.value:parsed.value + 1]
+            mut modifier = format[parsed.value - 1:parsed.value]
+            if modifier != "-" and modifier != "_" and modifier != "0" and modifier != ":":
+                modifier = "".to_string()
+            if modifier != "" and _is_compound_format_alias(directive):
+                return Err(DateTimeError(detail="padding modifiers are not supported on compound strftime aliases"))
+            match directive:
+                "F" => out += "%Y-%m-%d"
+                "D" | "x" => out += "%m/%d/%y"
+                "R" => out += "%H:%M"
+                "T" | "X" => out += "%H:%M:%S"
+                "r" => out += "%I:%M:%S %p"
+                "c" => out += "%a %b %_d %H:%M:%S %Y"
+                _ => out += "%" + modifier + directive
+            index = parsed.next
+    return Ok(out)
+
+
+pub def _is_calendar_field(directive: str) -> bool:
+    """Whether a date directive assigns a calendar field rather than an ISO or calendar-week field."""
+    return directive in ["Y", "y", "m", "d", "e", "j", "b", "h", "B"]
+
+
+pub def _parse_calendar_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse a calendar field's numeric width or English month name without changing civil state."""
+    match directive:
+        "Y" => return _parse_number(value, start, 4, 4)
+        "y" => return _parse_number(value, start, 2, 2)
+        "d" | "e" => return _parse_day_number(value, start)
+        "j" => return _parse_number(value, start, 1, 3)
+        "b" | "h" => return _parse_month_name(value, start, false)
+        "B" => return _parse_month_name(value, start, true)
+        _ => return _parse_number(value, start, 1, 2)
+
+
+pub def _expanded_short_year(year: int) -> int:
+    """Expand two-digit calendar and ISO years at the shared 1970/2069 boundary."""
+    if year >= 70:
+        return 1900 + year
+    return 2000 + year
+
+
+pub def _parse_week_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse the spelling and width of a weekday, week or ISO-year directive."""
+    match directive:
+        "a" => return _parse_weekday_name(value, start, false)
+        "A" => return _parse_weekday_name(value, start, true)
+        "u" | "w" => return _parse_number(value, start, 1, 1)
+        "G" => return _parse_number(value, start, 4, 4)
+        "g" => return _parse_number(value, start, 2, 2)
+        _ => return _parse_number(value, start, 1, 2)
+
+
+pub def _sunday_zero_to_iso_weekday(weekday: int) -> int:
+    """Map the Sunday-zero weekday spelling to the Monday-one civil representation."""
+    if weekday == 0:
+        return 7
+    return weekday
+
+
+pub def _parse_clock_number(value: str, start: int, directive: str) -> Result[_ParsedNumber, DateTimeError]:
+    """Parse ordinary clock fields as one or two digits, or scale fractional seconds to nanoseconds."""
+    if directive == "f":
+        return _parse_fractional_number(value, start)
+    return _parse_number(value, start, 1, 2)
+
+
+pub def _parse_number(value: str, start: int, min_digits: int, max_digits: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start
+    mut digits = 0
+    while index < len(value) and digits < max_digits and _is_digit(value[index:index + 1]):
+        index += 1
+        digits += 1
+    if digits < min_digits:
+        return Err(DateTimeError(detail="expected numeric strptime field"))
+    return Ok(_ParsedNumber(value=int(value[start:index]), next=index))
+
+
+pub def _parse_fixed_digits(value: str, start: int, digits: int, detail: str) -> Result[int, DateTimeError]:
+    mut index = start
+    while index < start + digits:
+        if not _is_digit(value[index:index + 1]):
+            return Err(DateTimeError(detail=detail))
+        index += 1
+    return Ok(int(value[start:start + digits]))
+
+
+def _parse_day_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    mut index = start
+    if value[index:index + 1] == " ":
+        index += 1
+    return _parse_number(value, index, 1, 2)
+
+
+def _parse_fractional_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
+    number = _parse_number(value, start, 1, 9)?
+    if number.next < len(value) and _is_digit(value[number.next:number.next + 1]):
+        return Err(DateTimeError(detail="fractional seconds must have at most 9 digits"))
+    mut nanos = number.value
+    mut digits = number.next - start
+    while digits < 9:
+        nanos = nanos * 10
+        digits += 1
+    return Ok(_ParsedNumber(value=nanos, next=number.next))
+
+
+def _parse_month_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
+    mut month = 1
+    while month <= _MONTHS_PER_YEAR:
+        mut name = _month_short(month)
+        if long:
+            name = _month_long(month)
+        if value[start:start + len(name)].lower() == name.lower():
+            return Ok(_ParsedNumber(value=month, next=start + len(name)))
+        month += 1
+    return Err(DateTimeError(detail="expected month name"))
+
+
+def _parse_weekday_name(value: str, start: int, long: bool) -> Result[_ParsedNumber, DateTimeError]:
+    mut weekday = 1
+    while weekday <= _DAYS_PER_WEEK:
+        mut name = _weekday_short(weekday)
+        if long:
+            name = _weekday_long(weekday)
+        if value[start:start + len(name)].lower() == name.lower():
+            return Ok(_ParsedNumber(value=weekday, next=start + len(name)))
+        weekday += 1
+    return Err(DateTimeError(detail="expected weekday name"))
+
+
+pub def _format_padded(value: int, width: int, padding: str) -> str:
+    mut out = str(value)
+    if padding == "-":
+        return out
+    mut fill = "0"
+    if padding == "_":
+        fill = " ".to_string()
+    while len(out) < width:
+        out = fill + out
+    return out
+
+
+def _is_digit(value: str) -> bool:
+    match value:
+        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => return true
+        _ => return false
+
+
+pub def _is_date_directive(directive: str) -> bool:
+    match directive:
+        "Y" | "y" | "m" | "d" | "e" | "j" | "a" | "A" | "b" | "h" | "B" | "w" | "u" | "U" | "W" | "V" | "G" | "g" =>
+            return true
+        _ => return false
+
+
+pub def _is_time_directive(directive: str) -> bool:
+    match directive:
+        "H" | "I" | "M" | "S" | "f" | "p" | "P" => return true
+        _ => return false
+
+
+pub def _is_timezone_directive(directive: str) -> bool:
+    match directive:
+        "z" | "Z" => return true
+        _ => return false
+
+
+def _is_compound_format_alias(directive: str) -> bool:
+    match directive:
+        "F" | "D" | "R" | "T" | "c" | "x" | "X" | "r" => return true
+        _ => return false
+
+
+pub def _hour_12(hour: int) -> int:
+    value = hour % 12
+    if value == 0:
+        return 12
+    return value
+
+
+pub def _period_upper(hour: int) -> str:
+    if hour < 12:
+        return "AM"
+    return "PM"
+
+
+pub def _period_lower(hour: int) -> str:
+    if hour < 12:
+        return "am"
+    return "pm"
+
+
+pub def _month_short(month: int) -> str:
+    match month:
+        1 => return "Jan"
+        2 => return "Feb"
+        3 => return "Mar"
+        4 => return "Apr"
+        5 => return "May"
+        6 => return "Jun"
+        7 => return "Jul"
+        8 => return "Aug"
+        9 => return "Sep"
+        10 => return "Oct"
+        11 => return "Nov"
+        _ => return "Dec"
+
+
+pub def _month_long(month: int) -> str:
+    match month:
+        1 => return "January"
+        2 => return "February"
+        3 => return "March"
+        4 => return "April"
+        5 => return "May"
+        6 => return "June"
+        7 => return "July"
+        8 => return "August"
+        9 => return "September"
+        10 => return "October"
+        11 => return "November"
+        _ => return "December"
+
+
+pub def _weekday_short(weekday: int) -> str:
+    match weekday:
+        1 => return "Mon"
+        2 => return "Tue"
+        3 => return "Wed"
+        4 => return "Thu"
+        5 => return "Fri"
+        6 => return "Sat"
+        _ => return "Sun"
+
+
+pub def _weekday_long(weekday: int) -> str:
+    match weekday:
+        1 => return "Monday"
+        2 => return "Tuesday"
+        3 => return "Wednesday"
+        4 => return "Thursday"
+        5 => return "Friday"
+        6 => return "Saturday"
+        _ => return "Sunday"
+
+
+pub def _pad2(value: int) -> str:
+    if value < 10:
+        return "0" + str(value)
+    return str(value)
+
+
+pub def _pad4(value: int) -> str:
+    if value < 10:
+        return "000" + str(value)
+    if value < 100:
+        return "00" + str(value)
+    if value < 1000:
+        return "0" + str(value)
+    return str(value)
+
+
+pub def _pad9(value: int) -> str:
+    mut out = str(value)
+    while len(out) < 9:
+        out = "0" + out
+    return out
+
+
+pub def _parse_fractional_nanos(value: str) -> Result[int, DateTimeError]:
+    if len(value) < 1 or len(value) > 9:
+        return Err(DateTimeError(detail="fractional seconds must have 1 to 9 digits"))
+    mut out = 0
+    mut index = 0
+    while index < len(value) and index < 9:
+        if not _is_digit(value[index:index + 1]):
+            return Err(DateTimeError(detail="fractional seconds must contain only digits"))
+        out = out * 10 + int(value[index:index + 1])
+        index += 1
+    while index < 9:
+        out = out * 10
+        index += 1
+    return Ok(out)

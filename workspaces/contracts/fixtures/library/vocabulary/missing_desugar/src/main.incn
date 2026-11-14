@@ -1,0 +1,11 @@
+# behavior: custom vocabulary registration requires a public typed desugar export, including for a private implementation
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary entry must export pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]
+
+from pub::words import marker
+
+
+def main() -> None:
+    """The producer must be refused before this ordinary consumer executes."""
+    println(marker())

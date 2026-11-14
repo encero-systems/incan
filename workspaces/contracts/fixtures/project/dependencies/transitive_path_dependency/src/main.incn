@@ -1,0 +1,10 @@
+# behavior: a dependency's own path dependency is reached too, listed under its package name
+# expect-dependencies:
+#   alpha alpha
+#   beta beta
+
+from pub::alpha import alpha_value
+
+
+def main() -> None:
+    println(alpha_value())

@@ -11,7 +11,7 @@ use super::TypeChecker;
 use crate::typechecker::LoopContextKind;
 use crate::typechecker::helpers::result_ty;
 use incan_lang::interop::RustItemKind;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 
 impl TypeChecker {
@@ -31,11 +31,13 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        let prev_await_operand_span = self.await_operand_span.replace((inner.span.start, inner.span.end));
+        let prev_await_operand_span = self.await_operand_span.replace(inner.span);
         let inner_ty = self.check_expr(inner);
         self.await_operand_span = prev_await_operand_span;
 
         if let Some(output_ty) = self.await_output_type(inner, &inner_ty) {
+            self.retain_open_await_value(inner.span, span);
+            self.retain_body_ir_await_output(inner, &output_ty, span);
             return output_ty;
         }
 
@@ -44,22 +46,56 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
+    /// Preserve a selected operand's concrete output before legacy async checking reopens its declaration binders.
+    /// Source async calls keep their logical result while structural awaitable carriers expose their payload.
+    fn retain_body_ir_await_output(&mut self, inner: &Spanned<Expr>, legacy: &ResolvedType, span: Span) {
+        let Some(actual) = self.body_ir_checked_value_type(inner.span).cloned() else {
+            return;
+        };
+        let output = if self.expr_is_async_call_realization(inner) {
+            Some(actual)
+        } else {
+            self.await_output_type_from_type(&actual)
+        };
+        let Some(output) = output.filter(|output| self.types_compatible(legacy, output)) else {
+            return;
+        };
+        let output = self.body_ir_close_value_parts(legacy, &output);
+        self.type_info.expressions.body_ir_expr_types.insert(span, output);
+    }
+
     /// Resolve the output type of one checked await operand.
     fn await_output_type(&mut self, expr: &Spanned<Expr>, ty: &ResolvedType) -> Option<ResolvedType> {
         if self.expr_is_async_call_realization(expr) {
             return Some(ty.clone());
+        }
+        if self.rust_associated_type(ty, "std::future::Future", "Output").is_none()
+            && let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture")
+        {
+            let output = self.rust_associated_type(&future, "std::future::Future", "Output")?;
+            self.type_info.rust.await_conversions.insert(
+                expr.span,
+                crate::typechecker::RustCheckedCall {
+                    storage: None,
+                    source_type_parameters: self.native_call_type_parameters(),
+                    signature_loans: Vec::new(),
+                    receiver_adjustments: Vec::new(),
+                    path: "std::future::IntoFuture::into_future".into(),
+                    type_arguments: vec![ty.clone()],
+                    parameters: vec![crate::symbols::CallableParam::positional(ty.clone())],
+                    return_type: future,
+                    result_item_path: None,
+                    has_receiver: true,
+                },
+            );
+            return Some(output);
         }
         self.await_output_type_from_type(ty)
     }
 
     /// Return whether this expression is a direct async call, the shape `await` and a task argument both admit.
     pub(in crate::typechecker::check_expr) fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
-        if self
-            .type_info
-            .rust
-            .async_call_realizations
-            .contains(&(expr.span.start, expr.span.end))
-        {
+        if self.type_info.rust.async_call_realizations.contains(&expr.span) {
             return true;
         }
         match &expr.node {
@@ -78,12 +114,20 @@ impl TypeChecker {
     /// Return whether a call callee resolves to an async function.
     fn call_expr_is_async(&mut self, callee: &Spanned<Expr>) -> bool {
         match &callee.node {
-            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| match &sym.kind {
-                SymbolKind::Function(info) => info.is_async,
-                SymbolKind::RustItem(info) => {
-                    matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+            Expr::Ident(name) => self.lookup_symbol(name).is_some_and(|sym| {
+                match &sym.kind {
+                    SymbolKind::Function(info) => info.is_async,
+                    SymbolKind::RustItem(info) => {
+                        matches!(&info.metadata, Some(metadata) if matches!(&metadata.kind, RustItemKind::Function(sig) if sig.is_async))
+                    }
+                    SymbolKind::Variable(_) => self
+                        .type_info
+                        .declarations
+                        .decorated_function_bindings_by_span
+                        .get(&sym.span)
+                        .is_some_and(|binding| binding.is_async),
+                    _ => false,
                 }
-                _ => false,
             }),
             Expr::Field(base, member) => self.module_function_member_is_async(base, member),
             _ => false,
@@ -174,26 +218,25 @@ impl TypeChecker {
 
     /// Resolve the output type yielded by awaiting a checked awaitable type.
     pub(in crate::typechecker) fn await_output_type_from_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        if let Some(output) = self.rust_associated_type(ty, "std::future::Future", "Output") {
+            return Some(output);
+        }
+        if let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture") {
+            return self.rust_associated_type(&future, "std::future::Future", "Output");
+        }
+        if let Some(output) = self.runtime_join_handle_output(ty) {
+            return Some(output);
+        }
         if let Some(name) = self.generic_placeholder_name(ty) {
             return self.await_output_type_from_active_bound(name);
         }
         match ty {
-            ResolvedType::Unknown | ResolvedType::RustPath(_) => Some(ResolvedType::Unknown),
+            ResolvedType::Unknown => Some(ResolvedType::Unknown),
             ResolvedType::TypeVar(name) => self.await_output_type_from_active_bound(name),
             ResolvedType::Generic(name, args)
                 if builtin_traits::from_str(name.as_str()) == Some(TraitId::Awaitable) && args.len() == 1 =>
             {
                 args.first().cloned()
-            }
-            ResolvedType::Generic(name, args)
-                if surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle) && args.len() == 1 =>
-            {
-                args.first().map(|output| {
-                    result_ty(
-                        output.clone(),
-                        ResolvedType::Named(TASK_JOIN_ERROR_TYPE_NAME.to_string()),
-                    )
-                })
             }
             ResolvedType::Named(name) => self
                 .instantiated_trait_args_for_type(name, &[], builtin_traits::as_str(TraitId::Awaitable))
@@ -206,20 +249,40 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve the registry-owned task handle's await output when selected Loaf metadata omits its native associated
+    /// type. Runtime provenance is required so an equal-spelled source type cannot acquire task semantics.
+    fn runtime_join_handle_output(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let projected;
+        let native = if let Some(target) = self.rusttype_native_target(ty) {
+            projected = target;
+            &projected
+        } else {
+            ty
+        };
+        let ResolvedType::Generic(base, arguments) = native else {
+            return None;
+        };
+        if surface_types::from_runtime_rust_path(base) != Some(SurfaceTypeId::JoinHandle)
+            || !self.type_info.runtime_owner_admitted(SurfaceTypeId::JoinHandle)
+        {
+            return None;
+        }
+        let [payload] = arguments.as_slice() else {
+            return None;
+        };
+        Some(result_ty(
+            payload.clone(),
+            ResolvedType::Named(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_string()),
+        ))
+    }
+
     /// Resolve `Awaitable[T]` output from active generic bounds for one placeholder.
     fn await_output_type_from_active_bound(&self, placeholder_name: &str) -> Option<ResolvedType> {
         let awaitable = builtin_traits::as_str(TraitId::Awaitable);
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            let Some(bounds) = frame.get(placeholder_name) else {
-                continue;
-            };
-            for bound in bounds {
-                if bound.name == awaitable && bound.type_args.len() == 1 {
-                    return bound.type_args.first().cloned();
-                }
-            }
-        }
-        None
+        self.innermost_type_param_bounds(placeholder_name)?
+            .iter()
+            .find(|bound| bound.name == awaitable && bound.type_args.len() == 1)
+            .and_then(|bound| bound.type_args.first().cloned())
     }
 
     /// Type-check an expression-form `race for value:` block.
@@ -333,7 +396,6 @@ impl TypeChecker {
         };
 
         self.report_unreachable_after_return(stmts);
-        self.enter_item_taking_block();
         for stmt in prefix {
             self.check_statement(stmt);
         }
@@ -345,7 +407,6 @@ impl TypeChecker {
                 ResolvedType::Unit
             }
         };
-        self.exit_item_taking_block();
         arm_ty
     }
 
@@ -430,7 +491,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Expression, expected.cloned(), span.start);
+        self.push_loop_context(LoopContextKind::Expression, expected.cloned(), span);
         self.check_statement_block(&loop_expr.body);
         let loop_ctx = self.pop_loop_context();
         self.symbols.exit_scope();

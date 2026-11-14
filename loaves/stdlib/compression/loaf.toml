@@ -4,10 +4,6 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
-[sdk]
-profile = "minimal"
-components = ["stdlib-system"]
-
 [dependencies]
 bzip2 = { loaf = "crates-io/bzip2", version = "0.6", features = [], default-features = true }
 flate2 = { loaf = "crates-io/flate2", version = "1", features = [], default-features = true }

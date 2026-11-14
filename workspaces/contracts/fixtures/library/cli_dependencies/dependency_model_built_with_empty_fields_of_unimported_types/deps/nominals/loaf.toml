@@ -1,0 +1,7 @@
+[project]
+name = "nominals"
+version = "0.1.0"
+
+[dependencies]
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"], default-features = true }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = [], default-features = true }

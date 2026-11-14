@@ -4,7 +4,7 @@ from rust::incan_semantics_core::body_ir import Operand as RustOperand
 from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, temporary, read_place, terminate_call
-from lowering import scalar_place
+from checked_values import scalar_place
 
 
 pub def serialize_enum_operand(

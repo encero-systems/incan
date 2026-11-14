@@ -26,6 +26,13 @@ pub(super) const RFC053_METHOD_BLANK_LINES: usize = 1;
 /// Formatter that transforms AST back to formatted source code.
 pub struct Formatter {
     writer: FormatWriter,
+    source: Option<String>,
+    /// How many brackets enclose the expression being written. The lexer ignores line breaks inside brackets, so a
+    /// layout may break a line anywhere while this is nonzero.
+    bracket_depth: usize,
+    /// Whether the expression about to be written ends its statement's line, the one other place the parser accepts
+    /// an indented fluent `.method()` continuation. Each expression consumes it; only its trailing parts inherit it.
+    fluent_tail: bool,
 }
 
 impl Formatter {
@@ -33,7 +40,16 @@ impl Formatter {
     pub fn new(config: FormatConfig) -> Self {
         Self {
             writer: FormatWriter::new(config),
+            source: None,
+            bracket_depth: 0,
+            fluent_tail: false,
         }
+    }
+
+    /// Retain the source for spelling-sensitive literals; AST spans identify each occurrence independently.
+    pub fn with_source(mut self, source: &str) -> Self {
+        self.source = Some(source.to_owned());
+        self
     }
 
     /// Format a program and return the formatted source.
@@ -68,16 +84,16 @@ impl Formatter {
                 self.format_type(&return_type.node);
             }
         } else {
-            for arg in &block.header_args {
-                self.writer.write(" ");
-                self.format_expr(&arg.node);
+            for (index, arg) in block.header_args.iter().enumerate() {
+                self.writer.write(if index == 0 { " " } else { ", " });
+                self.format_spanned_expr(arg);
             }
         }
     }
 
     /// Write an expression-list item without deciding statement terminators.
     fn format_vocab_expression_item_contents(&mut self, item: &VocabExpressionItemStmt) {
-        self.format_expr(&item.expr.node);
+        self.format_spanned_expr(&item.expr);
         if let Some(alias) = &item.alias {
             self.writer.write(" as ");
             self.writer.write(alias);
@@ -86,7 +102,7 @@ impl Formatter {
             self.writer.write(" ");
             self.writer.write(&modifier.keyword);
             self.writer.write(" ");
-            self.format_expr(&modifier.value.node);
+            self.format_spanned_expr(&modifier.value);
         }
     }
 
@@ -118,7 +134,7 @@ impl Formatter {
                 self.writer.newline();
             }
             Statement::Expr(expr) => {
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
                 self.writer.newline();
             }
             Statement::TupleUnpack(unpack) => self.format_tuple_unpack(unpack, TupleValueLayout::Parenthesized),
@@ -186,7 +202,7 @@ impl Formatter {
         match &stmt.node {
             Statement::Expr(expr) => {
                 self.writer.write(" ");
-                self.format_expr(&expr.node);
+                self.format_spanned_expr(expr);
                 true
             }
             Statement::VocabExpressionItem(item) => {
@@ -201,7 +217,7 @@ impl Formatter {
     /// Write one braced expression-list item without a trailing newline.
     fn format_braced_vocab_expression_list_item(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
-            Statement::Expr(expr) => self.format_expr(&expr.node),
+            Statement::Expr(expr) => self.format_spanned_expr(expr),
             Statement::VocabExpressionItem(item) => self.format_vocab_expression_item_contents(item),
             _ => self.format_statement(stmt),
         }
@@ -223,16 +239,6 @@ impl Formatter {
             idx = 1;
         }
 
-        if let Some(rust_module_path) = &program.rust_module_path {
-            if !first {
-                self.writer.blank_lines(1);
-            }
-            self.writer.write("rust.module(\"");
-            self.writer.write(&rust_module_path.node);
-            self.writer.writeln("\")");
-            first = false;
-        }
-
         while idx < program.declarations.len() {
             let required_features = program.declarations[idx].required_features.clone();
             if !required_features.is_empty() {
@@ -246,7 +252,7 @@ impl Formatter {
                     let extra_newlines = prev_decl
                         .as_ref()
                         .map(|prev| self.top_level_spacing(prev, &first_decl))
-                        .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
+                        .unwrap_or(0);
                     self.writer.blank_lines(extra_newlines);
                 }
                 self.format_feature_condition_header(&required_features);
@@ -274,7 +280,7 @@ impl Formatter {
                 let extra_newlines = prev_decl
                     .as_ref()
                     .map(|prev| self.top_level_spacing(prev, &decl))
-                    .unwrap_or_else(|| usize::from(program.rust_module_path.is_some()));
+                    .unwrap_or(0);
                 self.writer.blank_lines(extra_newlines);
             }
 

@@ -1,0 +1,25 @@
+# behavior: an integer literal assigned to an existing float binding is stored as that float, as it is in a float declaration
+# expect-stdout:
+#   1.0
+#   -2.0
+#   3.0
+#   7.0
+#   2.5
+
+def half(value: float) -> float:
+    return value / 2.0
+
+
+def main() -> None:
+    mut f: float = 0.5
+    f = 1
+    println(f)
+    f = -2
+    println(f)
+    declared: float = 3
+    println(declared)
+    for step in range(2):
+        if step == 1:
+            f = 7
+    println(f)
+    println(half(5))

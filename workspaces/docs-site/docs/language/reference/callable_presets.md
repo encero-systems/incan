@@ -57,7 +57,7 @@ model User:
 class Counter:
     pub count: int
 
-    def add(mut self, by: int) -> None:
+    pub def add(mut self, by: int) -> None:
         self.count += by
 
 def main() -> None:

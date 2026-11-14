@@ -1,0 +1,9 @@
+[project]
+name = "local_alias"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+counter = { loaf = "borrow_fixture", path = "rust/borrow_fixture" }

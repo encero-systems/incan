@@ -19,10 +19,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.retain_evaluated_value_read(expression, value, scope, out)
     }
 
-    /// Capture a global scalar or owned-text value at its evaluation point before a later operand or argument can
-    /// mutate storage. Mutable arguments and live collection handles retain their separate borrowing contracts.
-    /// Enum reads still require the admitted declaration identity; numeric, boolean and text carriers come from the
-    /// checked expression.
+    /// Capture scalar projections and owned text at their evaluation point before a later operand can borrow their
+    /// owner or consume its final read. Whole scalar locals and already captured temporaries need no snapshot.
+    /// Mutable arguments and live collection handles retain their separate borrowing contracts. Global enum reads
+    /// still require the admitted declaration identity; numeric, boolean and text carriers come from the checked
+    /// expression.
     pub(super) fn retain_evaluated_value_read(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -33,10 +34,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let bir::Operand::Place(read) = &value else {
             return value;
         };
-        if read.place.global().is_none() {
+        let ty = self.resolve_ty(expression.span);
+        let selected_view_call = self
+            .input_body
+            .as_ref()
+            .ok()
+            .and_then(|proof| proof.as_ref())
+            .map(|proof| proof.view_call_span(expression))
+            .and_then(|span| self.type_info.selected_call_view(span))
+            .is_some();
+        if read.fact == bir::OwnershipFact::Borrow
+            && !ty.abi_v0_facts().ownership.is_trivially_copy()
+            && (matches!(self.checked_borrow_source(expression), Some(Ok(_))) || selected_view_call)
+        {
+            // The checked loan includes the operation's consumption point, so later operands cannot invalidate
+            // this storage. Materializing an owned text temporary here would silently repair the explicit borrow.
             return value;
         }
-        let ty = self.resolve_ty(expression.span);
+        let global = read.place.global().is_some();
+        if !global && read.place.projection.is_empty() {
+            let temporary = read
+                .place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Temporary));
+            if temporary || !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Str)) {
+                return value;
+            }
+        }
         if numeric_carrier_id(&ty).is_some()
             || matches!(
                 ty,
@@ -45,6 +70,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out);
         }
+        if !global {
+            return value;
+        }
         let IncanType::Named(name) = &ty else {
             return value;
         };
@@ -52,23 +80,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.type_info
                 .expressions
                 .expression_type_identities
-                .get(&(expression.span.start, expression.span.end))?
+                .get(&expression.span)?
                 .get(&Vec::new())
         }) else {
             return value;
         };
-        let published = library_nominals::sdk_identity(identity);
-        let local = self.local_enum_declarations.values().any(|declaration| {
-            declaration.canonical == *identity
-                || published.as_ref().is_some_and(|canonical| {
-                    library_nominals::sdk_identity(&declaration.canonical).as_ref() == Some(canonical)
-                })
-        });
-        let sdk = published.as_ref().is_some_and(|canonical| {
-            canonical.kind == SemanticSourceTargetKind::Enum
-                && library_type_identities(self.type_info).contains(canonical)
-        });
-        if !local && !sdk {
+        let local = self
+            .local_enum_declarations
+            .values()
+            .any(|declaration| declaration.canonical == *identity);
+        let loaf = super::is_loaf_identity(identity) && identity.kind == SemanticSourceTargetKind::Enum;
+        if !local && !loaf {
             return value;
         }
         self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out)
@@ -142,6 +164,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_collection_equality_operand(lhs, scope, out),
                 self.lower_collection_equality_operand(rhs, scope, out),
             )
+        } else if is_string_like(&lhs_ty)
+            && is_string_like(&rhs_ty)
+            && matches!(string_helper_for_binop(op), Some(helper) if !matches!(helper, bir::HelperOp::StrConcat))
+        {
+            (
+                self.lower_text_comparison_operand(lhs, scope, out),
+                self.lower_text_comparison_operand(rhs, scope, out),
+            )
         } else {
             (
                 self.lower_binary_operand(lhs, scope, out),
@@ -162,10 +192,30 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Borrow local text for a non-consuming comparison while capturing global and projected values before later
+    /// effects. The read still decrements its ordinary countdown, but cannot mark the compared owner as transferred
+    /// along a short-circuit branch that falls through to another comparison.
+    fn lower_text_comparison_operand(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let mut value = self.lower_expr_to_operand(expression, scope, out);
+        if let bir::Operand::Place(read) = &mut value
+            && read.place.global().is_none()
+            && read.place.projection.is_empty()
+        {
+            self.retain_argument_borrow(read, false);
+            return value;
+        }
+        self.retain_evaluated_value_read(expression, value, scope, out)
+    }
+
     /// Materialize one comparison place and retain its shared read without marking source storage as moved.
     ///
-    /// A bare binding's comparison still counts as a read, so a subsequent final value use can move instead of
-    /// acquiring an extra clone. Projected reads retain the existing conservative partial-move policy.
+    /// Both bare and projected comparisons count as source reads, so a subsequent final owner use can move.
+    /// The comparison itself stays shared and cannot move a field out of its owner.
     fn lower_collection_equality_operand(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -173,12 +223,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let place = self.lower_expr_to_place(expr, scope, out);
-        if place.projection.is_empty()
-            && let Some(local) = place.local_id()
-            && let Some(remaining) = self.remaining_reads.get_mut(&local)
-        {
-            *remaining = remaining.saturating_sub(1);
-        }
+        let _ = self.consume_place_read(&place);
         bir::Operand::place(place, bir::OwnershipFact::Borrow, false)
     }
 
@@ -186,6 +231,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Both successors initialize one boolean temporary. Calls, panics, and mutations in the right operand stay
     /// inside the selected branch; downstream consumers need no source-expression reconstruction.
+    /// Enclosing owners stay live when the right operand is skipped.
     fn lower_boolean_short_circuit(
         &mut self,
         lhs: &ast::Spanned<ast::Expr>,
@@ -201,7 +247,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_bindings = self.bindings.clone();
         let range_layouts_before = self.materialized_range_locals.clone();
         let mut evaluated = Vec::new();
+        self.conditional_scopes.push(branch_scope);
         let value = self.lower_expr_to_operand(rhs, branch_scope, &mut evaluated);
+        self.conditional_scopes.pop();
         evaluated.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: bir::Place::from_local(local),
@@ -311,8 +359,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             native_trait_delegation: None,
             name: method.to_string(),
             intrinsic_carrier: None,
-            reflection: None,
-            sdk_trait: None,
+            operation: None,
+            loaf_trait: None,
+            trait_arguments: self
+                .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
             canonical: self
                 .type_info
                 .resolved_identity(span)
@@ -348,10 +398,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))];
 
         // ---- Parts: retain three typed Option slots ----
-        let option_int = IncanType::Generic {
-            base: "Option".to_string(),
-            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
-        };
+        let option_int = IncanType::builtin_collection(
+            CollectionTypeId::Option,
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        );
         for part in [&slice.start, &slice.end, &slice.step] {
             let value = match part {
                 Some(expression) => {
@@ -398,7 +448,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .protocols
                     .body_ir_truthiness_receivers
-                    .contains_key(&(expr.span.start, expr.span.end)) =>
+                    .contains_key(&expr.span) =>
             {
                 let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
                 Some(self.lower_operator_dispatch(&method, expr, &[], bool_ty, expr.span, scope, out))
@@ -450,12 +500,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return true;
         }
         // A builtin collection with no collection helper is *not* refused here. `==` on two lists is the case that
-        // settles it: the Rust-emission backend routes list `+` to `incan_std_core::collections::list_concat`, which
-        // is why representing it as `BinOp::Add` contradicted that backend -- but it emits comparisons as an infix
-        // operator, landing on Rust's `PartialEq` for `Vec`, which is also what Python's element-wise `==` means.
-        // A primitive is therefore the faithful representation there, and refusing it would invent a divergence
-        // between the two backends rather than close one. An operator that genuinely needs a runtime call earns a
-        // helper in `collection_helper_for_binop`, and the check above admits it.
+        // settles it: the Rust-emission backend routes list `+` to `incan_std_primitives::collections::list_concat`,
+        // which is why representing it as `BinOp::Add` contradicted that backend -- but it emits comparisons as
+        // an infix operator, landing on Rust's `PartialEq` for `Vec`, which is also what Python's element-wise
+        // `==` means. A primitive is therefore the faithful representation there, and refusing it would invent
+        // a divergence between the two backends rather than close one. An operator that genuinely needs a
+        // runtime call earns a helper in `collection_helper_for_binop`, and the check above admits it.
         lower_binary_op(op).is_some()
     }
 

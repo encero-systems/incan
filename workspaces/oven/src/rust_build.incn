@@ -1,0 +1,479 @@
+"""
+The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned
+toolchain's libraries, and rustc invocation.
+"""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.hash import sha256
+from std.encoding.hex import hexlify
+from codegen import rust_arguments, unit_metadata
+from driver_command import driver_command
+from intake import ManifestReader
+from loaf_local_graph import LocalFacet
+from registry_units import RegistryUnits, is_dynamic_library
+from retained_readings import installed_digest
+from rust_target import compiler_sysroot, compiler_version, decoded, deployment_target, inherited_deployment_selection
+from toolchain import NativeCrate, Toolchain, load_toolchain
+from unit_freshness import Key, cache_identities, compiler_fingerprint, fingerprint, sdk_content_identity
+from rust_freshness import extern_paths
+from rust_manifest import RustFacet
+from rust_registry import registry_selection
+
+
+pub model BuiltUnit:
+    """One compiled local unit: what its dependents pass as `--extern`, and where its outputs are."""
+
+    pub crate_name: str
+    pub artifact: str
+    pub directory: str
+    # Whether this build kept a stored Rust facet; Incan providers trace their library decision separately.
+    pub reused: bool = false
+    # An Incan provider's native closure, needed when Rust links the provider's transitive crates.
+    pub search: list[str] = []
+    # The Incan package identity, empty for a Rust-only library.
+    pub loaf: str = ""
+    # Authority that covered this Loaf's compile-time code for the request, empty when it carries none.
+    pub covered_by: str = ""
+
+
+pub def facet_slot(facet: LocalFacet, profile: str) -> str:
+    """
+    Locate a project's target slot by its declared owner, domain, features and profile.
+
+    The local graph refuses two projects that declare the same package, version and domain, so that declaration is
+    sufficient to distinguish real build units without leaking a checkout path into linker input names. Synthetic
+    facets without a declaration retain the project path as a compatibility fallback. This slot is never an identity.
+    """
+    mut owner = facet.project
+    if facet.package != "" and facet.version != "":
+        owner = f"{facet.package}\n{facet.version}"
+    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
+
+
+def refuse_shared_identities(facets: list[LocalFacet]) -> Result[None, str]:
+    """Refuse ambiguous local providers that declare the same package, version and compilation domain."""
+    mut owners: Dict[str, str] = {}
+    for facet in facets:
+        if facet.package == "":
+            continue
+        named = f"{facet.package} {facet.version} ({facet.domain.value()})"
+        if named in owners and owners[named] != facet.project:
+            return Err(f"two local Loaves both declare {named}: {owners[named]} and {facet.project}")
+        owners[named] = facet.project
+    return Ok(None)
+
+
+pub def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
+    """The facets in an order where every unit follows the local units it links."""
+    refuse_shared_identities(facets)?
+    mut done: list[str] = []
+    mut result: list[LocalFacet] = []
+    while len(result) < len(facets):
+        mut progressed = false
+        for facet in facets:
+            if facet.key() in done:
+                continue
+            mut ready = true
+            for edge in facet.local:
+                if edge.key() not in done:
+                    ready = false
+            if ready:
+                done.append(facet.key())
+                result.append(facet)
+                progressed = true
+        if not progressed:
+            return Err("the local Rust units depend on each other in a cycle")
+    return Ok(result)
+
+
+pub model RustBuild:
+    """The selected features, profile and compilers for one consumer's shared local dependency graph."""
+
+    pub project: str
+    pub profile: str = "debug"
+    # The toolchain's pinned compiler; never whichever `rustc` is first on PATH.
+    pub rustc: str
+    pub registry: RegistryUnits
+    pub features: list[str] = []
+    pub default_features: bool = true
+    # `--all-features`: the root selects every feature its manifest declares.
+    pub all_features: bool = false
+    # Loaves to use in place of the Loaf of a package name, wherever the graph reaches it.
+    pub substitutes: Dict[str, str] = {}
+    # The Incan unit orchestrator supplies its compiler without a reverse module dependency.
+    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str, ManifestReader, bool) -> Result[i32, str]] = None
+    # The toolchain's own search directories. An Incan provider's native closure leaves them to the search index, so a
+    # Rust facet, which rustc links directly, searches them beside the registry's.
+    pub toolchain_search: list[str] = []
+    # One installed generation is selected for the whole build, including Incan providers.
+    pub toolchain: Option[Toolchain] = None
+    pub compiler: str = ""
+    # All provider callbacks share the preparation's exact source readings.
+    pub manifests: ManifestReader = ManifestReader()
+    # Native Rust artifacts depend on the actual rustc, independently of installed Incan providers.
+    pub native_compiler: str = ""
+    # One name index retains ambiguity in the selected installed artifact generation.
+    pub installed: Dict[str, list[str]] = {}
+    # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
+    pub rust_facet_dependencies: bool = false
+    # Public Oven/Incan command surfaces may delegate ready dependency units to isolated worker processes.
+    pub schedule_rust_units: bool = false
+    # Unasked inspection and editor preparation may execute compile-time code only when trust evidence covers it.
+    pub unattended: bool = false
+    # Stable trust evidence keyed by selected Loaf package identity.
+    pub covered_by: Dict[str, str] = {}
+
+
+pub def rust_output(project: Path, profile: str) -> Path:
+    """Where a project's Rust units and the receipt of its last build are stored for a profile."""
+    return project.joinpath("target").joinpath("incan").joinpath("rust").joinpath(profile)
+
+
+pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
+    """
+    Select the installed compiler once, then retain its fingerprint for every facet in this build.
+
+    1. Preserve a caller's loaded toolchain, or load it once.
+    2. Derive the Incan-generation and actual Rust compiler fingerprints once.
+    """
+    # 1. The selected generation is shared by native facets and Incan providers.
+    selected = selected_toolchain(request)?
+    mut prepared = request
+    prepared.toolchain = Some(selected)
+    # 2. Legacy installed producers permit a local bake, but cannot authorize a portable unit identity.
+    if prepared.compiler == "":
+        match compiler_fingerprint(selected):
+            Ok(identity) => prepared.compiler = identity
+            Err(reason) =>
+                if "unit identity refused:" not in reason:
+                    return Err(reason)
+    prepared.installed = native_artifacts(selected.externs)
+    if prepared.native_compiler == "":
+        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc)?
+    return Ok(prepared)
+
+
+pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
+    """Index the installed generation once without hiding duplicate native crate bindings."""
+    mut artifacts: Dict[str, list[str]] = {}
+    for native in externs:
+        if native.name not in artifacts:
+            artifacts[native.name] = []
+        artifacts[native.name].append(native.path)
+    return artifacts
+
+
+pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
+    """Identify the actual pinned compiler by content after resolving the installation's sysroot alias."""
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    libraries = toolchain_libraries(compiler.0)?
+    version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
+    return fingerprint(
+        [
+            fingerprint(cache_identities([compiler.0])?)?,
+            version,
+            libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"],
+            deployment_target(compiler.0, version, inherited_deployment_selection()?)?,
+        ],
+    )
+
+
+pub def linker_compiler_identity(compiler: str, sdk: str) -> Result[str, str]:
+    """Bind selected SDK contents to an otherwise SDK-independent native compiler identity."""
+    return fingerprint([compiler, sdk])
+
+
+pub def rust_library_compiler_identity(kind: str, compiler: str, sdk: str) -> Result[str, str]:
+    """Keep rlibs SDK-independent while retaining SDK identity for Rust library kinds that perform a native link."""
+    if kind in ["lib", "rlib"]:
+        return Ok(compiler)
+    return linker_compiler_identity(compiler, sdk)
+
+
+pub def native_linker_fingerprint(rustc: str) -> Result[str, str]:
+    """Identify the compiler and SDK inputs of a final Rust executable or test link."""
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    native = native_compiler_fingerprint(compiler.0)?
+    return linker_compiler_identity(native, sdk_content_identity(compiler.parent().parent().0)?)
+
+
+pub def native_library_compiler_fingerprint(kind: str, rustc: str, compiler: str) -> Result[str, str]:
+    """Read SDK identity only when a Rust library unit emits a linked dynamic library."""
+    if kind in ["lib", "rlib"]:
+        return Ok(compiler)
+    selected = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    return rust_library_compiler_identity(kind, compiler, sdk_content_identity(selected.parent().parent().0)?)
+
+
+pub def selected_toolchain(request: RustBuild) -> Result[Toolchain, str]:
+    """The build's loaded toolchain; direct one-facet callers may select it here."""
+    match request.toolchain:
+        Some(selected) => return Ok(selected)
+        None => return load_toolchain()
+
+
+pub def linking(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+) -> Result[list[str], str]:
+    """Link one unit with the consumer's requested code-generation profile."""
+    return linking_with_profile(facet, request, built, search, request.profile)
+
+
+pub def linking_with_profile(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    profile: str,
+) -> Result[list[str], str]:
+    """
+    The arguments that link a unit under an explicit producer profile.
+
+    1. Its features, as `--cfg`.
+    2. The search directories: the registry's and the toolchain's, then those of the libraries built for the graph.
+    3. One `--extern` per local edge, then one per registry edge.
+    4. The optimization and debug settings of the profile.
+    """
+    # 1. The unit's code sees the features the graph activated, as `cfg(feature = ...)`.
+    mut arguments: list[str] = []
+    for feature in facet.features:
+        arguments.append("--cfg")
+        arguments.append(f"feature=\"{feature}\"")
+    # 2. The libraries the unit links, and what they link in turn, are found in the search directories, each once.
+    mut searched: set[str] = set()
+    for directory in request.registry.search + request.toolchain_search + facet_search(facet, built)?:
+        if directory in searched:
+            continue
+        searched.add(directory)
+        arguments.append("-L")
+        arguments.append(f"dependency={directory}")
+    # 3. Each edge names its library exactly, local edges first, so no library is chosen by scanning a directory.
+    arguments = arguments + local_externs(facet, built)? + registry_externs(facet, request)?
+    # 4. Both unit languages read their flags from one profile table.
+    arguments = arguments + rust_arguments(profile)
+    return Ok(arguments)
+
+
+def local_externs(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[str], str]:
+    """One `--extern alias=library` per local edge; an edge whose unit is not built is an error."""
+    return Ok(extern_arguments(local_bindings(facet, built)?))
+
+
+pub def facet_search(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[str], str]:
+    """Search only direct libraries and the native closure each retains, independently of build order."""
+    mut directories: list[str] = []
+    for edge in facet.local:
+        if edge.key() not in built:
+            return Err(f"{facet.project} links {edge.alias}, which has no compiled library")
+        unit = built[edge.key()]
+        for directory in [unit.directory] + unit.search:
+            if directory not in directories:
+                directories.append(directory)
+    return Ok(sorted(directories))
+
+
+def local_bindings(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[NativeCrate], str]:
+    """Retain each local graph edge's exact alias and built artifact for compilation and its native receipt."""
+    mut bindings: list[NativeCrate] = []
+    for edge in facet.local:
+        if edge.key() not in built:
+            return Err(f"{facet.project} links {edge.alias}, which has no compiled library")
+        bindings.append(NativeCrate(name=edge.alias.replace("-", "_"), path=built[edge.key()].artifact))
+    return Ok(bindings)
+
+
+def registry_externs(facet: LocalFacet, request: RustBuild) -> Result[list[str], str]:
+    """One `--extern alias=library` per registry edge, naming the edge when no compiled library serves it."""
+    return Ok(extern_arguments(registry_bindings(facet, request.registry)?))
+
+
+def registry_bindings(facet: LocalFacet, registry: RegistryUnits) -> Result[list[NativeCrate], str]:
+    """Bind registry aliases through the same version, feature and domain selection for either language."""
+    mut bindings: list[NativeCrate] = []
+    for index in range(len(facet.registry)):
+        alias = facet.registry_aliases[index]
+        selection = registry_selection(facet.registry[index])?
+        artifact = registry
+            .artifact_for(selection, facet.domain.value())
+            .map_err((reason) => f"{facet.project} links `{alias}`: {reason}")?
+        bindings.append(NativeCrate(name=alias.replace("-", "_"), path=artifact))
+    return Ok(bindings)
+
+
+def extern_arguments(bindings: list[NativeCrate]) -> list[str]:
+    """Render selected structured bindings once at rustc's argument boundary."""
+    mut arguments: list[str] = []
+    for binding in bindings:
+        arguments.append("--extern")
+        arguments.append(f"{binding.name}={binding.path}")
+    return arguments
+
+
+pub def facet_bindings(
+    facet: LocalFacet,
+    built: Dict[str, BuiltUnit],
+    registry: RegistryUnits,
+) -> Result[list[NativeCrate], str]:
+    """The facet's exact direct aliases, selected once by the shared local and registry binding policy."""
+    return Ok(local_bindings(facet, built)? + registry_bindings(facet, registry)?)
+
+
+pub def incan_artifacts(built: Dict[str, BuiltUnit]) -> list[Tuple[str, str]]:
+    """The exact package identities and artifact directories of already compiled Incan providers."""
+    mut result: list[Tuple[str, str]] = []
+    for key in sorted([key for key in built.keys()]):
+        unit = built[key]
+        if unit.loaf != "":
+            result.append((unit.loaf, unit.directory))
+    return result
+
+
+pub def artifact_context(facet: LocalFacet, declared: RustFacet, profile: str) -> Result[str, str]:
+    """
+    Name compiler outputs by their location-independent selection context, never a source directory hash.
+
+    rustc records its extra filename in crate metadata, so it is a real invocation fact rather than mere provenance.
+    The full unit identity controls qualification's symbol disambiguator; iteration keeps this context stable.
+    """
+    digest = fingerprint(
+        [declared.crate_name, declared.edition, declared.kind, facet.domain.value()] + sorted(facet.features) + rust_arguments(
+            profile,
+        ),
+    )?
+    return Ok(digest[:16])
+
+
+pub def materialized_arguments(arguments: list[str], key: Key) -> list[str]:
+    """
+    Derive rustc's symbol disambiguator from the completed unit identity, its conservative external identity.
+
+    The invocation key contains a generated metadata role rather than its own digest, avoiding a circular hash.
+    A refused reusable identity can retain deterministic code-generation inputs without authorizing publication. Only
+    an opaque key with neither identity receives an ephemeral local disambiguator.
+    """
+    mut identity = key.codegen
+    if identity == "":
+        identity = key.digest
+    metadata = unit_metadata(identity)
+    mut realized: list[str] = []
+    mut previous = ""
+    for argument in arguments:
+        if previous == "-C" and argument.startswith("metadata=incan-unit"):
+            realized.append(metadata)
+        else:
+            realized.append(argument)
+        previous = argument
+    return realized
+
+
+pub def extern_artifacts(arguments: list[str]) -> list[str]:
+    """The libraries a unit links: the file each `--extern alias=file` names."""
+    return extern_paths(arguments)
+
+
+pub def library_arguments(declared: RustFacet) -> list[str]:
+    """The crate selection shared by compilation and inspection; linking remains facet-owned."""
+    mut arguments = [declared.library, "--crate-name", declared.crate_name]
+    arguments = arguments + ["--crate-type", declared.kind, "--edition", declared.edition]
+    if declared.kind == "proc-macro":
+        arguments = arguments + ["--extern", "proc_macro"]
+    return arguments
+
+
+pub def incremental_directory(request: RustBuild, facet: LocalFacet, role: str) -> Path:
+    """Keep per-unit rustc scratch in the requesting build's target, even when artifacts publish into a home."""
+    slot = facet_slot(facet, request.profile)
+    return rust_output(Path(request.project), request.profile).joinpath("incremental").joinpath(f"{slot}-{role}")
+
+
+pub model ToolchainLibraries:
+    """Compile-time and runtime directories, with the exact identity of the first loadable pinned driver copy."""
+
+    # The runpath directories, relative to a sysroot: `lib`, which holds `rustc_driver` beside the libraries it loads
+    # itself, then `lib/rustlib/<host>/lib`, which holds the host's Rust standard libraries.
+    pub directories: list[str]
+    # The building machine's sysroot: the link search root and the fallback for a binary without a `sysroot` link.
+    pub sysroot: str
+    # The loader's token for the binary's own directory, so `<origin>/../sysroot` is the `sysroot` link beside `bin`.
+    pub origin: str
+    # `INCAN_DRIVER_RUSTC_IDENTITY`, `_LIBRARY` (relative to the sysroot) and `_LIBRARY_DIGEST`: content, not location.
+    pub environment: Dict[str, str]
+
+
+pub def toolchain_libraries(rustc: str) -> Result[ToolchainLibraries, str]:
+    """
+    The pinned toolchain's one `rustc_driver` library (in `lib`) and its identity.
+
+    1. Ask the pinned rustc for its sysroot and host.
+    2. The toolchain's `lib` holds exactly one `rustc_driver`. The rustc-dev component keeps a byte-identical copy in
+       `lib/rustlib/<host>/lib`, but only the copy in `lib` finds the libraries it loads itself, such as a Linux
+       toolchain's shared LLVM: an ELF loader resolves a library's dependencies through that library's own runpath.
+    3. Its identity is the compiler's version output and the digest of the library's bytes, which the home hashes once
+       per library generation (see `retained_readings`).
+    """
+    # 1. The sysroot and host triple are the pinned compiler's own, so the library found is the one it was built with.
+    sysroot = compiler_sysroot(rustc)?
+    compiler = compiler_version(rustc)?
+    mut host = ""
+    for line in compiler.split("\n"):
+        if line.startswith("host: "):
+            host = line[6:].strip()
+    relative = "lib"
+    directory = Path(sysroot).joinpath(relative)
+    # 2. Two `rustc_driver` libraries, or none, leave it unsaid which one the binary is built against.
+    mut found: list[Path] = []
+    for candidate in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        name = candidate.name()
+        if name.startswith("librustc_driver-") and is_dynamic_library(name):
+            found.append(candidate)
+    if len(found) != 1:
+        holds = f"{directory.0} holds {len(found)} rustc_driver libraries"
+        return Err(f"{holds}; the rustc component gives exactly one")
+    # 3. The identity is content, not location: the compiler's version output and the digest of the library's bytes.
+    library = found[0]
+    digest = installed_digest(library)?
+    environment: Dict[str, str] = {"INCAN_DRIVER_RUSTC_IDENTITY": compiler, "INCAN_DRIVER_LIBRARY": f"{relative}/{library.name()}", "INCAN_DRIVER_LIBRARY_DIGEST": digest}
+    mut origin = "$ORIGIN"
+    if host.endswith("apple-darwin"):
+        origin = "@loader_path"
+    return Ok(
+        ToolchainLibraries(
+            directories=[relative, f"lib/rustlib/{host}/lib"],
+            sysroot=sysroot,
+            origin=origin,
+            environment=environment,
+        ),
+    )
+
+
+pub def invoke_rustc(
+    rustc: str,
+    arguments: list[str],
+    environment: Dict[str, str],
+    unstable: bool,
+    unit: str,
+    driver: Option[Toolchain] = None,
+) -> Result[None, str]:
+    """Run the pinned rustc for one unit; a failure carries rustc's diagnostics."""
+    mut command = Command.new(rustc)
+    if let Some(toolchain) = driver:
+        command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    for name in sorted([key for key in environment.keys()]):
+        value = environment[name]
+        command.env(name, value)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    if unstable:
+        command.env("RUSTC_BOOTSTRAP", "1")
+    match command.output():
+        Err(error) => return Err(f"cannot run {rustc}: {error}")
+        Ok(result) =>
+            if result.status.success():
+                return Ok(None)
+            return Err(f"rustc failed for {unit}:\n{decoded(result.stderr)}")

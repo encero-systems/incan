@@ -1,0 +1,21 @@
+# behavior: a declared shared map type closes every nested native constructor without explicit inner type arguments
+# expect-stdout:
+#   created
+
+from rust::std::sync import Arc, Mutex
+from rust::std::collections import HashMap
+from rust::std::string import String as RustString
+
+type Cell = Arc[Mutex[HashMap[RustString, int]]]
+
+
+def create() -> Cell:
+    """Close the inner map from its native enclosing parameter and the declared result."""
+    cell: Cell = Arc.new(Mutex.new(HashMap.new()))
+    return cell
+
+
+def main() -> None:
+    """Run the nested allocation and transfer the fully closed cell across a source return."""
+    cell = create()
+    println("created")

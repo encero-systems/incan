@@ -100,7 +100,7 @@ means a call with explicit containers:
 collect("event", [1] + xs, <dict containing "kind": "demo" plus labels inserted in source order>)
 ```
 
-The generated Rust builds those containers with ordinary `Vec` and `HashMap` construction. Nothing is inspected at runtime to decide how arguments bind, and rest parameters are not the variadics of C or Rust. That is also why a function type that merely ends in a list or dictionary parameter is not rest-aware: the rest markers belong to the declaration, and a function value made from that declaration keeps them.
+The compiled code builds those containers with ordinary `Vec` and `HashMap` construction. Nothing is inspected at runtime to decide how arguments bind, and rest parameters are not the variadics of C or Rust. That is also why a function type that merely ends in a list or dictionary parameter is not rest-aware: the rest markers belong to the declaration, and a function value made from that declaration keeps them.
 
 ### Unpacking into fixed parameters
 

@@ -1,0 +1,24 @@
+# behavior: a native scalar parser retains its concrete associated error carrier
+# expect-stdout:
+#   42
+#   invalid digit found in string
+
+from rust::std::primitive import i64
+from rust::std::str import FromStr
+
+
+def parse(value: str) -> Result[int, str]:
+    """Return the scalar parser's exact error through its native Display implementation."""
+    match i64.from_str(value):
+        Ok(parsed) => return Ok(parsed)
+        Err(error) => return Err(str(error))
+
+
+def main() -> None:
+    """Exercise both variants of the native parser's result."""
+    match parse("42"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    match parse("bad"):
+        Ok(value) => println(value)
+        Err(error) => println(error)

@@ -1,0 +1,8 @@
+# behavior: default-features=false keeps a provider's default export inactive and reports the package-feature remedy
+# expect-diagnostic: INCAN-I0103
+
+from pub::feature_library import alpha_value
+
+
+def main() -> None:
+    println(alpha_value())

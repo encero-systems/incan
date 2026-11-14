@@ -1,0 +1,317 @@
+"""Strictly in-memory placement for the shared segment-store engine."""
+
+from std.primitives.hash import sha256
+from std.primitives.locking import LockGuard
+from std.primitives.views import MappedFile
+from crate.store.path import StoreContext, StoreContextRef, StorePath, StorePathOps, store_context
+
+
+static roots: int = 0
+
+
+pub def root() -> StorePath:
+    """Create an isolated memory placement without opening or naming any filesystem resource."""
+    roots += 1
+    placement = f"memory:{roots}"
+    return StorePath.create("", placement, _operations(), store_context())
+
+
+def _empty() -> StoreContext:
+    """Return an empty state used both for initialization and `RefCell.replace` access."""
+    return StoreContext(files={}, directories=set([""]), leases={})
+
+
+def _operations() -> StorePathOps:
+    """Bind every placement operation to the registry selected by its explicit placement identity."""
+    return StorePathOps(
+        join=_join,
+        parent=_parent,
+        name=_name,
+        exists=_exists,
+        is_file=_is_file,
+        is_directory=_is_directory,
+        is_symlink=_is_symlink,
+        create_directory=_create_directory,
+        read_all=_read_all,
+        write_all=_write_all,
+        children=_children,
+        length=_length,
+        copy=_copy,
+        set_readonly=_set_readonly,
+        remove=_remove,
+        remove_tree=_remove_tree,
+        replace=_replace,
+        sync=_sync,
+        sync_ordered=_sync,
+        map_read=_mapping,
+        lock_shared=_lock,
+        lock_exclusive=_lock,
+        try_lock_exclusive=_try_lock,
+        digest=_digest,
+    )
+
+
+def _take(state: StoreContextRef) -> StoreContext:
+    """Move the state out of its cell so Incan can inspect and update its fields."""
+    return state.replace(_empty())
+
+
+def _restore(state: StoreContextRef, current: StoreContext) -> None:
+    """Put a state moved out by `_take` back into its cell."""
+    _ = state.replace(current)
+
+
+def _join(_context: StoreContextRef, path: str, segment: str) -> str:
+    """Return one lexical child in the memory placement."""
+    if path == "":
+        return segment
+    return f"{path}/{segment}"
+
+
+def _parent(_context: StoreContextRef, path: str) -> str:
+    """Return one lexical parent, or the memory root."""
+    parts = path.split("/")
+    if len(parts) <= 1:
+        return ""
+    return "/".join(parts[:-1])
+
+
+def _name(_context: StoreContextRef, path: str) -> str:
+    """Return one logical object's final component."""
+    if path == "":
+        return ""
+    return path.split("/")[-1]
+
+
+def _exists(context: StoreContextRef, path: str) -> bool:
+    """Return whether an object or directory exists in memory."""
+    current = _take(context.clone())
+    found = path in current.files or path in current.directories
+    _restore(context, current)
+    return found
+
+
+def _is_file(context: StoreContextRef, path: str) -> bool:
+    """Return whether an immutable or mutable byte object exists in memory."""
+    current = _take(context.clone())
+    found = path in current.files
+    _restore(context, current)
+    return found
+
+
+def _is_directory(context: StoreContextRef, path: str) -> bool:
+    """Return whether a logical directory exists in memory."""
+    current = _take(context.clone())
+    found = path in current.directories
+    _restore(context, current)
+    return found
+
+
+def _is_symlink(_context: StoreContextRef, _path: str) -> bool:
+    """Memory placements contain no symbolic links."""
+    return false
+
+
+def _create_directory(context: StoreContextRef, path: str, parents: bool, exist_ok: bool) -> Result[None, str]:
+    """Create one logical directory and optionally every absent parent."""
+    mut current = _take(context.clone())
+    if path in current.files:
+        _restore(context, current)
+        return Err("a byte object already occupies the directory path")
+    if path in current.directories and not exist_ok:
+        _restore(context, current)
+        return Err("directory already exists")
+    parent = _parent(context.clone(), path)
+    if parent not in current.directories and not parents:
+        _restore(context, current)
+        return Err("parent directory does not exist")
+    for directory in _ancestors(context.clone(), path):
+        current.directories.add(directory)
+    _restore(context, current)
+    return Ok(None)
+
+
+def _ancestors(context: StoreContextRef, path: str) -> list[str]:
+    """Return the root-to-leaf directory prefixes of `path`."""
+    mut directories = [""]
+    mut current = ""
+    for component in path.split("/"):
+        if component == "":
+            continue
+        current = _join(context.clone(), current, component)
+        directories.append(current)
+    return directories
+
+
+def _mapping(context: StoreContextRef, path: str) -> Result[MappedFile, str]:
+    """Clone one immutable object's shared owner anchor."""
+    current = _take(context.clone())
+    if path not in current.files:
+        _restore(context, current)
+        return Err("object does not exist")
+    mapping = current.files[path].clone()
+    _restore(context, current)
+    return Ok(mapping)
+
+
+def _read_all(context: StoreContextRef, path: str) -> Result[bytes, str]:
+    """Copy one complete memory object into owned bytes."""
+    mapping = _mapping(context, path)?
+    match mapping.view(0, mapping.len()):
+        Some(view) => return Ok(view.to_bytes())
+        None => return Err("object view is unavailable")
+
+
+def _write_all(context: StoreContextRef, path: str, data: bytes) -> Result[None, str]:
+    """Replace one complete memory object with a new immutable owner anchor."""
+    mapping = MappedFile.owned(data)?
+    mut current = _take(context.clone())
+    if _parent(context.clone(), path) not in current.directories:
+        _restore(context, current)
+        return Err("parent directory does not exist")
+    current.files[path] = mapping
+    _restore(context, current)
+    return Ok(None)
+
+
+def _children(context: StoreContextRef, path: str) -> Result[list[str], str]:
+    """Return direct logical children in deterministic name order."""
+    current = _take(context.clone())
+    if path not in current.directories:
+        _restore(context, current)
+        return Err("directory does not exist")
+    mut found: set[str] = set()
+    for candidate in current.directories:
+        if candidate != path and _parent(context.clone(), candidate) == path:
+            found.add(candidate)
+    for candidate in current.files.keys():
+        if _parent(context.clone(), candidate) == path:
+            found.add(candidate)
+    _restore(context, current)
+    return Ok(sorted([candidate for candidate in found]))
+
+
+def _length(context: StoreContextRef, path: str) -> Result[int, str]:
+    """Return one memory object's byte length."""
+    return _mapping(context, path).map((mapping) => mapping.len())
+
+
+def _copy(context: StoreContextRef, source: str, target: str) -> Result[None, str]:
+    """Share an immutable object anchor under another logical name."""
+    mapping = _mapping(context.clone(), source)?
+    mut current = _take(context.clone())
+    if _parent(context.clone(), target) not in current.directories:
+        _restore(context, current)
+        return Err("target parent directory does not exist")
+    current.files[target] = mapping
+    _restore(context, current)
+    return Ok(None)
+
+
+def _set_readonly(context: StoreContextRef, path: str, _readonly: bool) -> Result[None, str]:
+    """Validate a memory object; immutable anchors need no permission mutation."""
+    _ = _mapping(context, path)?
+    return Ok(None)
+
+
+def _remove(context: StoreContextRef, path: str) -> Result[None, str]:
+    """Remove one named memory object."""
+    mut current = _take(context.clone())
+    if path not in current.files:
+        _restore(context, current)
+        return Err("object does not exist")
+    current.files = {name: current.files[name].clone() for name in current.files.keys() if name != path}
+    current.leases = {name: current.leases[name].clone() for name in current.leases.keys() if name != path}
+    _restore(context, current)
+    return Ok(None)
+
+
+def _remove_tree(context: StoreContextRef, path: str) -> Result[None, str]:
+    """Remove one logical directory tree and every object named beneath it."""
+    mut current = _take(context.clone())
+    prefix = f"{path}/"
+    current.files = {name: current.files[name].clone() for name in current.files.keys() if name != path and not name.startswith(
+        prefix,
+    )}
+    current.directories = set(
+        [name for name in current.directories if name == "" or (name != path and not name.startswith(prefix))],
+    )
+    current.leases = {name: current.leases[name].clone() for name in current.leases.keys() if name != path and not name.startswith(
+        prefix,
+    )}
+    _restore(context, current)
+    return Ok(None)
+
+
+def _replace(context: StoreContextRef, source: str, target: str) -> Result[None, str]:
+    """Move one immutable object name to its publication target in the shared state cell."""
+    mapping = _mapping(context.clone(), source)?
+    mut current = _take(context.clone())
+    if target in current.directories:
+        _restore(context, current)
+        return Err("replace requires a non-directory target")
+    current.files = {name: current.files[name].clone() for name in current.files.keys() if name != source}
+    current.files[target] = mapping
+    _restore(context, current)
+    return Ok(None)
+
+
+def _sync(context: StoreContextRef, path: str) -> Result[None, str]:
+    """Validate a memory publication object; memory durability needs no host barrier."""
+    if not _exists(context, path):
+        return Err("publication object does not exist")
+    return Ok(None)
+
+
+def _lock(context: StoreContextRef, path: str) -> Result[LockGuard, str]:
+    """Retain one in-process publication, claim or lease through the placement-neutral guard carrier."""
+    entry = _lock_entry(context.clone(), path)?
+    empty = MappedFile.owned(b"")?
+    mut current = _take(context.clone())
+    mut anchor = LockGuard.memory()
+    if entry in current.leases:
+        anchor = current.leases[entry].clone()
+    else:
+        current.leases[entry] = anchor.clone()
+        current.files[entry] = empty
+    _restore(context, current)
+    return Ok(anchor)
+
+
+def _try_lock(context: StoreContextRef, path: str) -> Result[Option[LockGuard], str]:
+    """Acquire an exclusive in-process guard only when no live shared guard retains its anchor."""
+    entry = _lock_entry(context.clone(), path)?
+    empty = MappedFile.owned(b"")?
+    mut current = _take(context.clone())
+    mut anchor = LockGuard.memory()
+    if entry in current.leases:
+        anchor = current.leases[entry].clone()
+        if anchor.reference_count() > 2:
+            _restore(context, current)
+            return Ok(None)
+    else:
+        current.leases[entry] = anchor.clone()
+        current.files[entry] = empty
+    _restore(context, current)
+    return Ok(Some(anchor))
+
+
+def _lock_entry(context: StoreContextRef, path: str) -> Result[str, str]:
+    """Return the persistent sibling object used to enumerate and coordinate one logical lock identity."""
+    name = _name(context.clone(), path)
+    if name == "":
+        return Err("memory locks require a path with a final component")
+    return Ok(_join(context.clone(), _parent(context, path), f".{name}.incan.lock"))
+
+
+def _digest(context: StoreContextRef, path: str, algorithm: str) -> Result[bytes, str]:
+    """Hash one immutable memory object without copying it out of its owner anchor."""
+    if algorithm != "sha256":
+        return Err(f"unsupported store digest algorithm {algorithm}")
+    mapping = _mapping(context, path)?
+    match mapping.view(0, mapping.len()):
+        None => return Err("object view is unavailable")
+        Some(view) =>
+            mut hasher = sha256.new()
+            hasher.update_view(view)
+            return Ok(hasher.finalize_bytes())

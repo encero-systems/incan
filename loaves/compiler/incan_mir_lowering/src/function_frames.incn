@@ -1,0 +1,599 @@
+"""Lower one function: its body builder, frame parameters, locals, scopes, and entrypoint effects."""
+
+from pub::incan_mir_plan import (
+    ExternalFunction,
+    Constant,
+    Function,
+    Local,
+    EnumDeclaration,
+    Parameter,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    assign as plan_assign,
+    place as plan_place,
+)
+from explicit_arguments import direct_view_access
+from layout_types import native_source_type
+from signature_lifetimes import signature_lifetimes
+from rust::incan_semantics_core import (
+    IncanInputAccess,
+    IncanType as RustType,
+    CanonicalSymbolId as RustCanonicalSymbolId,
+)
+from rust::incan_semantics_core::body_ir import (
+    NominalDeclaration as RustNominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+    Body as RustBody,
+    CallableParamDefault,
+    CallableParam as RustCallableParam,
+    LocalDecl as RustLocalDecl,
+    EntrypointEffect as RustEntrypointEffect,
+)
+from classes import (
+    parameter_local_index,
+    frame_type,
+    function_name,
+    is_program_entry,
+    body_module_identity,
+    body_type_bindings,
+)
+from tuple_iterators import zip_shape
+from generators import generator_shape, producer_frame, producer_name
+from pair_generators import pair_generator_locals, pair_generator_type
+from program_context import ProgramContext
+from native_type_identity import ConstructorIndex
+from table_views import borrowed_at, borrowed_table
+from decorator_caches import DecoratorFrame, frame_name, validate_binding_policy, callable_name_profile
+from traits import append_default_type_bindings
+from unions import retain_body_unions
+from text_plan import owned_literal
+from frame import Builder, temporary, drop_all_owned, external_call, read_place, literal
+from lists import list_iterator_locals, taking_iterator_locals, list_parameter_type
+from async_ import future_type, integer_entry, evaluator_name, is_future
+from defaults import default_type
+from type_parameters import Instance, substitute
+from result_requirements import validate_result_requirements
+from computed_statics import enters_module_initialization, initialize_module_statics
+from closures import (
+    validate_callable_representation,
+    function_pointer_storage,
+    parameter_representation,
+    local_representation,
+    return_representation,
+)
+from attributes import native_attributes
+from lowering import BodyIrModule
+from checked_values import builder_location, indexed_location, line_starts, location
+from statements import is_nominal_type, is_owned_callable, lower_block
+from call_arguments import lacks_exclusive_parameter, owned_collection, stored_parameter_type
+from builtin_calls import validate_exact_float
+from frame_instances import entry_result
+from list_iteration import frozen_list_snapshot_type
+from redo_counts import record_lowering
+
+
+pub def lower_function(
+    module: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    type_arguments: list[RustType],
+    role: DecoratorFrame,
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
+    """
+    Build a concrete frame and retain its instance requests and lifted functions.
+
+    1. Validate its decorator role and declared ABI.
+    2. Initialize storage and lower the checked executable body.
+    3. Retain producer and program entry wrappers with the completed frame.
+    """
+    # 1. Validate the source role and declared ABI before creating executable storage.
+    constructors = program.constructors.as_ref()
+    nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
+    enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+    span = location(body.span, source, file)
+    selected_name = frame_name(evaluator_name(module, body), role)
+    record_lowering(program.observe_work, body, selected_name, type_arguments, file)
+    cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
+    validate_callable_representation(body)?
+    validate_result_requirements(body)?
+    mut declared_carrier = PlanType.Unit
+    match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics, file):
+        Ok(carrier) => declared_carrier = carrier
+        Err(reason) =>
+            mut frame = str(body.name)
+            if len(body.params) != 0:
+                frame += f" on {borrowed_at(body.locals, parameter_local_index(body, 0)).ty}"
+            return Err(f"{reason} in {frame} return ABI")
+    declared_type = return_representation(body, declared_carrier)?
+    return_type = producer_return_type(constructors, module, body, declared_type, intrinsics)?
+    if is_program_entry(module, body) and return_type != PlanType.Unit:
+        if (body.is_async or return_type != PlanType.Int) and not entry_result(module, return_type, intrinsics):
+            return Err("unsupported Body IR non-unit native main")
+        if len(body.params) != 0:
+            return Err("unsupported Body IR non-unit native main parameters")
+    if body.is_async and is_program_entry(module, body) and len(body.params) != 0:
+        return Err("unsupported Body IR async entry signature")
+    parameters = frame_parameters(constructors, module, body, source, file, intrinsics)?
+    # 2. Initialize storage and lower the checked executable body.
+    mut builder = body_builder(
+        module,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        type_arguments,
+        parameters,
+        return_type,
+        selected_name,
+        cached_decorator,
+        initializing_decorator,
+        span,
+    )?
+    match direct_view_access(body):
+        Some(_access) =>
+            if body.is_generator():
+                return Err("unsupported Body IR returned view in a generator frame")
+        None => pass
+    # A carried view's carrier is an ordinary owned result whose carrying payload already holds the borrow.
+    match direct_view_access(body):
+        Some(access) => builder.returned_view = access
+        None => pass
+    match body.returned_view:
+        Some(view) =>
+            builder.carries_view = (
+                view.access != IncanInputAccess.Owned
+                and (view.carried.is_some() or len(view.component) != 0)
+            )
+        None => pass
+    initialize_body_frame(module, body, builder, parameters, declared_type, span)?
+    lower_block(module, builder, body.block)?
+    if not builder.closed[builder.current]:
+        if return_type != PlanType.Unit:
+            return Err("Body IR non-unit body has no retained Return")
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
+        drop_all_owned(builder, span)
+        builder.finish(TerminatorKind.Return, span)
+    # 3. Retain the completed frame and any producer or program entry wrappers.
+    mut function = Function(
+        name=selected_name,
+        parameters=parameters,
+        return_type=return_type,
+        locals=builder.locals,
+        blocks=builder.blocks,
+        span=span,
+        is_async=body.is_async,
+        attributes=native_attributes(body),
+        retained_result_source=retained_result_source(body),
+    )
+    # A returned view's result shares its source parameter's loan; instances recompute the same relation.
+    match body.returned_view:
+        Some(view) =>
+            if view.access != IncanInputAccess.Owned:
+                function.signature_lifetimes = signature_lifetimes(body, type_arguments)?
+        None => pass
+    if body.is_generator():
+        match generator_shape(declared_type):
+            Some((leaf, depth)) =>
+                producer_frame(function, builder.generator_handle, leaf, depth)
+                function.name = producer_name(function.name)
+            None => return Err("unsupported Body IR generator return type")
+    if is_program_entry(module, body) and return_type == PlanType.Int:
+        builder.synthesized.append(integer_entry(function, function_name(module, body)))
+    return Ok((function, builder.externals, builder.instances, builder.synthesized))
+
+
+def retained_result_source(body: &RustBody) -> int:
+    """Retain the checked parameter slot for an owned or aggregate result whose native storage carries its loan."""
+    match body.returned_view:
+        Some(source) =>
+            if source.access == IncanInputAccess.Owned or len(source.component) != 0:
+                return int(source.slot)
+        None => return -1
+    return -1
+
+
+def frame_decorator_role(
+    module: &BodyIrModule,
+    body: &RustBody,
+    role: DecoratorFrame,
+) -> Result[tuple[int, Option[RustCanonicalSymbolId]], str]:
+    """Validate matching decorator bindings and select the cached wrapper or initializer for this source role."""
+    mut cached_decorator = -1
+    mut initializing_decorator: Option[RustCanonicalSymbolId] = None
+    for slot in range(len(module.decorated_bindings)):
+        binding = module.decorated_bindings[slot]
+        if binding.original_body.canonical != body.canonical:
+            continue
+        validate_binding_policy(binding)?
+        match binding.initializer:
+            Some(_initializer) =>
+                if role == DecoratorFrame.Normal:
+                    cached_decorator = slot
+                elif role == DecoratorFrame.Initializer:
+                    initializing_decorator = body.canonical
+            None => pass
+    return Ok((cached_decorator, initializing_decorator))
+
+
+def body_builder(
+    module: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    type_arguments: list[RustType],
+    parameters: &list[Parameter],
+    return_type: PlanType,
+    selected_name: str,
+    cached_decorator: int,
+    initializing_decorator: Option[RustCanonicalSymbolId],
+    span: SourceSpan,
+) -> Result[Builder, str]:
+    """Construct frame storage and its checked lookup context before any executable block is emitted."""
+    callable_arguments: list[RustType] = [argument.clone() for argument in type_arguments]
+    method_names, method_bindings = body_type_bindings(module, body, type_arguments)?
+    mut names = method_names
+    mut bindings = method_bindings
+    if len(parameters) != 0:
+        append_default_type_bindings(module, body, parameters[0].ty, names, bindings)?
+    mut selected_unions = unions
+    retain_body_unions(selected_unions, program.union_types.as_ref(), body)
+    scoped_locals, scope_parents = frame_scopes(body)
+    return Ok(
+        Builder(
+            program=program,
+            locals=frame_locals(
+                program.constructors.as_ref(),
+                module,
+                body,
+                unions,
+                return_type,
+                span,
+                source,
+                file,
+                intrinsics,
+            )?,
+            parameter_count=len(parameters),
+            blocks=[],
+            current=0,
+            source=source,
+            file=file,
+            line_starts=line_starts(source),
+            module_identity=body_module_identity(body)?,
+            callable_identity=body.canonical.clone(),
+            loops=[],
+            loop_owners=[],
+            externals=[],
+            owned=[],
+            closed=[],
+            iterators=[],
+            borrowed_items=[],
+            in_place_items=[],
+            partial_callables=[],
+            scalar_closures=[],
+            unproven_closures=[],
+            intrinsics=list(intrinsics),
+            local_offset=0,
+            consuming_closure_frame=false,
+            generator_handle=-1,
+            unions=selected_unions,
+            instances=[],
+            type_parameters=names,
+            type_arguments=bindings,
+            callable_type_arguments=callable_arguments,
+            trait_environment=body.trait_default_instantiation.clone(),
+            function_pointer_locals=function_pointer_storage(body),
+            reference_values=reference_value_storage(body, names, bindings)?,
+            name=selected_name,
+            synthesized=[],
+            iteration_locals=list_iterator_locals(body.block),
+            scoped_locals=scoped_locals,
+            scope_parents=scope_parents,
+            moved_tuple_fields=[],
+            body_identity=body.canonical,
+            checked_local_types=[borrowed_at(body.locals, position).ty.clone() for position in range(len(body.locals))],
+            initializing_decorator=initializing_decorator,
+            cached_decorator=cached_decorator,
+            callable_name_dynamic_profile=callable_name_profile(module, body_module_identity(body)?)?,
+        ),
+    )
+
+
+def initialize_body_frame(
+    module: &BodyIrModule,
+    body: &RustBody,
+    mut builder: Builder,
+    parameters: &list[Parameter],
+    declared_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Initialize producer storage, parameter ownership and entry effects before lowering the checked body."""
+    _ = builder.new_block(span)
+    if body.is_generator():
+        match generator_shape(declared_type):
+            Some((leaf, depth)) =>
+                handle = temporary(builder, PlanType.GeneratorYield(leaf, depth), span)
+                builder.generator_handle = handle.local
+                builder.owned.append(handle.local)
+            None => return Err("unsupported Body IR generator return type")
+    for index in range(len(parameters)):
+        if (
+            parameters[index].ty == PlanType.String
+            or is_nominal_type(parameters[index].ty)
+            or is_owned_callable(parameters[index].ty)
+            or is_future(parameters[index].ty)
+            or owned_collection(parameters[index].ty)
+        ):
+            builder.owned.append(index + 1)
+    # Computed statics initialize on module entry (RFC 052), before a program entry installs the panic hook.
+    if enters_module_initialization(body):
+        initialize_module_statics(builder, body_module_identity(body)?, span)
+    # Only the checked program entry requests panic initialization; other functions named main remain ordinary calls.
+    entry = is_program_entry(module, body)
+    if entry:
+        initialized = temporary(builder, PlanType.Unit, span)
+        external_call(builder, "incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
+    for index in range(len(parameters)):
+        validate_exact_float(builder, plan_place(index + 1, span), span)
+    if entry:
+        if len(module.entrypoint_effects) != 0 and (body.is_async or body.is_generator()):
+            return Err("unsupported Body IR producer entrypoint setup effects")
+        lower_entrypoint_effects(module, builder)?
+    return Ok(None)
+
+
+def lower_entrypoint_effects(module: &BodyIrModule, mut builder: Builder) -> Result[None, str]:
+    """Print the entry module's retained setup before its body; project assembly does not merge dependency effects."""
+    for effect in module.entrypoint_effects:
+        lower_entrypoint_effect(effect, builder)?
+    return Ok(None)
+
+
+def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder) -> Result[None, str]:
+    """Lower one retained effect; its explicit interop type also preserves the enum import in legacy bake emission."""
+    match effect:
+        RustEntrypointEffect.PrintText(text=text, span=source_span) =>
+            span = builder_location(builder, source_span)
+            value = owned_literal(builder, str(text), span)
+            output = temporary(builder, PlanType.Unit, span)
+            external_call(
+                builder,
+                "incan_native_runtime::println_text",
+                [PlanType.String],
+                PlanType.Unit,
+                [read_place(value, true, span)],
+                output,
+                span,
+            )
+    return Ok(None)
+
+
+def producer_return_type(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &RustBody,
+    declared: PlanType,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """A generator producer returns unit and holds only owned parameters; ordinary functions retain their declared result."""
+    if not body.is_generator():
+        return Ok(declared)
+    for parameter in body.params:
+        capture = frame_type(
+            constructors,
+            module.nominal_declarations,
+            module.enum_declarations,
+            body.locals[int(parameter.local.index())],
+            intrinsics,
+        )?
+        if stored_parameter_type(body, parameter, capture)? != capture:
+            return Err(f"unsupported Body IR borrowed generator parameter in {body.name}")
+        match capture:
+            PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+            PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+            _ => pass
+    return Ok(PlanType.Unit)
+
+
+def reference_value_storage(body: &RustBody, names: list[str], arguments: list[RustType]) -> Result[list[int], str]:
+    """
+    Retain the checked reference-value slots after ordinary type substitution. Receiver origins and borrowed
+    parameter representations do not change a source value's logical type and therefore add no slot here.
+    """
+    mut slots: list[int] = []
+    body_name = str(body.name)
+    for position in range(len(body.locals)):
+        local = borrowed_at(body.locals, position)
+        closed: RustType = substitute(local.ty, names, arguments).map_err(
+            (reason) => f"{reason} in reference storage of {body_name}",
+        )?
+        match closed:
+            RustType.Ref(_inner) => slots.append(int(local.id.index()) + 1)
+            RustType.RefMut(_inner) => slots.append(int(local.id.index()) + 1)
+            _ => pass
+    return Ok(slots)
+
+
+def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
+    mut scoped_locals: list[tuple[int, int]] = []
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
+        scoped_locals.append((int(local.id.index()) + 1, int(local.scope.0)))
+    mut scope_parents: list[tuple[int, int]] = []
+    for scope_position in range(len(body.scopes)):
+        scope = borrowed_at(body.scopes, scope_position)
+        mut parent = -1
+        match scope.parent:
+            Some(enclosing) => parent = int(enclosing.0)
+            None => pass
+        scope_parents.append((int(scope.id.0), parent))
+    return (scoped_locals, scope_parents)
+
+
+def frame_locals(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &RustBody,
+    unions: list[RustType],
+    return_type: PlanType,
+    span: SourceSpan,
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[Local], str]:
+    """The frame's locals: the return slot first, then Body IR's locals in `LocalId` order."""
+    iterators = list_iterator_locals(body.block)
+    taking = taking_iterator_locals(body.block)
+    pairs = pair_generator_locals(body)
+    starts = line_starts(source)
+    mut locals = [Local(ty=return_type, span=span)]
+    # Borrow each local and parameter: every frame types every local, so copied declarations cost per frame.
+    for local_position in range(len(body.locals)):
+        local = borrowed_at(body.locals, local_position)
+        if int(local.id.index()) + 1 != len(locals):
+            return Err("Body IR local order disagrees with LocalId")
+        mut ty = PlanType.Unit
+        match future_type(constructors, module, local.ty, intrinsics)?:
+            Some(carrier) => ty = carrier
+            None =>
+                ty = body_frame_type(
+                    constructors,
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    body,
+                    local,
+                    intrinsics,
+                    file,
+                )?
+        index = int(local.id.index()) + 1
+        ty = local_representation(body, index - 1, ty)
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
+            if parameter.local == local.id and parameter.input_access != IncanInputAccess.Inferred:
+                if index in taking or index in iterators or index in pairs:
+                    return Err("unsupported Body IR explicit input iteration storage")
+        if index in pairs:
+            ty = pair_generator_type(ty)
+        if index in taking:
+            # A checked move preserves an admitted generator or zip carrier's existing ownership. Only an owned
+            # list needs the consuming list cursor representation; borrowed or unsupported carriers cannot supply it.
+            match ty:
+                PlanType.List(leaf, depth) => ty = PlanType.ListIntoIter(leaf, depth)
+                PlanType.Generator(_leaf, _depth) => pass
+                PlanType.ZipIterator(_left, _right) => pass
+                _ => return Err("unsupported Body IR consuming iteration outside an owned list")
+        elif index in iterators:
+            match ty:
+                PlanType.FrozenCollection(_name, _elements) => ty = frozen_list_snapshot_type(ty)?
+                _ => pass
+            match zip_shape(ty):
+                Some((left, right)) => ty = PlanType.ZipIteratorMutRef(left, right)
+                None => pass
+            match generator_shape(ty):
+                Some((leaf, depth)) => ty = PlanType.GeneratorMutRef(leaf, depth)
+                None => ty = list_parameter_type(ty, false)
+        for parameter_position in range(len(body.params)):
+            parameter = borrowed_at(body.params, parameter_position)
+            if parameter.local == local.id:
+                ty = stored_parameter_type(body, parameter, parameter_representation(body, index - 1, ty)?)?
+        locals.append(Local(ty=ty, span=indexed_location(starts, local.span, file)))
+    return Ok(locals)
+
+
+def body_frame_type(
+    constructors: &ConstructorIndex,
+    nominals: &list[RustNominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    body: &RustBody,
+    local: &RustLocalDecl,
+    mut intrinsics: list[EnumDeclaration],
+    file: str,
+) -> Result[PlanType, str]:
+    """Resolve a frame local, retaining its location and Body IR's own unsupported-construct explanation on failure."""
+    match frame_type(constructors, nominals, enums, local, intrinsics, file):
+        Ok(ty) => return Ok(ty)
+        Err(reason) =>
+            mut context = f"{reason} in {body.name} frame local {int(local.id.index())} in {file}"
+            match body.first_representation_gap():
+                Some(gap) => context = f"{context}; unsupported source construct: {gap}"
+                None => pass
+            return Err(f"{context} at source bytes {local.span.start}..{local.span.end}")
+
+
+pub def frame_parameter_type(
+    constructors: &ConstructorIndex,
+    nominals: &list[RustNominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    body: &RustBody,
+    parameter: &RustCallableParam,
+    mut intrinsics: list[EnumDeclaration],
+    file: str,
+) -> Result[PlanType, str]:
+    """Read a declared frame slot's checked representation for its definition and generated runtime forwarders."""
+    local = borrowed_at(body.locals, int(parameter.local.index()))
+    ty = parameter_representation(
+        body,
+        int(parameter.local.index()),
+        body_frame_type(constructors, nominals, enums, body, local, intrinsics, file)?,
+    )?
+    if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):
+        return Err("unsupported Body IR mutable tuple or iterator parameter")
+    if parameter.input_access == IncanInputAccess.Inferred and ty == PlanType.FrozenStr and parameter.mutable:
+        return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
+    return stored_parameter_type(body, parameter, ty)
+
+
+pub def frame_parameters(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[Parameter], str]:
+    """Build declaration-ordered parameters from their checked frame storage and source locations."""
+    mut parameters: list[Parameter] = []
+    starts = line_starts(source)
+    for parameter_position in range(len(body.params)):
+        parameter = borrowed_at(body.params, parameter_position)
+        ty = frame_parameter_type(
+            constructors,
+            module.nominal_declarations,
+            module.enum_declarations,
+            body,
+            parameter,
+            intrinsics,
+            file,
+        )?
+        if int(parameter.local.index()) != len(parameters):
+            return Err("Body IR parameter order disagrees with scalar frame")
+        match parameter.default:
+            CallableParamDefault.Required => pass
+            _ =>
+                local = borrowed_at(body.locals, int(parameter.local.index()))
+                declared = body_frame_type(
+                    constructors,
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    body,
+                    local,
+                    intrinsics,
+                    file,
+                )?
+                _ = default_type(parameter_representation(body, int(parameter.local.index()), declared)?)?
+        mut name = str(parameter.name)
+        if name == "self":
+            name = "__incan_self"
+        parameters.append(Parameter(name=name, ty=ty, span=indexed_location(starts, parameter.span, file)))
+    return Ok(parameters)

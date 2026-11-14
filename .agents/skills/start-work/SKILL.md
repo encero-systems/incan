@@ -22,6 +22,8 @@ If none is provided, ask the user what they want to work on.
 
 **Commit your own work.** Use the repo's message convention (`chore|bugfix|feature - <issue_id(s)> <description>`), push the branch, and open the PR when the work is ready. Do not leave finished work uncommitted waiting for the maintainer.
 
+Run `incan run scripts/check_us_english.incn` before every commit, including a merge commit.
+
 Still off-limits on your own initiative:
 
 - anything that overwrites or deletes uncommitted work — `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`
@@ -132,12 +134,12 @@ Do not improvise ad hoc multi-agent coordination inside this skill. This skill i
 
 ### Step 6: Draft the initial acceptance contract
 
-If the issue, RFC, or task touches milestone scope, release scope, compiler boundaries, package imports, vocab, formatter, test runner, generated Rust, Rust metadata, or downstream-facing behavior, draft the initial acceptance contract before proposing next steps.
+If the issue, RFC, or task touches milestone scope, release scope, compiler boundaries, package imports, vocab, formatter, test runner, Rust metadata, or downstream-facing behavior, draft the initial acceptance contract before proposing next steps.
 
 The contract should name:
 
 - direct/local behavior that must work,
-- import, reexport/facade, package-consumer, dependency-owned type, test-batch, vocab, formatter, generated-Rust, or Rust-metadata boundaries that can observe the behavior,
+- import, reexport/facade, package-consumer, dependency-owned type, test-batch, vocab, formatter, or Rust-metadata boundaries that can observe the behavior,
 - downstream acceptance lanes such as IncQL when relevant,
 - docs/generated-reference/rustdoc/release-note gates,
 - performance or progress-output expectations when relevant.

@@ -5,8 +5,9 @@ Keep the pipeline aligned (to avoid language/tooling drift):
 - **Semantic core (`loaves/kernel/incan_lang/`)**: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)
 - **Compiler (`loaves/compiler/`)**:
     - **typechecker** (`incan_frontend/`) validates and annotates
-    - **lowering** (`incan_ir/`) turns AST into IR
-    - **emission** (`incan_emit/`) generates correct Rust
+    - **Body IR** records resolved semantic facts
+    - **Incan lowering** (`incan_mir_lowering/`) consumes those facts and constructs a native plan
+    - **Rust adapter** (`incan-rustc-driver/`) translates the plan to the pinned Rust compiler's MIR
 - **Runtime/stdlib (`loaves/stdlib/<component>/{src,rust}/`)**: behavior that can live outside the compiler should live here
 
-*Rule of thumb*: prefer pushing shared meaning “down” into `incan_lang`/`incan_syntax`/the stdlib facets, and keep the driver (`incan_driver/`) and the `incan` command line (`loaves/toolchain/incan-cli/`) focused on orchestration and pipeline wiring.
+Keep shared language policy in kernel packages. Keep the driver (`incan_driver/`) and Oven (`workspaces/oven/`) focused on their unit and orchestration boundaries.

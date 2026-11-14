@@ -1,8 +1,0 @@
-"""Public vs private const bindings."""
-
-pub const PI: float = 3.14
-const E: float = 2.71
-
-def main() -> None:
-    print(PI)
-    print(E)

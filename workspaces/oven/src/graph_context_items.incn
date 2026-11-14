@@ -1,0 +1,112 @@
+"""Context item presentation and byte accounting shared by preparation and budget selection."""
+
+from std.json import JsonValue
+from std.fs import Path
+from files import json_text
+from graph_queries import display, nested, text
+
+
+pub def node_item(
+    record: JsonValue, identifier: str, stable: str, local: str, score: int, reason: str, root: str,
+) -> JsonValue:
+    """Present one proved node; ranking and identity selection remain with the context index."""
+    return JsonValue.object({
+        "record": JsonValue.string("node"), "local_id": JsonValue.string(local),
+        "id": JsonValue.string(identifier), "stable_key": JsonValue.string(stable),
+        "kind": JsonValue.string(text(record, "record")), "label": JsonValue.string(display(record)),
+        "anchor": JsonValue.string(anchor(record, root)), "signature": nested(record, "signature"),
+        "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
+        "score": JsonValue.int(score), "reason": JsonValue.string(reason), "details": node_details(record),
+    })
+
+
+pub def minimum_sizes(record: JsonValue, root: str) -> Result[tuple[int, int], str]:
+    """
+    Measure a node's fixed contribution at the requesting repository root, before its rank is known.
+
+    1. Use the shortest possible local id, positive-score width and ranking reason, with empty identity fields.
+    2. Measure through the same item renderer used during selection.
+    Identity bytes and differences in local id, score and reason are added at request time.
+    """
+    # 1. Every ranking reason is at least as long as `task match`; every positive score takes at least one digit.
+    item = node_item(record, "", "", "n0", 0, "task match", root)
+    # 2. JSON and JSONL have the same one-item contribution, including their separator.
+    return Ok((item_tokens(item, "compact")?, item_tokens(item, "json")?))
+
+
+pub def item_tokens(item: JsonValue, format: str) -> Result[int, str]:
+    """Measure one exact item plus its separator; context-header digests have fixed widths in every format."""
+    if format == "compact":
+        return Ok(tokens(compact_line(item)?) + 1)
+    return Ok(tokens(json_text(item)?) + 1)
+
+
+pub def compact_line(item: JsonValue) -> Result[str, str]:
+    """Render one context item identically for final output, byte accounting and prepared minimum sizes."""
+    trust = f"{text(item, 'provenance')} degraded={nested(item, 'degraded').to_json().unwrap_or('null')}"
+    where = json_text(nested(item, "anchor"))?
+    if text(item, "record") == "edge":
+        return Ok(f"{text(item, 'source')} -{text(item, 'kind')}-> {text(item, 'target')} [{trust}] {where}")
+    label = json_text(nested(item, "label"))?
+    signature = json_text(nested(item, "signature"))?
+    reason = json_text(nested(item, "reason"))?
+    mut detail = ""
+    if not nested(item, "details").is_null():
+        detail = f" details={json_text(nested(item, 'details'))?}"
+    local = text(item, "local_id")
+    kind = text(item, "kind")
+    return Ok(f"{local} {kind} {label} [{trust}] {where} {signature} why={reason}{detail}")
+
+
+pub def tokens(value: str) -> int:
+    """Bound tokens by UTF-8 bytes, avoiding an unversioned or model-specific tokenizer."""
+    return len(value.encode("utf-8"))
+
+
+pub def anchor(record: JsonValue, root: str) -> str:
+    """Retain source location separately from logical identity and use repository-relative display where possible."""
+    span = source_span(record)
+    mut file = text(span, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{nested(span, 'start_line').to_json().unwrap_or('0')}"
+
+
+pub def anchor_root(path: Path) -> Path:
+    """Prefer repository-relative source anchors, falling back to the nearest owning project for standalone Loaves."""
+    mut directory = path
+    if directory.is_file():
+        directory = directory.parent()
+    mut project = directory
+    mut found = false
+    while true:
+        if directory.joinpath(".git").is_file() or directory.joinpath(".git").is_dir():
+            return directory
+        if not found and directory.joinpath("loaf.toml").is_file():
+            project = directory
+            found = true
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 in [".", ""]:
+            return project
+        directory = parent
+
+
+def source_span(record: JsonValue) -> JsonValue:
+    """Use the primary diagnostic span only when the ordinary source span is absent."""
+    span = nested(record, "span")
+    if span.is_null():
+        return nested(record, "primary_span")
+    return span
+
+
+def node_details(record: JsonValue) -> JsonValue:
+    """Keep diagnostic messages and raw process evidence when their records fit the selected context budget."""
+    kind = text(record, "record")
+    if kind == "diagnostic":
+        return JsonValue.object({key: nested(record, key) for key in ["code", "message"]})
+    if kind == "risk_signal":
+        keys = ["source", "head", "churn", "ownership", "co_changes", "evidence", "controls"]
+        return JsonValue.object({key: nested(record, key) for key in keys})
+    return JsonValue.null()

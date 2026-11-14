@@ -87,16 +87,22 @@ pub model SealedEnvelope:
     pub envelope_id: str
 
     @staticmethod
-    def create(body: str, envelope_id: str) -> SealedEnvelope:
+    pub def create(body: str, envelope_id: str) -> SealedEnvelope:
         return SealedEnvelope(body=body, envelope_id=envelope_id)
 
-    def size(self) -> int:
+    pub def size(self) -> int:
         return len(self.body)
 ```
 
 Privacy is type-private. Methods declared on `SealedEnvelope` may read, construct, or pattern-match its private fields. Top-level functions, sibling modules, other model/class methods, re-export consumers, and compiled-library consumers may not.
 
 Incan 0.4 promoted every field of a `pub model` to public. When migrating a DTO-style public model to 0.5, add `pub` to each field that forms part of its public constructor, member-access, pattern, or reflection surface. Leaving a field unmodified now intentionally seals it behind methods on the owning model.
+
+### Method visibility
+
+Methods follow the same rule as fields. On a `pub model`, an unmarked method is private to the model: `create` and `size` above are marked `pub` because they are the model's surface, and a call to an unmarked method from a top-level function, another type or another module is refused with "Method 'size' on 'SealedEnvelope' is private". On a model without `pub`, unmarked fields and methods alike are visible wherever the model is, which is its own module. A method that implements a trait's method takes the trait's visibility, and a language hook such as `__eq__`, `__str__` or a derived model's `validate` is callable wherever the model is, so neither is marked `pub`. See [Method visibility (Reference)](../../reference/functions.md#method-visibility).
+
+Earlier releases made every method public. When migrating, add `pub` to each method of a `pub model` that code outside the model calls, as 0.5 asked for its fields.
 
 ## Field metadata and schema-safe aliases
 
@@ -105,6 +111,16 @@ Models support per-field metadata for schema/wire formats:
 - `alias="..."`: wire/schema name
 - `description="..."`: documentation string
 - **sugar**: `name as "wire"` is equivalent to `name [alias="wire"]`
+
+Fields can also retain rename continuity without changing their current source or wire spelling. `renamed_from` lists earlier declared names in chronological order, and `canonical=false` records that a field does not participate in a canonical stored hash:
+
+```incan
+model Customer:
+    email_address [renamed_from="email"] as "email": str
+    display_name [renamed_from=["name", "full_name"], canonical=false]: str
+```
+
+The earlier names are history, not additional constructor or decoder keys. See the [field metadata reference](../../reference/field_metadata.md) for the complete key and refusal contract.
 
 ```incan
 from std.serde import json

@@ -1,0 +1,842 @@
+"""Lower a program's ordinary bodies, entrypoints, async entries, tests, and Loaf exports."""
+
+from pub::incan_mir_plan import (
+    Carrier,
+    CalleeKind,
+    ExternalFunction,
+    Function,
+    ModelDeclaration,
+    EnumDeclaration,
+    PlanExport,
+    GenericModelDeclaration,
+    GenericEnumDeclaration,
+    PlanType,
+)
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    encode_incan_symbol_identity,
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    SymbolOrigin,
+    canonical_module_identity,
+    CompilerNodeId,
+)
+from rust::incan_semantics_core::body_ir import Body as RustBody, BodyIrModule as RustBodyIrModule
+from classes import function_name, is_program_entry, body_module_identity
+from program_context import ProgramContext, body_at
+from rust::std::collections import BTreeMap
+from rust::std::panic import resume_unwind
+from rust::std::sync import Arc
+from rust::std::thread import JoinHandle, spawn
+from rust::serde_json import to_string as native_json
+from rust::incan_semantics_core::semantic_digest import semantic_digest as native_digest
+from scalar_store import (
+    scalar_inputs,
+    record_scalar_inputs,
+    retained_scalar,
+    retain_scalar,
+    report_scalar,
+    report_scalar_refusal,
+)
+from record_positions import relative_body_positions
+from std.fs import Path
+from table_views import borrowed_at
+from decorator_caches import DecoratorFrame
+from traits import is_lazy_method_body
+from async_ import boxed_future_constructor, async_entry, async_test_name, evaluator_name
+from type_parameters import Instance, request_instance, merge_instance_requests
+from lowering import BodyIrModule, program_context
+from native_type_identity import constructor_index_with_packages as index_constructors, with_generic_constructor_arities
+from options import intrinsic_declarations
+from unions import collect_unions
+from program_refusals import append_generator_constructor
+from frame_instances import (
+    append_synthesized,
+    external_index,
+    function_names,
+    merge_externals,
+    merge_indexed,
+    named_functions,
+)
+from function_frames import lower_function
+from checked_values import location
+from parallel_ranges import balanced_module_ranges
+
+
+model ModuleFrames:
+    """One module's independently lowered frames and their deterministic merge inputs."""
+
+    functions: list[Function]
+    externals: list[ExternalFunction]
+    instances: list[Instance]
+    positions: list[int]
+    traces: list[str]
+    intrinsic_count: int
+
+
+pub def lower_ordinary_bodies(
+    context: Arc[RustBodyIrModule],
+    source_context: Arc[RustBodyIrModule],
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+    program: ProgramContext,
+    owners: &list[str],
+    sources: &list[str],
+    files: &list[str],
+    entry: int,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    mut emitted_frames: EmittedFrames,
+    unions: list[RustType],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    overflow_checks: bool,
+    record_report: Option[str],
+) -> Result[None, str]:
+    """Lower four contiguous module ranges over one prepared context per worker, then merge in module order."""
+    mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
+    for position in range(len(context.as_ref().bodies)):
+        owner = body_module_identity(body_at(context.as_ref().bodies, position))?
+        module_bodies.entry(owner).or_insert([]).push(position)
+    shared_source_files = Arc.new(source_files.clone())
+    shared_package_versions = Arc.new(package_versions.clone())
+    shared_scalar_bodies = Arc.new(scalar_bodies.clone())
+    mut completed: list[ModuleFrames] = []
+    mut workers: list[JoinHandle[Result[list[ModuleFrames], str]]] = []
+    mut module_weights: list[int] = []
+    for owner in owners:
+        mut weight = 1
+        match module_bodies.get(owner):
+            Some(positions) =>
+                if len(positions) > weight:
+                    weight = len(positions)
+            None => pass
+        module_weights.append(weight)
+    for start, end in balanced_module_ranges(module_weights):
+        mut selected_positions: list[list[int]] = []
+        mut selected_sources: list[str] = []
+        mut selected_files: list[str] = []
+        mut selected_entries: list[bool] = []
+        for index in range(start, end):
+            checked_owner = owners[index]
+            mut positions: list[int] = []
+            match module_bodies.get(checked_owner):
+                Some(selected) =>
+                    for selected_position in selected:
+                        positions.append(int(selected_position.clone()))
+                None => pass
+            selected_positions.append(positions)
+            selected_sources.append(sources[index])
+            selected_files.append(files[index])
+            selected_entries.append(index == entry)
+        worker_context = context.clone()
+        worker_source_context = source_context.clone()
+        worker_source_files = shared_source_files.clone()
+        worker_package_versions = shared_package_versions.clone()
+        worker_scalar_bodies = shared_scalar_bodies.clone()
+        entry_file = files[entry]
+        selected_tests = list(tests)
+        selected_kind = str(kind)
+        products = scalar_products
+        workers.append(
+            spawn(
+                () => lower_module_frames(
+                    worker_context,
+                    worker_source_context,
+                    worker_source_files,
+                    worker_package_versions,
+                    selected_positions,
+                    selected_sources,
+                    selected_files,
+                    entry_file,
+                    selected_entries,
+                    selected_kind,
+                    selected_tests,
+                    trace,
+                    products,
+                    worker_scalar_bodies,
+                    overflow_checks,
+                    record_report,
+                ),
+            ),
+        )
+    mut reversed: list[list[ModuleFrames]] = []
+    while len(workers) > 0:
+        worker = workers.pop()
+        match worker.join():
+            Ok(result) => reversed.append(result?)
+            Err(payload) => resume_unwind(payload)
+    while len(reversed) > 0:
+        chunk = reversed.pop()
+        for result in chunk:
+            completed.append(result)
+    for result in completed:
+        if result.intrinsic_count != len(intrinsics):
+            return lower_ordinary_bodies_serial(
+                context.as_ref(),
+                program,
+                owners,
+                sources,
+                files,
+                entry,
+                kind,
+                tests,
+                intrinsics,
+                functions,
+                externals,
+                instances,
+                emitted_frames,
+                unions,
+                trace,
+                scalar_products,
+                scalar_bodies,
+                record_report,
+            )
+    mut names = function_names()
+    mut signatures = external_index()
+    for result in completed:
+        for message in result.traces:
+            println(message)
+        append_synthesized(functions, names, result.functions)?
+        merge_indexed(externals, signatures, result.externals)?
+        merge_instance_requests(instances, result.instances)
+        for position in result.positions:
+            emitted_frames.record(body_at(context.as_ref().bodies, position), position)
+    return Ok(None)
+
+
+def lower_module_frames(
+    context: Arc[RustBodyIrModule],
+    source_context: Arc[RustBodyIrModule],
+    source_files: Arc[BTreeMap[str, str]],
+    package_versions: Arc[BTreeMap[str, str]],
+    positions_by_module: list[list[int]],
+    sources: list[str],
+    files: list[str],
+    entry_file: str,
+    entries: list[bool],
+    kind: str,
+    tests: list[str],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: Arc[BTreeMap[CompilerNodeId, str]],
+    overflow_checks: bool,
+    record_report: Option[str],
+) -> Result[list[ModuleFrames], str]:
+    """Prepare immutable layout views once, then lower a contiguous module range without shared mutable output."""
+    template_constructors = index_constructors(
+        source_context.as_ref().nominal_declarations,
+        source_files.as_ref(),
+        package_versions.as_ref(),
+    )
+    constructors = Arc.new(
+        with_generic_constructor_arities(
+            index_constructors(context.as_ref().nominal_declarations, source_files.as_ref(), package_versions.as_ref()),
+            template_constructors,
+        ),
+    )
+    unions = collect_unions(context.as_ref())
+    mut intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, [])?
+    program = program_context(constructors, context.as_ref(), intrinsics, unions, overflow_checks)?
+    mut completed: list[ModuleFrames] = []
+    for module_index in range(len(positions_by_module)):
+        completed.append(
+            lower_selected_module(
+                context.as_ref(),
+                program,
+                unions,
+                positions_by_module[module_index],
+                sources[module_index],
+                files[module_index],
+                entries[module_index],
+                kind,
+                tests,
+                intrinsics,
+                trace,
+                scalar_products,
+                scalar_bodies.as_ref(),
+                record_report,
+            )?,
+        )
+    return Ok(completed)
+
+
+def lower_selected_module(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    unions: list[RustType],
+    positions: list[int],
+    source: str,
+    file: str,
+    entry: bool,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str],
+) -> Result[ModuleFrames, str]:
+    """Lower one module against worker-local immutable layout views and return mergeable output."""
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
+    mut emitted = no_emitted_frames()
+    mut traces: list[str] = []
+    mut names = function_names()
+    mut signatures = external_index()
+    for position in positions:
+        body = body_at(context.bodies, position)
+        if not ordinary_body(context, body, emitted, kind):
+            continue
+        if trace:
+            traces.append(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+        diagnostic_owner = f" in {body.name} at {file}"
+        function, runtime, pending, synthesized = lower_ordinary_frame(
+            context,
+            program,
+            body,
+            unions,
+            source,
+            file,
+            intrinsics,
+            scalar_products,
+            scalar_bodies,
+            record_report,
+        ).map_err((reason) => reason + diagnostic_owner)?
+        merge_instance_requests(instances, pending)
+        if len(named_functions(names, functions, function.name)) != 0:
+            return Err(f"unsupported Body IR overloaded function {body.name}")
+        functions.append(function)
+        if kind == "library" and body.is_async:
+            mut captures: list[PlanType] = []
+            for parameter in function.parameters:
+                captures.append(parameter.ty)
+            functions.append(
+                boxed_future_constructor(
+                    function_name(context, body),
+                    CalleeKind.Planned(function.name),
+                    captures,
+                    function.return_type,
+                    function.span,
+                ),
+            )
+        emitted.record(body, position)
+        append_synthesized(functions, names, synthesized)?
+        append_async_entry(context, body, function, entry, tests, intrinsics, functions, externals)?
+        append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
+        merge_indexed(externals, signatures, runtime)?
+    return Ok(
+        ModuleFrames(
+            functions=functions,
+            externals=externals,
+            instances=instances,
+            positions=emitted.body_positions,
+            traces=traces,
+            intrinsic_count=len(intrinsics),
+        ),
+    )
+
+
+pub def lower_ordinary_bodies_serial(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    owners: &list[str],
+    sources: &list[str],
+    files: &list[str],
+    entry: int,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    mut emitted_frames: EmittedFrames,
+    unions: list[RustType],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str] = None,
+) -> Result[None, str]:
+    """
+    Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
+
+    Bodies are grouped by retained module provenance once, frame names are checked by key, and native signatures merge through
+    a keyed index, so no step rescans every body, frame or signature per frame.
+    """
+    mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
+    for position in range(len(context.bodies)):
+        owner = body_module_identity(body_at(context.bodies, position))?
+        module_bodies.entry(owner).or_insert([]).push(position)
+    mut names = function_names()
+    mut signatures = external_index()
+    for index in range(len(owners)):
+        checked_owner = owners[index]
+        mut positions: list[int] = []
+        match module_bodies.get(checked_owner):
+            Some(selected) =>
+                for selected_position in selected:
+                    positions.append(int(selected_position.clone()))
+            None => pass
+        for position in positions:
+            body = body_at(context.bodies, position)
+            if not ordinary_body(context, body, emitted_frames, kind):
+                continue
+            if trace:
+                println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+            diagnostic_owner = f" in {body.name} at {files[index]}"
+            function, runtime, pending, synthesized = lower_ordinary_frame(
+                context,
+                program,
+                body,
+                unions,
+                sources[index],
+                files[index],
+                intrinsics,
+                scalar_products,
+                scalar_bodies,
+                record_report,
+            ).map_err((reason) => reason + diagnostic_owner)?
+            merge_instance_requests(instances, pending)
+            # Frames any helper appended since the last check are named first, so the check covers every frame.
+            if len(named_functions(names, functions, function.name)) != 0:
+                return Err(f"unsupported Body IR overloaded function {body.name}")
+            functions.append(function)
+            if kind == "library" and body.is_async:
+                mut captures: list[PlanType] = []
+                for parameter in function.parameters:
+                    captures.append(parameter.ty)
+                functions.append(
+                    boxed_future_constructor(
+                        function_name(context, body),
+                        CalleeKind.Planned(function.name),
+                        captures,
+                        function.return_type,
+                        function.span,
+                    ),
+                )
+            emitted_frames.record(body, position)
+            append_synthesized(functions, names, synthesized)?
+            append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
+            append_generator_constructor(
+                program.constructors.as_ref(),
+                functions,
+                context,
+                body,
+                sources[index],
+                files[index],
+                intrinsics,
+            )?
+            merge_indexed(externals, signatures, runtime)?
+    return Ok(None)
+
+
+def lower_ordinary_frame(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    products: Option[str],
+    admitted: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str],
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
+    """Read only producer-admitted scalar products, or lower normally and retain an exact witnessed result."""
+    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted, record_report is not None)
+    mut record_identity = ""
+    if record_report is not None:
+        match body.canonical:
+            None =>
+                report_scalar_refusal(
+                    record_report,
+                    record_identity,
+                    evaluator_name(context, body),
+                    "body has no stable declaration identity",
+                )?
+            Some(identity) => record_identity = encode_incan_symbol_identity(identity)
+        if inputs is None:
+            report_scalar_refusal(
+                record_report,
+                record_identity,
+                evaluator_name(context, body),
+                "checker supplied no complete scalar body witness",
+            )?
+    original_intrinsics = len(intrinsics)
+    if let Some(directory) = products:
+        if let Some(witness) = inputs:
+            if let Some(product) = retained_scalar(directory, witness, Some(location(body.span, source, file))):
+                function, runtime = product
+                report_scalar(record_report, directory, witness, record_identity, function.name, true, len(runtime))?
+                return Ok((function, runtime, [], []))
+    function, runtime, pending, synthesized = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        [],
+        DecoratorFrame.Normal,
+    )?
+    if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
+        if let Some(directory) = products:
+            if let Some(witness) = inputs:
+                match retain_scalar(directory, witness, function, runtime):
+                    Ok(_) =>
+                        report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
+                    Err(reason) =>
+                        # The ordinary compiler already has its complete lowered function. Record the optional
+                        # product's refusal without changing that ordinary verdict.
+                        if record_report is not None:
+                            report_scalar_refusal(record_report, record_identity, function.name, reason)?
+    elif record_report is not None and inputs is not None:
+        report_scalar_refusal(
+            record_report,
+            record_identity,
+            function.name,
+            "lowering produced pending instances, synthesized frames, or intrinsic changes",
+        )?
+    return Ok((function, runtime, pending, synthesized))
+
+
+def ordinary_product_inputs(
+    context: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    overflow_checks: bool,
+    products: Option[str],
+    admitted: &BTreeMap[CompilerNodeId, str],
+    records: bool,
+) -> Option[list[str]]:
+    """Retain exact checked input only for frames whose complete read witnesses the source producer proved."""
+    if products is None:
+        return None
+    match admitted.get(body.direct_call_id):
+        None => return None
+        Some(witness) =>
+            match native_json(body):
+                Err(_) => return None
+                Ok(input) =>
+                    span = location(body.span, source, file)
+                    name = evaluator_name(context, body)
+                    if records:
+                        meaning = match native_digest(body):
+                            Ok(value) => value
+                            Err(_) => return None
+                        positions = match relative_body_positions(input, source, file, span):
+                            Ok(value) => value
+                            Err(_) => return None
+                        generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
+                            Ok(value) => value
+                            Err(_) => return None
+                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), positions)
+                        inputs.append(generation)
+                        return Some(inputs)
+                    return Some(scalar_inputs(input, name, span, overflow_checks, str(witness)))
+
+
+pub def validate_program_entry_selection(
+    modules: &list[BodyIrModule],
+    entry: int,
+    retained: &BodyIrModule,
+) -> Result[None, str]:
+    """Apply standalone entry naming against the current modules or their already validated retained bodies."""
+    for identity in modules[entry].program_entrypoints:
+        mut found = false
+        mut owner = ""
+        match canonical_module_identity(identity):
+            Some(path) => owner = path
+            None => return Err("selected program entry has no canonical module")
+        for module_position in range(len(modules)):
+            module = borrowed_at(modules, module_position)
+            if owner != module.module_id.path():
+                continue
+            found = validate_selected_entry_body(module, identity)?
+            break
+        if not found:
+            found = validate_retained_entry_body(retained, identity)?
+        if not found:
+            return Err("selected program entry has no owning module body")
+    return Ok(None)
+
+
+def validate_selected_entry_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+    """Validate an entry against its owning module without copying the module's bodies across the boundary."""
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
+        if body.canonical == Some(identity.clone()):
+            if function_name(module, body) != "main":
+                return Err("selected program entry is not a standalone main")
+            return Ok(true)
+    return Ok(false)
+
+
+def validate_retained_entry_body(context: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+    """Validate an unchanged selected entry whose owning module body lives only in continuation authority."""
+    for body_position in range(len(context.bodies)):
+        body = borrowed_at(context.bodies, body_position)
+        if body.canonical == Some(identity.clone()):
+            if str(body.name) != "main":
+                return Err("selected program entry is not a standalone main")
+            return Ok(true)
+    return Ok(false)
+
+
+pub def selected_program_entries(context: &BodyIrModule) -> Result[list[str], str]:
+    """Keep the unit's checked selector order while resolving canonical entries to their native wrappers."""
+    mut entries: list[str] = []
+    for identity in context.program_entrypoints:
+        mut found = false
+        for body_position in range(len(context.bodies)):
+            body = borrowed_at(context.bodies, body_position)
+            if body.canonical == Some(identity):
+                entries.append(function_name(context, body))
+                found = true
+                break
+        if not found:
+            return Err("selected program entry has no retained body")
+    return Ok(entries)
+
+
+def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, tests: list[str]) -> Option[str]:
+    """Name the native function that runs an async body under the executor: `main`, or a collected test's wrapper."""
+    if not body.is_async:
+        return None
+    native = function_name(context, body)
+    if is_program_entry(context, body):
+        return Some(native)
+    if in_entry and str(body.name) in tests:
+        return Some(async_test_name(native))
+    return None
+
+
+def append_async_entry(
+    context: &BodyIrModule,
+    body: &RustBody,
+    function: Function,
+    in_entry: bool,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+) -> Result[None, str]:
+    """Add the native function that runs an async `main` or collected async test, when the body is one."""
+    match async_entry_name(context, body, in_entry, tests):
+        Some(entry_name) =>
+            entry_function, entry_constructor, entry_runtime = async_entry(context, function, intrinsics, entry_name)?
+            functions.append(entry_function)
+            functions.append(entry_constructor)
+            _ = merge_externals(externals, [entry_runtime])?
+        None => pass
+    return Ok(None)
+
+
+pub def collected_test_entries(
+    context: &BodyIrModule,
+    entry_owner: str,
+    tests: list[str],
+    functions: &list[Function],
+    enums: list[EnumDeclaration],
+) -> Result[list[str], str]:
+    """Resolve zero-argument tests returning None or Result[None, E]; rustc's test harness reports Err as failure."""
+    mut entries: list[str] = []
+    for name in tests:
+        mut found = false
+        for body in context.bodies:
+            if body_module_identity(body)? != entry_owner:
+                continue
+            if str(body.name) != name:
+                continue
+            native = function_name(context, body)
+            evaluator = evaluator_name(context, body)
+            for function_position in range(len(functions)):
+                function = borrowed_at(functions, function_position)
+                if function.name != evaluator:
+                    continue
+                if len(function.parameters) != 0 or not test_return_type(function.return_type, enums):
+                    return Err(f"unsupported test signature for {name}: requires () -> None or Result[None, E]")
+                if function.is_async:
+                    entries.append(async_test_name(native))
+                else:
+                    entries.append(native)
+                found = true
+        if not found:
+            return Err(f"unsupported collected test body {name}")
+    return Ok(entries)
+
+
+def test_return_type(ty: PlanType, enums: list[EnumDeclaration]) -> bool:
+    """Admit only unit success values, preserving a standard Result's native failure and Debug contract."""
+    if ty == PlanType.Unit:
+        return true
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            if owner < 0 or owner >= len(enums):
+                return false
+            declaration = enums[owner]
+            if declaration.carrier != Carrier.Result or len(declaration.variants) != 2:
+                return false
+            return declaration.variants[0].fields == [PlanType.Unit] and len(declaration.variants[1].fields) == 1
+        _ => return false
+
+
+pub def loaf_exports(
+    context: &BodyIrModule,
+    emitted: &list[int],
+    declarations: &BodyIrModule,
+    templates: list[GenericModelDeclaration],
+    enum_templates: list[GenericEnumDeclaration],
+) -> list[PlanExport]:
+    """
+    Export every body and type a Loaf compiles at its crate root, under the encoding of its canonical identity:
+    the item its consumers name (DD-0007).
+
+    A body emitted in several frames under one identity, such as a trait default per receiver, has no single item, so
+    none is exported for it. A generic body emits no item; its consumers instantiate its governed body. Generic
+    nominal exports name their retained templates, rather than any concrete instance discovered in this provider.
+    """
+    mut exports: list[PlanExport] = []
+    mut ambiguous: list[str] = []
+    for position in emitted:
+        body = body_at(context.bodies, position)
+        match body.canonical:
+            Some(identity) =>
+                if is_package_identity(identity):
+                    name = encode_incan_symbol_identity(identity)
+                    if exports_name(exports, name):
+                        ambiguous.append(name)
+                    else:
+                        exports.append(PlanExport(name=name, path=f"crate::{function_name(context, body)}"))
+            None => pass
+    for declaration in declarations.nominal_declarations:
+        if len(declaration.type_parameters) != 0:
+            mut retained = false
+            for template in templates:
+                if template.name == str(declaration.name):
+                    retained = true
+            if not retained:
+                continue
+        if declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
+    for enum_position in range(len(declarations.enum_declarations)):
+        declaration = borrowed_at(declarations.enum_declarations, enum_position)
+        if len(declaration.type_parameters) != 0:
+            mut retained = false
+            for template in enum_templates:
+                if template.name == declaration.carrier_name():
+                    retained = true
+            if not retained:
+                continue
+        if declaration.native_item == "" and is_package_identity(declaration.canonical):
+            exports.append(
+                PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
+            )
+    mut unique: list[PlanExport] = []
+    for export in exports:
+        if export.name not in ambiguous:
+            unique.append(export)
+    return unique
+
+
+def exports_name(exports: list[PlanExport], name: str) -> bool:
+    """Whether an export already takes `name`."""
+    for export in exports:
+        if export.name == name:
+            return true
+    return false
+
+
+def is_package_identity(identity: RustCanonicalSymbolId) -> bool:
+    """Whether a package declares `identity`, so a Loaf compiles it."""
+    match identity.origin:
+        SymbolOrigin.Package(library=_library, module_path=_path) => return true
+        _ => return false
+
+
+pub model EmittedFrames:
+    """Index emitted frames in the immutable checked body inventory without retaining executable snapshots."""
+
+    pub body_positions: list[int]
+    pub positions: BTreeMap[RustCanonicalSymbolId, list[int]]
+
+    pub def contains(self, context: &BodyIrModule, candidate: &RustBody) -> bool:
+        """Reuse an identical canonical frame revisited through module context; differing facts still face overload validation."""
+        match candidate.canonical:
+            None => return false
+            Some(identity) =>
+                match self.positions.get(identity):
+                    None => return false
+                    Some(indices) =>
+                        for index in indices:
+                            if body_at(context.bodies, int(index.clone())) == candidate:
+                                return true
+        return false
+
+    pub def record(mut self, body: RustBody, position: int) -> None:
+        """Record a checked body position under its canonical identity, preserving emission order for exports."""
+        match body.canonical:
+            Some(identity) => self.positions.entry(identity.clone()).or_insert([]).push(position)
+            None => pass
+        self.body_positions.append(position)
+
+
+pub def no_emitted_frames() -> EmittedFrames:
+    """Start a unit's emitted-frame history empty."""
+    positions: BTreeMap[RustCanonicalSymbolId, list[int]] = BTreeMap.new()
+    return EmittedFrames(body_positions=[], positions=positions)
+
+
+pub def ordinary_body(context: &BodyIrModule, body: &RustBody, emitted_frames: &EmittedFrames, kind: str) -> bool:
+    """
+    Whether a checked module's body lowers as an ordinary function, for compilation and the census alike.
+
+    A body with type parameters lowers per instance, a lazy method body only when a call or bridge selects it, a frame
+    already emitted once is not emitted again, a test unit omits its authored program entry, and a unit that selects
+    program entries reaches `main` through them.
+    """
+    if len(body.type_parameters) != 0:
+        return false
+    if is_lazy_method_body(context, body):
+        return false
+    if emitted_frames.contains(context, body):
+        return false
+    if kind == "test" and function_name(context, body) == "main":
+        return false
+    return len(context.program_entrypoints) == 0 or function_name(context, body) != "main"
+
+
+pub def comparison_bridge_instances(
+    context: &BodyIrModule,
+    models: &list[ModelDeclaration],
+    enums: &list[EnumDeclaration],
+) -> list[Instance]:
+    """
+    Schedule the lazy method bodies that native comparison bridges call.
+
+    Native comparison bridges call their checked slots without an ordinary source call to schedule them, so each lazy
+    method body a model or enum names as a comparison method becomes an instance without type arguments.
+    """
+    mut bridge_bodies: list[str] = []
+    for position in range(len(models)):
+        declaration = borrowed_at(models, position)
+        bridge_bodies.extend(declaration.comparison_methods)
+    for position in range(len(enums)):
+        declaration = borrowed_at(enums, position)
+        bridge_bodies.extend(declaration.comparison_methods)
+    mut instances: list[Instance] = []
+    empty_arguments: list[RustType] = []
+    for body_position in range(len(context.bodies)):
+        body = borrowed_at(context.bodies, body_position)
+        if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
+            request_instance(instances, body, empty_arguments, [], false)
+    return instances

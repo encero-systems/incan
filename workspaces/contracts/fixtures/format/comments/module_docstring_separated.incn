@@ -1,0 +1,21 @@
+# behavior: An ordinary leading comment block keeps its blank line before a module docstring.
+# expect-formatted:
+#   # A leading comment.
+#   # Another comment.
+#
+#   """Module documentation."""
+#
+#
+#   def main() -> None:
+#       """Keep the file executable."""
+#       pass
+
+# A leading comment.
+# Another comment.
+
+"""Module documentation."""
+
+
+def main() -> None:
+    """Keep the file executable."""
+    pass

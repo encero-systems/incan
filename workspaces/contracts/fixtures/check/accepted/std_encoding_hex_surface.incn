@@ -1,0 +1,40 @@
+# behavior: ambient std.primitives hex encoding and the existing std.encoding surface check with the same value types
+# expect-accepted:
+
+from std.encoding import hex, EncodingError
+from std.primitives import hexlify
+
+
+def run() -> Result[None, EncodingError]:
+    """Check shared byte and string types through primitive and compatibility imports."""
+    encoded: str = hexlify(b"Az\0")
+    assert encoded == hex.hexlify(b"Az\0")
+    println(encoded)
+
+    decoded = hex.unhexlify("417A00")?
+    println(len(decoded))
+    println(hex.hexlify(decoded))
+
+    lenient = hex.decode_lenient("41 7a\n00")?
+    println(hex.hexlify(lenient))
+
+    println(hex.b16encode(b"\xff"))
+    println(hex.hexlify(b"\x10"))
+    println(hex.hexlify(hex.b16decode("00")?))
+    println(hex.hexlify(hex.unhexlify("7f")?))
+
+    match hex.unhexlify("abc"):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+
+    match hex.unhexlify("zz"):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())

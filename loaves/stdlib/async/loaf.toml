@@ -12,8 +12,6 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
-[sdk]
-profile = "minimal"
-
 [dependencies]
+incan_std_primitives = { loaf = "incan_stdlib_primitives", path = "../primitives", version = "0.5.0" }
 tokio = { loaf = "crates-io/tokio", version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"], default-features = true }

@@ -2,7 +2,6 @@
 
 from std.web import App, route, Json, Query, GET, POST
 from std.serde import json
-import std.async
 
 
 @derive(json)

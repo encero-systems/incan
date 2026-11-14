@@ -1,14 +1,14 @@
 # Toolchain ring
 
-Command binaries and the pinned native-driver Loaf live here. They may depend on every ring; nothing depends on the toolchain ring. The native driver holds the narrow rustc-type adapter required by DD-0004. `workspaces/release` and `workspaces/ide` stay where they are because a TypeScript extension and shell packaging are workspaces, not Loaves.
+The language server and pinned rustc adapter live here. They may depend on compiler and kernel Loaves; those rings do not depend on toolchain units. The command line is Oven, authored in Incan under `workspaces/oven/`.
 
-**Versioning:** The bundle. `Incan 0.6` is a manifest pinning one version of every other ring, the way a Rust toolchain pins rustc, cargo, and std.
+**Versioning:** The toolchain bundle pins matching compiler, runtime and standard-package artifacts.
 
 | Directory | Purpose |
 | --- | --- |
-| `incan-cli/` | The `incan` command: clap surface, terminal rendering, exit codes. |
-| `incan-lsp/` | Language server over the driver. |
-| `incan-rustc-driver/` | Oven-built pinned rustc adapter and executable; scalar Incan plans enter as AST declarations and MIR bodies. |
-| `oven-cli/` | The `oven` binary and the `oven`, `lock` and `tools` handlers as a library `incan` mounts under its own spellings; depends on the driver and the frontend until RFC 118 authors `oven` against the Oven API. |
+| `incan-lsp/` | Language server over checked driver and library metadata. |
+| `incan-rustc-driver/` | Pinned compiler adapter and executable; checks units and translates the native plan into rustc MIR. Its check, diagnostic and formatting handlers serve Oven's commands. |
 
-The ring rules live in *Repository layout* in `workspaces/docs-site/docs/contributing/explanation/architecture.md`; the migration is #1478's history.
+Release packaging and the editor extension remain under `workspaces/release/` and `workspaces/ide/`.
+
+Layer boundaries are documented in `workspaces/docs-site/docs/contributing/explanation/layering.md`.

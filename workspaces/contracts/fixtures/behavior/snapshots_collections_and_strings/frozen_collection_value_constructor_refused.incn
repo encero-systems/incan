@@ -1,0 +1,14 @@
+# behavior: FrozenList(...), FrozenDict(...) and FrozenSet(...) are not constructors, and a frozen list exposes no mutation method; both are refused at check time (#1719, #2704)
+# expect-diagnostic: INCAN-T0001
+
+def count(frozen: FrozenList[int]) -> int:
+    return len(frozen)
+
+
+def mutate(frozen: FrozenList[int]) -> None:
+    """Exercise the immutable collection's existing missing-method diagnostic."""
+    frozen.append(9)
+
+
+def main() -> None:
+    println(count(FrozenList([7, 8])))

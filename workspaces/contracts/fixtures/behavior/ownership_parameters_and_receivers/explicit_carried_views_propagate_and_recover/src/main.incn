@@ -1,0 +1,77 @@
+# behavior: a `Result[Reference[Self], E]` method carries a returned view of its receiver, `?` takes the view out so a fluent chain keeps editing the original buffer, and an error leaves the caller's buffer usable for recovery; repeating the error path leaves the heap as it found it (#2500).
+# expect-stdout:
+#   full
+#   [10, 20, 30]
+#   recovered
+#   heap flat
+
+"""Carry a returned view through `?`, recover from its error, and measure what the error path leaves behind."""
+
+from rust::drop_probe import live_heap_bytes
+
+
+def heap() -> int:
+    return live_heap_bytes()
+
+
+class SampleBuffer:
+    pub capacity: int
+    pub samples: list[int]
+
+    pub def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+        if len(self.samples) >= self.capacity:
+            return Err("full")
+        self.samples.append(sample)
+        return Ok(self)
+
+    pub def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
+        for sample in samples:
+            self.append(sample)?
+        return Ok(self)
+
+
+def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:
+    (buffer.append(10)?).append_all([20, 30])?
+    return Ok(None)
+
+
+def recover() -> Result[None, str]:
+    mut buffer = SampleBuffer(capacity=2, samples=[])
+    match fill(buffer):
+        Ok(_) => println("all samples added")
+        Err(error) =>
+            println(error)
+            assert len(buffer.samples) == 2
+            buffer.capacity = 3
+            buffer.append(30)?
+    assert len(buffer.samples) == 3
+    println(buffer.samples)
+    return Ok(None)
+
+
+def repeated_errors() -> None:
+    """
+    Run the error path a thousand times on a fresh buffer: `?` leaves `append_all` and `fill` with an error while the
+    buffer, the list argument and each error text are still held. Anything left behind grows the heap by at least a
+    thousand allocations; less than a byte a round is the allocator's own bookkeeping.
+    """
+    before = heap()
+    mut left = 0
+    while left < 1000:
+        mut buffer = SampleBuffer(capacity=1, samples=[])
+        match fill(buffer):
+            Ok(_) => pass
+            Err(_) => pass
+        left += 1
+    grown = heap() - before
+    if grown < 1000:
+        println("heap flat")
+    else:
+        println(f"heap grew by {grown} bytes over 1000 rounds")
+
+
+def main() -> None:
+    match recover():
+        Ok(_) => println("recovered")
+        Err(error) => println(error)
+    repeated_errors()

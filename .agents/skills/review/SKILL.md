@@ -33,7 +33,7 @@ The report must use this exact top-level shape:
 ## Activity
 - [21:54] review started
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
-- [21:57] found 2 warnings in loaves/oven/oven_model/src/project_lifecycle/version.rs
+- [21:57] found 2 warnings in workspaces/oven/src/semver_req.incn
 - [22:01] running make fmt
 - [22:04] make pre-commit passed
 
@@ -137,7 +137,7 @@ Each new `/review` invocation starts a fresh report for the current run. Do not 
 3. Check for both directions of scope drift:
    - **missing in-scope behavior** that the issue/RFC/docs imply should exist but does not, and
    - **out-of-scope additions** or scope creep that the governing spec did not ask for.
-4. Determine which pipeline stages are touched: Parser · Typechecker · Lowering · Emission.
+4. Determine which pipeline stages are touched: Parser · Typechecker · Body IR · Incan lowering · driver MIR adapter. Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep.
 5. If the change is user-facing, stdlib-facing, or architectural, also consult `AGENTS.md`, `architecture.md`, `layering.md`, `readable-maintainable-rust.md`, and `extending_language.md` as relevant.
 6. If review uncovers a likely compiler bug outside the current change scope, trigger `flag-compiler-bug`: minimize the repro, judge blocking vs workaround, check whether the bug is already filed, and then raise or draft the bug before continuing.
 7. Work through the checklists below in order.
@@ -162,9 +162,8 @@ These fail CI or panic at runtime. Flag every occurrence.
 
 - [ ] **No `.unwrap()` or `.expect()`** — anywhere, including tests and examples.
   Use `?`, `.map_err(|e| miette!(...))`, or explicit `match`.
-  The only accepted exemption is `#[cfg(test)]` blocks in `backend::project` submodules that already carry `#[allow(clippy::unwrap_used)]`.
 - [ ] **Test functions that do fallible work return `Result`** — `fn my_test() -> Result<(), Box<dyn std::error::Error>>` + `?`, never `.unwrap()`.
-- [ ] **`cargo clippy` clean** — run `cargo clippy --all-targets --all-features` mentally or literally; flag any obvious clippy violations you can identify from the diff.
+- [ ] **Rust quality checked** — flag anti-patterns from the diff and run the applicable Makefile gates. There is no Cargo project; never run Cargo or claim an unrun lint check passed.
 
 ---
 
@@ -175,10 +174,11 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Feature flows through all relevant stages.** If a new AST node is added:
   - Parsed and stored in the AST?
   - Validated in the typechecker (`check_decl`, `check_expr`, or `collect`)?
-  - Lowered in `loaves/compiler/incan_ir/src/lower/`?
-  - Emitted in `loaves/compiler/incan_emit/src/emit/`?
+  - Represented by checked facts in Body IR (`loaves/compiler/incan_frontend/`)?
+  - Lowered by `loaves/compiler/incan_mir_lowering/src/` into `incan_mir_plan`?
+  - Adapted to MIR in `loaves/toolchain/incan-rustc-driver/src/`?
 - [ ] **Out-of-scope features are rejected at the typechecker**, not silently passed to lowering to fail later. Rejection should emit a typed diagnostic from `loaves/kernel/incan_syntax/src/diagnostics/catalog/errors/`.
-- [ ] **Stdlib changes** (`loaves/stdlib/`) have matching Rust-side backing in the owning component's facet (`loaves/stdlib/<component>/rust/src/`) and are registered in `STDLIB_NAMESPACES` (`loaves/kernel/incan_lang/src/lang/stdlib.rs`).
+- [ ] **Stdlib changes** (`loaves/stdlib/`) remain ordinary Loaves with behavior authored in Incan and existing Rust crates used through `rust::` interop where needed. Verify the owning manifests and canonical registries instead of assuming a new Rust facet is required.
 
 ---
 
@@ -226,7 +226,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 - [ ] **Touched Incan declarations have descriptive docstrings** — use the Python-quality rule: every touched `.incn` module, class, model, enum, trait, function, and method needs a descriptive docstring, including private/internal helpers. This is stricter than Rust prose rules and mirrors the expected ruff/pylint/mypy-style Python documentation discipline.
 - [ ] **Touched non-trivial Rust functions/methods are documented** — not just public APIs. Private Rust helpers may skip rustdoc only when they are genuinely tiny and self-evident.
 - [ ] **Docs explain intent and constraints** — especially for public types, traits, derives, runtime adapters, and non-obvious lowering/emission behavior.
-- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, consider whether `mkdocs build --strict` should pass.
+- [ ] **Docs-site changes follow repo rules** — no hard wrap under `workspaces/docs-site/`; if docs are touched, run `make docs`.
 - [ ] **Docs follow Divio intent** — apply the `AGENTS.md` docs rules to the actual content. Reference pages must provide a complete factual lookup for their stated public surface, including signatures and error contracts; a truthful walkthrough or overview in `reference/` is still a finding. Check page intent and completeness independently of MkDocs, and link to how-to or explanation material when needed. A reference page also states nothing beyond the contract: read every changed sentence against the list in *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`; each hit is a blocker.
 - [ ] **User-facing docs do not lean on RFC references** — pages under user docs (tutorials, how-to, reference, release notes, tooling/language guides) should explain behavior directly. Flag direct RFC references in user-facing prose unless the page is itself an RFC/contributor-facing document or the RFC link is part of an explicit release-note inventory.
 - [ ] **Boy Scout Rule** — did the author leave touched code at least as clean as they found it? Flag stale TODOs, misleading variable names, missing doc comments, or unused imports that could have been fixed in-scope.
@@ -236,10 +236,11 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 ## Checklist 6 — Tests
 
-- [ ] **New functionality has tests.** For typechecker changes: unit tests in the `#[cfg(test)]` block. For codegen changes: a fixture in `loaves/compiler/incan_emit/tests/codegen_snapshots/` and a corresponding snapshot.
-- [ ] **Snapshots updated** if codegen changed. Command: `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests`.
-- [ ] **Integration tests** (`loaves/toolchain/incan-cli/tests/integration_tests.rs`) updated if the change affects end-to-end behavior.
-- [ ] Both typechecker-level tests (semantic validation) AND codegen snapshot tests (end-to-end) exist for any pipeline feature.
+- [ ] **New functionality has contract coverage** in the relevant families under `workspaces/contracts/fixtures/`; `workspaces/contracts/README.md` defines the layouts, expectations, and runner.
+- [ ] **Extend before adding** — add a case only when no existing case in the same area can carry the behavior. The whole suite (contracts, Rust unit tests, and Incan test functions) stays under about 3,000 tests.
+- [ ] **No case per bug** — name guarded bugs in `# behavior:`. Each library case has one producer Loaf carrying every declaration it needs.
+- [ ] Semantic acceptance/refusal and observable execution are covered for pipeline features where relevant; do not demand redundant unit tests when contracts already exercise the behavior.
+- [ ] The smallest case or area selector was run during development and affected whole families at commit points; no baseline passing case regressed.
 - [ ] **Compiler/runtime parity risks are tested** — when behavior exists in both compile-time checks and runtime helpers, add or verify parity coverage for the edge case.
 - [ ] **Tooling parity is preserved** — syntax, diagnostics, formatter, CLI, and LSP behavior stay aligned when shared frontend behavior changes.
 
@@ -266,7 +267,7 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 ## Checklist 8 — Architecture and layering
 
 - [ ] **Changes live in the correct layer/crate** — `incan_syntax` stays syntax-only; `incan_lang` stays pure/deterministic; orchestration layers stay thin.
-- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_core` and the others) except as a dev-dependency; shared policy belongs in `incan_lang`, runtime glue belongs in the facets.
+- [ ] **Layering rules are preserved** — `incan` must not depend on a standard library facet (`incan_std_primitives` and the others) except as a dev-dependency; shared policy belongs in `incan_lang`, runtime glue belongs in the facets.
 - [ ] **No duplicated policy across layers** — if parser/typechecker/lowering/CLI/LSP need the same rule, prefer a shared helper, registry, or semantic pack.
 - [ ] **Registry-driven behavior stays registry-driven** — stdlib namespaces, soft keywords, surface semantics, and runtime requirements should extend the canonical registries rather than add hardcoded special cases.
 - [ ] **Runtime/compiler boundaries stay clean** — generated-program helpers belong in runtime crates; compiler logic belongs in compiler crates; avoid hidden drift between the two.
@@ -280,7 +281,9 @@ Only applies when the diff touches a language feature (not a pure refactor or do
 
 - [ ] **User-facing changes update the right docs** — rustdoc, docs-site pages, examples, and release notes stay aligned when behavior changes.
 - [ ] **Release-note inventories stay complete** — when the branch implements or materially completes an RFC/user-facing feature, verify the current release notes mention it in the implemented/features inventory where this repo expects that summary to live.
-- [ ] **Generated language reference is current** — if the change touches `loaves/kernel/incan_lang/src/lang/`, `loaves/kernel/incan_lang/src/bin/generate_lang_reference.rs`, or `workspaces/docs-site/docs/language/reference/language.md`, run `cargo run -p incan_lang --bin generate_lang_reference`, inspect the resulting `language.md` diff, and require that generated diff to be committed or explicitly reported as blocked.
+- [ ] **Generated language reference is current** — if language registries, the reference generator, or `workspaces/docs-site/docs/language/reference/language.md` change, inspect the generator and its current entry point. Check the Makefile and Oven CLI before naming a regeneration command; report a missing supported entry point explicitly rather than inventing one. Review any resulting generated diff.
+- [ ] **Design records state decisions only** — change a record only when a decision changes, in a sentence or two. Keep the decision, boundaries, consequences, and non-goals under about 1,000 words; mechanism detail belongs in commit messages and rustdoc, never a paragraph per commit.
+- [ ] **Commits check US English** — `incan run scripts/check_us_english.incn` runs before every commit.
 - [ ] **Compiler bugs discovered during review are surfaced explicitly** — if you find a likely compiler defect that should not be fixed inside the current change, invoke `flag-compiler-bug` instead of burying it in review notes.
 - [ ] **Repo learnings are captured when warranted** — if the change taught a durable lesson about architecture, testing, or pitfalls, consider whether `AGENTS.md` should be updated.
 
@@ -312,7 +315,7 @@ Produce a report with:
 One or two sentences on overall quality and merge-readiness.
 ```
 
-- **Blocker 🔴** — must fix before merge (clippy deny, `.unwrap()`, pipeline gap, missing test for new feature).
+- **Blocker 🔴** — must fix before merge (`.unwrap()`, pipeline gap, missing test for new feature).
 - **Warning 🟡** — should fix (anti-pattern, style violation, missing doc comment on a touched public or non-trivial item).
 - **Suggestion 🟢** — nice to have (minor readability, opportunistic Boy Scout improvement).
 - **Note 💡** — observation, question, or context (no change required).
@@ -336,8 +339,9 @@ Before you write "no blockers", "no warnings", or equivalent clean-review langua
 - [ ] User-facing docs do not casually lean on RFC references unless the page is explicitly RFC/contributor-facing or the RFC appears in an explicit release-note inventory.
 - [ ] Docs, CLI help, examples, scaffolds, and release notes do not claim behavior the code does not implement.
 - [ ] Release-note inventories were updated where the repo expects them for implemented user-facing work.
-- [ ] If language registries or generated language-reference inputs changed, `cargo run -p incan_lang --bin generate_lang_reference` was run and any resulting `workspaces/docs-site/docs/language/reference/language.md` diff was reviewed and committed.
+- [ ] If language registries or generated language-reference inputs changed, regeneration used a verified supported entry point and resulting output was reviewed, or the missing entry point is reported explicitly.
 - [ ] `make fmt` was run after fixes.
+- [ ] Relevant contract selectors were run, including affected whole families at commit points.
 - [ ] `make pre-commit` was run after the final fix pass, or you explicitly report why it was not run.
 
 If any item is unchecked, do not claim the review is clean. Report the remaining gap explicitly.
@@ -346,7 +350,7 @@ If any item is unchecked, do not claim the review is clean. Report the remaining
 
 A failed broad verification command does **not** invalidate the review.
 
-If `make fmt`, `make pre-commit`, `mkdocs build --strict`, or another broad check fails for reasons unrelated to the
+If `make fmt`, `make pre-commit`, `make docs`, or another broad check fails for reasons unrelated to the
 current local findings, you must still:
 
 1. keep reviewing the worktree,
@@ -389,9 +393,10 @@ Before declaring the loop clean, do one explicit final sweep for the common miss
 The default verification bar for a strong review is:
 
 - `make fmt`
-- `make pre-commit`
+- the relevant contracts: `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (substitute the compiler under test and a case/area selector during development or affected whole families at commit points)
+- `make pre-commit` (`make pre-commit`, `incan run scripts/check_us_english.incn`, `incan run scripts/check_changed_rustdocs.incn`, and `incan run scripts/check_agents_doc_sync.incn`)
 
-If either command was not run, say so explicitly in the final review report and treat that as residual risk rather than silently claiming the branch is clean.
+Oven owns builds and execution. Verify commands against the Makefile and `workspaces/oven/src/main.incn`. If applicable verification was not run, say so explicitly in the final review report and treat that as residual risk rather than silently claiming the branch is clean.
 
 ## Findings ledger
 

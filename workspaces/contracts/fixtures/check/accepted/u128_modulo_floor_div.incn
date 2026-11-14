@@ -1,0 +1,16 @@
+# behavior: u128 modulo and floor division narrow to u8 through `wrapping_resize`
+# expect-accepted:
+
+def low_byte(value: u128) -> u8:
+    return (value % 256).wrapping_resize()
+
+
+def high_byte(value: u128) -> u8:
+    return ((value // 256) % 256).wrapping_resize()
+
+
+def main() -> None:
+    value: u128 = 258
+    assert low_byte(value) == 2
+    assert high_byte(value) == 1
+    println("u128 modulo ok")

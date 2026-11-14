@@ -13,30 +13,43 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
-use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable};
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
-use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::published_layout::{executable_surface_path, public_executable_identities};
-use crate::library_manifest_index::LibraryArtifactMetadata;
-use crate::provider::ProviderPlan;
+use crate::library_manifest::public_identities::public_executable_identities;
+use crate::loaf_index::{LoafIndex, LoafIndexError};
+
+/// Bound temporary storage while verifying the selected executable artifact's content digest.
+const CONTENT_DIGEST_BUFFER_BYTES: usize = 64 * 1024;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExecutableResolutionError {
+    /// A demanded manifest could not be read or changed since its inventory was admitted.
+    #[error(transparent)]
+    Artifact(#[from] LoafIndexError),
     /// Local declarations execute from the current compilation, never from a synthesized package representation.
     #[error("`{declaration}` is not a package declaration")]
     NotAPackageDeclaration { declaration: String },
     /// The canonical provider is absent from the selected direct and transitive artifact graph.
-    #[error("package `{library}` is not a resolved dependency of this compilation")]
-    UnknownPackage { library: String },
+    #[error(
+        "package `{library}` is not a resolved dependency of this compilation; required declaration: {}; dependency chain: {}",
+        declaration.render_compact(), render_dependency_chain(chain)
+    )]
+    UnknownPackage {
+        library: String,
+        declaration: Box<CanonicalSymbolId>,
+        chain: Vec<CanonicalSymbolId>,
+    },
     /// Canonical identity cannot distinguish conflicting resolved instances, so choosing one would be unsound.
     #[error(
         "package `{library}` has conflicting resolved artifacts ({versions}); executable resolution requires one unambiguous package instance"
@@ -89,15 +102,17 @@ pub struct ResolvedExecutableModules {
     pub content_bytes_verified: u64,
     /// Package versions bound to the returned module identities for preflight refusal diagnostics.
     pub package_versions: BTreeMap<String, String>,
+    /// Why each reached package is reached: for every declaration that entered it from a requested root or from
+    /// another package, its requester chain from that root. A package selected only by an explicitly uncovered root
+    /// has no entry.
+    pub entries: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
 }
 
-/// A resolved provider instance, selected by the compilation's dependency edges and checked artifact context.
+/// One indexed Loaf's manifest and governed-body file.
 struct PackageArtifact {
-    /// Admitted name, version, content digest and feature projection; canonical package names alone cannot select an
-    /// instance.
-    provider_key: String,
-    manifest: LibraryManifest,
-    metadata: LibraryArtifactMetadata,
+    manifest: Arc<LibraryManifest>,
+    /// The Loaf's `.incnbody`.
+    bodies: PathBuf,
 }
 
 impl PackageArtifact {
@@ -121,206 +136,98 @@ impl PackageArtifact {
     }
 }
 
-/// Resolve every statically required package call and its published public closure before execution begins.
+/// Load the declaration records and governed bodies the program reaches in its Loaves (DD-0007).
 ///
-/// All versions, coverage records and manifest memberships are validated before returning. No body is executed, no
-/// source is consulted, and each selected fragment is decoded once even when recursion or facades reach it again.
-/// Requirements reached through a public package may name an active SDK provider; they use that provider's admitted
-/// artifact with the same coverage and content checks. Conflicting instances refuse rather than replacing one another.
-pub fn resolve_executable_requirements(
-    plan: &ProviderPlan,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
-    if required.is_empty() {
-        return Ok(ResolvedExecutableModules::default());
-    }
-    resolve_from_catalog(&executable_catalog(plan)?, required, false)
-}
-
-/// Load available checked publication context without demanding executable coverage from every referenced type.
-///
-/// An authenticated explicitly uncovered root contributes no facts. This is useful for ordinary native-linked
-/// library publication, whose signatures may name linking-only types. Covered roots still require their complete
-/// executable closure, and malformed artifacts, missing public membership and digest mismatches remain errors.
-/// Actual execution must use [`resolve_executable_requirements`] to require every selected root.
-pub fn resolve_available_executable_context(
-    plan: &ProviderPlan,
+/// Every requested root and its published closure is read from the declaring Loaf's `.incnbody`, decoded once even
+/// when recursion or facades reach it again. An explicitly uncovered root contributes no facts; malformed artifacts,
+/// missing public membership and digest mismatches are errors. Exact public identities already supplied by the
+/// checked producer satisfy returning dependency edges without demanding an older artifact of the same package.
+/// Nothing executes and no additional source is consulted.
+pub fn resolve_loaf_declarations(
+    loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&executable_catalog(plan)?, requested, true)
+    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, checked_local, true)?;
+    loaves.validate_demands()?;
+    Ok(resolved)
 }
 
-/// Resolve published records of active SDK packages, which the native route links as crates but still needs as checked
-/// declarations, such as a stdlib model's field defaults. The same version, coverage and digest checks apply; nothing
-/// is executed and no source is consulted.
-pub fn resolve_sdk_requirements(
-    plan: &ProviderPlan,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
-    if required.is_empty() {
-        return Ok(ResolvedExecutableModules::default());
-    }
-    let catalog = sdk_catalog(plan)?;
-    if let Some(value) = resolve_linked_numeric_constant(&catalog, required)? {
-        return Ok(value);
-    }
-    resolve_from_catalog(&catalog, required, false)
-}
-
-/// Load an immutable numeric newtype value for a linked SDK without requesting unrelated method bodies.
-/// The root must be public and covered, its only dependency must be the same-package constructor owner, and
-/// the authenticated owner payload must exactly match the constant's complete physical layout and binding.
-/// Other values retain ordinary executable-closure resolution; no execution route uses this declaration-only path.
-fn resolve_linked_numeric_constant(
-    catalog: &BTreeMap<String, PackageArtifact>,
-    required: &BTreeSet<CanonicalSymbolId>,
-) -> Result<Option<ResolvedExecutableModules>, ExecutableResolutionError> {
-    use incan_semantics_core::SemanticSourceTargetKind;
-    use incan_semantics_core::body_ir::Constant;
-    if required.len() != 1 {
-        return Ok(None);
-    }
-    let Some(identity) = required.first() else {
-        return Ok(None);
-    };
-    if identity.kind != SemanticSourceTargetKind::Const {
-        return Ok(None);
-    }
-    let SymbolOrigin::Package { library, .. } = &identity.origin else {
-        return Ok(None);
-    };
-    let Some(package) = catalog.get(library) else {
-        return Ok(None);
-    };
-    let mut surface = OpenSurface::open(package, identity)?;
-    let DeclarationCoverage::Covered {
-        offset,
-        length,
-        requirements,
-    } = surface
-        .index
-        .coverage(identity)
-        .map_err(|error| package.unusable(error))?
-    else {
-        return Ok(None);
-    };
-    let (offset, length, dependencies) = (*offset, *length, requirements.clone());
-    let declaration = surface.read(package, identity, offset, length)?;
-    let ExecutableDeclaration::Constant(constant) = &declaration else {
-        return Ok(None);
-    };
-    let Constant::NumericNewtype(value) = &constant.value else {
-        return Ok(None);
-    };
-    let Some(owner) = value.constructor.canonical.as_ref() else {
-        return Ok(None);
-    };
-    if !matches!(&owner.origin, SymbolOrigin::Package { library: origin, .. } if origin == library)
-        || dependencies.len() != 1
-        || !dependencies.contains(owner)
-    {
-        return Ok(None);
-    }
-    let DeclarationCoverage::Covered {
-        offset: owner_offset,
-        length: owner_length,
-        ..
-    } = surface
-        .index
-        .execution_coverage(owner)
-        .map_err(|error| package.unusable(error))?
-    else {
-        return Ok(None);
-    };
-    let (owner_offset, owner_length) = (*owner_offset, *owner_length);
-    let owner_declaration = surface.read(package, owner, owner_offset, owner_length)?;
-    let layout = match &owner_declaration {
-        ExecutableDeclaration::Nominal(layout) | ExecutableDeclaration::NominalWithTraits(layout, _) => layout,
-        _ => return Ok(None),
-    };
-    if !value.matches_layout(layout) {
-        return Err(package.unusable(malformed(
-            "numeric SDK constant disagrees with its authenticated layout",
-        )));
-    }
-    let owner = owner.clone();
-    let mut modules = BTreeMap::new();
-    for (identity, declaration) in [(identity, declaration), (&owner, owner_declaration)] {
-        let path = canonical_module_identity(identity)
-            .ok_or_else(|| package.unusable(malformed("numeric SDK constant has no module owner")))?;
-        retain_declaration(
-            modules.entry(path.clone()).or_insert_with(|| empty_module(path)),
-            declaration,
-        );
-    }
-    Ok(Some(ResolvedExecutableModules {
-        modules: modules.into_values().collect(),
-        decoded_declarations: 2,
-        payload_bytes_read: length + owner_length,
-        content_bytes_verified: surface.content_bytes_verified,
-        package_versions: BTreeMap::from([(library.clone(), package.manifest.version.clone())]),
-    }))
-}
-
-/// Join only the ordinary and active SDK artifacts already admitted by the compilation's provider plan.
-fn executable_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = package_catalog(plan)?;
-    for artifact in sdk_catalog(plan)?.into_values() {
-        insert_artifact(&mut catalog, artifact)?;
+/// One artifact per package name across the index; two instances of one package refuse rather than replacing each
+/// other.
+fn catalog(loaves: &LoafIndex) -> Result<BTreeMap<String, String>, ExecutableResolutionError> {
+    let mut catalog = BTreeMap::new();
+    let mut identities = BTreeMap::new();
+    for (key, identity) in loaves.identities() {
+        let stable = identity.stable_key();
+        if let Some(previous) = identities.insert(&identity.name, stable.clone())
+            && previous != stable
+        {
+            return Err(ExecutableResolutionError::AmbiguousPackage {
+                library: identity.name.clone(),
+                versions: format!("{previous}, {stable}"),
+            });
+        }
+        catalog.entry(identity.name.clone()).or_insert_with(|| key.to_owned());
     }
     Ok(catalog)
 }
 
-/// Preserve one admitted instance per canonical package name, rejecting different versions, digests or feature
-/// projections.
-fn insert_artifact(
-    catalog: &mut BTreeMap<String, PackageArtifact>,
-    artifact: PackageArtifact,
-) -> Result<(), ExecutableResolutionError> {
-    match catalog.entry(artifact.manifest.name.clone()) {
-        Entry::Vacant(entry) => {
-            entry.insert(artifact);
-        }
-        Entry::Occupied(entry) if entry.get().provider_key != artifact.provider_key => {
-            return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: artifact.manifest.name,
-                versions: format!("{}, {}", entry.get().provider_key, artifact.provider_key),
-            });
-        }
-        Entry::Occupied(_) => {}
-    }
-    Ok(())
+/// Demand one manifest from the already disambiguated inventory catalog, retaining the same artifact for all edges.
+fn demand_package<'a>(
+    loaves: &LoafIndex,
+    catalog: &BTreeMap<String, String>,
+    packages: &'a mut BTreeMap<String, PackageArtifact>,
+    library: &str,
+    declaration: &CanonicalSymbolId,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> Result<&'a PackageArtifact, ExecutableResolutionError> {
+    let slot = match packages.entry(library.to_owned()) {
+        Entry::Occupied(slot) => return Ok(slot.into_mut()),
+        Entry::Vacant(slot) => slot,
+    };
+    let unknown = || ExecutableResolutionError::UnknownPackage {
+        library: library.to_owned(),
+        declaration: Box::new(declaration.clone()),
+        chain: dependency_chain(declaration, parents),
+    };
+    let key = catalog.get(library).ok_or_else(unknown)?;
+    let (manifest, bodies) = loaves.execution_artifact(key)?.ok_or_else(unknown)?;
+    Ok(slot.insert(PackageArtifact { manifest, bodies }))
 }
 
 /// Load every required declaration and its published closure from one package catalog.
 fn resolve_from_catalog(
-    catalog: &BTreeMap<String, PackageArtifact>,
+    loaves: &LoafIndex,
+    catalog: &BTreeMap<String, String>,
     required: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
     optional_roots: bool,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let mut opened = BTreeMap::new();
+    let mut packages = BTreeMap::new();
     let mut pending: BTreeSet<_> = required
         .iter()
         .cloned()
         .map(|identity| (identity, false, optional_roots))
         .collect();
+    let mut parents = BTreeMap::new();
     let mut visited = BTreeSet::new();
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
     while let Some((identity, implementation_allowed, optional_root)) = pending.pop_first() {
+        if checked_local.contains(&identity) {
+            continue;
+        }
         let SymbolOrigin::Package { library, .. } = &identity.origin else {
             return Err(ExecutableResolutionError::NotAPackageDeclaration {
                 declaration: identity.declaration_name.clone(),
             });
         };
-        let package = catalog
-            .get(library)
-            .ok_or_else(|| ExecutableResolutionError::UnknownPackage {
-                library: library.clone(),
-            })?;
+        let package = demand_package(loaves, catalog, &mut packages, library, &identity, &parents)?;
         // A checked module binding selects an admitted package namespace; it has no executable body. Calls and
         // type uses retain their own canonical requirements and must still resolve from the selected artifact.
         if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Module {
@@ -354,6 +261,7 @@ fn resolve_from_catalog(
             continue;
         }
         if let DeclarationCoverage::TypeContext { owner } = coverage {
+            retain_dependency_parent(&mut parents, required, owner, &identity);
             pending.insert((owner.clone(), true, false));
             continue;
         }
@@ -368,20 +276,38 @@ fn resolve_from_catalog(
             }));
         };
         pending.extend(requirements.iter().map(|dependency| {
+            retain_dependency_parent(&mut parents, required, dependency, &identity);
             let same_package =
                 matches!(&dependency.origin, SymbolOrigin::Package { library: owner, .. } if owner == library);
             (dependency.clone(), same_package, false)
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        if let ExecutableDeclaration::NominalWithTraits(_, implementations) = &declaration {
+            // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
+            // uncovered unused default contributes no body, just as an uncovered source-adoption root does.
+            pending.extend(
+                implementations
+                    .iter()
+                    .filter(|implementation| implementation.implementation == implementation.method)
+                    .map(|implementation| {
+                        retain_dependency_parent(&mut parents, required, &implementation.method, &identity);
+                        (implementation.method.clone(), false, true)
+                    }),
+            );
+        }
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
-        let module = modules.entry(owner.clone()).or_insert_with(|| empty_module(owner));
+        let module = modules
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner));
         retain_declaration(module, declaration);
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
     }
+    resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
     for module in modules.values_mut() {
+        crate::body_ir::retain_published_module(module);
         // Canonical lookup is name-first; module initialization follows checked physical declaration order.
         module
             .static_declarations
@@ -391,26 +317,66 @@ fn resolve_from_catalog(
     Ok(resolved)
 }
 
-/// Assemble only selected fragments under their checked canonical module owner, without source reconstruction.
-fn empty_module(owner: String) -> BodyIrModule {
-    BodyIrModule {
-        string_conversion_contract: incan_semantics_core::body_ir::StringConversionContract::Unselected,
-        decorated_bindings: Vec::new(),
-        entrypoint_effects: Vec::new(),
-        constant_declarations: Vec::new(),
-        type_alias_declarations: Vec::new(),
-        trait_declarations: Vec::new(),
-        trait_implementations: Vec::new(),
-        module_id: CompilerNodeId::module(owner),
-        stdlib_delegations: Vec::new(),
-        native_union_declarations: Vec::new(),
-        enum_declarations: Vec::new(),
-        static_declarations: Vec::new(),
-        nominal_declarations: Vec::new(),
-        fieldless_enum_declarations: Vec::new(),
-        value_enum_declarations: Vec::new(),
-        bodies: Vec::new(),
+/// Preserve the first deterministic incoming edge without turning an explicitly selected root into a child.
+fn retain_dependency_parent(
+    parents: &mut BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    roots: &BTreeSet<CanonicalSymbolId>,
+    dependency: &CanonicalSymbolId,
+    parent: &CanonicalSymbolId,
+) {
+    if !roots.contains(dependency) {
+        parents.entry(dependency.clone()).or_insert_with(|| parent.clone());
     }
+}
+
+/// Group each loaded declaration that a root or another package requested under its package, with its requester
+/// chain. Same-package edges stay inside the entry that reached them.
+fn package_entries(
+    packages: &BTreeMap<String, String>,
+    visited: &BTreeSet<CanonicalSymbolId>,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> BTreeMap<String, Vec<Vec<CanonicalSymbolId>>> {
+    let mut entries: BTreeMap<_, Vec<_>> = packages.keys().map(|library| (library.clone(), Vec::new())).collect();
+    for identity in visited {
+        let SymbolOrigin::Package { library, .. } = &identity.origin else {
+            continue;
+        };
+        let crosses = parents.get(identity).is_none_or(
+            |parent| !matches!(&parent.origin, SymbolOrigin::Package { library: owner, .. } if owner == library),
+        );
+        if crosses && let Some(entry) = entries.get_mut(library) {
+            entry.push(dependency_chain(identity, parents));
+        }
+    }
+    entries
+}
+
+/// Recover canonical requester ancestry; a cycle in declaration requirements stops at its first repeated identity.
+fn dependency_chain(
+    declaration: &CanonicalSymbolId,
+    parents: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> Vec<CanonicalSymbolId> {
+    let mut chain = vec![declaration.clone()];
+    let mut seen = BTreeSet::from([declaration.clone()]);
+    let mut current = declaration;
+    while let Some(parent) = parents.get(current) {
+        if !seen.insert(parent.clone()) {
+            break;
+        }
+        chain.push(parent.clone());
+        current = parent;
+    }
+    chain.reverse();
+    chain
+}
+
+/// Format canonical identities for diagnostics without assigning imported declaration offsets to a source file.
+fn render_dependency_chain(chain: &[CanonicalSymbolId]) -> String {
+    chain
+        .iter()
+        .map(CanonicalSymbolId::render_compact)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 /// Retain the selected payload's original declaration kind and associated checked trait or enum context.
@@ -418,6 +384,26 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
     match declaration {
         ExecutableDeclaration::Body(body) => {
             module.bodies.push(*body);
+        }
+        ExecutableDeclaration::CompiledCallableFrame { mut frame, callables } => {
+            crate::body_ir::retain_published_frame(&mut frame);
+            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
+                module.loaf_callables.push(callable);
+            }
+            retain_native_callables(module, callables);
+        }
+        ExecutableDeclaration::NativeBody { body, callables } => {
+            module.bodies.push(*body);
+            retain_native_callables(module, callables);
+        }
+        ExecutableDeclaration::GenericDecoratedBody {
+            body,
+            binding,
+            callables,
+        } => {
+            module.bodies.push(*body);
+            module.decorated_bindings.push(*binding);
+            retain_native_callables(module, callables);
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {
             module.bodies.push(*body);
@@ -446,39 +432,13 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         }
     }
 }
-/// Select materialized active SDK artifacts without collapsing conflicting instances of a package name.
-fn sdk_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    for provider in plan.active_sdk_records() {
-        let (Some(manifest), Some(metadata)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
-            continue;
-        };
-        insert_artifact(
-            &mut catalog,
-            PackageArtifact {
-                provider_key: provider.identity.stable_key(),
-                manifest: manifest.clone(),
-                metadata: metadata.clone(),
-            },
-        )?;
+/// Merge authenticated native call selections without duplicating an already-retained ABI declaration.
+fn retain_native_callables(module: &mut BodyIrModule, callables: Vec<LoafCallable>) {
+    for callable in callables {
+        if !module.loaf_callables.contains(&callable) {
+            module.loaf_callables.push(callable);
+        }
     }
-    Ok(catalog)
-}
-
-/// Select from the shared provider plan's admitted artifacts; dependency edges are not traversed a second time.
-fn package_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut catalog = BTreeMap::new();
-    for package in plan.public_artifacts() {
-        insert_artifact(
-            &mut catalog,
-            PackageArtifact {
-                provider_key: package.identity.stable_key(),
-                manifest: (*package.manifest).clone(),
-                metadata: package.artifact.clone(),
-            },
-        )?;
-    }
-    Ok(catalog)
 }
 
 /// File handle and already-decoded metadata; executable payloads remain on disk until their identity is selected.
@@ -493,13 +453,14 @@ struct OpenSurface {
 impl OpenSurface {
     /// Accept only the stable version prefix before reading a bounded index, then compare it with the manifest.
     fn open(package: &PackageArtifact, requested: &CanonicalSymbolId) -> Result<Self, ExecutableResolutionError> {
-        let Some(path) = executable_surface_path(&package.metadata.manifest_path, &package.manifest) else {
+        let path = package.bodies.clone();
+        if package.manifest.contract_metadata.executable_representation.is_none() || !path.is_file() {
             return Err(ExecutableResolutionError::NoPublishedRepresentation {
                 library: package.manifest.name.clone(),
                 version: package.manifest.version.clone(),
                 declaration: requested.declaration_name.clone(),
             });
-        };
+        }
         let mut file = File::open(&path).map_err(|error| package.unreadable(path.clone(), error))?;
         // The frame is written by `encode_surface` as a postcard-encoded `u32` version, then an 8-byte
         // little-endian index length, then the index, then the payload. `SurfaceReader` parses that same frame
@@ -528,13 +489,16 @@ impl OpenSurface {
             .executable_representation
             .as_ref()
             .ok_or_else(|| package.unusable(malformed("manifest descriptor disappeared")))?;
-        if descriptor.representation_version
-            != incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION
-        {
+        if !incan_semantics_core::executable_representation::supports_version(descriptor.representation_version) {
             return Err(package.unusable(ExecutableRepresentationError::UnsupportedVersion {
                 found: descriptor.representation_version,
                 supported: incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION,
             }));
+        }
+        let encoded_version = incan_semantics_core::executable_representation::representation_version(&version)
+            .map_err(|error| package.unusable(error))?;
+        if descriptor.representation_version != encoded_version {
+            return Err(package.unusable(malformed("manifest and executable representation versions differ")));
         }
         let mut length = [0u8; 8];
         file.read_exact(&mut length)
@@ -585,29 +549,8 @@ impl OpenSurface {
                 "declared representation coverage differs from the manifest public surface",
             )));
         }
-        // A descriptor selects immutable publication content; it does not authenticate a package. Use the same open
-        // handle for verification and later range reads, without decoding unrelated declaration payloads.
-        file.seek(SeekFrom::Start(0))
-            .map_err(|error| package.unreadable(path.clone(), error))?;
-        let mut digest = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        let mut content_bytes_verified = 0;
-        loop {
-            let length = file
-                .read(&mut buffer)
-                .map_err(|error| package.unreadable(path.clone(), error))?;
-            if length == 0 {
-                break;
-            }
-            digest.update(&buffer[..length]);
-            content_bytes_verified +=
-                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
-        }
-        if hex::encode(digest.finalize()) != descriptor.content_digest {
-            return Err(package.unusable(malformed(
-                "executable content differs from its manifest-selected digest",
-            )));
-        }
+        let content_bytes_verified =
+            Self::verify_content_digest(&mut file, &path, package, &descriptor.content_digest)?;
         Ok(Self {
             file,
             path,
@@ -615,6 +558,40 @@ impl OpenSurface {
             index,
             content_bytes_verified,
         })
+    }
+
+    /// Verify immutable publication content on the handle later used for range reads, without decoding payloads.
+    ///
+    /// The digest binds the manifest-selected bytes; it does not authenticate the package. Successful verification
+    /// leaves the handle at EOF and reports the number of bytes read for the resolution evidence.
+    fn verify_content_digest(
+        file: &mut File,
+        path: &Path,
+        package: &PackageArtifact,
+        expected_digest: &str,
+    ) -> Result<u64, ExecutableResolutionError> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; CONTENT_DIGEST_BUFFER_BYTES];
+        let mut content_bytes_verified = 0;
+        loop {
+            let length = file
+                .read(&mut buffer)
+                .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+            if length == 0 {
+                break;
+            }
+            digest.update(&buffer[..length]);
+            content_bytes_verified +=
+                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
+        }
+        if hex::encode(digest.finalize()) != expected_digest {
+            return Err(package.unusable(malformed(
+                "executable content differs from its manifest-selected digest",
+            )));
+        }
+        Ok(content_bytes_verified)
     }
 
     /// Range-read one selected fragment and validate its payload identity against its checked index key.
@@ -650,6 +627,85 @@ impl OpenSurface {
 fn malformed(reason: impl Into<String>) -> ExecutableRepresentationError {
     ExecutableRepresentationError::Malformed { reason: reason.into() }
 }
-
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::{ExecutableResolutionError, dependency_chain, package_entries, resolve_loaf_declarations};
+    use crate::loaf_index::LoafIndex;
+    use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Construct a governed identity without source files, so diagnostics must retain its actual package owner.
+    fn declaration(package: &str, name: &str) -> CanonicalSymbolId {
+        let mut identity = CanonicalSymbolId::module_declaration(
+            vec!["api".to_owned()],
+            name,
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(10, 20),
+        );
+        identity.origin = SymbolOrigin::Package {
+            library: package.to_owned(),
+            module_path: vec!["api".to_owned()],
+        };
+        identity
+    }
+
+    /// Missing providers must identify the selected declaration, not only the package that contains it.
+    #[test]
+    fn missing_provider_retains_canonical_requirement() -> Result<(), Box<dyn std::error::Error>> {
+        let wanted = declaration("absent_provider", "read_bytes");
+        let outcome = resolve_loaf_declarations(
+            &LoafIndex::default(),
+            &BTreeSet::from([wanted.clone()]),
+            &BTreeSet::new(),
+        );
+        let error = match outcome {
+            Err(error) => error,
+            Ok(_) => return Err("absent provider unexpectedly resolved".into()),
+        };
+        let rendered = error.to_string();
+        match error {
+            ExecutableResolutionError::UnknownPackage {
+                library,
+                declaration,
+                chain,
+            } => {
+                assert_eq!(library, "absent_provider");
+                assert_eq!(*declaration, wanted);
+                assert_eq!(chain, vec![wanted]);
+            }
+            _ => return Err("missing provider lost its structured requirement".into()),
+        }
+        assert!(rendered.contains("pub::absent_provider::api::read_bytes"));
+        assert!(rendered.contains("dependency chain"));
+        Ok(())
+    }
+
+    /// Cyclic declaration requirements remain finite diagnostics and retain each canonical owner once.
+    #[test]
+    fn cyclic_requester_chain_stops_without_losing_the_required_declaration() {
+        let first = declaration("first", "read");
+        let second = declaration("second", "read");
+        let parents = BTreeMap::from([(first.clone(), second.clone()), (second.clone(), first.clone())]);
+        assert_eq!(dependency_chain(&first, &parents), vec![second, first]);
+    }
+
+    /// A package's entries are its roots and the declarations another package requested; same-package edges stay
+    /// inside the entry that reached them, and a package selected only by an uncovered root keeps an empty entry.
+    #[test]
+    fn package_entries_list_only_declarations_that_cross_into_a_package() {
+        let root = declaration("codecs", "hexlify");
+        let helper = declaration("codecs", "nibble");
+        let runtime = declaration("runtime", "append_list");
+        let parents = BTreeMap::from([(helper.clone(), root.clone()), (runtime.clone(), helper.clone())]);
+        let visited = BTreeSet::from([root.clone(), helper.clone(), runtime.clone()]);
+        let packages = BTreeMap::from([
+            ("codecs".to_owned(), "1".to_owned()),
+            ("runtime".to_owned(), "1".to_owned()),
+            ("uncovered".to_owned(), "1".to_owned()),
+        ]);
+        let entries = package_entries(&packages, &visited, &parents);
+        assert_eq!(entries["codecs"], vec![vec![root.clone()]]);
+        assert_eq!(entries["runtime"], vec![vec![root, helper, runtime]]);
+        assert!(entries["uncovered"].is_empty());
+    }
+}

@@ -1,0 +1,21 @@
+# behavior: Every public oven command refuses unknown options before accessing operands and points to oven's help.
+# cli-commands:
+#   oven --nonexistent
+#   oven run --nonexistent
+#   oven check --nonexistent
+#   oven test --nonexistent
+#   oven describe-unit --nonexistent
+#   oven build --nonexistent
+#   oven owner stop --nonexistent
+#   oven bakery status --nonexistent
+#   oven inspect dependencies --nonexistent
+#   oven --version --nonexistent
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown option
+#   Run `oven --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that invalid option invocations never compile."""
+    pass

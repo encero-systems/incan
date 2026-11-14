@@ -1,8 +1,0 @@
-model User:
-    name: str
-    age: int = 0
-    email: str
-
-
-def greet(name: str) -> str:
-    return "Hello"

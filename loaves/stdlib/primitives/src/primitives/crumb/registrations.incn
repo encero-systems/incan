@@ -1,0 +1,136 @@
+"""Explicit profile-kind shapes and optional printing orders, without execution authority."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.types import NominalKind
+
+
+pub model PropertyGroupOrder:
+    """One named nested property's declared printing order; absent groups keep their read order."""
+
+    pub name: str
+    pub order: list[str]
+
+
+pub model KindRegistration:
+    """
+    A profile kind's core shape and optional property ordering facts.
+
+    None means the outer property semantics are unknown, not that properties are forbidden.
+    Some([]) is a known empty declared order. Groups independently supply their own orders.
+    These are printing hints, never a property allowlist or authority to resolve types or run code.
+    Codecs retain every property and its read order even when no ordering facts are supplied.
+    """
+
+    pub kind: str
+    pub shape: NominalKind
+    pub property_order: Option[list[str]]
+    pub property_groups: list[PropertyGroupOrder]
+
+
+pub class KindRegistry:
+    """
+    An explicitly admitted local set of profile kinds; core Record and Enum remain built in.
+
+    Construction refuses ambiguous registrations. Resolution does not validate description
+    members or interpret profile values: each codec still validates core structure and types.
+    Unknown metadata is retained as data; unsupported value-changing interpretations must fail
+    at their owning admission boundary. No profile code is loaded by this registry.
+    """
+
+    entries: dict[str, KindRegistration]
+
+    @staticmethod
+    pub def create(registrations: list[KindRegistration], mut budget: Budget) -> Result[Self, CrumbError]:
+        """Validate names and unique ordering facts before retaining the local registrations."""
+        mut entries: dict[str, KindRegistration] = {}
+        for registration in registrations:
+            charge_registration(registration, budget)?
+            if core_shape(registration.kind).is_some():
+                return Err(CrumbError.invalid_input("core kind redefinition"))
+            if registration.kind in entries:
+                return Err(CrumbError.invalid_input("duplicate profile kind"))
+            match registration.property_order:
+                Some(order) => check_order(order)?
+                None => pass
+            mut groups: set[str] = set()
+            for group in registration.property_groups:
+                if group.name in groups:
+                    return Err(CrumbError.invalid_input("duplicate property group"))
+                groups.add(group.name)
+                check_order(group.order)?
+            entries[registration.kind] = registration
+        return Ok(KindRegistry(entries=entries))
+
+    pub def shape(self, kind: str, mut budget: Budget) -> Result[NominalKind, CrumbError]:
+        """Resolve only a core kind or an explicitly registered profile kind."""
+        charge_name(kind, budget)?
+        if let Some(shape) = core_shape(kind):
+            return Ok(shape)
+        if kind not in self.entries:
+            return Err(CrumbError.invalid_input("unregistered profile kind"))
+        return Ok(self.entries[kind].shape)
+
+    pub def registration(self, kind: str, mut budget: Budget) -> Result[Option[KindRegistration], CrumbError]:
+        """
+        Return retained profile ordering facts, or None for a built-in core kind.
+
+        An unknown profile kind is an error, never None. Returning a registration charges its
+        names and list entries before copying; callers cannot bypass limits with repeated lookups.
+        The codec owns the core kinds' declared printing order.
+        """
+        self.shape(kind, budget)?
+        if core_shape(kind).is_some():
+            return Ok(None)
+        charge_registration(self.entries[kind], budget)?
+        return Ok(Some(self.entries[kind]))
+
+
+def core_shape(kind: str) -> Option[NominalKind]:
+    """Recognize the two title-cased core names through their shared nominal-kind vocabulary."""
+    if kind == core_name(NominalKind.Record):
+        return Some(NominalKind.Record)
+    if kind == core_name(NominalKind.Enum):
+        return Some(NominalKind.Enum)
+    return None
+
+
+def core_name(shape: NominalKind) -> str:
+    """Render the external title-cased core kind from the closed nominal-kind value."""
+    spelling = shape.value()
+    return spelling[0].upper() + spelling[1:]
+
+
+def charge_name(name: str, mut budget: Budget) -> Result[None, CrumbError]:
+    """Charge name storage and lookup work before retaining or hashing it."""
+    budget.charge_elements(1)?
+    for _ in range(4):
+        budget.charge_bytes(len(name))?
+    if name == "":
+        return Err(CrumbError.invalid_input("empty registration name"))
+    return Ok(None)
+
+
+def charge_registration(registration: KindRegistration, mut budget: Budget) -> Result[None, CrumbError]:
+    """Charge all retained names and list entries before constructing a registry or copying an entry."""
+    charge_name(registration.kind, budget)?
+    match registration.property_order:
+        Some(order) =>
+            for name in order:
+                charge_name(name, budget)?
+        None => pass
+    for group in registration.property_groups:
+        charge_name(group.name, budget)?
+        for name in group.order:
+            charge_name(name, budget)?
+    return Ok(None)
+
+
+def check_order(names: list[str]) -> Result[None, CrumbError]:
+    """Require unique names after their storage and validation work has been charged."""
+    mut seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            return Err(CrumbError.invalid_input("duplicate property order name"))
+        seen.add(name)
+    return Ok(None)

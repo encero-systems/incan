@@ -1,0 +1,105 @@
+"""Deterministic task retrieval over exported records, with conservative token accounting."""
+
+from std.json import JsonValue
+from rust::std::time import Instant
+from graph_queries import identity, nested
+from graph_context_index import ContextIndex, endpoints
+from graph_context_items import anchor, compact_line, item_tokens, node_item, tokens
+from observation import trace
+from unit_freshness import fingerprint
+
+
+pub def pack(
+    mut index: ContextIndex, snapshot: str, degraded: JsonValue, task: str, budget: int, root: str,
+    format: str, preferences: Dict[str, int] = {},
+) -> Result[str, str]:
+    """Fit a UTF-8 token upper bound: 1. Rank current facts. 2. Select whole nodes. 3. Fit directed edges."""
+    # 1. Rank facts from the selected snapshot.
+    mut started = Instant.now()
+    context = fingerprint(["incan.context/1", snapshot, task, str(budget)])?
+    unresolved = index.unresolved
+    scores, reasons = index.rank(task, preferences)?
+    trace(f"graph context candidates: {started.elapsed().as_millis()} ms")
+    started = Instant.now()
+    mut ranked: Dict[str, str] = {}
+    mut smallest = budget
+    for identifier in scores.keys():
+        score = scores[identifier]
+        if score > 0:
+            ranked[f"{10000000 - score} {index.stable(identifier)} {identifier}"] = identifier
+            smallest = min([smallest, index.minimum_tokens(identifier, format)?])
+    mut chosen: list[JsonValue] = []
+    mut local: Dict[str, str] = {}
+    # 2. Select whole nodes, reserving room for relationships that explain their inclusion.
+    node_budget = budget * 3 // 4
+    header_size = tokens(render(chosen, snapshot, context, degraded, unresolved, budget, format)?)
+    mut used = header_size
+    if used + 1 > budget:
+        return Err("--budget is too small for the context header")
+    for key in sorted([item for item in ranked.keys()]):
+        # An oversized node may precede a smaller one; only a bound shared by all nodes permits stopping.
+        if used + smallest + 1 > node_budget:
+            break
+        identifier = ranked[key]
+        name = f"n{len(local)}"
+        added = index.contribution(identifier, format, name, scores[identifier], reasons[identifier])?
+        if used + added + 1 > node_budget:
+            continue
+        node = index.node(identifier)?
+        item = node_item(node, identifier, identity(node), name, scores[identifier], reasons[identifier], root)
+        if item_tokens(item, format)? != added:
+            return Err("prepared context item size does not match its payload")
+        chosen.append(item)
+        local[identifier] = name
+        used += added
+    trace(f"graph context nodes: {started.elapsed().as_millis()} ms")
+    started = Instant.now()
+    mut edges: Dict[str, JsonValue] = {}
+    # 3. Fit directed edges between selected nodes.
+    for record in index.edges(local)?:
+        source, target, kind = endpoints(record)
+        if source not in local or target not in local:
+            continue
+        edge = JsonValue.object({
+            "record": JsonValue.string("edge"), "source": JsonValue.string(local[source]),
+            "target": JsonValue.string(local[target]), "kind": JsonValue.string(kind),
+            "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
+            "anchor": JsonValue.string(anchor(record, root))
+        })
+        edges[edge.to_json().map_err((error) => error.message())?] = edge
+    for key in sorted([item for item in edges.keys()]):
+        added = item_tokens(edges[key], format)?
+        if used + added + 1 <= budget:
+            chosen.append(edges[key])
+            used += added
+    trace(f"graph context edges: {started.elapsed().as_millis()} ms")
+    trace(f"graph context answer: {len(local)} nodes, {len(chosen) - len(local)} edges")
+    trace(f"graph context payloads: {index.parsed} records, {index.read_bytes} bytes")
+    return render(chosen, snapshot, context, degraded, unresolved, budget, format)
+
+
+def render(
+    items: list[JsonValue], snapshot: str, context: str, degraded: JsonValue,
+    unresolved: int, budget: int, format: str
+) -> Result[str, str]:
+    """Serialize one context contract in compact, JSON or JSONL without repeating fully qualified edge endpoints."""
+    selected = JsonValue.array(items).to_json().map_err((error) => error.message())?
+    identifier = f"context:{fingerprint([context, selected])?}"
+    header = JsonValue.object({
+        "record": JsonValue.string("context"), "schema": JsonValue.string("incan.context/1"),
+        "snapshot_id": JsonValue.string(snapshot), "context_id": JsonValue.string(identifier),
+        "degraded": degraded, "unresolved_calls": JsonValue.int(unresolved), "budget": JsonValue.int(budget),
+        "token_accounting": JsonValue.string("utf8_bytes_upper_bound")
+    })
+    if format == "json":
+        return JsonValue.array([header] + items).to_json().map_err((error) => error.message())
+    if format == "jsonl":
+        return Ok("\n".join([item.to_json().map_err((error) => error.message())? for item in [header] + items]))
+    status = degraded.to_json().unwrap_or("null")
+    mut lines = [
+        f"incan.context/1 {snapshot} {identifier} degraded={status} "
+        + f"unresolved_calls={unresolved} budget={budget} tokens<=utf8_bytes"
+    ]
+    for item in items:
+        lines.append(compact_line(item)?)
+    return Ok("\n".join(lines))

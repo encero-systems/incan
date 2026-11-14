@@ -1,0 +1,97 @@
+"""Apply production field plans to test notation; verify reconstructed values and their digest projections."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.admission import FieldPlan, RecordShape, ValuePlan, plan_adaptation
+from std.primitives.crumb.types import AbsentPolicy, ContainerKind, TypeNode
+from std.primitives.text import encode_utf8
+from case_data import ExpectedStatus, FixtureValueKind, array, expected_status, field, fields, text
+from hash_cases import check_projections
+
+
+pub def check_adaptation(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
+    """Check refusal paths or reconstructed tagged values; do not claim unchecked projection assertions."""
+    written = field(value, "written")?
+    requested = field(value, "requested")?
+    # The corpus's nominal labels are opaque test binding identities, not runtime display-name resolution.
+    source = RecordShape(nominal=encode_utf8(text(written, "nominal")?), fields=fields(written)?)
+    target = RecordShape(nominal=encode_utf8(text(requested, "nominal")?), fields=fields(requested)?)
+    expected = field(value, "expected")?
+    match plan_adaptation(source, target, budget):
+        Err(error) =>
+            if expected_status(expected)? != ExpectedStatus.Refused:
+                return Ok(false)
+            return Ok(error.kind.value() == text(expected, "kind")? and error.path == text(expected, "path")?)
+        Ok(plan) =>
+            if expected_status(expected)? != ExpectedStatus.Accepted:
+                return Ok(false)
+            values = array(value, "values")?
+            mut output: list[JsonValue] = []
+            for item in plan:
+                match item.source:
+                    Some(index) => output.append(convert(values[index], item.conversion)?)
+                    None => output.append(absent_value(item)?)
+            values_match = JsonValue.array(output).equals(field(expected, "values")?)
+            return Ok(values_match and check_projections(value, output, budget)?)
+
+
+def absent_value(plan: FieldPlan) -> Result[JsonValue, str]:
+    """Materialize only the absence the production plan admitted, never a nonempty default."""
+    match plan.requested.absent:
+        AbsentPolicy.NoneValue =>
+            return Ok(JsonValue.object({"kind": JsonValue.string(FixtureValueKind.NoneValue.value())}))
+        AbsentPolicy.Empty =>
+            match plan.requested.storage_type:
+                TypeNode.Container(ContainerKind.List, _) => return Ok(collection(FixtureValueKind.List, []))
+                TypeNode.Container(ContainerKind.Set, _) => return Ok(collection(FixtureValueKind.Set, []))
+                _ => return Err("test adapter has no empty representation for this type")
+        AbsentPolicy.Required => return Err("production plan attempted to fill a required field")
+
+
+def convert(value: JsonValue, plan: ValuePlan) -> Result[JsonValue, str]:
+    """Interpret the plan, preserving exact integer strings and explicit optional layers."""
+    match plan:
+        ValuePlan.Identity => return Ok(value.clone())
+        ValuePlan.Widen(target) =>
+            mut object = value.expect_object().map_err((error) => error.message())?
+            object["type"] = JsonValue.string(target.value())
+            return Ok(JsonValue.object(object))
+        ValuePlan.Wrap(children) => return Ok(some(convert(value, children[0])?))
+        ValuePlan.Optional(children) =>
+            kind = match FixtureValueKind.from_value(text(value, "kind")?):
+                Some(selected) => selected
+                None => return Err("unknown adaptation value kind")
+
+            if kind == FixtureValueKind.NoneValue:
+                return Ok(value.clone())
+            return Ok(some(convert(field(value, "value")?, children[0])?))
+        ValuePlan.Record(_) | ValuePlan.Recur(_) | ValuePlan.Enum(_) | ValuePlan.Union(_) =>
+            return Err("test adapter does not materialize recursive record plans")
+        ValuePlan.Container(kind, children) =>
+            if kind != ContainerKind.List and kind != ContainerKind.Set:
+                return Err("test adapter does not implement this container conversion")
+            mut output: list[JsonValue] = []
+            for item in array(value, "items")?:
+                output.append(convert(item, children[0])?)
+            selected = match kind:
+                ContainerKind.List => FixtureValueKind.List
+                ContainerKind.Set => FixtureValueKind.Set
+                _ => return Err("test adapter does not implement this container conversion")
+
+            return Ok(collection(selected, output))
+
+
+def some(value: JsonValue) -> JsonValue:
+    """Retain a present optional layer instead of flattening nested absence."""
+    mut object: dict[str, JsonValue] = {}
+    object["kind"] = JsonValue.string(FixtureValueKind.Some.value())
+    object["value"] = value
+    return JsonValue.object(object)
+
+
+def collection(kind: FixtureValueKind, items: list[JsonValue]) -> JsonValue:
+    """Keep the test's list/set tag separate from its element sequence."""
+    mut object: dict[str, JsonValue] = {}
+    object["kind"] = JsonValue.string(kind.value())
+    object["items"] = JsonValue.array(items)
+    return JsonValue.object(object)

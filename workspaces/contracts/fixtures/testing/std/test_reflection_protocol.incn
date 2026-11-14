@@ -1,0 +1,152 @@
+# behavior: the primitive and convenient reflection imports share handwritten protocols with recursive stateful defaults
+# expect-stdout-contains:
+#   test_reflection_protocol.incn::test_public_recursive_walker PASSED
+#   test_reflection_protocol.incn::test_checked_decimal_carrier PASSED
+
+"""Public imports of the handwritten reflection protocol through an independent test project."""
+
+from std.primitives.reflection import (
+    DecimalValue,
+    DecimalValueErrorKind,
+    FieldInfo,
+    LifecycleInfo,
+    ShapeInfo,
+    VariantInfo,
+    Walk,
+    Walker,
+)
+from std.reflection import (
+    FieldInfo as PublicFieldInfo,
+    DecimalValue as PublicDecimalValue,
+    DecimalValueError as PublicDecimalValueError,
+    ShapeInfo as PublicShapeInfo,
+)
+
+const NO_RENAMES: FrozenList[FrozenStr] = []
+const COUNT_RENAMES: FrozenList[FrozenStr] = ["old_count"]
+const NO_FIELDS: FrozenList[FieldInfo] = []
+const NO_VARIANTS: FrozenList[VariantInfo] = []
+const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
+
+
+model ReflectedCount:
+    """The generated metadata and explicit records share an Incan-owned layout."""
+
+    pub count [renamed_from { name="old_count", since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration" }]: int
+
+
+class StoredText with Walk:
+    """An explicit class adopter that exposes its text as one scalar."""
+
+    pub value: str
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Send the text through the supplied mutable walker."""
+        return walker.str(self.value)
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Describe this handwritten scalar representation."""
+        return ShapeInfo(
+            name="str",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="string",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
+
+
+class SeenText with Walker[str]:
+    """Override only the scalar while inheriting generic structural recursion."""
+
+    pub values: list[str]
+
+    def str(mut self, value: str) -> Result[None, str]:
+        """Retain observations in call order."""
+        self.values.append(value)
+        return Ok(None)
+
+
+def test_public_recursive_walker() -> Result[None, str]:
+    """A structural default reuses caller state and both imports name the same shape."""
+    mut walker = SeenText(values=[])
+    walker.some(StoredText(value="first"))?
+    walker.element(StoredText(value="second"))?
+    assert walker.values == ["first", "second"]
+    shape: PublicShapeInfo = ShapeInfo.of[StoredText]()
+    assert shape.spelling == "string"
+    metadata: PublicFieldInfo = ReflectedCount.__fields__()[0]
+    lifecycle = LifecycleInfo(since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration")
+    expected = FieldInfo(
+        name="count",
+        identity=metadata.identity,
+        canonical=true,
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=Some(lifecycle),
+        position=0,
+        default_is_empty=false,
+        stored_type=Some("i64"),
+        alias=None,
+        description=None,
+        wire_name="count",
+        type_name="int",
+        has_default=false,
+        extra=NO_EXTRA,
+    )
+    assert metadata == expected
+    # Handwritten model and variant shapes accept the generated field's exact lifecycle carrier.
+    # This proves interchangeability; automatic shape generation belongs to the following checkpoint.
+    model_shape = ShapeInfo(
+        name="ReflectedCount",
+        identity=b"",
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=metadata.renamed_from_lifecycle,
+        spelling="test-only",
+        fields=NO_FIELDS,
+        variants=NO_VARIANTS,
+    )
+    variant = VariantInfo(
+        name="Count",
+        identity=b"",
+        description=None,
+        fields=NO_FIELDS,
+        extra=NO_EXTRA,
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=model_shape.renamed_from_lifecycle,
+    )
+    assert variant.renamed_from_lifecycle == Some(lifecycle)
+    assert str(FieldInfo.__fields__()[0].name) == "name"
+    return Ok(None)
+
+
+def test_checked_decimal_carrier() -> Result[None, str]:
+    """Checked construction is shared by both public import paths."""
+    value: PublicDecimalValue = DecimalValue.new(coefficient=1990, precision=10, scale=2).map_err((_) => "decimal")?
+    assert value.coefficient == 1990
+    assert value.scale == 2
+    assert DecimalValue.new(coefficient=100, precision=2, scale=0).is_err()
+    assert DecimalValue.new(coefficient=0, precision=1, scale=2).is_err()
+    return Ok(None)
+
+
+def test_facade_checked_constructor() -> Result[None, str]:
+    """The convenient facade also invokes the generated constructor and retains rejection."""
+    value: DecimalValue = PublicDecimalValue.new(coefficient=42, precision=2, scale=1).map_err((_) => "facade decimal")?
+    assert value.coefficient == 42
+    assert value.precision == 2
+    assert value.scale == 1
+    outcome: Result[DecimalValue, PublicDecimalValueError] = PublicDecimalValue.new(
+        coefficient=100,
+        precision=2,
+        scale=0,
+    )
+    match outcome:
+        Err(error) =>
+            assert error.kind == DecimalValueErrorKind.Coefficient
+            assert error.coefficient == 100
+            assert error.precision == 2
+            assert error.scale == 0
+        Ok(_) => return Err("invalid facade decimal accepted")
+    return Ok(None)

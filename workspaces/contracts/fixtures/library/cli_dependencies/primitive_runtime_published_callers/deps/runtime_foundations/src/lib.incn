@@ -1,0 +1,76 @@
+"""Publish primitive collection storage and complete-line output operations."""
+
+from std.primitives.collections import (
+    append_list,
+    clone_dict,
+    clone_list,
+    clone_set,
+    copy_list_at,
+    empty_dict,
+    empty_list,
+    empty_set,
+    insert_dict,
+    insert_set,
+    length_dict,
+    length_list,
+    length_set,
+    replace_list_at,
+)
+from std.primitives.output import write_line, write_stderr_line, write_stdout_line
+from rust::std::fs import File
+
+
+pub def collection_summary() -> Result[str, str]:
+    """
+    Exercise primitive collection storage and return its ownership observations.
+
+    1. Allocate, append, copy, access and replace list storage.
+    2. Check invalid positions without a native indexing panic.
+    3. Allocate, insert and explicitly copy hashed storage.
+    """
+    # 1. List operations retain the source when an explicit copy changes.
+    mut values = empty_list[int]()
+    append_list(values, 2)
+    append_list(values, 4)
+    mut copied = clone_list(values)
+    replace_list_at(copied, 1usize, 8)?
+    selected = copy_list_at(copied, 1usize)?
+
+    # 2. Checked primitive positions return ordinary errors and leave storage usable.
+    match copy_list_at(values, 9usize):
+        Ok(_) => return Err("unchecked primitive list access")
+        Err(_) => write_stdout_line("checked access refused")?
+    match replace_list_at(values, 9usize, 5):
+        Ok(_) => return Err("unchecked primitive list replacement")
+        Err(_) => write_stdout_line("checked replacement refused")?
+
+    # 3. Hashed collection copies own independent storage.
+    mut values_set = empty_set[int]()
+    insert_set(values_set, 3)
+    mut copied_set = clone_set(values_set)
+    insert_set(copied_set, 4)
+    mut values_dict = empty_dict[str, int]()
+    insert_dict(values_dict, "a", 1)
+    copied_dict = clone_dict(values_dict)
+    list_length = length_list(values)
+    set_length = length_set(copied_set)
+    dictionary_lengths = f"{length_dict(values_dict)} {length_dict(copied_dict)}"
+    return Ok(f"{list_length} {selected} {set_length} {dictionary_lengths}")
+
+
+pub def output_failure(path: str) -> Result[str, str]:
+    """Return a marker when complete-line writing reports the host failure from a read-only file."""
+    mut file = File.open(path).map_err((error) => str(error))?
+    match write_line(file, "not written"):
+        Ok(_) => return Err("read-only output unexpectedly accepted a write")
+        Err(_) => return Ok("output failure retained")
+
+
+pub def write_stdout(value: str) -> Result[None, str]:
+    """Write one complete stdout line through the primitive output boundary."""
+    return write_stdout_line(value)
+
+
+pub def write_stderr(value: str) -> Result[None, str]:
+    """Write one complete stderr line through the primitive output boundary."""
+    return write_stderr_line(value)

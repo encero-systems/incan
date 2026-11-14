@@ -1,8 +1,7 @@
 """
-Producer library for the pro-level vocab companion example.
+Producer library for the pro-level routekit vocabulary example.
 
-The consumer example imports this library through `pub::routekit`, which activates the sibling vocab companion metadata
-during `incan build --lib`.
+The consumer imports this library through `pub::routekit`, activating the descriptors registered by `src/vocab.incn`.
 """
 
 pub from info import routekit_name

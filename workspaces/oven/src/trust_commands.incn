@@ -1,0 +1,152 @@
+"""List and update ordinary compile-time trust entries in the user's Oven configuration."""
+
+from std.fs import Path
+from files import make_directory, read
+from publication import publish
+from trust_policy import (
+    LOAF,
+    PROJECT,
+    PUBLISHER,
+    TrustPolicy,
+    load,
+    normalize_entry,
+    read_policy,
+    toolchain_defaults,
+    user_config,
+)
+
+
+pub def trust_command(arguments: list[str]) -> Result[str, str]:
+    """Run `oven trust list|add|remove`, returning its complete stable stdout text."""
+    if len(arguments) == 1 and arguments[0] == "list":
+        return Ok(list_policy(load()?))
+    if len(arguments) != 3 or arguments[0] not in ["add", "remove"]:
+        return Err("expected `list`, `add publisher|loaf|project VALUE`, or `remove publisher|loaf|project VALUE`")
+    kind = str(arguments[1])
+    if kind != PUBLISHER and kind != LOAF and kind != PROJECT:
+        return Err(f"unknown trust entry kind `{kind}`; expected publisher, loaf or project")
+    file = user_config()?
+    selected = normalize(kind, arguments[2], file)?
+    effective = load()?
+    editable = read_policy(file, None, toolchain_defaults()?, None)?
+    mut values = editable.values(kind)
+    mut changed = false
+    if arguments[0] == "add" and selected not in values:
+        values.append(selected)
+        changed = true
+    if arguments[0] == "remove":
+        if selected in values:
+            values = [value for value in values if value != selected]
+            changed = true
+        elif selected in effective.values(kind):
+            return Err(f"{kind} {selected} is controlled by organization configuration and cannot be removed here")
+    # Materialize all effective publisher defaults when changing any kind, so a removed release default stays removed.
+    mut publishers = editable.values(PUBLISHER)
+    mut loaves = editable.values(LOAF)
+    mut projects = editable.values(PROJECT)
+    if kind == PUBLISHER:
+        publishers = values
+    elif kind == LOAF:
+        loaves = values
+    else:
+        projects = values
+    if changed:
+        write_user_policy(file, publishers, loaves, projects)?
+    mut action = "removed"
+    if arguments[0] == "add":
+        action = "added"
+    if not changed:
+        action = "unchanged"
+    return Ok(f"{action} {kind} {selected}")
+
+
+def normalize(kind: str, value: str, file: Path) -> Result[str, str]:
+    """Use the policy module as the single validation and project-path normalization boundary."""
+    return normalize_entry(kind, value, file)
+
+
+pub def list_policy(policy: TrustPolicy) -> str:
+    """Render all effective entries in kind/value order with the source that supplied each one."""
+    mut lines: list[str] = []
+    for kind in [PUBLISHER, LOAF, PROJECT]:
+        for value in policy.values(kind):
+            mut source = ""
+            for entry in policy.entries:
+                if entry.kind == kind and entry.value == value:
+                    source = entry.source
+                    break
+            lines.append(f"{kind} {value} ({source})")
+    if len(lines) == 0:
+        return "no trust entries"
+    return "\n".join(lines)
+
+
+def write_user_policy(file: Path, publishers: list[str], loaves: list[str], projects: list[str]) -> Result[None, str]:
+    """Atomically replace only `[trust]`, preserving all unrelated configuration text byte for byte."""
+    mut source = ""
+    if file.is_file():
+        source = read(file)?
+    updated = updated_config(source, publishers, loaves, projects)?
+    make_directory(file.parent())?
+    return publish(file, updated)
+
+
+pub def updated_config(source: str, publishers: list[str], loaves: list[str], projects: list[str]) -> Result[str, str]:
+    """Replace one ordinary `[trust]` table, refusing ambiguous repeated definitions and preserving other tables."""
+    refuse_dotted_trust(source)?
+    table = render_table(publishers, loaves, projects)
+    lines = source.split("\n")
+    mut result: list[str] = []
+    mut found = false
+    mut skipping = false
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "[trust]":
+            if found:
+                return Err("config.toml contains more than one [trust] table")
+            found = true
+            skipping = true
+            result.extend(table.strip().split("\n"))
+            continue
+        if skipping and stripped.startswith("["):
+            skipping = false
+        if not skipping:
+            result.append(line)
+    if not found:
+        mut separator = ""
+        if source != "":
+            separator = "\n\n"
+            if source.endswith("\n"):
+                separator = "\n"
+        return Ok(source + separator + table)
+    return Ok("\n".join(result))
+
+
+def refuse_dotted_trust(source: str) -> Result[None, str]:
+    """Refuse top-level dotted or inline trust definitions that cannot be replaced without rewriting other syntax."""
+    for line in source.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            return Ok(None)
+        if stripped.startswith("trust.") or stripped.startswith("trust ="):
+            return Err("config.toml must use an ordinary [trust] table before `oven trust` can update it")
+    return Ok(None)
+
+
+def render_table(publishers: list[str], loaves: list[str], projects: list[str]) -> str:
+    """Render the complete user table in stable key and value order."""
+    return "[trust]\npublishers = " + array(publishers) + "\nloaves = " + array(loaves) + "\nprojects = " + array(
+        projects,
+    ) + "\n"
+
+
+def array(values: list[str]) -> str:
+    """A deterministic TOML string array."""
+    return "[" + ", ".join([quoted(value) for value in sorted(values)]) + "]"
+
+
+def quoted(value: str) -> str:
+    """A TOML basic string for a validated trust value."""
+    mut escaped = value.replace("\\", "\\\\").replace("\"", "\\\"")
+    escaped = escaped.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return f"\"{escaped}\""

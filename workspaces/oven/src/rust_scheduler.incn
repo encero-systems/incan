@@ -1,0 +1,157 @@
+"""Admit ready local Rust units within the host's CPU and declared memory budgets."""
+
+from rust::std::process import Command, Stdio
+from rust::std::string import String as RustString
+from rust::std::thread import available_parallelism
+from std.environ import get_or
+from std.fs import Path
+from loaf_local_graph import LocalFacet
+
+
+# A lowering activation may retain the compiler's largest semantic and native planning state.
+pub const LOWERING_RESERVATION_BYTES: int = 6442450944
+# Other project and standard units retain at most the ordinary compiler-worker footprint.
+pub const UNIT_RESERVATION_BYTES: int = 2147483648
+
+
+pub class RustUnitSchedule:
+    """
+    Own one dependency scheduler's pending, active and completed partitions.
+
+    A position appears in exactly one partition. Admission moves only ready positions from pending to active and never
+    exceeds either the selected job count or the host-memory budget. Completion moves exactly one active position to
+    the completed key set, which may make its dependents ready immediately.
+    """
+
+    facets: list[LocalFacet]
+    pending: list[int]
+    active: list[int] = []
+    completed: set[str] = set()
+    jobs: int
+    memory: int
+
+    @staticmethod
+    pub def start(facets: list[LocalFacet], jobs: int = 0, memory: int = -1) -> RustUnitSchedule:
+        """Create a schedule using explicit test bounds or the current host's declared resources."""
+        mut selected_jobs = jobs
+        if selected_jobs <= 0:
+            selected_jobs = scheduler_jobs()
+        mut selected_memory = memory
+        if selected_memory < 0:
+            selected_memory = scheduler_memory()
+        return RustUnitSchedule(
+            facets=facets,
+            pending=[position for position in range(len(facets))],
+            jobs=selected_jobs,
+            memory=selected_memory,
+        )
+
+    pub def admit(mut self) -> list[int]:
+        """Move every currently ready position that fits beside active reservations into the active partition."""
+        mut chosen: list[int] = []
+        mut held = self.held_memory()
+        mut count = len(self.active)
+        for position in self.pending:
+            if not self.ready(position) or count >= self.jobs:
+                continue
+            reservation = unit_reservation(self.facets[position])
+            if count > 0 and self.memory > 0 and held + reservation > self.memory:
+                continue
+            chosen.append(position)
+            count += 1
+            held += reservation
+        self.pending = [position for position in self.pending if position not in chosen]
+        self.active.extend(chosen)
+        return chosen
+
+    pub def finish(mut self, position: int) -> Result[None, str]:
+        """Move one active position to completed, refusing a completion the schedule did not admit."""
+        if position not in self.active:
+            return Err(f"Rust unit scheduler completed inactive position {position}")
+        self.active = [current for current in self.active if current != position]
+        self.completed.add(self.facets[position].key())
+        return Ok(None)
+
+    pub def done(self) -> bool:
+        """Whether every facet reached the completed partition and no worker remains active."""
+        return len(self.pending) == 0 and len(self.active) == 0
+
+    pub def stalled(self) -> bool:
+        """Whether pending facets remain but no active or ready facet can advance them."""
+        if len(self.active) > 0 or len(self.pending) == 0:
+            return false
+        for position in self.pending:
+            if self.ready(position):
+                return false
+        return true
+
+    pub def active_count(self) -> int:
+        """The number of admitted workers whose terminal completion has not been integrated."""
+        return len(self.active)
+
+    def ready(self, position: int) -> bool:
+        """Whether every local dependency of one pending facet has reached a terminal completion."""
+        for edge in self.facets[position].local:
+            if edge.key() not in self.completed:
+                return false
+        return true
+
+    def held_memory(self) -> int:
+        """Sum the declared reservations of active facets without observing process RSS as policy."""
+        mut total = 0
+        for position in self.active:
+            total += unit_reservation(self.facets[position])
+        return total
+
+
+pub def unit_reservation(facet: LocalFacet) -> int:
+    """Reserve 6 GiB for lowering and 2 GiB for every other project or standard unit."""
+    if facet.package == "incan_mir_lowering" or facet.project.endswith("/incan_mir_lowering"):
+        return LOWERING_RESERVATION_BYTES
+    return UNIT_RESERVATION_BYTES
+
+
+def scheduler_jobs() -> int:
+    """Select `INCAN_JOBS` when valid, otherwise the host's available CPU count, with one as the floor."""
+    configured = get_or("INCAN_JOBS", "")
+    if digits_only(configured) and configured != "":
+        selected = int(configured)
+        if selected > 0:
+            return selected
+    match available_parallelism():
+        Ok(count) => return int(count.get())
+        Err(_) => return 1
+
+
+def scheduler_memory() -> int:
+    """Read macOS or Linux physical memory; an unavailable probe fails closed to one 2 GiB unit at a time."""
+    match Command.new("/usr/sbin/sysctl").arg("-n").arg("hw.memsize").stderr(Stdio.null()).output():
+        Err(_) => pass
+        Ok(found) =>
+            if found.status.success():
+                match RustString.from_utf8(found.stdout):
+                    Err(_) => pass
+                    Ok(decoded) =>
+                        text = str(decoded).strip()
+                        if digits_only(text):
+                            return int(text)
+    meminfo = Path("/proc/meminfo")
+    if meminfo.is_file():
+        match meminfo.read_text("utf-8", "strict"):
+            Err(_) => pass
+            Ok(contents) =>
+                for line in contents.split("\n"):
+                    fields = [field for field in line.split(" ") if field != ""]
+                    if len(fields) == 3 and fields[0] == "MemTotal:" and fields[2] == "kB" and digits_only(fields[1]):
+                        return int(fields[1]) * 1024
+    return UNIT_RESERVATION_BYTES
+
+
+def digits_only(value: str) -> bool:
+    """Whether a nonempty string contains only ASCII decimal digits."""
+    if value == "":
+        return false
+    for character in value:
+        if character not in "0123456789":
+            return false
+    return true

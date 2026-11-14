@@ -1,0 +1,159 @@
+"""Native per-declaration products preserve the formatting frame used by an unchanged program entry."""
+
+from pub::incan_mir_plan import (
+    BasicBlock,
+    Callee,
+    CalleeKind,
+    Constant,
+    Function,
+    ExternalFunction,
+    ModelDeclaration,
+    Parameter,
+    ListLeaf,
+    EnumDeclaration,
+    EnumVariant,
+    Carrier,
+    Local,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    Plan,
+    Rvalue,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    StatementKind,
+    Terminator,
+    TerminatorKind,
+    Unwind,
+    source_span,
+)
+from scalar_products import decode_scalar, encode_scalar, encode_product, decode_product
+from record_positions import relocate_product
+from record_plan_codec import encode_record_plan, decode_record_plan
+from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
+
+
+pub def test_native_product_round_trips_formatting_frame() -> Result[None, str]:
+    """Fixed formatting arrays, their shared slices and an instantiated call survive one exact product round trip."""
+    span = source_span(file="formatting_frame.incn", line=1, column=1)
+    function = Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[
+            Local(ty=PlanType.Unit, span=span),
+            Local(ty=PlanType.StrArray(2), span=span),
+            Local(ty=PlanType.StrArrayRef(2), span=span),
+            Local(ty=PlanType.StrSlice, span=span),
+            Local(ty=PlanType.StringArray(1), span=span),
+            Local(ty=PlanType.StringArrayRef(1), span=span),
+            Local(ty=PlanType.StringSlice, span=span),
+        ],
+        blocks=[
+            BasicBlock(
+                statements=[
+                    assign_array(1, [text("before", span), text("after", span)], span),
+                    assign_borrow(2, 1, span),
+                    assign_unsized_slice(3, 2, span),
+                    assign_array(4, [text("value", span)], span),
+                    assign_borrow(5, 4, span),
+                    assign_unsized_slice(6, 5, span),
+                ],
+                terminator=Terminator(
+                    kind=TerminatorKind.Call(
+                        Callee(
+                            kind=CalleeKind.Instantiated(
+                                "incan_stdlib::fstring",
+                                [PlanType.StrSlice, PlanType.StringSlice],
+                            ),
+                            span=span,
+                        ),
+                        [copy(3, span), copy(6, span)],
+                        place(0, span),
+                        1,
+                        Unwind.Continue,
+                    ),
+                    span=span,
+                ),
+                cleanup=false,
+                span=span,
+            ),
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+
+    restored = decode_scalar(encode_scalar(function)?)?
+    assert restored == function
+    empty_runtime: list[ExternalFunction] = []
+    relative = relocate_product(encode_product(function, empty_runtime)?, "<owner>", 1)?
+    moved, runtime = decode_product(relocate_product(relative, "moved.incn", 17)?)?
+    assert moved.span.line == 17 and str(moved.span.file) == "moved.incn"
+    assert moved.blocks[0].statements[0].span.line == 17
+    assert len(runtime) == 0
+    original, _runtime = decode_product(relocate_product(relative, "formatting_frame.incn", 1)?)?
+    assert original == function
+    mut plan = Plan(enums=[], models=[], functions=[function], externals=[], programs=["main"], span=span)
+    plan.models.append(ModelDeclaration(
+        name="SDKRecord", public=true,
+        fields=[Parameter(name="ids", ty=PlanType.List(ListLeaf.Int, 1), span=span)],
+        field_public=[true], derives=["Clone"], span=span, source_name="SDKRecord", library_item="sdk::SDKRecord",
+    ))
+    plan.enums.append(EnumDeclaration(
+        name="OptionalText", public=false,
+        variants=[EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[PlanType.String])],
+        derives=[], span=span, carrier=Carrier.Option,
+        semantic_key=Some(CheckedType.Generic("Option", [CheckedType.Primitive(CheckedPrimitiveType.Str)])),
+    ))
+    assert decode_record_plan(encode_record_plan(plan)?)? == plan
+    plan.tests.append("unsupported entry")
+    match encode_record_plan(plan):
+        Ok(_) => assert false, "native-interface dropped an unsupported plan field"
+        Err(_) => pass
+    return Ok(None)
+
+
+def assign_array(local: int, values: list[Operand], span: SourceSpan) -> Statement:
+    """Assign one exact fixed formatting array to its native local."""
+    return assign(local, RvalueKind.Array(values), span)
+
+
+def assign_borrow(local: int, source: int, span: SourceSpan) -> Statement:
+    """Assign the shared reference which owns a fixed formatting array's later slice."""
+    return assign(local, RvalueKind.Borrow(place(source, span)), span)
+
+
+def assign_unsized_slice(local: int, source: int, span: SourceSpan) -> Statement:
+    """Assign the shared slice created from one checked fixed-array reference."""
+    return assign(local, RvalueKind.UnsizeSlice(copy(source, span)), span)
+
+
+def assign(local: int, kind: RvalueKind, span: SourceSpan) -> Statement:
+    """Build one source-located assignment for the formatting-frame fixture."""
+    return Statement(
+        kind=StatementKind.Assign(place(local, span), Rvalue(kind=kind, span=span)),
+        span=span,
+    )
+
+
+def place(local: int, span: SourceSpan) -> Place:
+    """Name one whole formatting-frame local."""
+    return Place(local=local, projection=Projection.Whole, span=span)
+
+
+def copy(local: int, span: SourceSpan) -> Operand:
+    """Read one Copy formatting carrier without changing its owner."""
+    return Operand(kind=OperandKind.Copy(place(local, span)), span=span)
+
+
+def text(value: str, span: SourceSpan) -> Operand:
+    """Build one borrowed static string operand for the formatting parts array."""
+    return Operand(kind=OperandKind.Literal(Constant.Text(value)), span=span)

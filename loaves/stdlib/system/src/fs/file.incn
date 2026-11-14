@@ -1,10 +1,18 @@
-from rust::std::cell import RefCell
-from rust::std::fs import File as RustFile, OpenOptions as RustOpenOptions
-from rust::std::io import Read, Seek, SeekFrom, Write
-from rust::std::path import Path as RustPath
-from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::encoding_rs import Encoding
+from std.primitives.fs.file import (
+    FileHandle as PrimitiveFile,
+    flush as primitive_flush,
+    open_options as primitive_open_options,
+    read_chunk as primitive_read_chunk,
+    read_remaining as primitive_read_remaining,
+    seek as primitive_seek,
+    sync as primitive_sync,
+    sync_data as primitive_sync_data,
+    tell as primitive_tell,
+    write_all as primitive_write_all,
+)
+from std.primitives.fs.path import PrimitivePath
 from std.fs.path import Path, _as_path, _fs_error, _io_error
 from std.io import BinaryReader, IoError
 
@@ -27,12 +35,12 @@ pub class File with BinaryReader:
 
     pub path: Path
     pub mode: str
-    pub handle: Rc[RefCell[RustFile]]
+    pub handle: PrimitiveFile
     pub encoding: Option[str]
     pub errors: Option[str]
     pub newline: Option[str]
 
-    def read(self, size: int) -> Result[str, IoError]:
+    pub def read(self, size: int) -> Result[str, IoError]:
         """
         Read text from the current cursor.
 
@@ -58,16 +66,17 @@ pub class File with BinaryReader:
             Bytes read from the file, or `Err(IoError)`.
         """
         mut buf: bytes = b""
-        mut file = self.handle.borrow_mut()
         if size < 0:
-            match file.read_to_end(buf):
-                Ok(_) => return Ok(buf)
-                Err(err) => return Err(_io_error(self.path, err))
-        match Read.by_ref(file).take(size).read_to_end(buf):
-            Ok(_) => return Ok(buf)
-            Err(err) => return Err(_io_error(self.path, err))
+            match primitive_read_remaining(self.handle):
+                Ok(data) => return Ok(data)
+                Err(error) => return Err(_io_error(self.path, error))
+        if size == 0:
+            return Ok(buf)
+        match primitive_read_chunk(self.handle, size):
+            Ok(data) => return Ok(data)
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def read_exact(self, size: int) -> Result[bytes, IoError]:
+    pub def read_exact(self, size: int) -> Result[bytes, IoError]:
         """
         Read exactly `size` bytes.
 
@@ -82,7 +91,7 @@ pub class File with BinaryReader:
             return Err(_fs_error(self.path, "unexpected_eof", "file ended before read_exact size"))
         return Ok(chunk)
 
-    def write(self, data: str) -> Result[int, IoError]:
+    pub def write(self, data: str) -> Result[int, IoError]:
         """
         Write text at the current cursor.
 
@@ -95,15 +104,14 @@ pub class File with BinaryReader:
         mut out = data
         if let Some(line_ending) = self.newline:
             out = out.replace("\n", line_ending)
-        mut file = self.handle.borrow_mut()
         encoding = _option_or_str(self.encoding, "utf-8")
         errors = _option_or_str(self.errors, "strict")
         bytes_out = _encode_text(self.path, out, encoding, errors)?
-        match file.write_all(bytes_out):
+        match primitive_write_all(self.handle, bytes_out):
             Ok(_) => return Ok(len(out))
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def write_bytes(self, data: bytes) -> Result[int, IoError]:
+    pub def write_bytes(self, data: bytes) -> Result[int, IoError]:
         """
         Write bytes at the current cursor.
 
@@ -113,24 +121,22 @@ pub class File with BinaryReader:
         Returns:
             Number of bytes accepted for writing, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
-        match file.write_all(data):
-            Ok(_) => return Ok(len(data))
-            Err(err) => return Err(_io_error(self.path, err))
+        match primitive_write_all(self.handle, data):
+            Ok(written) => return Ok(written)
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def tell(self) -> Result[int, IoError]:
+    pub def tell(self) -> Result[int, IoError]:
         """
         Return the current byte offset.
 
         Returns:
             Current stream position in bytes, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
-        match file.stream_position():
-            Ok(pos) => return Ok(int(pos))
-            Err(err) => return Err(_io_error(self.path, err))
+        match primitive_tell(self.handle):
+            Ok(position) => return Ok(position)
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def seek(self, offset: int, whence: int) -> Result[int, IoError]:
+    pub def seek(self, offset: int, whence: int) -> Result[int, IoError]:
         """
         Move the file cursor and return the new byte offset.
 
@@ -144,53 +150,33 @@ pub class File with BinaryReader:
         Returns:
             New byte offset after seeking, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
+        match primitive_seek(self.handle, offset, whence):
+            Ok(position) => return Ok(position)
+            Err(error) => return Err(_io_error(self.path, error))
 
-        # Absolute seeks reuse Rust's current-position primitive after computing the delta from the current cursor.
-        if whence == 0:
-            match file.stream_position():
-                Ok(pos) =>
-                    delta = offset - int(pos)
-                    match file.seek(SeekFrom.Current(delta)):
-                        Ok(new_pos) => return Ok(int(new_pos))
-                        Err(err) => return Err(_io_error(self.path, err))
-                Err(err) => return Err(_io_error(self.path, err))
-
-        # Current-position and end-relative seeks map directly to host seek modes.
-        elif whence == 1:
-            match file.seek(SeekFrom.Current(offset)):
-                Ok(new_pos) => return Ok(int(new_pos))
-                Err(err) => return Err(_io_error(self.path, err))
-        else:
-            match file.seek(SeekFrom.End(offset)):
-                Ok(new_pos) => return Ok(int(new_pos))
-                Err(err) => return Err(_io_error(self.path, err))
-
-    def flush(self) -> Result[None, IoError]:
+    pub def flush(self) -> Result[None, IoError]:
         """
         Flush buffered writes from the handle.
 
         Returns:
             `Ok(None)` after flushing, or `Err(IoError)`.
         """
-        mut file = self.handle.borrow_mut()
-        match file.flush():
+        match primitive_flush(self.handle):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def sync(self) -> Result[None, IoError]:
+    pub def sync(self) -> Result[None, IoError]:
         """
         Synchronize file data and metadata to durable storage.
 
         Returns:
             `Ok(None)` after the host completes the sync request, or `Err(IoError)`.
         """
-        file = self.handle.borrow_mut()
-        match file.sync_all():
+        match primitive_sync(self.handle):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(error) => return Err(_io_error(self.path, error))
 
-    def fsync(self) -> Result[None, IoError]:
+    pub def fsync(self) -> Result[None, IoError]:
         """
         Synchronize file data and metadata to durable storage.
 
@@ -199,17 +185,16 @@ pub class File with BinaryReader:
         """
         return self.sync()
 
-    def sync_data(self) -> Result[None, IoError]:
+    pub def sync_data(self) -> Result[None, IoError]:
         """
         Synchronize file data without requiring all metadata.
 
         Returns:
             `Ok(None)` after the host completes the data sync request, or `Err(IoError)`.
         """
-        file = self.handle.borrow_mut()
-        match file.sync_data():
+        match primitive_sync_data(self.handle):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(error) => return Err(_io_error(self.path, error))
 
 
 pub class OpenOptions:
@@ -234,7 +219,7 @@ pub class OpenOptions:
     pub creating: bool = false
     pub creating_new: bool = false
 
-    def read(mut self, value: bool) -> OpenOptions:
+    pub def read(mut self, value: bool) -> OpenOptions:
         """
         Set read access.
 
@@ -247,7 +232,7 @@ pub class OpenOptions:
         self.readable = value
         return self
 
-    def write(mut self, value: bool) -> OpenOptions:
+    pub def write(mut self, value: bool) -> OpenOptions:
         """
         Set write access.
 
@@ -260,7 +245,7 @@ pub class OpenOptions:
         self.writable = value
         return self
 
-    def append(mut self, value: bool) -> OpenOptions:
+    pub def append(mut self, value: bool) -> OpenOptions:
         """
         Set append mode.
 
@@ -273,7 +258,7 @@ pub class OpenOptions:
         self.appendable = value
         return self
 
-    def truncate(mut self, value: bool) -> OpenOptions:
+    pub def truncate(mut self, value: bool) -> OpenOptions:
         """
         Set truncate-on-open behavior.
 
@@ -286,7 +271,7 @@ pub class OpenOptions:
         self.truncating = value
         return self
 
-    def create(mut self, value: bool) -> OpenOptions:
+    pub def create(mut self, value: bool) -> OpenOptions:
         """
         Set create-if-missing behavior.
 
@@ -299,7 +284,7 @@ pub class OpenOptions:
         self.creating = value
         return self
 
-    def create_new(mut self, value: bool) -> OpenOptions:
+    pub def create_new(mut self, value: bool) -> OpenOptions:
         """
         Set exclusive creation behavior.
 
@@ -312,7 +297,7 @@ pub class OpenOptions:
         self.creating_new = value
         return self
 
-    def open(self, path: Union[Path, str]) -> Result[File, IoError]:
+    pub def open(self, path: Union[Path, str]) -> Result[File, IoError]:
         """
         Open a path with these flags.
 
@@ -325,20 +310,17 @@ pub class OpenOptions:
         p = _as_path(path)
         mode = _mode_from_flags(self.readable, self.writable, self.appendable, self.truncating, self.creating_new)
 
-        mut opts = RustOpenOptions.new()
-        opts.read(self.readable)
-        opts.write(self.writable)
-        opts.append(self.appendable)
-        opts.truncate(self.truncating)
-        opts.create(self.creating)
-        opts.create_new(self.creating_new)
-
-        match opts.open(RustPath.new(p.0)):
-            Ok(handle) =>
-                return Ok(
-                    File(path=p, mode=mode, handle=Rc.new(RefCell.new(handle)), encoding=None, errors=None, newline=None),
-                )
-            Err(err) => return Err(_io_error(p, err))
+        match _open_primitive_file(
+            p,
+            self.readable,
+            self.writable,
+            self.appendable,
+            self.truncating,
+            self.creating,
+            self.creating_new,
+        ):
+            Ok(handle) => return Ok(File(path=p, mode=mode, handle=handle, encoding=None, errors=None, newline=None))
+            Err(error) => return Err(error)
 
 
 pub enum OpenFileMode(str):
@@ -523,7 +505,7 @@ def _normalize_newlines(data: str) -> str:
     return data.replace("\r\n", "\n").replace("\r", "\n")
 
 
-pub def _open_file(path: Path, mode: str) -> Result[RustFile, IoError]:
+pub def _open_file(path: Path, mode: str) -> Result[PrimitiveFile, IoError]:
     """
     Open a host file using a std.fs mode string.
 
@@ -535,10 +517,15 @@ pub def _open_file(path: Path, mode: str) -> Result[RustFile, IoError]:
         Host file handle, or `Err(IoError)` when the mode or host open fails.
     """
     mode_spec = _open_file_mode(path, mode)?
-    opts = _open_file_options(mode_spec)
-    match opts.open(RustPath.new(path.0)):
-        Ok(handle) => return Ok(handle)
-        Err(err) => return Err(_io_error(path, err))
+    match mode_spec:
+        OpenFileMode.ReadOnly => return _open_primitive_file(path, true, false, false, false, false, false)
+        OpenFileMode.WriteTruncate => return _open_primitive_file(path, false, true, false, true, true, false)
+        OpenFileMode.Append => return _open_primitive_file(path, false, false, true, false, true, false)
+        OpenFileMode.ExclusiveCreate => return _open_primitive_file(path, false, true, false, false, false, true)
+        OpenFileMode.ReadWrite => return _open_primitive_file(path, true, true, false, false, false, false)
+        OpenFileMode.ReadWriteTruncate => return _open_primitive_file(path, true, true, false, true, true, false)
+        OpenFileMode.ReadAppend => return _open_primitive_file(path, true, false, true, false, true, false)
+        OpenFileMode.ReadExclusiveCreate => return _open_primitive_file(path, true, true, false, false, false, true)
 
 
 def _open_file_mode(path: Path, mode: str) -> Result[OpenFileMode, IoError]:
@@ -587,27 +574,34 @@ def _is_binary_open_file_mode(mode: str) -> bool:
     return mode.endswith("b") or mode.endswith("b+")
 
 
-def _open_file_options(mode: OpenFileMode) -> RustOpenOptions:
+def _open_primitive_file(
+    path: Path,
+    readable: bool,
+    writable: bool,
+    appendable: bool,
+    truncating: bool,
+    creating: bool,
+    creating_new: bool,
+) -> Result[PrimitiveFile, IoError]:
     """
-    Build Rust open options for one canonical text mode.
+    Open a primitive file while adapting its host failure to the std.fs error contract.
 
     Args:
-        mode: Canonical open mode.
+        path: Rich path retained for facade error context.
+        readable: Whether the handle may read.
+        writable: Whether the handle may write.
+        appendable: Whether writes append.
+        truncating: Whether opening truncates an existing file.
+        creating: Whether opening creates a missing file.
+        creating_new: Whether opening requires a new file.
 
     Returns:
-        Configured Rust `OpenOptions`.
+        An owned primitive handle, or `Err(IoError)` with the facade path attached.
     """
-    mut opts = RustOpenOptions.new()
-    match mode:
-        OpenFileMode.ReadOnly => opts.read(true)
-        OpenFileMode.WriteTruncate => opts.write(true).create(true).truncate(true)
-        OpenFileMode.Append => opts.append(true).create(true)
-        OpenFileMode.ExclusiveCreate => opts.write(true).create_new(true)
-        OpenFileMode.ReadWrite => opts.read(true).write(true)
-        OpenFileMode.ReadWriteTruncate => opts.read(true).write(true).create(true).truncate(true)
-        OpenFileMode.ReadAppend => opts.read(true).append(true).create(true)
-        OpenFileMode.ReadExclusiveCreate => opts.read(true).write(true).create_new(true)
-    return opts
+    primitive_path = PrimitivePath(value=path.0)
+    match primitive_open_options(primitive_path, readable, writable, appendable, truncating, creating, creating_new):
+        Ok(file) => return Ok(file)
+        Err(error) => return Err(_io_error(path, error))
 
 
 def _mode_from_flags(readable: bool, writable: bool, appendable: bool, truncating: bool, creating_new: bool) -> str:

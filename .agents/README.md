@@ -6,7 +6,7 @@ This folder contains subagents and reference material for AI agents working on t
 
 | File | Purpose |
 | --- | --- |
-| `test-suite.md` | Test orchestrator — analyzes the diff, runs targeted tests, checks snapshots and clippy, reports results. Delegated to automatically when validating changes. |
+| `test-suite.md` | Test orchestrator — analyzes the diff, runs focused contract selectors and affected whole families, reports results. Delegated to automatically when validating changes. |
 
 ## Reference material
 

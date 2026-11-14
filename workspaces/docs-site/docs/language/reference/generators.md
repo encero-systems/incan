@@ -64,6 +64,28 @@ Rules:
 - Each `if` clause must type-check as `bool`.
 - A generator expression may have several `for` clauses and trailing `if` filters.
 - A generator expression is lazy; a list comprehension builds its list when it is evaluated.
+- A generator expression over a list place reads that list in place and yields a copy of each requested item. The generator and every value that carries it retain a shared dependency on the list until their last dependent use. Mutation, replacement or transfer of the list while that dependency remains live is refused with `INCAN-T0001`; no whole-list snapshot is made implicitly. A moved list or a temporary list transfers its storage to the generator instead.
+
+```incan
+def accepted() -> None:
+    mut xs = [1, 2, 3]
+    total = xs.iter().map((x) => x * 2).sum()
+    xs.append(total)                         # accepted: the dependency ended at sum()
+
+
+def refused() -> None:
+    mut xs = [1, 2, 3]
+    it = xs.iter()
+    xs.append(4)                             # refused: it still reads xs below
+    println(it.collect())
+
+
+def explicit() -> None:
+    mut xs = [1, 2, 3]
+    it = xs.clone().iter()
+    xs.append(4)                             # accepted: the source contains the explicit copy
+    println(it.collect())
+```
 
 ## Methods
 

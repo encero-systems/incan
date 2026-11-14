@@ -1,0 +1,19 @@
+# behavior: a compiled dependency preserves made-private field, method and type guidance while its own code keeps owner access (#2524, #2570)
+# expect-stderr-contains:
+#   Field 'secret' on 'Ledger' is private
+#   Method 'checksum' on 'Ledger' is private
+#   Cannot import `LegacyLedger` from `ledger`: the type is private
+#   Use report
+#   Use `Ledger.report` instead
+#   Use Ledger
+#   Use `Ledger` instead
+# expect-exit: 1
+from pub::ledger import Ledger, LegacyLedger
+
+
+def main() -> None:
+    ledger = Ledger(total=4, secret=2)
+    println(ledger.report())
+    println(ledger.secret)
+    println(ledger.checksum())
+    legacy = LegacyLedger(total=4)

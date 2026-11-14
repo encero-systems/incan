@@ -1,0 +1,348 @@
+"""Stored comparison and bounded merge ordering over already validated logical values."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
+from crate.primitives.crumb.types import AbsentPolicy, TypeNode, NominalKind
+from crate.primitives.crumb.native_numbers import compare_decimals, integer_compare
+from crate.primitives.crumb.scalars import float64_bits
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.hash import sha256
+from crate.primitives.hex import hexlify
+from crate.primitives.text import encode_utf8
+
+
+pub def omitted(field: ValueField, projection: Projection) -> bool:
+    """Only declared outer absence or collection emptiness omits a field, before recursive projection."""
+    if projection == Projection.Canonical and not field.canonical:
+        return true
+    match field.value:
+        Value.NoneValue => return field.absent == AbsentPolicy.NoneValue
+        Value.List(items) | Value.Set(items) => return field.absent == AbsentPolicy.Empty and len(items) == 0
+        Value.Map(items) => return field.absent == AbsentPolicy.Empty and len(items) == 0
+        _ => return false
+
+
+pub def fields_in_order(
+    fields: list[ValueField],
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[list[int], CrumbError]:
+    """Return contributing field indices by exact identity without rebuilding their values."""
+    mut keys: list[tuple[str, int]] = []
+    for index in range(len(fields)):
+        budget.charge_elements(1)?
+        if not omitted(fields[index], projection):
+            budget.charge_bytes(28)?
+            keys.append((hexlify(fields[index].identity), index))
+    return Ok([item[1] for item in sorted(keys)])
+
+
+pub def absence_depth(value: Value, mut budget: Budget) -> Result[Option[int], CrumbError]:
+    """Distinguish nested absent states under the same depth/work allowance as their containing request."""
+    budget.enter()?
+    result = absence_inner(value, budget)
+    budget.leave()?
+    return result
+
+
+def absence_inner(value: Value, mut budget: Budget) -> Result[Option[int], CrumbError]:
+    """Only optional wrappers participate in absence depth; present containers remain values."""
+    budget.charge_elements(1)?
+    match value:
+        Value.NoneValue => return Ok(Some(0))
+        Value.Some(items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("optional arity"))
+            match absence_depth(items[0], budget)?:
+                Some(depth) => return Ok(Some(depth + 1))
+                None => return Ok(None)
+        _ => return Ok(None)
+
+
+pub def compare(left: Value, right: Value, projection: Projection, mut budget: Budget) -> Result[int, CrumbError]:
+    """Compare complete values after admission; this invokes no application equality or ordering code."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = compare_inner(left, right, projection, budget)
+    budget.leave()?
+    return result
+
+
+def compare_inner(left: Value, right: Value, projection: Projection, mut budget: Budget) -> Result[int, CrumbError]:
+    """Normalize present optional wrappers while preserving absent depth and type-specific ordering."""
+    left_absent = absence_depth(left, budget)?
+    right_absent = absence_depth(right, budget)?
+    match (left_absent, right_absent):
+        (Some(a), Some(b)) => return Ok(order(a, b))
+        (Some(_), None) => return Ok(-1)
+        (None, Some(_)) => return Ok(1)
+        _ => pass
+    match left:
+        Value.Some(items) => return compare(items[0], right, projection, budget)
+        _ => pass
+    match right:
+        Value.Some(items) => return compare(left, items[0], projection, budget)
+        _ => pass
+    match (left, right):
+        (Value.Boolean(a), Value.Boolean(b)) =>
+            if a == b:
+                return Ok(0)
+            if a:
+                return Ok(1)
+            return Ok(-1)
+        (Value.Integer(a), Value.Integer(b)) =>
+            return Ok(integer_compare(a, b))
+        (Value.Float(a_width, a), Value.Float(b_width, b)) =>
+            return Ok(text_order(float_key(a_width, a, budget)?, float_key(b_width, b, budget)?))
+        (Value.Decimal(a, a_scale), Value.Decimal(b, b_scale)) =>
+            return compare_decimals(a, a_scale, b, b_scale, budget)
+        (Value.Text(a), Value.Text(b)) =>
+            budget.charge_elements(len(a))?
+            budget.charge_elements(len(b))?
+            return Ok(text_order(a, b))
+        (Value.Binary(a), Value.Binary(b)) => return byte_order(a, b, budget)
+        (Value.Withheld, Value.Withheld) => return Ok(0)
+        (Value.List(a), Value.List(b)) | (Value.Tuple(a), Value.Tuple(b)) => return sequence(a, b, projection, budget)
+        (Value.Set(a), Value.Set(b)) =>
+            a_order = order_values(a, projection, budget)?
+            b_order = order_values(b, projection, budget)?
+            for index in range(min([len(a_order), len(b_order)])):
+                result = compare(a[a_order[index]], b[b_order[index]], projection, budget)?
+                if result != 0:
+                    return Ok(result)
+            return Ok(order(len(a_order), len(b_order)))
+        (Value.Map(a), Value.Map(b)) => return compare_maps(a, b, projection, budget)
+        (Value.Record(a), Value.Record(b)) => return compare_fields(a, b, projection, budget)
+        (Value.Enum(a_id, a), Value.Enum(b_id, b)) =>
+            result = byte_order(a_id, b_id, budget)?
+            if result != 0:
+                return Ok(result)
+            return compare_fields(a, b, projection, budget)
+        (Value.Union(a_type, a), Value.Union(b_type, b)) =>
+            result = compare_selectors(a_type, b_type, budget)?
+            if result != 0:
+                return Ok(result)
+            return compare(a[0], b[0], projection, budget)
+        (Value.Reference(a_type, a_id), Value.Reference(b_type, b_id)) =>
+            result = byte_order(a_type, b_type, budget)?
+            if result != 0:
+                return Ok(result)
+            return Ok(byte_order(a_id, b_id, budget)?)
+        _ => return Err(CrumbError.invalid_input("unrelated unwrapped ordering kinds"))
+
+
+def sequence(
+    left: list[Value],
+    right: list[Value],
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """Lexicographic order compares values first and uses length only for an equal prefix."""
+    for index in range(min([len(left), len(right)])):
+        result = compare(left[index], right[index], projection, budget)?
+        if result != 0:
+            return Ok(result)
+    return Ok(order(len(left), len(right)))
+
+
+def compare_fields(
+    left: list[ValueField],
+    right: list[ValueField],
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """Apply projection before comparing field identities and their values."""
+    a_order = fields_in_order(left, projection, budget)?
+    b_order = fields_in_order(right, projection, budget)?
+    for index in range(min([len(a_order), len(b_order)])):
+        a = left[a_order[index]]
+        b = right[b_order[index]]
+        result = byte_order(a.identity, b.identity, budget)?
+        if result != 0:
+            return Ok(result)
+        contents = compare(a.value, b.value, projection, budget)?
+        if contents != 0:
+            return Ok(contents)
+    return Ok(order(len(a_order), len(b_order)))
+
+
+def compare_maps(
+    left: list[MapEntry],
+    right: list[MapEntry],
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """Maps compare their ordered key/value pairs; projected key ties compare projected values."""
+    a_order = order_entries(left, projection, budget)?
+    b_order = order_entries(right, projection, budget)?
+    for index in range(min([len(a_order), len(b_order)])):
+        a = left[a_order[index]]
+        b = right[b_order[index]]
+        result = compare(a.key, b.key, projection, budget)?
+        if result != 0:
+            return Ok(result)
+        contents = compare(a.value, b.value, projection, budget)?
+        if contents != 0:
+            return Ok(contents)
+    return Ok(order(len(a_order), len(b_order)))
+
+
+pub def compare_selectors(left: TypeNode, right: TypeNode, mut budget: Budget) -> Result[int, CrumbError]:
+    """Nominal union members use framed K, while nonnominal members use hashed N with a full tie-break."""
+    a = selector_key(left, budget)?
+    b = selector_key(right, budget)?
+    # Explicit components preserve lexicographic order until tuple lowering is fixed (#2799).
+    category = order(a[0], b[0])
+    if category != 0:
+        return Ok(category)
+    identity = text_order(a[1], b[1])
+    if identity != 0:
+        return Ok(identity)
+    return Ok(text_order(a[2], b[2]))
+
+
+def selector_key(node: TypeNode, mut budget: Budget) -> Result[tuple[int, str, str], CrumbError]:
+    """The kind breaks a same-K nominal tie; aliases fold before deciding the member category."""
+    match node:
+        TypeNode.Underlying(items) => return selector_key(items[0], budget)
+        TypeNode.Bound(items) => return selector_key(items[0], budget)
+        TypeNode.Nominal(kind, _, _, _) => return Ok((1, hexlify(closed_selector(node, budget)?), kind.value()))
+        _ =>
+            spelling = selector_spelling(node, budget)?
+            budget.charge_bytes(len(spelling))?
+            return Ok((0, hexlify(sha256.digest(encode_utf8(spelling))), spelling))
+
+
+def float_key(width: int, value: bytes, mut budget: Budget) -> Result[str, CrumbError]:
+    """Transform normalized IEEE bits into bytewise numeric order, including negative zero and NaN."""
+    bits = float64_bits(width, value, budget)?
+    negative = bits[0] >= 128u8
+    budget.charge_bytes(24)?
+    mut key: list[u8] = []
+    for index in range(8):
+        mut byte = int(bits[index])
+        if negative:
+            byte = 255 - byte
+        elif index == 0:
+            byte += 128
+        key.append(byte.saturating_resize[u8]())
+    return Ok(hexlify(key))
+
+
+def order(left: int, right: int) -> int:
+    """Return comparison sign without subtracting potentially extreme integers."""
+    if left < right:
+        return -1
+    if left > right:
+        return 1
+    return 0
+
+
+def byte_order(left: bytes, right: bytes, mut budget: Budget) -> Result[int, CrumbError]:
+    """Compare borrowed octets directly; do not allocate hex strings for every sorting comparison."""
+    for index in range(min([len(left), len(right)])):
+        budget.charge_elements(1)?
+        result = order(int(left[index]), int(right[index]))
+        if result != 0:
+            return Ok(result)
+    return Ok(order(len(left), len(right)))
+
+
+def text_order(left: str, right: str) -> int:
+    """Valid UTF-8 text ordering preserves exact code-point/byte order without normalization."""
+    if left < right:
+        return -1
+    if left > right:
+        return 1
+    return 0
+
+
+pub def order_values(items: list[Value], projection: Projection, mut budget: Budget) -> Result[list[int], CrumbError]:
+    """Merge-sort indices, retaining original values and keeping projected-equal entries distinct."""
+    budget.charge_elements(len(items))?
+    for _ in range(8):
+        budget.charge_bytes(len(items))?
+    mut indices = [index for index in range(len(items))]
+    mut width = 1
+    while width < len(items):
+        mut output: list[int] = []
+        mut first = 0
+        while first < len(items):
+            middle = first + min([width, len(items) - first])
+            end = middle + min([width, len(items) - middle])
+            mut a = first
+            mut b = middle
+            while a < middle or b < end:
+                budget.charge_elements(1)?
+                budget.charge_bytes(8)?
+                if b == end:
+                    output.append(indices[a])
+                    a += 1
+                elif a == middle:
+                    output.append(indices[b])
+                    b += 1
+                elif compare(items[indices[a]], items[indices[b]], projection, budget)? <= 0:
+                    output.append(indices[a])
+                    a += 1
+                else:
+                    output.append(indices[b])
+                    b += 1
+            first = end
+        indices = output
+        width = width + min([width, len(items) - width])
+    return Ok(indices)
+
+
+pub def order_entries(
+    items: list[MapEntry],
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[list[int], CrumbError]:
+    """Merge-sort map indices by projected key then value without collapsing equal projected entries."""
+    budget.charge_elements(len(items))?
+    for _ in range(8):
+        budget.charge_bytes(len(items))?
+    mut indices = [index for index in range(len(items))]
+    mut width = 1
+    while width < len(items):
+        mut output: list[int] = []
+        mut first = 0
+        while first < len(items):
+            middle = first + min([width, len(items) - first])
+            end = middle + min([width, len(items) - middle])
+            mut a = first
+            mut b = middle
+            while a < middle or b < end:
+                budget.charge_elements(1)?
+                budget.charge_bytes(8)?
+                if b == end:
+                    output.append(indices[a])
+                    a += 1
+                elif a == middle:
+                    output.append(indices[b])
+                    b += 1
+                elif compare_entries(items[indices[a]], items[indices[b]], projection, budget)? <= 0:
+                    output.append(indices[a])
+                    a += 1
+                else:
+                    output.append(indices[b])
+                    b += 1
+            first = end
+        indices = output
+        width = width + min([width, len(items) - width])
+    return Ok(indices)
+
+
+def compare_entries(
+    left: MapEntry,
+    right: MapEntry,
+    projection: Projection,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """A full key comparison always precedes the value tie-break; digest equality is never sufficient."""
+    result = compare(left.key, right.key, projection, budget)?
+    if result != 0:
+        return Ok(result)
+    return compare(left.value, right.value, projection, budget)

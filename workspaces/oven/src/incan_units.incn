@@ -1,0 +1,403 @@
+"""
+Incan units: checking and compiling a described unit with the toolchain's compiler (DD-0008).
+
+Oven writes the unit description where the compiler reads it, under `<project>/target/incan/units/`, and
+runs the compiler once per unit. The description already names the exact Rust externs, ABI caches, and dependency
+search directories; these are the same inputs for checking and compilation.
+
+A program or test executable is a fact of the home bakery (see `bakery`), and the project's `target/incan/` holds a
+view of it. A later run of the same identity, in this project or any other, views the fact and starts no compiler;
+deleting `target/` only costs the views. Compiler-certified deterministic refusals are retained as facts under that
+same identity. A normal repeat replays them; crashes, signals, resource failures and missing successful outputs remain
+retryable.
+"""
+
+from rust::std::os::unix::process import CommandExt, ExitStatusExt
+from trace_adapter import flush as flush_trace
+from rust::std::process import Command
+from std.fs import Path
+from std.primitives.locking import LockGuard
+from rust::std::rc import Rc
+from pub::incan_platform.store import Transaction
+from bakery import (
+    bakery,
+    claim,
+    find,
+    view_directory,
+    lookup,
+    reached,
+    seal,
+    prepare_seal,
+    prior_size,
+    staging,
+    unit_identity,
+    unit_name,
+    view,
+    fact_file,
+    has_files_under,
+)
+from bakery_records import Fact
+from bakery_roots import register_root
+from compiler_body_values import SelectedBodyPage
+from compiler_refusals import check_or_replay
+from observation import trace, trace_launch
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
+from unit_freshness import Key, unit_key
+from unit_rust import compile_library_unit, prepare_native
+from shared_link import development_link, library_witness, linkage_key, witness_current
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
+
+
+pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
+    """
+    Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code.
+
+    A unit whose key is unchanged replays the report and status of its last certified check (see `check_or_replay`).
+
+    1. Prepare the dependencies and exact native inputs, and key the prepared unit.
+    2. Publish its description under that key.
+    3. Replay the stored report for this key and format, or check and retain a certified report.
+    """
+    # 1. A dependency whose sources changed is compiled again, which changes the key of the unit checked against it.
+    ready = prepare_native(unit, toolchain)?
+    key = unit_key(ready, toolchain)?
+    # 2. An unchanged description is kept as it is.
+    path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
+    # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
+    return check_or_replay(ready, toolchain, path, format, bakery()?, key)
+
+
+pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
+    """
+    Print the unit's settled dependency closure, which the compiler checks and plans exactly as a build would. Returns
+    the exit code.
+
+    1. Prepare the dependencies and exact native inputs.
+    2. Publish the prepared unit's description.
+    3. Ask the compiler for the closure. The report is never retained, so it always describes the current inputs.
+    """
+    ready = prepare_native(unit, toolchain)?
+    path = write_unit(ready, crate_name(ready))?
+    mut arguments = ["--dependencies", path.0, toolchain.sysroot]
+    if toolchain.codegraph_on_request:
+        arguments.append("--no-codegraph")
+    return run_compiler(toolchain, arguments)
+
+
+pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
+    """Ask the compiler to format one source with its unit's vocabulary, preserving its exit status."""
+    path = write_unit(unit, crate_name(unit))?
+    mut arguments = ["--fmt", path.0, source]
+    if check:
+        arguments.append("--check")
+    return run_compiler(toolchain, arguments)
+
+
+pub model Made:
+    """How making a unit ended, the file that starts its program, and the observed whole-unit producer work."""
+
+    # The compiler's exit code; zero when the output exists.
+    pub code: i32
+    # The executable view to start, also reported by the host's executable-path lookup.
+    pub launch: Path
+    # Whole-unit producer evaluations and published native units of an executable; a bakery hit evaluates and bakes
+    # nothing.
+    pub evaluations: int = 0
+    pub native_bakes: int = 0
+    # The executable's fact. A deferred bake also carries its unpublished record transaction and the producer claim,
+    # held until the caller commits.
+    pub fact: Option[Fact] = None
+    pub transaction: Option[Transaction] = None
+    pub claim: Option[Rc[LockGuard]] = None
+
+
+pub def compile_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    development: bool = false,
+) -> Result[i32, str]:
+    """Compile the described program, library or test unit to `output` (see `make_unit`). Returns the exit code."""
+    return Ok(make_unit(unit, toolchain, output, development)?.code)
+
+
+pub def make_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    development: bool = false,
+) -> Result[Made, str]:
+    """
+    Compile the described program, library or test unit to `output`, and name the file that starts it.
+
+    A development request may share debug native inputs; ordinary builds and all libraries retain archive linkage.
+
+    1. Prepare the shared local graph and bind the exact native inputs.
+    2. Compile a library, or reuse an executable whose inputs have not changed.
+    """
+    # 1. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
+    ready = prepare_native(unit, toolchain)?
+    # 2. Both libraries and executables reuse their complete, unchanged artifact sets.
+    if ready.kind == "library":
+        return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
+    return obtain_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
+
+
+pub def compile_executable(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    key: Key,
+    development: bool = false,
+    selected_store: Option[Path] = None,
+) -> Result[i32, str]:
+    """Obtain one whole-unit executable through the bakery, preserving the existing status-only caller contract."""
+    return obtain_executable(unit, toolchain, output, key, development, selected_store).map((result) => result.code)
+
+
+pub def obtain_executable(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    key: Key,
+    development: bool = false,
+    selected_store: Option[Path] = None,
+    defer_publication: bool = false,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
+) -> Result[Made, str]:
+    """
+    Obtain the executable of `key` from the home bakery and make `output` a view of it.
+
+    The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
+    Development linkage has its own identity, and every shared library is validated before its fact is used.
+    Execution starts the requested view, so the host's executable-path lookup and the program name agree.
+
+    1. A sealed fact of the identity is viewed, and no compiler starts.
+    2. Otherwise claim the identity: one bake of it at a time, in any project or process.
+    3. A fact another command sealed while this one waited is viewed.
+    4. Compile into a private staging directory of the fact.
+    5. Seal it, then view it.
+    """
+    shared = development_link(unit, development)
+    # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
+    if key.refusal != "":
+        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records)?
+        return Ok(Made(code=code, launch=output, evaluations=1))
+    selected = linkage_key(key, shared)?
+    mut store = Path("")
+    match selected_store:
+        Some(chosen) => store = chosen
+        None => store = bakery()?
+    identity = unit_identity(selected)
+    label = f"unit {crate_name(unit)} {unit.kind}"
+    register_root(store, unit.project_root, root_registration(unit), [identity])?
+    # 1. A sealed executable of the identity starts no compiler.
+    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        made = viewed(store, fact, output, unit.kind, shared)?
+        trace(f"{label}: reused")
+        return Ok(made)
+    # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
+    held = claim(store, identity)?
+    # 3. A bake another command finished while this one waited is used, not repeated.
+    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        made = viewed(store, fact, output, unit.kind, shared)?
+        trace(f"{label}: reused (built meanwhile by another command)")
+        return Ok(made)
+    # 4. A failed bake publishes nothing; its staging directory goes with it.
+    staged = staging(store, identity, prior_size(store, unit_name(unit)))?
+    code = compile_staged(
+        unit,
+        toolchain,
+        staged.joinpath(output.name()),
+        key,
+        bake_reason(store, unit),
+        shared,
+        graph_body_records,
+    )?
+    if code != 0:
+        _ = staged.remove_tree()
+        return Ok(Made(code=code, launch=output, evaluations=1))
+    if key.compiler != "" and unit_key(unit, toolchain, key.compiler)?.digest != key.digest:
+        _ = staged.remove_tree()
+        return Err("unit inputs changed while the native producer ran; no unit record was published")
+    # 5. A request may group the record with capture and selection while retaining the producer claim.
+
+    reaches = reached(store, [loaf.dir for loaf in unit.loaves])?
+    if defer_publication:
+        prepared = prepare_seal(
+            store,
+            identity,
+            staged,
+            unit.kind,
+            unit_name(unit),
+            reaches,
+            f"incan {unit.kind} {unit.profile}",
+        )?
+        view_executable(store, prepared.fact, output, unit.kind, shared)?
+        return Ok(
+            Made(
+                code=0,
+                launch=output,
+                evaluations=1,
+                native_bakes=1,
+                fact=Some(prepared.fact),
+                transaction=Some(prepared.transaction),
+                claim=Some(Rc.new(held)),
+            ),
+        )
+    fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
+    launch = viewed(store, fact, output, unit.kind, shared)?.launch
+    return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1))
+
+
+def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Result[Made, str]:
+    """Make `output` the executable view and launch it, preserving the program's observable location."""
+    view_executable(store, fact, output, kind, shared)?
+    return Ok(Made(code=0, launch=output, fact=Some(fact)))
+
+
+def current_executable(store: Path, identity: str, binary: str, shared: bool) -> Result[Option[Fact], str]:
+    """The sealed fact of `identity`, while its shared libraries, if it links any, are still the ones it recorded."""
+    match find(store, identity)?:
+        None => return Ok(None)
+        Some(fact) =>
+            if shared and not current_link(store, fact, binary):
+                trace(f"bakery {identity[:12]}: dynamic native inputs changed")
+                return Ok(None)
+            return Ok(Some(fact))
+
+
+def bake_reason(store: Path, unit: UnitDescription) -> str:
+    """Why a unit is baked: nothing was baked under its name yet, or what was is for other inputs."""
+    match lookup(store, unit_name(unit)):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
+    return "no stored build"
+
+
+def compile_staged(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    staged: Path,
+    key: Key,
+    reason: str,
+    shared: bool,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
+) -> Result[i32, str]:
+    """Compile a unit to its staged name. Returns the compiler's exit code."""
+    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records)
+
+
+pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
+    """The executable, its optional test report and its required loader witness when shared linkage was selected."""
+    mut outputs = [output]
+    if kind == "test":
+        outputs.append(test_report(output))
+    if shared:
+        outputs.append(library_witness(output))
+    return outputs
+
+
+pub def test_report(binary: Path) -> Path:
+    """The report of the tests a compiled test unit collected, which the compiler writes beside the executable."""
+    return Path(f"{binary.0}.tests.json")
+
+
+pub def view_executable(store: Path, fact: Fact, output: Path, kind: str, shared: bool = false) -> Result[None, str]:
+    """
+    Make `output`, and the files that belong beside it, clones of the executable fact that the user may run, edit or
+    strip. A development executable with shared linkage finds its libraries through absolute search paths, so its
+    clone runs wherever it is placed.
+    """
+    for path in executable_outputs(kind, output, shared):
+        view(store, fact, path.name(), path)?
+    bundle = debug_bundle(Path(output.name())).0
+    if has_files_under(fact, bundle):
+        view_directory(store, fact, debug_bundle(output), bundle)?
+    return Ok(None)
+
+
+def current_link(store: Path, fact: Fact, binary: str) -> bool:
+    """Whether a baked development executable's shared libraries are still the ones its loader witness records."""
+    match fact_file(store, fact, library_witness(Path(binary)).0):
+        None => return false
+        Some(witness) => return witness_current(witness)
+
+
+def debug_bundle(binary: Path) -> Path:
+    """The debug information the linker writes beside an executable on macOS."""
+    return Path(f"{binary.0}.dSYM")
+
+
+pub def run_program(
+    binary: Path,
+    arguments: list[str],
+    argv0: Option[str] = None,
+    wait: bool = false,
+) -> Result[i32, str]:
+    """
+    Execute the compiled program with the caller's arguments, standard streams and working directory.
+
+    By default this process is replaced by the program. A scoped engine execution sets `wait` to keep its execution
+    interest alive until the child exits. A failed requested trace also waits, so command completion can report it
+    after the program's output, retaining the shell's `128 + signal` status. A scoped execution otherwise keeps its
+    existing signal-termination status one.
+    """
+    preparing = begin_work()
+    program = f"{binary.0}"
+    mut command = Command.new(binary.0)
+    match argv0:
+        Some(value) => _ = command.arg0(value)
+        None => pass
+    for argument in arguments:
+        command.arg(argument)
+    trace_launch(program)
+    record_work(Operation.ProgramPrepare, program, preparing)
+    trace_failed = flush_trace()
+    if wait or trace_failed:
+        status = command.status().map_err((error) => f"cannot run {program}: {error}")?
+        match status.code():
+            Some(code) => return Ok(code)
+            None =>
+                if trace_failed:
+                    if let Some(signal) = status.signal():
+                        return Ok(128i32 + signal)
+                return Ok(1)
+    failure = command.exec()
+    return Err(f"cannot run {program}: {failure}")
+
+
+pub def program_binary(unit: UnitDescription) -> Path:
+    """Where a program unit's executable is stored in its project."""
+    return stored_executable(unit, "bin")
+
+
+pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
+    """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
+    return executable_view(Path(unit.project_root), unit.profile, directory, crate_name(unit))
+
+
+pub def test_source_name(unit: UnitDescription) -> str:
+    """
+    The test source a test unit compiles, by the file name its test ids carry. Each test source of a project has its
+    own executable and its own latest result, so testing two sources at once never replaces the other's.
+    """
+    return Path(unit.source).stem()
+
+
+def root_registration(unit: UnitDescription) -> str:
+    """What a unit's latest result is registered as: its crate and kind, and for a test unit also its test source."""
+    registration = f"unit\t{crate_name(unit)}\t{unit.kind}"
+    if unit.kind == "test":
+        return f"{registration}\t{test_source_name(unit)}"
+    return registration
+
+
+pub def executable_view(project: Path, profile: str, directory: str, name: str) -> Path:
+    """The ordinary derived output location of a named executable, independent of how its unit was obtained."""
+    return project.joinpath("target/incan").joinpath(profile).joinpath(directory).joinpath(name)

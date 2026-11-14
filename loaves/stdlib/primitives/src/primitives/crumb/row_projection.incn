@@ -1,0 +1,85 @@
+"""Select a field through its identity, bitmap rank and two directly addressed offsets."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.cell_read import absent, read_field_cell
+from crate.primitives.crumb.descriptions import StoredField
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_field
+from crate.primitives.crumb.encoding_index import RecordIndex, rank, bit, selected
+from crate.primitives.crumb.types import AbsentPolicy
+from crate.primitives.crumb.values import Value
+from crate.primitives.hex import hexlify
+from crate.primitives.views import MappedView
+
+
+pub def field_index(
+    fields: list[StoredField],
+    identity: bytes,
+    origin: int,
+    mut budget: Budget,
+) -> Result[int, BinaryError]:
+    """Binary-search the admitted identity order; names never select an ambiguous stored field."""
+    if len(identity) != 6:
+        return Err(failure(BinaryFailure.MissingField, origin))
+    budget.charge_bytes(12).map_err((e) => primitive(e, origin))?
+    key = hexlify(identity)
+    mut low = 0
+    mut high = len(fields)
+    while low < high:
+        budget.charge_elements(1).map_err((e) => primitive(e, origin))?
+        budget.charge_bytes(12).map_err((e) => primitive(e, origin))?
+        middle = low + (high - low) // 2
+        candidate = hexlify(fields[middle].shape.identity)
+        if candidate == key:
+            return Ok(middle)
+        if candidate < key:
+            low = middle + 1
+        else:
+            high = middle
+    return Err(failure(BinaryFailure.MissingField, origin))
+
+
+def location(
+    field: StoredField,
+    index: RecordIndex,
+    mut budget: Budget,
+) -> Result[Option[tuple[MappedView, int]], BinaryError]:
+    """Required-field rank is precomputed; eligible rank scans only the bitmap, never earlier offsets."""
+    if field.shape.absent != AbsentPolicy.Required:
+        if not bit(index.bitmap, field.eligible_before, index.bitmap_origin)?:
+            return Ok(None)
+    preceding = rank(index.bitmap, field.eligible_before, index.bitmap_origin, budget)?
+    physical = field.required_before + preceding
+    return Ok(Some(selected(index.cells, physical, budget)?))
+
+
+pub def project_view(
+    fields: list[StoredField],
+    index: RecordIndex,
+    identity: bytes,
+    mut budget: Budget,
+) -> Result[Option[MappedView], BinaryError]:
+    """Return an independently anchored encoded cell, or typed declared absence without constructing other values."""
+    position = field_index(fields, identity, index.bitmap_origin, budget)?
+    located = location(fields[position], index, budget)?
+    match located:
+        None => return Ok(None)
+        Some((view, _)) => return Ok(Some(view))
+
+
+pub def project_value(
+    fields: list[StoredField],
+    index: RecordIndex,
+    identity: bytes,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, BinaryError]:
+    """Materialize only the selected stored field; its encoded cell view is a separate explicit operation."""
+    position = field_index(fields, identity, index.bitmap_origin, budget)?
+    located = location(fields[position], index, budget)?
+    match located:
+        None => return absent(fields[position], index.bitmap_origin)
+        Some((view, origin)) =>
+            return read_field_cell(fields[position], view, origin, dictionary, budget).map_err(
+                (e) => in_field(e, identity),
+            )

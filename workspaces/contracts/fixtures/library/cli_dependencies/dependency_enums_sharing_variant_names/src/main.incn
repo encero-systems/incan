@@ -1,0 +1,43 @@
+# behavior: dependency enums retain distinct variants and layouts across declaration orders, sibling modules, later payload declarations and two reexports (#1561, #1337, #1698); value enums retain generated getters and parsers; enum aliases retain compiled Clone implementations, and Rust consumers retain reexported factory, model and Rust item identities (#2256)
+# expect-stdout:
+#   loud
+#   quiet
+#   loud
+#   missing
+#   enter intro
+#   leave
+#   enter
+#   leave
+#   entering
+#   leaving
+#   intro at gate 1
+#   gone
+#   north at gate 4
+#   enter 1,2
+#   leave done
+#   start
+#   start
+#   start 4
+#   2
+#   3
+#   true
+#   17
+#   41
+#   0
+#   42
+#   -1
+#   43
+#   0
+#   44
+#   -1
+
+from enum_reexports import run_enum_reexports
+from value_enum_helpers import run_value_enum_helpers
+from variant_names import run_variant_names
+
+
+def main() -> None:
+    """Run each dependency enum observation in the order of the cases it carries."""
+    run_value_enum_helpers()
+    run_variant_names()
+    run_enum_reexports()

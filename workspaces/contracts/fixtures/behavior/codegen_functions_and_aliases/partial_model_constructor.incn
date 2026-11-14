@@ -1,0 +1,21 @@
+# behavior: a partial over a model constructor presets fields, and a call of the partial builds the model with them
+# expect-stdout:
+#   bronze
+#   delta
+
+pub model Reader:
+    pub layer: str
+    pub format: str
+
+
+pub BronzeReader = partial Reader(layer="bronze", format="delta")
+
+
+pub def use() -> Reader:
+    return BronzeReader()
+
+
+def main() -> None:
+    reader = use()
+    println(reader.layer)
+    println(reader.format)

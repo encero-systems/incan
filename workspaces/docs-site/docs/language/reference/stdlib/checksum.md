@@ -5,12 +5,18 @@
 ## Imports
 
 ```incan
-from std.checksum import crc32
+from std.checksum import Crc32, crc32
+```
+
+The same declarations are also available from their foundational home:
+
+```incan
+from std.primitives.checksum import Crc32, crc32
 ```
 
 ## CRC32
 
-`std.checksum` exposes the IEEE CRC-32 algorithm through the `crc32` namespace.
+`std.primitives.checksum` owns the IEEE CRC-32 algorithm through the `crc32` namespace. `std.checksum` reexports the same declarations; values cross either import surface without conversion.
 
 | API | Returns | Description |
 | --- | --- | --- |
@@ -39,7 +45,14 @@ value = h.finalize_u32()
 digest = h.finalize_bytes()
 ```
 
-`finalize_u32()` snapshots the current value. `finalize_bytes()` returns the same value as big-endian bytes.
+| Method | Returns | Contract |
+| --- | --- | --- |
+| `Crc32.new()` | `Crc32` | Class-owned factory for a fresh incremental hasher; `crc32.new()` delegates to it. |
+| `Crc32.update(mut self, chunk: bytes)` | `None` | Add a chunk; empty chunks preserve state. |
+| `Crc32.finalize_u32(self)` | `u32` | Snapshot the current checksum without resetting or consuming the hasher. |
+| `Crc32.finalize_bytes(self)` | `bytes` | Snapshot as four big-endian bytes. |
+
+Repeated finalization returns the same result until another update. Updating after finalization continues the existing stream. Empty input has integer checksum zero and four zero bytes. These methods do not report typed failures; native allocation or process failures are not converted into checksum results.
 
 ## Relationship To std.hash
 

@@ -38,3 +38,14 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0003](0003_replacement_program_output_contract.md)   | Deliver replacement program output during execution and bind it into the receipt | Withdrawn | v0.6          |
 | [DD-0004](0004_native_route_through_the_pinned_rustc.md) | Isolate the native compiler driver in a pinned Loaf                              | Accepted  | v0.6          |
 | [DD-0005](0005_cargo_free_development_contract.md)       | Cargo-free development with eager dependencies and Just Enough Compilation       | Accepted  | v0.6          |
+| [DD-0006](0006_rust_interop_on_the_direct_route.md)      | Rust interop values and calls on the direct route                                | Accepted  | v0.6          |
+| [DD-0007](0007_loaf_artifacts.md)                        | Loaf artifacts and the one consumer index                                        | Accepted  | v0.6          |
+| [DD-0008](0008_one_oven_in_incan.md)                     | One Oven, written in Incan                                                       | Accepted  | v0.6          |
+| [DD-0009](0009_rust_facts_from_rustc_metadata.md)        | Rust facts are ABI caches read from rustc's metadata                             | Accepted  | v0.6          |
+| [DD-0010](0010_released_toolchains_for_ci_and_development.md) | CI and development install a released toolchain                             | Accepted  | v0.6          |
+| [DD-0012](0012_incremental_compilation_over_a_semantic_store.md) | Incremental compilation over a persistent semantic store | Accepted | v0.6 |
+| [DD-0013](0013_the_incan_build_engine.md) | The Incan build engine | Accepted | v0.6 |
+| [DD-0014](0014_resolved_project_lock.md) | Resolved project lock | Accepted | v0.6 |
+| [DD-0016](0016_signed_toolchain_releases.md) | Signed toolchain releases | Accepted | v0.6 |
+| [DD-0015](0015_compiler_producer_map.md) | The compiler producer map | Accepted | v0.6 |
+| [DD-0017](0017_compile_time_code_trust.md) | Compile-time code trust | Accepted | v0.6 |

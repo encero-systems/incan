@@ -1,0 +1,96 @@
+"""A packed toolchain ships the registry units its checkout's Loaves reach and leaves carried-forward units behind."""
+
+from std.fs import Path
+from files import make_directory, write as write_file
+from registry_shipping import ships, ships_search, shipped_entries
+from registry_units import RegistryUnit
+from scratch import scratch_directory
+
+
+pub def test_only_units_a_declared_crate_reaches_are_shipped() -> Result[None, str]:
+    """
+    A declared crate ships with everything it links, whichever dependency table, alias or environment declares it; a
+    unit that only an undeclared crate reaches stays behind, and so does its search directory.
+    """
+    scratch = scratch_directory()?
+    checkout = scratch.path()
+    write(checkout.joinpath("loaves/app/loaf.toml"), APP)?
+    write(checkout.joinpath("loaves/fixture/loaf.toml"), FIXTURE)?
+    write(checkout.joinpath("loaves/workspace/loaf.toml"), WORKSPACE)?
+    write(checkout.joinpath("loaves/refused/loaf.toml"), REFUSED)?
+    # A build output's manifests are not declarations.
+    write(checkout.joinpath("loaves/app/target/copy/loaf.toml"), STALE)?
+    units = [
+        unit("crates-io/serde-json", "sha256:a1", ["sha256:b2"]),
+        unit("crates-io/itoa", "sha256:b2", []),
+        unit("crates-io/regex", "sha256:c3", []),
+        unit("crates-io/tokio", "sha256:d4", []),
+        unit("crates-io/ra-ap-load-cargo", "sha256:e5", ["sha256:f6"]),
+        unit("crates-io/ra-ap-hir", "sha256:f6", []),
+        unit("crates-io/local", "", []),
+    ]
+    shipped = shipped_entries(units, checkout)?
+    for entry in ["sha256:a1", "sha256:b2", "sha256:c3", "sha256:d4"]:
+        assert entry in shipped, f"{entry} was left behind"
+    for entry in ["sha256:e5", "sha256:f6"]:
+        assert entry not in shipped, f"{entry} no Loaf reaches was shipped"
+    assert ships(units[6], shipped), "a unit without a recorded entry was dropped"
+    assert ships_search("/home/toolchain/registry/entries/sha256-a1/artifacts", shipped)
+    assert not ships_search("/home/toolchain/registry/entries/sha256-e5/artifacts", shipped)
+    assert ships_search("/home/toolchain/native/support", shipped), "a support directory was dropped"
+    return Ok(None)
+
+
+const APP: str = """[project]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+serde_json = { loaf = "crates-io/serde-json", version = "1" }
+helper = { loaf = "helper", path = "../helper" }
+
+[envs.test.dependencies]
+tokio = { loaf = "crates-io/tokio", version = "1" }
+"""
+const FIXTURE: str = """[project]
+name = "fixture"
+version = "0.1.0"
+
+[dependencies]
+pattern = { loaf = "crates-io/regex", version = "1" }
+"""
+const STALE: str = """[project]
+name = "stale"
+version = "0.1.0"
+
+[dependencies]
+loader = { loaf = "crates-io/ra-ap-load-cargo", version = "0.0.325" }
+"""
+const WORKSPACE: str = """[workspace]
+members = ["app", "fixture"]
+"""
+const REFUSED: str = """[project]
+name = "refused"
+version = "0.1.0"
+
+[dependencies]
+loader = { loaf = "crates-io/ra-ap-load-cargo", version = "0.0.325", package = "ra-ap-load-cargo" }
+"""
+
+
+def unit(loaf: str, entry: str, dependencies: list[str]) -> RegistryUnit:
+    """A registry unit that links `dependencies`."""
+    return RegistryUnit(
+        loaf=loaf,
+        version="1.0.0",
+        domain="target",
+        directory="",
+        entry=entry,
+        dependencies=dependencies,
+    )
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, creating its directory."""
+    make_directory(path.parent())?
+    return write_file(path, text)

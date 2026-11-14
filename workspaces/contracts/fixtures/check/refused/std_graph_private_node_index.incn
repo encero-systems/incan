@@ -1,0 +1,10 @@
+# behavior: physical node indexes are private and name contains_node as their replacement (#2524)
+# expect-diagnostic: INCAN-T0001
+
+from std.graph import DiGraph
+
+
+def bypass() -> None:
+    mut graph = DiGraph[str]()
+    node = graph.add_node("node")
+    println(graph.node_index(node))

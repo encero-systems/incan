@@ -1,12 +1,30 @@
-"""Expose the language entrypoint's canonical panic reporting to the direct native entrypoint."""
+"""Install payload-only panic reporting through the standard native hook without entering an Incan main body."""
 
-
-def main() -> None:
-    """Run the language's generated entrypoint initialization without program output."""
-    # Legacy emission installs the canonical payload-only panic hook before every Incan main body.
-    pass
+from rust::std::panic import set_hook, panic_any
+from rust::std::string import String as NativeString
+from rust::std::io import stderr, Stderr, Write
+from rust::std::vec import Vec
 
 
 pub def initialize_panic_hook() -> None:
-    """Install the same panic hook as an ordinary Incan executable, preserving unwinding and exit status."""
-    main()
+    """Install canonical reporting: 1. Register a noncapturing native callback, preserving unwinding and exit status."""
+    # 1. The native call boundary boxes this checked function pointer.
+    set_hook((info) => report_panic(info.payload_as_str()))
+
+
+def report_panic(message: Option[str]) -> None:
+    """Print string payloads without location decoration, retaining the original fallback for other payloads."""
+    match message:
+        Some(message) => write_panic_line(NativeString.from(message))
+        None => write_panic_line("generated program panicked")
+
+
+def write_panic_line(value: str) -> None:
+    """Write one complete diagnostic line with the standard stderr I/O failure behavior."""
+    native: NativeString = value
+    mut bytes: Vec[u8] = native.into_bytes()
+    bytes.push(10)
+    mut stream: Stderr = stderr()
+    match stream.write_all(bytes):
+        Ok(_value) => return
+        Err(error) => panic_any(f"failed printing to stderr: {error}")

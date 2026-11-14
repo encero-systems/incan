@@ -24,10 +24,11 @@ pub(crate) fn unwind(value: &Unwind) -> Result<mir::UnwindAction, PlanError> {
     })
 }
 
-/// Lower one block exit, retaining its source location and call argument locations.
+/// Lower one block exit, retaining source locations and removing the normal continuation of checked diverging calls.
 pub fn terminator<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
+    function: &crate::plan::Function,
     value: &Terminator,
 ) -> Result<mir::Terminator<'tcx>, PlanError> {
     let span = sources.span(&value.span)?;
@@ -52,7 +53,15 @@ pub fn terminator<'tcx>(
                 .chain(generator_producer(tcx, sources, callee)?.into_iter().map(Ok))
                 .collect::<Result<_, PlanError>>()?,
             destination: place(tcx, destination)?,
-            target: Some(block(*target)?),
+            target: if function
+                .locals
+                .get(index(destination.local)?)
+                .is_some_and(|local| matches!(local.ty, crate::plan::PlanType::Never))
+            {
+                None
+            } else {
+                Some(block(*target)?)
+            },
             unwind: unwind(action)?,
             call_source: mir::CallSource::Normal,
             fn_span: span,
@@ -89,7 +98,7 @@ pub fn terminator<'tcx>(
     })
 }
 
-/// Instantiate admitted runtime operations and clone calls; ordinary planned callees remain monomorphic.
+/// Instantiate admitted runtime operations, clone calls and the retained lifetime binders of planned callees.
 fn call_operand<'tcx>(
     tcx: TyCtxt<'tcx>,
     sources: &Sources<'_>,
@@ -98,6 +107,20 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::Value(value) = &callee.kind {
         return operand(tcx, sources, value);
     }
+    let (definition, arguments) = call_instance(tcx, callee)?;
+    Ok(mir::Operand::function_handle(
+        tcx,
+        definition,
+        arguments,
+        sources.span(&callee.span)?,
+    ))
+}
+
+/// Resolve one concrete call instance for both pre-MIR bound validation and MIR construction.
+pub(crate) fn call_instance<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee: &crate::plan::Callee,
+) -> Result<(rustc_hir::def_id::DefId, rustc_middle::ty::GenericArgsRef<'tcx>), PlanError> {
     let mut arguments = Vec::new();
     match &callee.kind {
         crate::plan::CalleeKind::SpawnGenerator(name, leaf, depth) => {
@@ -125,6 +148,14 @@ fn call_operand<'tcx>(
         arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
         arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
     }
+    if let crate::plan::CalleeKind::CallBorrowingClosure(signature) = &callee.kind {
+        let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+            function: "borrowing callable object".into(),
+            reason: "callable signature has no return type".into(),
+        })?;
+        arguments.push(crate::types::borrowing_callable_object_type(tcx, signature)?.into());
+        arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
+    }
     if let crate::plan::CalleeKind::CallClosureOnce(signature) = &callee.kind {
         let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
             function: "consuming callable object".into(),
@@ -144,14 +175,57 @@ fn call_operand<'tcx>(
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }
     if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
-        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
+        let definition = callees::resolve(tcx, callee)?;
+        if callees::has_const_parameters(tcx, definition) {
+            let plan = crate::adapter::active_plan().map_err(|_| PlanError::UnknownCallee("external".into()))?;
+            let external = plan
+                .externals
+                .iter()
+                .find(|external| {
+                    external.type_arguments.as_slice() == types.as_slice()
+                        && external.path == callee_path(callee)
+                        && external.span == callee.span
+                })
+                .ok_or_else(|| PlanError::UnknownCallee(callee_path(callee).into()))?;
+            arguments.extend(callees::external_arguments(tcx, definition, external)?.iter());
+        } else {
+            arguments.extend(callees::arguments(tcx, definition, types)?.iter());
+        }
     }
-    Ok(mir::Operand::function_handle(
-        tcx,
-        callees::resolve(tcx, callee)?,
-        arguments,
-        sources.span(&callee.span)?,
-    ))
+    if let crate::plan::CalleeKind::FormatValue(ty, _) = &callee.kind {
+        let definition = callees::resolve(tcx, callee)?;
+        let closed = callees::arguments(tcx, definition, std::slice::from_ref(ty))?;
+        callees::verify_bounds(tcx, definition, closed)?;
+        arguments.extend(closed.iter());
+    }
+    if let crate::plan::CalleeKind::External(path) = &callee.kind {
+        let definition = callees::resolve(tcx, callee)?;
+        if callees::has_const_parameters(tcx, definition) {
+            let plan = crate::adapter::active_plan().map_err(|_| PlanError::UnknownCallee(path.clone()))?;
+            let external = plan
+                .externals
+                .iter()
+                .find(|external| {
+                    external.path == *path && external.type_arguments.is_empty() && external.span == callee.span
+                })
+                .ok_or_else(|| PlanError::UnknownCallee(path.clone()))?;
+            arguments.extend(callees::external_arguments(tcx, definition, external)?.iter());
+        } else {
+            arguments.extend(callees::arguments(tcx, definition, &[])?.iter());
+        }
+    }
+    if let crate::plan::CalleeKind::Planned(_) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
+    }
+    Ok((callees::resolve(tcx, callee)?, tcx.mk_args(&arguments)))
+}
+
+/// Return the retained external path for an instantiated native callee.
+fn callee_path(callee: &crate::plan::Callee) -> &str {
+    match &callee.kind {
+        crate::plan::CalleeKind::Instantiated(path, _) | crate::plan::CalleeKind::External(path) => path,
+        _ => "",
+    }
 }
 
 /// Instantiate the runtime method's yielded element without changing its representation.

@@ -1,0 +1,89 @@
+# behavior: a list, set or dict bound by a match arm is dropped once, when its arm ends: each element of a bound list drops exactly once before the statement after the match, and a loop of such matches keeps the heap flat (#2481)
+# expect-stdout:
+#   bound 2
+#   dropped first
+#   dropped second
+#   live probes 0
+#   list arm: heap flat
+#   set arm: heap flat
+#   dict arm: heap flat
+
+"""Bind owned collections from fresh results and observe their drops and the live heap around many rounds."""
+
+from rust::drop_probe import Probe, live_heap_bytes, live_probes
+
+const ROUNDS: int = 1000
+
+
+class Holder:
+    pub probe: Probe
+
+
+def holders() -> Option[list[Holder]]:
+    return Some([Holder(probe=Probe.new("first")), Holder(probe=Probe.new("second"))])
+
+
+def words() -> Option[list[str]]:
+    return Some(["a word long enough to own heap storage", "another word long enough to own heap storage"])
+
+
+def word_set() -> Option[set[str]]:
+    return Some(set(["a word long enough to own heap storage", "another word long enough to own heap storage"]))
+
+
+def word_index() -> Result[dict[str, list[str]], str]:
+    return Ok({"words": ["a word long enough to own heap storage", "another word long enough to own heap storage"]})
+
+
+def list_arm() -> int:
+    match words():
+        Some(values) => return len(values)
+        None => return 0
+
+
+def set_arm() -> int:
+    match word_set():
+        Some(values) => return len(values)
+        None => return 0
+
+
+def dict_arm() -> int:
+    match word_index():
+        Ok(index) => return len(index)
+        Err(_) => return 0
+
+
+def report(label: str, grown: int) -> None:
+    """
+    Print whether a shape's rounds left the heap where they found it, from `grown` bytes measured before printing.
+
+    A value left behind by every round grows the heap by at least ROUNDS allocations; less than a byte a round is the
+    allocator's own bookkeeping.
+    """
+    if grown < ROUNDS:
+        println(f"{label}: heap flat")
+    else:
+        println(f"{label}: heap grew by {grown} bytes over {ROUNDS} rounds")
+
+
+def main() -> None:
+    match holders():
+        Some(bound) => println(f"bound {len(bound)}")
+        None => pass
+    println(f"live probes {live_probes()}")
+    mut total = list_arm() + set_arm() + dict_arm()
+    mut before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += list_arm()
+    mut grown = live_heap_bytes() - before
+    report("list arm", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += set_arm()
+    grown = live_heap_bytes() - before
+    report("set arm", grown)
+    before = live_heap_bytes()
+    for _ in range(ROUNDS):
+        total += dict_arm()
+    grown = live_heap_bytes() - before
+    report("dict arm", grown)

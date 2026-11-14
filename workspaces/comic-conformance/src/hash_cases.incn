@@ -1,0 +1,83 @@
+"""Derive hash preimages and digest relations from logical inputs, then compare independent literals."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.hashes import HashResult, value_hash, model_hash, description_hash, seal_hash
+from std.primitives.crumb.types import TypeNode
+from std.primitives.crumb.values import Projection
+from std.primitives.hex import hexlify
+from case_data import HashExpectation, HashKind, array, field, fields, node, text
+from fixture_adapter import logical, logical_items, metadata, record
+
+
+pub def check_preimage(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
+    """A matching digest alone is insufficient: verify the actual emitted domain and contribution bytes."""
+    input = field(value, "input")?
+    expected = field(value, "expected")?
+    kind = match HashKind.from_value(text(value, "projection")?):
+        Some(selected) => selected
+        None => return Err("unknown hash projection")
+
+    result = project(kind, input, budget)?
+    match result.preimage:
+        Some(bytes) =>
+            bytes_match = hexlify(bytes) == text(expected, "preimage_hex")?
+            return Ok(bytes_match and hexlify(result.digest) == text(expected, "sha256")?)
+        None => return Err("hash request did not capture its derived preimage")
+
+
+def project(kind: HashKind, value: JsonValue, mut budget: Budget) -> Result[HashResult, str]:
+    """Dispatch domains without feeding expected bytes or test derivation annotations to the implementation."""
+    match kind:
+        HashKind.Object =>
+            return value_hash(logical(value)?, Projection.Object, budget, true).map_err((e) => e.message())
+        HashKind.Canonical =>
+            return value_hash(logical(value)?, Projection.Canonical, budget, true).map_err((e) => e.message())
+        HashKind.Model => return model_hash(node(field(value, "type")?)?, budget, true).map_err((e) => e.message())
+        HashKind.Description =>
+            return description_hash(metadata(field(value, "description")?)?, budget, true).map_err((e) => e.message())
+        HashKind.Seal =>
+            return seal_hash(logical_items(array(value, "values")?)?, budget, true).map_err((e) => e.message())
+
+
+pub def check_relation(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
+    """Equality relations compare independently derived logical object digests."""
+    left = value_hash(logical(field(value, "left")?)?, Projection.Object, budget).map_err((e) => e.message())?
+    right = value_hash(logical(field(value, "right")?)?, Projection.Object, budget).map_err((e) => e.message())?
+    return relation(left, right, expectation(text(value, "expected")?)?)
+
+
+def expectation(value: str) -> Result[HashExpectation, str]:
+    """Parse one independently authored digest relation before comparing values."""
+    match HashExpectation.from_value(value):
+        Some(selected) => return Ok(selected)
+        None => return Err("unknown hash relation")
+
+
+def relation(left: HashResult, right: HashResult, expected: HashExpectation) -> Result[bool, str]:
+    """Unknown expectation words fail instead of accidentally behaving like inequality."""
+    match expected:
+        HashExpectation.Same => return Ok(left.digest == right.digest)
+        HashExpectation.Changed | HashExpectation.Distinct => return Ok(left.digest != right.digest)
+
+
+pub def check_projections(value: JsonValue, output: list[JsonValue], mut budget: Budget) -> Result[bool, str]:
+    """Adaptation is complete only when reconstructed values and all three requested projections agree."""
+    written = field(value, "written")?
+    requested = field(value, "requested")?
+    before = record(written, array(value, "values")?)?
+    after = record(requested, output)?
+    expected = field(field(value, "expected")?, "projections")?
+    left_object = value_hash(before, Projection.Object, budget).map_err((e) => e.message())?
+    right_object = value_hash(after, Projection.Object, budget).map_err((e) => e.message())?
+    left_canonical = value_hash(before, Projection.Canonical, budget).map_err((e) => e.message())?
+    right_canonical = value_hash(after, Projection.Canonical, budget).map_err((e) => e.message())?
+    left_model = model_hash(TypeNode.Record("source", fields(written)?), budget).map_err((e) => e.message())?
+    right_model = model_hash(TypeNode.Record("target", fields(requested)?), budget).map_err((e) => e.message())?
+    return Ok(
+        relation(left_object, right_object, expectation(text(expected, "object")?)?)? and relation(
+            left_canonical,
+            right_canonical,
+            expectation(text(expected, "canonical")?)?,
+        )? and relation(left_model, right_model, expectation(text(expected, "model")?)?)?,
+    )

@@ -1,0 +1,14 @@
+# behavior: a union returned by one module's function is accepted by another module's union parameter, and a literal converts to that union at the call (#457, #461)
+# expect-stdout:
+#   FALLBACK
+#   number
+#   LITERAL
+
+from producers import parse_value
+from consumers import describe
+
+
+def main() -> None:
+    println(describe(parse_value(false)))
+    println(describe(parse_value(true)))
+    println(describe("literal"))

@@ -25,13 +25,8 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 '#' => {
-                    // Comment line - skip to end
-                    while let Some(c) = self.peek() {
-                        if c == '\n' {
-                            break;
-                        }
-                        self.advance();
-                    }
+                    // Comment line - scan it through the same source-security boundary as an inline comment.
+                    self.scan_comment();
                     if self.peek() == Some('\n') {
                         self.advance();
                     }

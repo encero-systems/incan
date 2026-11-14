@@ -16,7 +16,8 @@ Own:
 - duplicated policy across layers
 - hardcoded behavior that should extend canonical registries
 - compiler/runtime semantic drift
-- split-brain decision surfaces where local/imported/reexported/package/test/vocab/generated-Rust paths can make different decisions for the same semantic concept
+- split-brain decision surfaces where local/imported/reexported/package/test/vocab paths can make different decisions for the same semantic concept
+- design records that log mechanisms instead of decisions: a record changes only when a decision changes, in a sentence or two, and keeps decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit
 
 Do not own:
 
@@ -63,7 +64,7 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
    - duplicated semantics that should live in shared registries/helpers
    - hidden policy drift between compiler/runtime/tooling layers
 4. For any touched compiler, tooling, package, vocab, or metadata path, ask where the canonical source of truth is for callable identity, defaults, ownership/coercion, union wrapper identity, Rust metadata, dependency ownership, and vocab helper-call behavior. If two paths decide the same concept separately, file an architecture finding unless the duplication is explicitly documented and covered by tests.
-5. Check whether behavior can diverge across local source, imported source, facade reexports, package consumers, test batches, dependency vocab, formatter parsing, generated Rust, or downstream acceptance lanes. Same-module success does not clear an architectural risk when another boundary can observe the behavior differently.
+5. Check whether behavior can diverge across local source, imported source, facade reexports, package consumers, test batches, dependency vocab, formatter parsing, or downstream acceptance lanes. Same-module success does not clear an architectural risk when another boundary can observe the behavior differently.
 6. Attach findings to files, but explain the cross-file architectural reason.
 7. Architectural review may legitimately produce either:
    - concrete bugs,
@@ -86,8 +87,8 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Reviewed Clean Surfaces
 - <optional, only for risky or disputed clean calls>
@@ -111,8 +112,8 @@ Only write this file when findings are present.
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Resolution
 - <optional, only if this snapshot is written after a fix loop>

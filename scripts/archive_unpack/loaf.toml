@@ -1,0 +1,10 @@
+[project]
+name = "incan_release_archive_unpack"
+version = "0.6.0-dev.8"
+description = "Release-owned gzip tar extraction"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tar = { loaf = "crates-io/tar", version = "0.4" }

@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_semantics_core::body_ir::nominal_carrier_key;
 
 use super::TypeChecker;
 
@@ -36,9 +38,6 @@ impl TypeChecker {
         if member.identity.as_ref() != Some(selected) {
             return None;
         }
-        if member.is_async {
-            return None;
-        }
         let bindings = self.body_ir_member_bindings(&parameters, arguments, &member, args)?;
         for (name, bounds) in &member.type_param_bound_details {
             let ty = bindings.get(name)?;
@@ -62,6 +61,11 @@ impl TypeChecker {
         };
         let (_, returned) = self.method_types_substituting_call_site_self(&member, &closed_receiver);
         let returned = substitute_resolved_type(&returned, &bindings);
+        // The call produces the declaration's value type, through the same projection as its checked expression type.
+        let returned = match member.identity.as_ref() {
+            Some(identity) => self.returned_value_type(identity, &returned),
+            None => returned,
+        };
         if !Self::is_settled_type_argument(&returned) {
             return None;
         }
@@ -74,14 +78,11 @@ impl TypeChecker {
             .into_iter()
             .map(|name| bindings.get(name).cloned())
             .collect::<Option<Vec<_>>>()?;
-        self.type_info
-            .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), ordered);
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, ordered);
         self.type_info
             .calls
             .body_ir_call_result_types
-            .insert((span.start, span.end), returned.clone());
+            .insert(span, returned.clone());
         Some(returned)
     }
 
@@ -107,6 +108,7 @@ impl TypeChecker {
             let actual = self.body_ir_checked_value_type(value.span)?;
             self.infer_type_param_bindings(&parameter.ty, actual, &mut bindings);
         }
+        self.infer_type_param_bindings_from_source_bounds(&member.type_param_bound_details, &mut bindings);
         if parameters
             .iter()
             .chain(&member.type_params)
@@ -117,26 +119,47 @@ impl TypeChecker {
         Some(bindings)
     }
 
-    /// Read a newtype's checked payload declaration under the closed receiver's existing owner arguments.
-    pub(super) fn body_ir_newtype_field_type(&self, receiver: &Spanned<Expr>, field: &str) -> Option<ResolvedType> {
-        if field != "0" {
-            return None;
-        }
+    /// Read a checked nominal field under the receiver's exact declaration and closed owner arguments.
+    pub(super) fn body_ir_nominal_field_type(&self, receiver: &Spanned<Expr>, field: &str) -> Option<ResolvedType> {
         let (owner, arguments) = nominal_parts(self.body_ir_checked_value_type(receiver.span)?)?;
-        let TypeInfo::Newtype(info) = self.lookup_semantic_type_info(owner)? else {
-            return None;
+        let qualified = self.symbols.module_type_identity(owner).and_then(nominal_carrier_key);
+        let info = qualified
+            .as_deref()
+            .and_then(|key| self.lookup_semantic_type_info(key))
+            .or_else(|| self.lookup_semantic_type_info(owner))?;
+        let (parameters, declared) = match info {
+            TypeInfo::Newtype(info) if field == "0" => (&info.type_params, &info.underlying),
+            TypeInfo::Model(info) => (
+                &info.type_params,
+                &self.resolve_field_info(&info.fields, field, true, false)?.1.ty,
+            ),
+            TypeInfo::Class(info) => (
+                &info.type_params,
+                &self.resolve_field_info(&info.fields, field, false, true)?.1.ty,
+            ),
+            _ => return None,
         };
-        let returned = substitute_resolved_type(&info.underlying, &type_param_subst_map(&info.type_params, arguments));
+        let returned = substitute_resolved_type(declared, &type_param_subst_map(parameters, arguments));
         Self::is_settled_type_argument(&returned).then_some(returned)
     }
 
-    /// Carry a constant tuple element from the already checked tuple value, including a checked negative index.
-    pub(super) fn body_ir_tuple_element_type(
+    /// Carry a list or dictionary element, or constant tuple element, from its already checked collection value.
+    pub(super) fn body_ir_indexed_value_type(
         &self,
         receiver: &Spanned<Expr>,
         index: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
-        let ResolvedType::Tuple(elements) = self.body_ir_checked_value_type(receiver.span)? else {
+        let actual = self.body_ir_checked_value_type(receiver.span)?;
+        if let Some(element) = Self::body_ir_list_element_type(actual) {
+            return Some(element.clone());
+        }
+        if let ResolvedType::Generic(name, parts) = actual
+            && collections::from_str(name) == Some(CollectionTypeId::Dict)
+            && let [_, value] = parts.as_slice()
+        {
+            return Some(value.clone());
+        }
+        let ResolvedType::Tuple(elements) = actual else {
             return None;
         };
         let mut index = Self::constant_tuple_index(index)?;

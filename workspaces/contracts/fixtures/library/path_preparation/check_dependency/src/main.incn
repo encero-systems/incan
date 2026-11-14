@@ -1,0 +1,10 @@
+# behavior: checking a dependency with a custom source root retains its integer return contract
+# expect-diagnostic: INCAN-T0001
+
+from pub::values import answer
+
+
+def main() -> None:
+    """Check the result against an incompatible annotation."""
+    value: str = answer()
+    println(value)

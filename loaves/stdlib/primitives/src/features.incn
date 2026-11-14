@@ -1,0 +1,1229 @@
+"""
+Foundational typed standard-library capability catalog.
+
+This module is the source authority for the generated feature inventory. Its runtime registry contains the entries
+from this module when loaded; tools use the compiler-checked projection for complete package discovery.
+
+The catalog is deliberately module-private: it documents Incan's public surface without creating a second runtime API
+that applications would need to support or keep in sync.
+"""
+
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+from crate.features._descriptors import FeatureCategory, FeatureDescriptor, FeatureId, FeatureStability
+from crate.features._descriptors import namespaced_stdlib_forms, namespaced_stdlib_references
+from crate.features._descriptors import rust_interop_boundary_forms, rust_interop_boundary_references
+from crate.features._descriptors import checked_c_binding_forms, checked_c_binding_references
+from crate.features._descriptors import oven_interop_requirements_forms, oven_interop_requirements_references
+from crate.features._descriptors import incan_libraries_forms, incan_libraries_references
+from crate.features._descriptors import static_storage_forms, static_storage_references
+from crate.features._descriptors import first_class_functions_forms, first_class_functions_references
+from crate.features._descriptors import call_site_generics_forms, call_site_generics_references
+from crate.features._descriptors import abstract_traits_forms, abstract_traits_references
+from crate.features._descriptors import source_defined_derives_traits_forms, source_defined_derives_traits_references
+from crate.features._descriptors import model_field_metadata_forms, model_field_metadata_references
+from crate.features._descriptors import type_tokens_reflection_forms, type_tokens_reflection_references
+from crate.features._descriptors import value_enums_forms, value_enums_references
+from crate.features._descriptors import union_types_forms, union_types_references
+from crate.features._descriptors import validated_newtypes_forms, validated_newtypes_references
+from crate.features._descriptors import numeric_type_system_forms, numeric_type_system_references
+from crate.features._descriptors import loop_expressions_forms, loop_expressions_references
+from crate.features._descriptors import if_while_let_forms, if_while_let_references
+from crate.features._descriptors import pattern_alternation_forms, pattern_alternation_references
+from crate.features._descriptors import enum_methods_traits_forms, enum_methods_traits_references
+from crate.features._descriptors import computed_properties_forms, computed_properties_references
+from crate.features._descriptors import symbol_aliases_forms, symbol_aliases_references
+from crate.features._descriptors import callable_presets_forms, callable_presets_references
+from crate.features._descriptors import variadic_and_spread_calls_forms, variadic_and_spread_calls_references
+from crate.features._descriptors import user_defined_decorators_forms, user_defined_decorators_references
+from crate.features._descriptors import generators_forms, generators_references
+from crate.features._descriptors import iterator_adapters_forms, iterator_adapters_references
+from crate.features._descriptors import fallible_iteration_forms, fallible_iteration_references
+from crate.features._descriptors import result_combinators_forms, result_combinators_references
+from crate.features._descriptors import protocol_hooks_forms, protocol_hooks_references
+from crate.features._descriptors import rust_trait_adoption_forms, rust_trait_adoption_references
+from crate.features._descriptors import scoped_dsl_surfaces_forms, scoped_dsl_surfaces_references
+from crate.features._descriptors import std_web_forms, std_web_references
+from crate.features._descriptors import std_math_forms, std_math_references
+from crate.features._descriptors import std_collections_forms, std_collections_references
+from crate.features._descriptors import std_graph_forms, std_graph_references
+from crate.features._descriptors import std_fs_forms, std_fs_references
+from crate.features._descriptors import std_io_forms, std_io_references
+from crate.features._descriptors import std_regex_forms, std_regex_references
+from crate.features._descriptors import std_uuid_forms, std_uuid_references
+from crate.features._descriptors import std_compression_forms, std_compression_references
+from crate.features._descriptors import std_encoding_forms, std_encoding_references
+from crate.features._descriptors import std_hash_forms, std_hash_references
+from crate.features._descriptors import std_environ_forms, std_environ_references
+from crate.features._descriptors import std_json_forms, std_json_references
+from crate.features._descriptors import std_toml_forms, std_toml_references
+from crate.features._descriptors import std_tempfile_forms, std_tempfile_references
+from crate.features._descriptors import std_datetime_forms, std_datetime_references
+from crate.features._descriptors import std_telemetry_core_forms, std_telemetry_core_references
+from crate.features._descriptors import std_logging_forms, std_logging_references
+from crate.features._descriptors import std_checksum_forms, std_checksum_references
+from crate.features._descriptors import testing_assertions_forms, testing_assertions_references
+from crate.features._descriptors import test_runner_forms, test_runner_references
+from crate.features._descriptors import async_await_forms, async_await_references
+from crate.features._descriptors import async_race_forms, async_race_references
+from crate.features._descriptors import project_lifecycle_forms, project_lifecycle_references
+from crate.features._descriptors import (
+    workspace_multi_package_projects_forms,
+    workspace_multi_package_projects_references,
+)
+from crate.features._descriptors import toolchain_installer_manifest_forms, toolchain_installer_manifest_references
+from crate.features._descriptors import zero_clone_starter_flow_forms, zero_clone_starter_flow_references
+from crate.features._descriptors import stable_diagnostics_forms, stable_diagnostics_references
+from crate.features._descriptors import (
+    build_reports_and_rust_inspection_forms,
+    build_reports_and_rust_inspection_references,
+)
+from crate.features._descriptors import build_test_oven_observability_forms, build_test_oven_observability_references
+from crate.features._descriptors import codegraph_inspection_forms, codegraph_inspection_references
+from crate.features._descriptors import checked_api_metadata_forms, checked_api_metadata_references
+from crate.features._descriptors import (
+    compiled_providers_sdk_components_package_features_forms,
+    compiled_providers_sdk_components_package_features_references,
+)
+from crate.features._descriptors import formatter_contract_forms, formatter_contract_references
+from crate.features._descriptors import std_registry_forms, std_registry_references
+
+static features: Registry[FeatureId, FeatureDescriptor] = Registry.define(subjects=[SubjectKind.CompilationUnit])
+static namespaced_stdlib: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("NamespacedStdlib"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("NamespacedStdlib"),
+        name="Namespaced stdlib imports and decorators",
+        category=FeatureCategory.Stdlib,
+        since="0.2",
+        rfc="RFC 022",
+        stability=FeatureStability.Stable,
+        activation="Import the relevant `std.*` module.",
+        summary="Standard-library APIs and compiler-owned decorators resolve through explicit `std.*` module paths.",
+        canonical_forms=namespaced_stdlib_forms,
+        prefer_over="Bare pre-0.2 stdlib names and ambient decorator magic.",
+        references=namespaced_stdlib_references,
+    ),
+)
+static rust_interop_boundary: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("RustInteropBoundary"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("RustInteropBoundary"),
+        name="Rust interop boundary",
+        category=FeatureCategory.Interop,
+        since="0.2",
+        rfc="RFC 041",
+        stability=FeatureStability.Stable,
+        activation="Declare Rust dependencies in `loaf.toml`; import through `rust` / `rust::` paths.",
+        summary="Incan can import Rust crates, bind Rust paths, declare `rusttype` wrappers, and model explicit interop edges.",
+        canonical_forms=rust_interop_boundary_forms,
+        prefer_over="Custom Rust backend modules used when ordinary Rust imports or wrappers are sufficient.",
+        references=rust_interop_boundary_references,
+    ),
+)
+static checked_c_binding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CheckedCBindingFoundation"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CheckedCBindingFoundation"),
+        name="Checked C binding foundation",
+        category=FeatureCategory.Interop,
+        since="0.5",
+        rfc="RFC 116",
+        stability=FeatureStability.Experimental,
+        activation="Import `c` from `std.interop`, then declare a `binding` in the importing module.",
+        summary="Explicit C headers, exact scalar signatures (`i8`–`i128`, `u8`–`u128`, `usize`, `f32`, `f64`), opaque resources, output positions, paired byte or `f32` spans, bounded C-string text bridges, enum carriers, and plain layouts are verified before private generated C ABI calls.",
+        canonical_forms=checked_c_binding_forms,
+        prefer_over="Unverified Rust wrappers, ambient header discovery, string-based dynamic symbol lookup, or general raw-pointer access.",
+        references=checked_c_binding_references,
+    ),
+)
+static oven_interop_requirements: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("OvenInteropRequirements"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("OvenInteropRequirements"),
+        name="Declared Oven interop requirements",
+        category=FeatureCategory.Interop,
+        since="0.5",
+        rfc="RFC 116",
+        stability=FeatureStability.Experimental,
+        activation="Declare `[interop.c]` headers in `loaf.toml`, then check or build the source.",
+        summary="Oven supplies declared C headers to the compiler; checked bindings verify symbols and layouts with Clang for the supported host target.",
+        canonical_forms=oven_interop_requirements_forms,
+        prefer_over="Ambient host discovery, untracked interop source trees, or package manifests that claim a concrete local compiler or SDK has already been selected.",
+        references=oven_interop_requirements_references,
+    ),
+)
+static incan_libraries: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("IncanLibraries"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("IncanLibraries"),
+        name="Incan libraries and `pub::` imports",
+        category=FeatureCategory.Libraries,
+        since="0.2",
+        rfc="RFC 031",
+        stability=FeatureStability.Stable,
+        activation="Build libraries with `incan build --lib`; consume dependencies through `pub::` imports.",
+        summary="Projects publish checked APIs through explicit root facades and source-derived module namespaces.",
+        canonical_forms=incan_libraries_forms,
+        prefer_over="Copying source files between projects or relying on private module paths.",
+        references=incan_libraries_references,
+    ),
+)
+static static_storage: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StaticStorage"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StaticStorage"),
+        name="Module static storage",
+        category=FeatureCategory.Syntax,
+        since="0.2",
+        rfc="RFC 052",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="`static` declares live module-owned runtime storage, distinct from deeply immutable `const` values.",
+        canonical_forms=static_storage_forms,
+        prefer_over="Module-level mutable state hidden behind ad hoc helper functions.",
+        references=static_storage_references,
+    ),
+)
+static first_class_functions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("FirstClassFunctions"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("FirstClassFunctions"),
+        name="First-class function references",
+        category=FeatureCategory.TypeSystem,
+        since="0.2",
+        rfc="RFC 035",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Named functions and closures can be passed, stored, typed, and accepted through `CallableN` bounds.",
+        canonical_forms=first_class_functions_forms,
+        prefer_over="Closures or wrappers whose only job is to pass through an existing named function.",
+        references=first_class_functions_references,
+    ),
+)
+static call_site_generics: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CallSiteGenerics"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CallSiteGenerics"),
+        name="Explicit call-site generics",
+        category=FeatureCategory.TypeSystem,
+        since="0.2",
+        rfc="RFC 054",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Direct function and method calls can spell type arguments when inference needs help.",
+        canonical_forms=call_site_generics_forms,
+        prefer_over="Adding throwaway typed locals or duplicate helper functions only to steer inference.",
+        references=call_site_generics_references,
+    ),
+)
+static abstract_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("AbstractTraits"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("AbstractTraits"),
+        name="Abstract traits and supertraits",
+        category=FeatureCategory.TypeSystem,
+        since="0.2",
+        rfc="RFC 042",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Trait names are abstract annotation types, and traits can adopt supertraits with `with`.",
+        canonical_forms=abstract_traits_forms,
+        prefer_over="Hidden generic bounds or duplicated method requirements when a trait annotation names the concept.",
+        references=abstract_traits_references,
+    ),
+)
+static source_defined_derives_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("SourceDefinedDerivesTraits"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("SourceDefinedDerivesTraits"),
+        name="Source-defined derives and trait contracts",
+        category=FeatureCategory.TypeSystem,
+        since="0.2",
+        rfc="RFC 024",
+        stability=FeatureStability.Stable,
+        activation="Import the relevant `std.derives.*`, `std.traits.*`, or derivable module.",
+        summary="Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore.",
+        canonical_forms=source_defined_derives_traits_forms,
+        prefer_over="Backend-only helper shims or comments that claim derive behavior without source-visible contracts.",
+        references=source_defined_derives_traits_references,
+    ),
+)
+static model_field_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ModelFieldMetadata"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ModelFieldMetadata"),
+        name="Model field metadata and reflection",
+        category=FeatureCategory.TypeSystem,
+        since="0.2",
+        rfc="RFC 021",
+        stability=FeatureStability.Stable,
+        activation="None for field metadata; import `std.reflection` helpers when needed.",
+        summary="Model fields carry aliases, descriptions, rename continuity and canonical-hash participation; reflection exposes the checked facts through typed `FieldInfo` metadata.",
+        canonical_forms=model_field_metadata_forms,
+        prefer_over="Stringly schema maps that duplicate model field names and wire aliases.",
+        references=model_field_metadata_references,
+    ),
+)
+static type_tokens_reflection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("TypeTokensReflection"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("TypeTokensReflection"),
+        name="Type tokens and type-argument reflection",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 107",
+        stability=FeatureStability.Stable,
+        activation="Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`.",
+        summary="Primitive type arguments expose stable source names. Explicit `Type[T]` contexts admit checked primitive, model, enum, trait, alias, constrained-scalar and newtype tokens for storage and precise overload selection; constrained generic overloads map explicit type arguments to precise results without making types general runtime values.",
+        canonical_forms=type_tokens_reflection_forms,
+        prefer_over="String target names, dummy schema values, or helper families used only to recover type-specific return types.",
+        references=type_tokens_reflection_references,
+    ),
+)
+static value_enums: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ValueEnums"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ValueEnums"),
+        name="Value enums",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 032",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Enums can use `str` or `int` backing values while preserving enum type safety.",
+        canonical_forms=value_enums_forms,
+        prefer_over="Loose string/int constants or duplicate parsing helpers around enum-like values.",
+        references=value_enums_references,
+    ),
+)
+static union_types: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("UnionTypes"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("UnionTypes"),
+        name="Union types and narrowing",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 029",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Closed anonymous unions support `Union[A, B]`, `A | B`, narrowing, and exhaustive match type patterns.",
+        canonical_forms=union_types_forms,
+        prefer_over="Untyped `Any`-like values, parallel option fields, or manual tag/payload models for closed alternatives.",
+        references=union_types_references,
+    ),
+)
+static validated_newtypes: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ValidatedNewtypes"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ValidatedNewtypes"),
+        name="Validated newtypes and checked coercion",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 017",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Newtypes can validate primitive constraints and participate in checked construction/coercion.",
+        canonical_forms=validated_newtypes_forms,
+        prefer_over="Raw primitives passed across APIs with comments describing expected invariants.",
+        references=validated_newtypes_references,
+    ),
+)
+static numeric_type_system: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("NumericTypeSystem"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("NumericTypeSystem"),
+        name="Exact numeric types and conversions",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 009",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Exact integer widths, float widths, schema aliases, decimal precision/scale, and explicit resize policies are typed language surface.",
+        canonical_forms=numeric_type_system_forms,
+        prefer_over="Using broad `int`/`float` at wire, Rust interop, binary, or schema boundaries where representation matters.",
+        references=numeric_type_system_references,
+    ),
+)
+static loop_expressions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("LoopExpressions"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("LoopExpressions"),
+        name="`loop:` expressions and break values",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 016",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Intentional infinite loops can produce values directly through `break <value>`.",
+        canonical_forms=loop_expressions_forms,
+        prefer_over="Mutable sentinel initialization followed by later branch assignment.",
+        references=loop_expressions_references,
+    ),
+)
+static if_while_let: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("IfWhileLet"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("IfWhileLet"),
+        name="`if let` and `while let`",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 049",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Single-pattern control flow handles the common success-path case without full `match` scaffolding.",
+        canonical_forms=if_while_let_forms,
+        prefer_over="Verbose one-arm `match` blocks where the non-match path intentionally does nothing.",
+        references=if_while_let_references,
+    ),
+)
+static pattern_alternation: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("PatternAlternation"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("PatternAlternation"),
+        name="Pattern alternation",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 071",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="`match` and `if let` patterns can share a branch across alternatives with compatible bindings.",
+        canonical_forms=pattern_alternation_forms,
+        prefer_over="Duplicated branch bodies for variants that have the same behavior.",
+        references=pattern_alternation_references,
+    ),
+)
+static enum_methods_traits: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("EnumMethodsTraits"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("EnumMethodsTraits"),
+        name="Enum methods and trait adoption",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 050",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Enums can own methods, associated functions, and trait implementations directly in the enum body.",
+        canonical_forms=enum_methods_traits_forms,
+        prefer_over="Detached helper functions for behavior that belongs to a closed enum.",
+        references=enum_methods_traits_references,
+    ),
+)
+static computed_properties: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ComputedProperties"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ComputedProperties"),
+        name="Computed properties",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 046",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Models, classes, and traits can expose field-like computed readers with `property`.",
+        canonical_forms=computed_properties_forms,
+        prefer_over="Zero-argument methods when callers should read a value-like member.",
+        references=computed_properties_references,
+    ),
+)
+static symbol_aliases: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("SymbolAliases"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("SymbolAliases"),
+        name="Symbol, method, and variant aliases",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 083",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Aliases expose another resolved name for the same declaration, method, or enum variant without duplicating behavior.",
+        canonical_forms=symbol_aliases_forms,
+        prefer_over="Wrapper functions or duplicated enum variants used only for compatibility names.",
+        references=symbol_aliases_references,
+    ),
+)
+static callable_presets: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CallablePresets"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CallablePresets"),
+        name="Callable presets with `partial`",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 084",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="`partial` creates a callable surface from an existing callable by supplying named preset values.",
+        canonical_forms=callable_presets_forms,
+        prefer_over="Hand-written wrappers whose only job is to pass the same keyword defaults.",
+        references=callable_presets_references,
+    ),
+)
+static variadic_and_spread_calls: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("VariadicAndSpreadCalls"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("VariadicAndSpreadCalls"),
+        name="Rest parameters, unpacking, and spreads",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 038",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="Functions can capture `*args` / `**kwargs`; calls and literals support typed unpack/spread forms.",
+        canonical_forms=variadic_and_spread_calls_forms,
+        prefer_over="Manually spelling every forwarding arity or merging collections one element at a time.",
+        references=variadic_and_spread_calls_references,
+    ),
+)
+static user_defined_decorators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("UserDefinedDecorators"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("UserDefinedDecorators"),
+        name="User-defined decorators",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 036",
+        stability=FeatureStability.Stable,
+        activation="None for user-defined decorators; compiler-owned decorators keep their documented imports.",
+        summary="Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose `func.__name__`.",
+        canonical_forms=user_defined_decorators_forms,
+        prefer_over="Boilerplate wrapper declarations around every function that needs the same callable transform.",
+        references=user_defined_decorators_references,
+    ),
+)
+static generators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("Generators"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("Generators"),
+        name="Generators",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 006",
+        stability=FeatureStability.Stable,
+        activation="None.",
+        summary="`yield`-based functions and generator expressions produce lazy `Generator[T]` values.",
+        canonical_forms=generators_forms,
+        prefer_over="Eager list construction when callers only need lazy iteration.",
+        references=generators_references,
+    ),
+)
+static iterator_adapters: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("IteratorAdapters"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("IteratorAdapters"),
+        name="Iterator adapters and terminal consumers",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 088",
+        stability=FeatureStability.Stable,
+        activation="Use iterator values.",
+        summary="Iterator pipelines expose lazy adapters and explicit terminal consumers.",
+        canonical_forms=iterator_adapters_forms,
+        prefer_over="Manual loop accumulators for ordinary map/filter/fold pipeline shapes.",
+        references=iterator_adapters_references,
+    ),
+)
+static fallible_iteration: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("FallibleIteration"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("FallibleIteration"),
+        name="Fallible iteration and combinators",
+        category=FeatureCategory.Stdlib,
+        since="0.5",
+        rfc="RFC 115",
+        stability=FeatureStability.Stable,
+        activation="Import `FallibleIterator` from `std.derives.collection` or use a standard fallible stream.",
+        summary="Fallible streams separate exhaustion from typed poll errors and support lazy pipelines.",
+        canonical_forms=fallible_iteration_forms,
+        prefer_over="Hand-written polling loops that duplicate item, exhaustion, and error routing for each source.",
+        references=fallible_iteration_references,
+    ),
+)
+static result_combinators: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ResultCombinators"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ResultCombinators"),
+        name="`Result[T, E]` combinators",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 070",
+        stability=FeatureStability.Stable,
+        activation="Use `Result[T, E]` values.",
+        summary="`Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps.",
+        canonical_forms=result_combinators_forms,
+        prefer_over="Nested matches that only rewrap `Ok` / `Err` around one transformed branch.",
+        references=result_combinators_references,
+    ),
+)
+static protocol_hooks: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ProtocolHooks"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ProtocolHooks"),
+        name="Protocol hooks for core syntax",
+        category=FeatureCategory.TypeSystem,
+        since="0.3",
+        rfc="RFC 068",
+        stability=FeatureStability.Stable,
+        activation="Define compatible dunder hooks and adopt/document the corresponding trait vocabulary where useful.",
+        summary="User-defined types can participate in truthiness, length, membership, iteration, indexing, assignment, and calls.",
+        canonical_forms=protocol_hooks_forms,
+        prefer_over="Special-casing custom types in caller code instead of giving the type the expected protocol.",
+        references=protocol_hooks_references,
+    ),
+)
+static rust_trait_adoption: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("RustTraitAdoption"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("RustTraitAdoption"),
+        name="Rust trait adoption from Incan",
+        category=FeatureCategory.Interop,
+        since="0.3",
+        rfc="RFC 043",
+        stability=FeatureStability.Stable,
+        activation="Import the Rust trait metadata and adopt with `with TraitName`.",
+        summary="Newtype and rusttype declarations can author Rust trait impls with Incan adoption syntax.",
+        canonical_forms=rust_trait_adoption_forms,
+        prefer_over="Writing Rust-shaped `impl Trait for Type` concepts in comments or custom backend code.",
+        references=rust_trait_adoption_references,
+    ),
+)
+static scoped_dsl_surfaces: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ScopedDslSurfaces"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ScopedDslSurfaces"),
+        name="Scoped DSL surfaces",
+        category=FeatureCategory.Syntax,
+        since="0.3",
+        rfc="RFC 040",
+        stability=FeatureStability.Stable,
+        activation="Import a vocab package that publishes scoped surface descriptors.",
+        summary="Library vocab crates can activate declaration, clause, glyph, leading-dot, and scoped symbol syntax inside their own DSL blocks.",
+        canonical_forms=scoped_dsl_surfaces_forms,
+        prefer_over="Global parser changes for syntax that only belongs to one imported DSL.",
+        references=scoped_dsl_surfaces_references,
+    ),
+)
+static std_web: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdWeb"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdWeb"),
+        name="`std.web` hosted web framework",
+        category=FeatureCategory.Stdlib,
+        since="0.2",
+        rfc="RFC 023",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.web` or submodules such as `std.web.routing`.",
+        summary="`std.web` provides hosted web app, routing, request, response and macro surfaces through compiled standard packages and their checked native dependencies.",
+        canonical_forms=std_web_forms,
+        prefer_over="Compiler-special-cased web wrappers or direct Axum wiring for ordinary hosted Incan web apps.",
+        references=std_web_references,
+    ),
+)
+static std_math: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdMath"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdMath"),
+        name="`std.math` numeric helpers",
+        category=FeatureCategory.Stdlib,
+        since="0.2",
+        rfc="RFC 022",
+        stability=FeatureStability.Stable,
+        activation="Import `std.math`.",
+        summary="`std.math` provides mathematical constants, integer gcd/lcm helpers, floating-point functions, and numeric-string shape checks.",
+        canonical_forms=std_math_forms,
+        prefer_over="Direct Rust math imports or project-local numeric string probes for ordinary numeric helper calls.",
+        references=std_math_references,
+    ),
+)
+static std_collections: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdCollections"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdCollections"),
+        name="`std.collections` specialized containers",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 030",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.collections`.",
+        summary="Specialized containers cover deque, counter, default dict, ordered/sorted maps and sets, chain maps, and priority queues.",
+        canonical_forms=std_collections_forms,
+        prefer_over="Encoding specialized container behavior in plain `list`, `dict`, or `set` plus ad hoc helpers.",
+        references=std_collections_references,
+    ),
+)
+static std_graph: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdGraph"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdGraph"),
+        name="`std.graph` directed graph types",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 047",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.graph`.",
+        summary="Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering.",
+        canonical_forms=std_graph_forms,
+        prefer_over="Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs.",
+        references=std_graph_references,
+    ),
+)
+static std_fs: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdFs"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdFs"),
+        name="`std.fs` filesystem APIs",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 055",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.fs` or submodules such as `std.fs.path`.",
+        summary="Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, durability syncs, and crash-safe publication through same-filesystem replacement, directory synchronization, and advisory locks.",
+        canonical_forms=std_fs_forms,
+        prefer_over="One-off Rust filesystem wrappers for ordinary path and file work.",
+        references=std_fs_references,
+    ),
+)
+static std_io: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdIo"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdIo"),
+        name="`std.io` in-memory binary streams",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 056",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.io`.",
+        summary="Binary streams cover endian-aware I/O, cursors, delimiters, fallible chunks, and buffer extraction.",
+        canonical_forms=std_io_forms,
+        prefer_over="Byte-twiddling helpers with unclear endian or cursor semantics.",
+        references=std_io_references,
+    ),
+)
+static std_regex: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdRegex"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdRegex"),
+        name="`std.regex` safe-default regular expressions",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 059",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.regex`.",
+        summary="`std.regex` provides compiled regular expressions, match spans, captures, splitting, and replacement through the predictable stdlib regex engine.",
+        canonical_forms=std_regex_forms,
+        prefer_over="Ad hoc string scans or direct Rust regex interop when the safe default stdlib engine is sufficient.",
+        references=std_regex_references,
+    ),
+)
+static std_uuid: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdUuid"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdUuid"),
+        name="`std.uuid` UUID values",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 060",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.uuid`.",
+        summary="`std.uuid` provides RFC 9562 UUID parsing, formatting, generation, byte and integer conversion, version inspection, and standard namespace constants.",
+        canonical_forms=std_uuid_forms,
+        prefer_over="Loose UUID strings, byte arrays, or project-local UUID wrappers when UUID semantics belong in the type.",
+        references=std_uuid_references,
+    ),
+)
+static std_compression: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdCompression"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdCompression"),
+        name="`std.compression` codec workflows",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 061",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.compression` or one of its codec namespaces.",
+        summary="`std.compression` provides codec-explicit compression and decompression for byte payloads, streams, and file handles, with explicit decompression autodetection.",
+        canonical_forms=std_compression_forms,
+        prefer_over="Backend-crate compression wrappers, implicit codec guesses, or ad hoc byte transforms for standard compression formats.",
+        references=std_compression_references,
+    ),
+)
+static std_encoding: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdEncoding"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdEncoding"),
+        name="`std.encoding` binary-text encodings",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 064",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.encoding`.",
+        summary="`std.encoding` provides explicit binary-to-text encoding and strict decoding helpers for hex, base32, base58, base64, base85, and Bech32 formats.",
+        canonical_forms=std_encoding_forms,
+        prefer_over="Project-local encoding wrappers, hidden alphabet flags, or guessing formats from payload shape.",
+        references=std_encoding_references,
+    ),
+)
+static std_hash: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdHash"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdHash"),
+        name="`std.hash` hashing primitives",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 065",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.hash`.",
+        summary="`std.hash` provides deterministic byte, file, reader, and incremental hashing through explicit cryptographic, compatibility, and non-cryptographic algorithm namespaces. `Sha256Hasher` is a public stored-state handle for byte streams owned across model or class methods. `hmac_sha256` adds keyed authentication with constant-time verification, for values that arrive across a boundary the caller does not trust.",
+        canonical_forms=std_hash_forms,
+        prefer_over="Ad hoc hashing shims, hidden default algorithms, `std.checksum` when the caller needs hash rather than checksum semantics, or an unkeyed digest where the caller actually needs to authenticate a value rather than detect corruption.",
+        references=std_hash_references,
+    ),
+)
+static std_environ: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdEnviron"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdEnviron"),
+        name="`std.environ` runtime environment access",
+        category=FeatureCategory.Stdlib,
+        since="0.5",
+        rfc="RFC 089",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.environ`.",
+        summary="`std.environ` provides redacted, read-only Unicode environment access through string helpers and typed `TryFrom[str]` reads for primitives, explicit adopters, and validated newtypes.",
+        canonical_forms=std_environ_forms,
+        prefer_over="Direct `rust::std::env` imports or shell glue for ordinary runtime environment reads.",
+        references=std_environ_references,
+    ),
+)
+static std_json: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdJson"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdJson"),
+        name="`std.json` dynamic JSON values",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 051",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.json`.",
+        summary="`JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop.",
+        canonical_forms=std_json_forms,
+        prefer_over="Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open.",
+        references=std_json_references,
+    ),
+)
+static std_toml: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdToml"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdToml"),
+        name="`std.toml` project documents",
+        category=FeatureCategory.Stdlib,
+        since="0.6",
+        rfc="None (API contract: issue #1409)",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.toml`.",
+        summary="Read typed TOML values and declared models with located diagnostics, and serialize generated documents while retaining date/time kinds. Locate table values for application-owned validation diagnostics.",
+        canonical_forms=std_toml_forms,
+        prefer_over="JSON conversion that discards TOML date/time kinds or structural-error source locations.",
+        references=std_toml_references,
+    ),
+)
+static std_tempfile: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdTempfile"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdTempfile"),
+        name="`std.tempfile` temporary resources",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 010",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.tempfile`.",
+        summary="Temporary files and directories are explicit resources with cleanup and persist semantics.",
+        canonical_forms=std_tempfile_forms,
+        prefer_over="Manual random path generation or unchecked cleanup around temporary files.",
+        references=std_tempfile_references,
+    ),
+)
+static std_datetime: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdDatetime"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdDatetime"),
+        name="`std.datetime` temporal values",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 058",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.datetime` modules or prelude.",
+        summary="Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic.",
+        canonical_forms=std_datetime_forms,
+        prefer_over="Raw strings or integer timestamps inside code that has date/time semantics.",
+        references=std_datetime_references,
+    ),
+)
+static std_telemetry_core: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdTelemetryCore"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdTelemetryCore"),
+        name="`std.telemetry.core` data model",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 072",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.telemetry.core` or the `std.telemetry` prelude.",
+        summary="Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters.",
+        canonical_forms=std_telemetry_core_forms,
+        prefer_over="Stringifying structured observability fields before they reach logging or telemetry boundaries.",
+        references=std_telemetry_core_references,
+    ),
+)
+static std_logging: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdLogging"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdLogging"),
+        name="`std.logging` structured logging",
+        category=FeatureCategory.Stdlib,
+        since="0.3",
+        rfc="RFC 072",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.logging`; ambient `log` is available for the current module logger.",
+        summary="Structured logging includes levels, named loggers, bound fields, formatting, JSON rendering, and telemetry values.",
+        canonical_forms=std_logging_forms,
+        prefer_over="Printing diagnostic strings or routing ordinary application logging through custom Rust shims.",
+        references=std_logging_references,
+    ),
+)
+static std_checksum: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdChecksum"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdChecksum"),
+        name="`std.checksum` CRC32 helpers",
+        category=FeatureCategory.Stdlib,
+        since="0.5",
+        rfc="RFC 065",
+        stability=FeatureStability.Stable,
+        activation="Import from `std.checksum`.",
+        summary="`std.checksum` exposes CRC32 value, digest-byte, and incremental helpers for compatibility and accidental-corruption checks, separate from `std.hash` hashing contracts.",
+        canonical_forms=std_checksum_forms,
+        prefer_over="Project-local Rust shims or `std.hash` helpers when a protocol explicitly requires CRC32 checksum semantics.",
+        references=std_checksum_references,
+    ),
+)
+static testing_assertions: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("TestingAssertions"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("TestingAssertions"),
+        name="Testing assertions and markers",
+        category=FeatureCategory.Testing,
+        since="0.3",
+        rfc="RFC 018",
+        stability=FeatureStability.Stable,
+        activation="Use `assert` directly; import marker/helper APIs from `std.testing`.",
+        summary="Tests can use language assertions, raises checks, helper assertions, fixtures, parametrization, and marker decorators.",
+        canonical_forms=testing_assertions_forms,
+        prefer_over="Ad hoc panic helpers or external test metadata formats for ordinary Incan tests.",
+        references=testing_assertions_references,
+    ),
+)
+static test_runner: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("TestRunner"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("TestRunner"),
+        name="`incan test` runner",
+        category=FeatureCategory.Testing,
+        since="0.3",
+        rfc="RFC 019",
+        stability=FeatureStability.Stable,
+        activation="Run `incan test`.",
+        summary="The runner owns discovery, inline test modules, stable ids, selection, fixtures, parametrization, reporting, shuffling, and scheduling.",
+        canonical_forms=test_runner_forms,
+        prefer_over="Project-local scripts that duplicate core test discovery and reporting behavior.",
+        references=test_runner_references,
+    ),
+)
+static async_await: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("AsyncAwait"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("AsyncAwait"),
+        name="Async and await",
+        category=FeatureCategory.Async,
+        since="0.2",
+        rfc="RFC 172",
+        stability=FeatureStability.Stable,
+        activation="Use `async def` or `await`; import `std.async` only for library APIs.",
+        summary="`async` and `await` are reserved language syntax, while compiled `std.async` modules provide native tasks, timeouts and runtime support.",
+        canonical_forms=async_await_forms,
+        prefer_over="Threading async behavior through synchronous wrappers or importing a library only to activate syntax.",
+        references=async_await_references,
+    ),
+)
+static async_race: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("AsyncRace"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("AsyncRace"),
+        name="Async race and awaitability",
+        category=FeatureCategory.Async,
+        since="0.3",
+        rfc="RFC 172",
+        stability=FeatureStability.Stable,
+        activation="Use `race for`; import `std.async.race` only for `Awaitable[T]` and helper APIs.",
+        summary="Language-owned `race for`, `Awaitable[T]`, and helper-style race composition support first-ready async workflows.",
+        canonical_forms=async_race_forms,
+        prefer_over="Legacy `std.async.select` or hand-rolled polling loops.",
+        references=async_race_references,
+    ),
+)
+static project_lifecycle: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ProjectLifecycle"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ProjectLifecycle"),
+        name="Project lifecycle tooling",
+        category=FeatureCategory.Tooling,
+        since="0.3",
+        rfc="RFC 015",
+        stability=FeatureStability.Stable,
+        activation="Declare the project and scripts in `loaf.toml`, then pass an explicit source path to Oven.",
+        summary="Oven reads project manifests, selects compilation inputs and prepares declared dependencies before checking, building, running or testing source.",
+        canonical_forms=project_lifecycle_forms,
+        prefer_over="Duplicated project resolution in compiler and editor tools.",
+        references=project_lifecycle_references,
+    ),
+)
+static workspace_multi_package_projects: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("WorkspaceMultiPackageProjects"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("WorkspaceMultiPackageProjects"),
+        name="Path-linked multi-package projects",
+        category=FeatureCategory.Tooling,
+        since="0.5",
+        rfc="RFC 077",
+        stability=FeatureStability.Stable,
+        activation="Declare path dependencies and select a package's source explicitly.",
+        summary="Oven prepares the selected package's active path dependency graph, with checked public aliases and unified package features.",
+        canonical_forms=workspace_multi_package_projects_forms,
+        prefer_over="Implicit cross-project dependency activation or copying a dependency's source into its consumer.",
+        references=workspace_multi_package_projects_references,
+    ),
+)
+static toolchain_installer_manifest: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ToolchainInstallerManifest"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ToolchainInstallerManifest"),
+        name="Toolchain installer and release manifest",
+        category=FeatureCategory.Tooling,
+        since="0.4",
+        rfc="RFC 015",
+        stability=FeatureStability.Stable,
+        activation="Pack an installed toolchain and install the resulting native archive.",
+        summary="Oven verifies a staged archive's portable manifest, binds the local Rust sysroot and checks the compiler identity before publishing an installation.",
+        canonical_forms=toolchain_installer_manifest_forms,
+        prefer_over="Treating Cargo, repository checkouts, and package-manager adapters as separate sources of install truth.",
+        references=toolchain_installer_manifest_references,
+    ),
+)
+static zero_clone_starter_flow: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("ZeroCloneStarterFlow"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("ZeroCloneStarterFlow"),
+        name="Installed-toolchain starter project flow",
+        category=FeatureCategory.Tooling,
+        since="0.4",
+        rfc="RFC 015",
+        stability=FeatureStability.Stable,
+        activation="Create a manifest, source entry and test file, then run the installed commands.",
+        summary="A project with a declared script can run, test and build through an installed toolchain without cloning the compiler repository.",
+        canonical_forms=zero_clone_starter_flow_forms,
+        prefer_over="Cloning the compiler repository or copying examples manually before a first run.",
+        references=zero_clone_starter_flow_references,
+    ),
+)
+static stable_diagnostics: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StableDiagnostics"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StableDiagnostics"),
+        name="Stable diagnostic reports",
+        category=FeatureCategory.Tooling,
+        since="0.4",
+        rfc="RFC 015",
+        stability=FeatureStability.Stable,
+        activation="Use `incan check PATH --format json`.",
+        summary="Check reports publish stable diagnostic codes, source spans, notes, hints and explanation command strings in versioned JSON.",
+        canonical_forms=stable_diagnostics_forms,
+        prefer_over="Scraping terminal diagnostics or building tool-specific error-code maps.",
+        references=stable_diagnostics_references,
+    ),
+)
+static build_reports_and_rust_inspection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("BuildReportsAndRustInspection"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("BuildReportsAndRustInspection"),
+        name="Unit descriptions and checked graph inspection",
+        category=FeatureCategory.Tooling,
+        since="0.4",
+        rfc="RFC 015",
+        stability=FeatureStability.Stable,
+        activation="Use `oven describe-unit` or `incan inspect codegraph` with an explicit source path.",
+        summary="Unit descriptions publish selected compilation inputs; checked graphs expose declarations, Rust interop facts, source ranges and provenance.",
+        canonical_forms=build_reports_and_rust_inspection_forms,
+        prefer_over="Scraping terminal progress output for source or dependency facts.",
+        references=build_reports_and_rust_inspection_references,
+    ),
+)
+static build_test_oven_observability: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("BuildTestOvenObservability"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("BuildTestOvenObservability"),
+        name="Build and test Oven observability",
+        category=FeatureCategory.Tooling,
+        since="0.5",
+        rfc="RFC 015",
+        stability=FeatureStability.Experimental,
+        activation="Set `OVEN_TRACE=-` for preparation traces or request a unit description.",
+        summary="Oven traces distinguish compilation, executable reuse and replayed refusals, with the reason for preparing a changed unit.",
+        canonical_forms=build_test_oven_observability_forms,
+        prefer_over="Inferring compilation or reuse from timestamps and elapsed time alone.",
+        references=build_test_oven_observability_references,
+    ),
+)
+static codegraph_inspection: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CodegraphInspection"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CodegraphInspection"),
+        name="Compiler-backed codegraph inspection",
+        category=FeatureCategory.Tooling,
+        since="0.4",
+        rfc="RFC 106",
+        stability=FeatureStability.Stable,
+        activation="Use `incan inspect codegraph`.",
+        summary="Incan-language source files, modules, declarations, imports, exports, body-level reference and call syntax, conservative resolved reference and call targets, containment, spans, provenance, language tags, degraded state, and diagnostics can be exported as deterministic JSONL records.",
+        canonical_forms=codegraph_inspection_forms,
+        prefer_over="Repeated grep/read loops or tool-specific source scrapers when agents and tooling need basic Incan structure.",
+        references=codegraph_inspection_references,
+    ),
+)
+static checked_api_metadata: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CheckedApiMetadata"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CheckedApiMetadata"),
+        name="Checked API metadata",
+        category=FeatureCategory.Tooling,
+        since="0.3",
+        rfc="RFC 048",
+        stability=FeatureStability.Stable,
+        activation="Build a library; consumers and LSP read its published `.incnlib` metadata.",
+        summary="Checked libraries publish structured API metadata with public declarations, signatures, documentation and namespace members.",
+        canonical_forms=checked_api_metadata_forms,
+        prefer_over="Scraping source text when tooling needs checked API contracts.",
+        references=checked_api_metadata_references,
+    ),
+)
+static compiled_providers_sdk_components_package_features: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("CompiledProvidersSdkComponentsPackageFeatures"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("CompiledProvidersSdkComponentsPackageFeatures"),
+        name="Compiled libraries, standard packages, and package features",
+        category=FeatureCategory.Libraries,
+        since="0.5",
+        rfc="RFC 114",
+        stability=FeatureStability.Stable,
+        activation="Use installed standard packages and declared dependencies; select package features in manifests or unit options.",
+        summary="Standard packages are compiled Loaves. Package features select additive source and dependency facts, with the selected features recorded in the unit description.",
+        canonical_forms=compiled_providers_sdk_components_package_features_forms,
+        prefer_over="Hardcoded stdlib inventories, copied provider source, or Cargo feature names used as public package semantics.",
+        references=compiled_providers_sdk_components_package_features_references,
+    ),
+)
+static formatter_contract: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("FormatterContract"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("FormatterContract"),
+        name="Formatter spacing and wrapping contract",
+        category=FeatureCategory.Tooling,
+        since="0.3",
+        rfc="RFC 053",
+        stability=FeatureStability.Stable,
+        activation="Run `incan fmt`.",
+        summary="Formatter output has explicit vertical-spacing buckets, docstring normalization, comment attachment, and common wrapping rules.",
+        canonical_forms=formatter_contract_forms,
+        prefer_over="Hand-maintained whitespace conventions that drift from the formatter.",
+        references=formatter_contract_references,
+    ),
+)
+static std_registry: RegistryEntry[FeatureId, FeatureDescriptor] = features.entry(
+    key=FeatureId("StdRegistry"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=FeatureDescriptor(
+        id=FeatureId("StdRegistry"),
+        name="`std.registry` typed declaration catalogs",
+        category=FeatureCategory.Stdlib,
+        since="0.5",
+        rfc="RFC 113",
+        stability=FeatureStability.Experimental,
+        activation="Import from `std.registry` and define a typed static registry.",
+        summary="Typed registries associate checked structural descriptors with declarations, compilation units, or packages while keeping complete inspection distinct from loaded runtime entries.",
+        canonical_forms=std_registry_forms,
+        prefer_over="Comment metadata blocks, source scanners, global registration side effects, or Rust-authored catalog facades.",
+        references=std_registry_references,
+    ),
+)

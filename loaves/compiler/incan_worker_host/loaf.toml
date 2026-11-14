@@ -1,0 +1,11 @@
+[project]
+name = "incan_worker_host"
+version = "0.6.0-dev.8"
+description = "The compiler worker host: versioned compile and record protocols and the worker process lifecycle"
+
+[dependencies]
+incan_platform = { path = "../../platform" }
+internal_models = { path = "../internal_models" }
+
+[build]
+rust-edition = "2024"

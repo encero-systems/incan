@@ -1,0 +1,295 @@
+"""Compile a Rust facet's binaries against its built libraries, and bake each one under its producer identity."""
+
+from std.fs import Path
+from rust::std::env::consts import OS
+from codegen import (
+    DARWIN_UUID_SALT,
+    remap_arguments,
+    rust_executable_arguments,
+    rust_incremental_arguments,
+    rust_metadata,
+)
+from darwin_executable import normalize_release_executable
+from loaf_local_graph import LocalFacet
+from observation import trace
+from publication import place
+from unit_freshness import Key, fingerprint
+from rust_freshness import compilation_observations, dependency_arguments, inputs_unchanged, library_key
+from rust_freshness import relocate_dependencies
+from rust_bakery import claim_rust, rust_claim, rust_store, rust_unit_name
+from bakery import find, seal, staging, view
+from bakery_roots import register_root
+from rust_manifest import RustFacet, package_environment
+from rust_build import (
+    BuiltUnit,
+    RustBuild,
+    ToolchainLibraries,
+    artifact_context,
+    incremental_directory,
+    invoke_rustc,
+    library_arguments,
+    linking,
+    materialized_arguments,
+    native_linker_fingerprint,
+    selected_toolchain,
+    toolchain_libraries,
+)
+
+
+pub def compile_binary(
+    name: str,
+    source: str,
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    testing: bool = false,
+    test_role: str = "unit",
+    root_library_key: str = "",
+) -> Result[str, str]:
+    """
+    Reuse or compile one root binary, publishing only a complete executable bound to its inputs.
+
+    1. Name the binary and the crate it compiles from.
+    2. Link the root's own library, then everything the facet links.
+    3. A binary that links the toolchain's own libraries carries the runpaths to find them.
+    4. Reuse an unchanged binary, or compile and atomically publish it.
+
+    Dependency evidence that is absent, stale or cannot identify the selected checkout is rescanned before anything
+    is hashed. Published dep-info names project sources relatively, so a later checkout can validate the same unit.
+    """
+    # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
+    directory = output.joinpath("bin")
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    mut output_name = name
+    if testing:
+        output_name = f"{test_role}-{name}-tests"
+    binary = directory.joinpath(output_name)
+    crate_id = name.replace("-", "_")
+    mut arguments = binary_arguments(name, source, facet, declared, request, built, search, testing, root_library_key)?
+    # 2. The binary links the root's own library first when it has one, then everything the facet links.
+    mut libraries: Option[ToolchainLibraries] = None
+    if declared.sysroot:
+        libraries = Some(toolchain_libraries(request.rustc)?)
+    environment = binary_environment(request.rustc, facet.project, declared, crate_id, libraries)?
+    # 3. A binary that loads the toolchain's own libraries can find them, wherever its `sysroot` link points.
+    if let Some(selected) = libraries:
+        arguments = arguments + runpath_arguments(selected)
+    # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
+    dependencies = directory.joinpath(f"{output_name}.d")
+    mut inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
+    label = f"unit {name} rust binary"
+    store = rust_store()?
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
+        return Ok(binary.0)
+    # Old dep-info proposes a hit only. A miss rescans before claiming the complete identity: new modules and
+    # newly selected includes must enter that identity before the native producer runs.
+    discovered = dependency_arguments(arguments, dependencies)
+    invoke_rustc(request.rustc, discovered, environment, declared.unstable, name)?
+    inputs = binary_key(directory, dependencies, facet, declared, request, arguments, environment)?
+    held = claim_rust(store, f"binary {inputs.digest}")?
+    if view_baked_binary(store, inputs, name, output_name, directory, facet.project)?:
+        return Ok(binary.0)
+    trace(f"{label}: compiled (not baked)")
+    toolchain = selected_toolchain(request)?
+    observations = compilation_observations(Path(facet.project), dependencies, arguments, [], toolchain)?
+    staged = staging(store, f"binary-{name}", 0, rust_claim(f"binary {inputs.digest}")?)?
+    staged_binary = staged.joinpath(output_name)
+    staged_dependencies = staged.joinpath(f"{output_name}.d")
+    emitted = materialized_arguments(arguments, inputs) + [
+        "--emit",
+        f"link,dep-info={staged_dependencies.0}",
+        "-o",
+        staged_binary.0,
+    ]
+    scratch = incremental_directory(request, facet, output_name)
+    invoke_rustc(
+        request.rustc,
+        emitted + rust_incremental_arguments(scratch, arguments),
+        environment,
+        declared.unstable,
+        name,
+    )?
+    normalize_release_executable(staged_binary, request.profile)?
+    current = binary_key(directory, staged_dependencies, facet, declared, request, arguments, environment)?
+    if (
+        current.digest != inputs.digest
+        or not inputs_unchanged(staged_dependencies, observations, Some(Path(facet.project)), arguments)?
+    ):
+        return Err(f"Rust producer inputs changed while compiling {name}")
+    if current.refusal != "":
+        place(staged_binary, binary)?
+        place(staged_dependencies, dependencies)?
+        println(f"compiled {name}")
+        return Ok(binary.0)
+    # Baked evidence is interpreted in each consumer's checkout, just as a library's dependency evidence is.
+    relocate_dependencies(staged_dependencies, Path(facet.project))?
+    fact = seal(
+        store,
+        current.digest,
+        staged,
+        "rust binary",
+        rust_unit_name("binary", output_name, ""),
+        [],
+        "rust binary",
+    )?
+    register_root(store, facet.project, rust_unit_name("binary", output_name, ""), [current.digest])?
+    view(store, fact, output_name, binary)?
+    view(store, fact, f"{output_name}.d", dependencies)?
+    println(f"compiled {name}")
+    return Ok(binary.0)
+
+
+def view_baked_binary(
+    store: Path,
+    key: Key,
+    name: str,
+    output_name: str,
+    directory: Path,
+    project: str,
+) -> Result[bool, str]:
+    """View and report a baked binary with its dep-info; false for a miss or refused identity."""
+    if key.refusal != "":
+        return Ok(false)
+    match find(store, key.digest)?:
+        None => return Ok(false)
+        Some(fact) =>
+            register_root(store, project, rust_unit_name("binary", output_name, ""), [key.digest])?
+            view(store, fact, output_name, directory.joinpath(output_name))?
+            view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
+            trace(f"unit {name} rust binary: reused")
+            println(f"reused {name}")
+            return Ok(true)
+
+
+pub def binary_arguments(
+    name: str,
+    source: str,
+    facet: LocalFacet,
+    declared: RustFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    testing: bool = false,
+    root_library_key: str = "",
+) -> Result[list[str], str]:
+    """Frame crate and link arguments, preserving the planner's explicit host library for a macro test consumer."""
+    arguments = [source, "--crate-name", name.replace("-", "_"), "--crate-type", "bin", "--edition", declared.edition]
+    mut selected = arguments
+    if testing and source == declared.library:
+        selected = library_arguments(declared)
+    if testing:
+        selected.append("--test")
+    mut library = root_library_key
+    if library == "":
+        library = facet.key()
+    elif library not in built:
+        return Err(f"Rust test graph has no selected production library {library}")
+    if library in built and (not testing or source != declared.library):
+        selected = selected + ["--extern", f"{declared.crate_name}={built[library].artifact}"]
+    context = fingerprint(
+        [artifact_context(facet, declared, request.profile)?, declared.package, declared.version, name, str(testing)],
+    )?
+    return Ok(
+        selected + ["-C", rust_metadata(request.profile, context)] + rust_executable_arguments(request.profile) + linking(
+            facet,
+            request,
+            built,
+            search,
+        )? + remap_arguments(facet.project, [], Path(request.rustc).parent().parent().0)?,
+    )
+
+
+def runpath_arguments(libraries: ToolchainLibraries) -> list[str]:
+    """
+    The linker arguments that let a binary find the toolchain's `rustc_driver` and the libraries it links.
+
+    The binary carries runpaths to them and the identity it was built against, which it verifies before it compiles
+    anything. The relative runpaths come first, so an installed toolchain runs wherever its `sysroot` link points; the
+    building machine's sysroot follows, which keeps a binary without that link (a bootstrap build) runnable. The linker
+    also searches `lib`, where a Linux toolchain keeps LLVM as a shared library.
+    """
+    mut arguments = ["-L", f"native={libraries.sysroot}/lib"]
+    for relative in libraries.directories:
+        arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.origin}/../sysroot/{relative}"]
+    for relative in libraries.directories:
+        arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.sysroot}/{relative}"]
+    return arguments
+
+
+def binary_key(
+    directory: Path,
+    dependencies: Path,
+    facet: LocalFacet,
+    declared: RustFacet,
+    request: RustBuild,
+    arguments: list[str],
+    environment: Dict[str, str],
+) -> Result[Key, str]:
+    """
+    Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
+    that is absent or stale names no identity, so the caller scans before anything is hashed.
+    """
+    compiler = native_linker_fingerprint(request.rustc)?
+    facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
+    key = library_key(
+        Path(facet.project),
+        directory,
+        dependencies,
+        facts,
+        environment,
+        [],
+        selected_toolchain(request)?,
+        compiler,
+    )?
+    return Ok(refuse_absolute_runtime_path(key, arguments))
+
+
+pub def refuse_absolute_runtime_path(key: Key, arguments: list[str]) -> Key:
+    """
+    Refuse portable reuse when a binary embeds an absolute runpath, while retaining deterministic code generation.
+
+    The absolute path remains an effective invocation fact, so a different path derives a different code-generation
+    identity. Clearing only the reusable digest prevents publication without replacing stable symbol metadata with a
+    process-local fallback.
+    """
+    for argument in arguments:
+        if argument.startswith("link-arg=-Wl,-rpath,/"):
+            return Key(
+                digest="",
+                codegen=key.codegen,
+                parts=key.parts,
+                provenance=key.provenance,
+                refusal="unit identity refused: absolute runtime search path",
+                descriptor=key.descriptor,
+                compiler=key.compiler,
+            )
+    return key
+
+
+pub def binary_environment(
+    rustc: str,
+    project: str,
+    declared: RustFacet,
+    name: str,
+    retained: Option[ToolchainLibraries] = None,
+) -> Result[Dict[str, str], str]:
+    """The package and pinned-driver identity environment shared by binary compilation and analysis."""
+    mut environment = package_environment(project, declared, name)
+    if OS == "macos":
+        environment["RC_UUID_SALT"] = DARWIN_UUID_SALT
+    if declared.sysroot:
+        libraries = binary_libraries(rustc, retained)?
+        for variable in sorted([key for key in libraries.environment.keys()]):
+            value = libraries.environment[variable]
+            environment[variable] = value
+    return Ok(environment)
+
+
+def binary_libraries(rustc: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
+    """Reuse the binary's selected toolchain libraries during both argument and environment construction."""
+    match retained:
+        Some(selected) => return Ok(selected)
+        None => return toolchain_libraries(rustc)

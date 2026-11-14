@@ -1,13 +1,17 @@
 //! Backend-neutral semantic type model and unstable ABI v0 hooks.
 //!
 //! This module is intentionally compiler-facing. It gives HIR, semantic facts, diagnostics, and future backends an
-//! Incan-owned type vocabulary without treating emitted Rust spelling as the source of language semantics.
+//! Incan-owned type vocabulary without treating native Rust spelling as the source of language semantics.
 
 use std::fmt;
 
+use incan_lang::lang::types::UNION_TYPE_NAME;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 
 use serde::{Deserialize, Serialize};
+
+use crate::facts::CanonicalSymbolId;
 
 /// Read the arity of a Rust tuple type spelling, or `None` when the shape cannot be established.
 ///
@@ -93,6 +97,54 @@ pub enum IncanType {
     Unsupported(String),
     Infer,
     Unknown,
+    /// A native fixed-size array whose element storage and evaluated length were retained by the checker.
+    NativeArray {
+        element: Box<IncanType>,
+        length: u64,
+    },
+    /// A checked nongeneric native trait object with independently retained auto traits.
+    NativeTraitObject {
+        path: String,
+        send: bool,
+        sync: bool,
+    },
+    /// Exact compiler-managed foreign pointer storage; source code receives it only through a checked bridge.
+    NativePointer {
+        mutable: bool,
+        pointee: Box<IncanType>,
+    },
+    /// The target's C char category, whose signedness comes from the selected native toolchain.
+    NativeCChar,
+    /// Canonical checked source trait represented by a type token; it has no standalone runtime storage.
+    ///
+    /// Appended so every earlier serialized discriminant remains unchanged.
+    Trait(CanonicalSymbolId),
+}
+
+/// Physical Rust storage of compiler-owned builtin values. These paths identify the existing native ABI, not a
+/// source declaration or an authority grant, and remain usable while the Incan runtime itself is being compiled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCarrier {
+    /// Exact decimal coefficient and written scale.
+    Decimal,
+    /// Immutable UTF-8 text with static storage.
+    FrozenStr,
+    /// Immutable bytes with static storage.
+    FrozenBytes,
+    /// The builtin validation error's owned message and optional code.
+    ValidationError,
+}
+
+impl RuntimeCarrier {
+    /// Return the canonical Rust definition supplying this builtin's physical storage.
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Decimal => "incan_std_primitives::num::Decimal128",
+            Self::FrozenStr => "incan_std_primitives::frozen::FrozenStr",
+            Self::FrozenBytes => "incan_std_primitives::frozen::FrozenBytes",
+            Self::ValidationError => "incan_std_primitives::validation::ValidationError",
+        }
+    }
 }
 
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
@@ -108,6 +160,19 @@ impl RuntimeBuiltinType {
         match self {
             Self::ValidationError => "ValidationError",
         }
+    }
+
+    /// Return the Rust path of the runtime storage this builtin is.
+    pub fn carrier_path(&self) -> &'static str {
+        match self {
+            Self::ValidationError => RuntimeCarrier::ValidationError.path(),
+        }
+    }
+
+    /// Recognize this builtin's own Rust carrier, which a Rust import names by path; it is the builtin itself.
+    pub fn from_carrier_path(path: &str) -> Option<Self> {
+        let path = path.trim().trim_start_matches("::");
+        (path == Self::ValidationError.carrier_path()).then_some(Self::ValidationError)
     }
 
     /// Recognize the complete root builtin identity; source declarations and aliases with different origins refuse.
@@ -126,6 +191,16 @@ impl RuntimeBuiltinType {
 /// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked arguments.
 pub fn generic(base: String, args: Vec<IncanType>) -> IncanType {
     IncanType::Generic { base, args }
+}
+
+/// Construct the checked native array type for the legacy bootstrap, whose emitter cannot construct Rust
+/// struct-style variants (#2256). This bridge preserves the supplied element and evaluated count and retires with
+/// dev.7.
+pub fn native_array_type(element: IncanType, length: u64) -> IncanType {
+    IncanType::NativeArray {
+        element: Box::new(element),
+        length,
+    }
 }
 
 /// Construct a function type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
@@ -160,12 +235,15 @@ impl IncanType {
         match self {
             Self::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
             | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit)
-            | Self::Decimal { .. } => AbiV0Ownership::CopyOrTrivial,
+            | Self::Decimal { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
             Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown | Self::Unsupported(_) => {
                 AbiV0Ownership::Unknown
             }
+            Self::Trait(_) => AbiV0Ownership::Unknown,
             _ => AbiV0Ownership::Owned,
         }
     }
@@ -175,6 +253,7 @@ impl IncanType {
         match self {
             Self::Primitive(_) => AbiV0Representation::BuiltinValue,
             Self::Named(_) => AbiV0Representation::SourceNominal,
+            Self::Trait(_) => AbiV0Representation::Unknown,
             Self::Decimal { .. } => AbiV0Representation::BuiltinValue,
             Self::Generic { .. } => AbiV0Representation::GenericInstance,
             Self::Function { .. } => AbiV0Representation::FunctionValue,
@@ -183,18 +262,84 @@ impl IncanType {
             Self::TypeVar(_) => AbiV0Representation::TypeParameter,
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
-            Self::RustInteropPath(_) | Self::NativeBuiltin(_) => AbiV0Representation::RustInterop,
+            Self::RustInteropPath(_)
+            | Self::NativeBuiltin(_)
+            | Self::NativeArray { .. }
+            | Self::NativeTraitObject { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Representation::RustInterop,
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
+    }
+
+    /// The builtin collection type `id` applied to `args`, spelled with the collection's canonical name.
+    pub fn builtin_collection(id: CollectionTypeId, args: Vec<IncanType>) -> IncanType {
+        Self::Generic {
+            base: collections::as_str(id).to_string(),
+            args,
+        }
+    }
+
+    /// The builtin collection this type instantiates, with its checked type arguments.
+    ///
+    /// The collection is read through the language's one collection vocabulary, so every accepted spelling of a
+    /// builtin (`Result` and `result`) names the same collection. Callers consult this rather than comparing the
+    /// written base name.
+    pub fn collection(&self) -> Option<(CollectionTypeId, &[IncanType])> {
+        match self {
+            Self::Generic { base, args } => collections::from_str(base).map(|id| (id, args.as_slice())),
+            _ => None,
+        }
+    }
+
+    /// The type arguments of this type when it instantiates the expected builtin collection.
+    pub fn collection_arguments(&self, expected: CollectionTypeId) -> Option<&[IncanType]> {
+        self.collection()
+            .and_then(|(id, args)| (id == expected).then_some(args))
+    }
+
+    /// The member types of an anonymous union (`int | str`), read through the language's one union name.
+    pub fn union_members(&self) -> Option<&[IncanType]> {
+        match self {
+            Self::Generic { base, args } if base == UNION_TYPE_NAME => Some(args.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an anonymous union (`int | str`), for callers that need only the answer.
+    pub fn is_union(&self) -> bool {
+        self.union_members().is_some()
+    }
+
+    /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
+    /// static initializers and their validation both read this rule.
+    pub fn static_literal_carrier(&self) -> bool {
+        matches!(
+            self,
+            Self::Primitive(
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Float
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+            )
+        )
+    }
+
+    /// Whether a static literal may be a hash key or set member of this carrier: floating point lacks the Eq and Hash
+    /// that hashed collections require.
+    pub fn hashed_static_literal_carrier(&self) -> bool {
+        self.static_literal_carrier() && !matches!(self, Self::Primitive(IncanPrimitiveType::Float))
     }
 }
 
 impl fmt::Display for IncanType {
+    /// Render structural native facts alongside source types, preserving exact array lengths in diagnostics.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Never => write!(f, "!"),
             Self::Primitive(primitive) => write!(f, "{primitive}"),
             Self::Named(name) | Self::TypeVar(name) => write!(f, "{name}"),
+            Self::Trait(identity) => write!(f, "{}", identity.declaration_name),
             Self::Generic { base, args } => write_joined_type_args(f, base, args),
             Self::Decimal { precision, scale } => write!(f, "decimal[{precision}, {scale}]"),
             Self::Function { params, return_type } => {
@@ -208,6 +353,7 @@ impl fmt::Display for IncanType {
                 write!(f, ") -> {return_type}")
             }
             Self::TypeToken(inner) => write!(f, "Type[{inner}]"),
+            Self::NativeArray { element, length } => write!(f, "[{element}; {length}]"),
             Self::Tuple(items) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
@@ -222,7 +368,19 @@ impl fmt::Display for IncanType {
             Self::Ref(inner) => write!(f, "&{inner}"),
             Self::RefMut(inner) => write!(f, "&mut {inner}"),
             Self::RustInteropPath(path) => write!(f, "rust::{path}"),
+            Self::NativeTraitObject { path, send, sync } => write!(
+                f,
+                "dyn {path}{}{}",
+                if *send { " + Send" } else { "" },
+                if *sync { " + Sync" } else { "" }
+            ),
             Self::NativeBuiltin(builtin) => write!(f, "runtime::{}", builtin.binding_name()),
+            Self::NativePointer { mutable, pointee } => write!(
+                f,
+                "native {} pointer[{pointee}]",
+                if *mutable { "mutable" } else { "const" }
+            ),
+            Self::NativeCChar => write!(f, "c.c_char"),
             Self::Unsupported(description) => write!(f, "unsupported[{description}]"),
             Self::Infer => write!(f, "_"),
             Self::Unknown => write!(f, "?"),
@@ -272,6 +430,49 @@ impl fmt::Display for IncanPrimitiveType {
     }
 }
 
+/// Source input access, independent of binding mutability and the native collection ABI. Missing named metadata
+/// means ordinary inference only; positional executable records require their matching schema version.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum IncanInputAccess {
+    /// Preserve the existing unannotated parameter convention and its checked inference.
+    #[default]
+    Inferred,
+    /// Shared access without ownership transfer or permission to write.
+    Shared,
+    /// Exclusive access; the separate mutable binding flag governs writes.
+    Exclusive,
+    /// Ownership transfer, or a checked Copy value; never an implicit repair clone.
+    Owned,
+    /// Shared access inferred from the complete checked body and published for every caller.
+    ///
+    /// Unlike [`Self::Shared`], this is not an explicit source obligation and therefore requires no explicit-input
+    /// body profile. Its distinct wire value preserves the authored difference between plain `T` and `Borrowed[T]`.
+    InferredShared,
+}
+
+impl IncanInputAccess {
+    /// Whether source access remains inferred rather than explicitly annotated.
+    pub const fn is_inferred(&self) -> bool {
+        matches!(self, Self::Inferred | Self::InferredShared)
+    }
+
+    /// Whether the checked callable receives shared access without ownership transfer.
+    pub const fn is_shared(&self) -> bool {
+        matches!(self, Self::Shared | Self::InferredShared)
+    }
+
+    /// Render an explicit contract for diagnostics; this spelling is not used to recognize its identity.
+    pub const fn source_form(self) -> Option<&'static str> {
+        match self {
+            Self::Inferred => None,
+            Self::Shared => Some("Borrowed"),
+            Self::Exclusive => Some("BorrowedMut"),
+            Self::Owned => Some("Owned"),
+            Self::InferredShared => None,
+        }
+    }
+}
+
 /// Callable parameter metadata preserved in semantic function types.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct IncanCallableParam {
@@ -292,6 +493,13 @@ pub struct IncanCallableParam {
     /// field existed decodes it as `false`.
     #[serde(default)]
     pub is_mut: bool,
+    /// A checked native collection parameter consumes its outer value even when its carrier is an inline builtin
+    /// collection. This passing fact is separate from the source callable's `mut` marker and preserves nested loans.
+    #[serde(default)]
+    pub native_owned: bool,
+    /// Checked explicit input access; ordinary legacy metadata grants no explicit borrowing or transfer.
+    #[serde(default)]
+    pub input_access: IncanInputAccess,
 }
 
 impl fmt::Display for IncanCallableParam {
@@ -300,9 +508,13 @@ impl fmt::Display for IncanCallableParam {
             write!(f, "mut ")?;
         }
         match self.kind {
-            IncanCallableParamKind::Normal => write!(f, "{}", self.ty),
-            IncanCallableParamKind::RestPositional => write!(f, "*{}", self.ty),
-            IncanCallableParamKind::RestKeyword => write!(f, "**{}", self.ty),
+            IncanCallableParamKind::Normal => {}
+            IncanCallableParamKind::RestPositional => write!(f, "*")?,
+            IncanCallableParamKind::RestKeyword => write!(f, "**")?,
+        }
+        match self.input_access.source_form() {
+            Some(mode) => write!(f, "{mode}[{}]", self.ty),
+            None => write!(f, "{}", self.ty),
         }
     }
 }
@@ -416,6 +628,8 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -424,6 +638,8 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
+                    input_access: IncanInputAccess::Inferred,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![

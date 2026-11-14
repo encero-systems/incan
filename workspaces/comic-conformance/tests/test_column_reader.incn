@@ -1,0 +1,131 @@
+"""Retained field lifetime, direct projection, complete admission and explicit envelope boundaries."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_reader import read_columns, read_prefix
+from std.primitives.crumb.column_projection import ColumnField
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.encoding_errors import BinaryFailure
+from std.primitives.crumb.encoding_buffer import EncodingBuffer
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.values import IntegerValue, Value, ValueField
+from std.primitives.crumb.types import AbsentPolicy
+from encoding_test_support import description, member, backing
+
+
+def retained_field() -> Result[ColumnField, str]:
+    """The returned numeric projection outlives the byte buffer, mapping owner and containing set."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    declared = description(b"record\x00", [member(b"field1", "i64")])
+    mut records: list[RowRecord] = []
+    for number in range(257):
+        field = ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(number.wrapping_resize[i128]())),
+        )
+        records.append(RowRecord(key=b"record\x00", value=Value.Record([field])))
+    choices = [GroupChoice(columns=[ColumnChoice(blocks=[BlockEncoding.FrameOfReference, BlockEncoding.ZigzagDelta])])]
+    raw = write_columns([declared], records, registry, true, choices, budget).map_err((e) => e.message())?
+    rows = read_columns(backing(raw)?, [], registry, true, budget).map_err((e) => e.message())?
+    assert rows.len() == 257
+    assert rows.is_sealed()
+    assert rows.read_record(-1, budget).is_err()
+    assert rows.read_record(257, budget).is_err()
+    assert rows.field(0, b"absent", budget).is_err()
+    return rows.field(256, b"field1", budget).map_err((e) => e.message())
+
+
+def test_retained_column_field_outlives_its_set() -> Result[None, str]:
+    """Packed fields retain backing and decode correctly after every outer owner leaves scope."""
+    field = retained_field()?
+    mut budget = Budget.create(bytes=4096, elements=4096, depth=64).map_err((e) => e.message())?
+    match field.read(budget).map_err((e) => e.message())?:
+        Value.Integer(value) =>
+            assert value == IntegerValue.Signed(256i128)
+        _ => return Err("retained numeric field lost its type")
+    return Ok(None)
+
+
+def test_projection_does_not_materialize_a_large_neighbor() -> Result[None, str]:
+    """After full admission, a small projection allowance succeeds beside a sixteen-kilobyte column."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "binary")])
+    small = ValueField(
+        identity=b"field1",
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
+    payload: bytes = [1u8 for _ in range(16384)]
+    large = ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Binary(payload))
+    rows = [RowRecord(key=b"record\x00", value=Value.Record([small, large]))]
+    raw = write_columns([declared], rows, registry, false, [], budget).map_err((e) => e.message())?
+    admitted = read_columns(backing(raw)?, [], registry, false, budget).map_err((e) => e.message())?
+    mut small_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
+    match admitted.read_field(0, b"field1", small_budget).map_err((e) => e.message())?:
+        Value.Integer(value) =>
+            assert value == IntegerValue.Signed(7i128)
+        _ => return Err("projected field lost its type")
+    mut large_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
+    assert admitted.read_field(0, b"field2", large_budget).is_err()
+    # Complete-record access must preserve the same failing field attribution.
+    mut record_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
+    match admitted.read_record(0, record_budget):
+        Ok(_) => return Err("record materialization ignored its byte allowance")
+        Err(error) =>
+            assert error.field == Some(b"field2")
+            assert error.cause.is_some()
+
+    return Ok(None)
+
+
+def test_corrupt_unselected_column_prevents_set_admission() -> Result[None, str]:
+    """Malformed boolean data in the last column cannot be hidden by a valid earlier integer field."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "boolean")])
+    first = ValueField(
+        identity=b"field1",
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
+    last = ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Boolean(false))
+    rows = [RowRecord(key=b"record\x00", value=Value.Record([first, last]))]
+    raw = write_columns([declared], rows, registry, false, [], budget).map_err((e) => e.message())?
+    assert raw[len(raw) - 1] == 0u8
+    mut corrupt = EncodingBuffer.create()
+    corrupt.append(raw[:len(raw) - 1], budget).map_err((e) => e.message())?
+    corrupt.octet(2, budget).map_err((e) => e.message())?
+    changed = corrupt.finish(budget).map_err((e) => e.message())?
+    match read_columns(backing(changed)?, [], registry, false, budget):
+        Ok(_) => return Err("unselected malformed boolean was admitted")
+        Err(error) =>
+            assert error.field == Some(b"field2")
+            match error.cause:
+                Some(cause) =>
+                    assert cause.kind == BinaryFailure.InvalidCell
+                None => return Err("shared cell failure lost its typed cause")
+    return Ok(None)
+
+
+def test_prefix_consumption_is_explicit_and_exact_read_refuses_tail() -> Result[None, str]:
+    """A leading envelope may be selected only through the explicit prefix API."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    raw = write_columns([], [], registry, true, [], budget).map_err((e) => e.message())?
+    mut joined = EncodingBuffer.create()
+    joined.append(raw, budget).map_err((e) => e.message())?
+    joined.octet(0, budget).map_err((e) => e.message())?
+    combined = joined.finish(budget).map_err((e) => e.message())?
+    assert read_columns(backing(combined)?, [], registry, true, budget).is_err()
+    rows, consumed = read_prefix(backing(combined)?, [], registry, true, budget).map_err((e) => e.message())?
+    assert rows.len() == 0
+    assert rows.is_sealed()
+    assert consumed == len(raw)
+    return Ok(None)

@@ -21,13 +21,12 @@ from std.encoding._shared import (
 )
 from std.fs import Path
 from std.io import BytesIO, _BytesIO
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 const _URLSAFE_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
 
-
-# Public value helpers
 
 pub def b64encode(data: bytes) -> str:
     """
@@ -127,9 +126,7 @@ pub def decode(
 
 
 pub def standard_b64decode(text: str) -> Result[bytes, EncodingError]:
-    """
-    Alias `b64decode` with an explicit standard-alphabet name.
-    """
+    """Alias `b64decode` with an explicit standard-alphabet name."""
     return b64decode(text)
 
 
@@ -157,9 +154,7 @@ pub def b64decode_lenient(text: str) -> Result[bytes, EncodingError]:
 
 
 pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
-    """
-    Decode standard Base64 using the module's lenient whitespace rules.
-    """
+    """Decode standard Base64 using the module's lenient whitespace rules."""
     return b64decode_lenient(text)
 
 
@@ -172,8 +167,6 @@ pub def urlsafe_b64decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     return _decode_base64(text, _URLSAFE_ALPHABET, true)
 
-
-# BytesIO convenience helpers
 
 pub def b64encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
     """
@@ -195,9 +188,7 @@ pub def b64encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 6
 
 
 pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
-    """
-    Alias `b64encode_stream` as the standard Base64 stream encoder.
-    """
+    """Alias `b64encode_stream` as the standard Base64 stream encoder."""
     return b64encode_stream(source, target, chunk_size)
 
 
@@ -221,13 +212,15 @@ pub def b64decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 6
 
 
 pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
-    """
-    Alias `b64decode_stream` as the standard Base64 stream decoder.
-    """
+    """Alias `b64decode_stream` as the standard Base64 stream decoder."""
     return b64decode_stream(source, target, chunk_size)
 
 
-pub def urlsafe_b64encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+pub def urlsafe_b64encode_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    chunk_size: int = 65536,
+) -> Result[None, EncodingError]:
     """
     Read bytes from `source`, encode URL-safe Base64, and write ASCII bytes to `target`.
 
@@ -240,7 +233,11 @@ pub def urlsafe_b64encode_stream(source: _BytesIO, target: _BytesIO, chunk_size:
     return _write_stream_bytes("base64", target, _ascii_bytes("base64", urlsafe_b64encode(data))?)
 
 
-pub def urlsafe_b64decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+pub def urlsafe_b64decode_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    chunk_size: int = 65536,
+) -> Result[None, EncodingError]:
     """
     Read URL-safe Base64 ASCII bytes from `source`, decode them, and write bytes to `target`.
 
@@ -252,8 +249,6 @@ pub def urlsafe_b64decode_stream(source: _BytesIO, target: _BytesIO, chunk_size:
     text = _ascii_text("base64", _read_stream_bytes("base64", source)?)?
     return _write_stream_bytes("base64", target, urlsafe_b64decode(text)?)
 
-
-# Codec implementation
 
 def _encode_base64(data: bytes, alphabet: str) -> str:
     """
@@ -311,30 +306,34 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
     elif len(padded) % 4 != 0:
         return Err(_error("invalid_length", "base64 input length must be a multiple of 4", len(padded)))
 
+    encoded = _encode_utf8(padded)
+    alphabet_bytes = _encode_utf8(alphabet)
     out = BytesIO(b"")
-    for quartet_index in range(len(padded) // 4):
+    for quartet_index in range(len(encoded) // 4):
         index = quartet_index * 4
-        c0 = padded[index:index + 1]
-        c1 = padded[index + 1:index + 2]
-        c2 = padded[index + 2:index + 3]
-        c3 = padded[index + 3:index + 4]
-        if c0 == "=" or c1 == "=":
+        c0 = int(encoded[index])
+        c1 = int(encoded[index + 1])
+        c2 = int(encoded[index + 2])
+        c3 = int(encoded[index + 3])
+        if c0 == 61 or c1 == 61:
             return Err(_error("invalid_padding", "padding cannot appear in the first two positions of a quartet", index))
-        pad2 = c2 == "="
-        pad3 = c3 == "="
+        pad2 = c2 == 61
+        pad3 = c3 == 61
         if pad2 and not pad3:
-            return Err(_error("invalid_padding", "single base64 padding marker must be in the fourth position", index + 2))
-        if (pad2 or pad3) and index + 4 != len(padded):
+            return Err(
+                _error("invalid_padding", "single base64 padding marker must be in the fourth position", index + 2),
+            )
+        if (pad2 or pad3) and index + 4 != len(encoded):
             return Err(_error("invalid_padding", "base64 padding is only valid at the end", index))
 
-        v0 = _decode_char(c0, alphabet, index)?
-        v1 = _decode_char(c1, alphabet, index + 1)?
+        v0 = _decode_byte(c0, alphabet_bytes, index)?
+        v1 = _decode_byte(c1, alphabet_bytes, index + 1)?
         mut v2 = 0
         mut v3 = 0
         if not pad2:
-            v2 = _decode_char(c2, alphabet, index + 2)?
+            v2 = _decode_byte(c2, alphabet_bytes, index + 2)?
         if not pad3:
-            v3 = _decode_char(c3, alphabet, index + 3)?
+            v3 = _decode_byte(c3, alphabet_bytes, index + 3)?
 
         # The two `=` positions decide how many bytes are real; the zero defaults only fill unused lane bits.
         n = v0 * 262144 + v1 * 4096 + v2 * 64 + v3
@@ -346,61 +345,49 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
     return Ok(out.getvalue())
 
 
-def _clean_input(text: str, lenient: bool) -> str:
-    """
-    Return text unchanged for strict mode or without ASCII whitespace in lenient mode.
-    """
-    if not lenient:
-        return text
-    mut out = ""
-    for ch in text:
-        if not _is_ascii_whitespace(ch):
-            out += ch
-    return out
+def _clean_input(text: &str, lenient: bool) -> str:
+    """Return text unchanged for strict mode or without ASCII whitespace in lenient mode."""
+    mut out: list[u8] = []
+    for code in _encode_utf8(text):
+        if not lenient or (code != 9 and code != 10 and code != 13 and code != 32):
+            byte: u8 = code.wrapping_resize()
+            out.append(byte)
+    _, cleaned = _decode_utf8(out, false)
+    return cleaned
 
 
-def _decode_char(ch: str, alphabet: str, position: int) -> Result[int, EncodingError]:
-    """
-    Map one Base64 alphabet character to its six-bit value.
-    """
-    for index, character in enumerate(alphabet):
-        if character == ch:
+def _decode_byte(code: int, alphabet: bytes, position: int) -> Result[int, EncodingError]:
+    """Map one Base64 alphabet character to its six-bit value."""
+    for index in range(len(alphabet)):
+        if int(alphabet[index]) == code:
             return Ok(index)
     return Err(_error("invalid_character", "character is not in the base64 alphabet", position))
 
 
 def _alphabet_char(alphabet: str, index: int) -> str:
-    """
-    Return one character from the selected Base64 alphabet.
-    """
+    """Return one character from the selected Base64 alphabet."""
     return alphabet[index:index + 1]
 
 
 def _byte(value: int) -> bytes:
-    """
-    Return a one-byte `bytes` value for an integer in the byte range.
-    """
+    """Return a one-byte `bytes` value for an integer in the byte range."""
     return _BYTE_TABLE[value:value + 1]
 
 
 def _write_byte(out: _BytesIO, value: int) -> Result[None, EncodingError]:
-    """
-    Append one decoded byte to an in-memory buffer.
-    """
+    """Append one decoded byte to an in-memory buffer."""
     match out.write_bytes(_byte(value)):
         Ok(_) => return Ok(None)
         Err(err) => return Err(_error("io", err.message(), -1))
 
 
-def _is_ascii_whitespace(ch: str) -> bool:
-    """
-    Return whether `ch` is ASCII whitespace accepted by lenient mode.
-    """
-    return ch == " " or ch == "\n" or ch == "\r" or ch == "\t"
-
-
 def _error(kind: str, detail: str, position: int) -> EncodingError:
-    """
-    Build a Base64 error with the module's codec name.
-    """
+    """Build a Base64 error with the module's codec name."""
     return _encoding_error("base64", kind, detail, position)
+# Public value helpers
+
+
+# BytesIO convenience helpers
+
+
+# Codec implementation

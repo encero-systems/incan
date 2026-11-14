@@ -1,0 +1,39 @@
+# behavior: telemetry values display text, ambient logging accepts typed fields without an import, and a user log binding shadows it
+# expect-stdout:
+#   hello
+#   local
+
+from std.telemetry import TelemetryValue, Attributes, Resource, InstrumentationScope, SpanContext
+from std.logging import Level, basic_config
+
+
+def touch_value(value: TelemetryValue) -> str:
+    return value.display_text()
+
+
+def touch_attributes(attributes: Attributes) -> None:
+    pass
+
+
+def touch_resource(resource: Resource) -> None:
+    pass
+
+
+def touch_scope(scope: InstrumentationScope) -> None:
+    pass
+
+
+def touch_span_context(context: SpanContext) -> None:
+    pass
+
+
+def shadowed_log(log: str) -> str:
+    return log
+
+
+def main() -> None:
+    basic_config(level=Level.FATAL)
+    log.info("disabled")
+    log.info("disabled", fields={"count": 1})
+    println(touch_value(TelemetryValue.string("hello")))
+    println(shadowed_log("local"))

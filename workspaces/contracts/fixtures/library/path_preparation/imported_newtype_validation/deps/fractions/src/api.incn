@@ -1,0 +1,6 @@
+from percentile import Percentile
+
+
+pub def fraction_of(value: Percentile) -> float:
+    """Read a fraction only after its checked construction has succeeded."""
+    return value.0

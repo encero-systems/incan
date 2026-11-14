@@ -1,0 +1,124 @@
+"""CLI help contracts for both surfaces, including exact synopses, ownership and the boundaries of help flags."""
+
+from std.testing import fail
+from command_help import command_help, usage, version_text
+from graph_mcp import options as mcp_options
+from surfaces import misplaced
+
+
+def assert_help(surface: str, commands: list[tuple[str, str]]) -> None:
+    """Each command's detailed help on `surface` begins with its synopsis and example, and the overview lists it."""
+    overview: list[str] = usage(surface).split("\n")
+    assert overview[0] == f"usage: {surface} COMMAND [OPTIONS]"
+    for invocation, synopsis in commands:
+        parts = invocation.split(" ")
+        command = parts[0]
+        prefix = parts[1:]
+        # Both help flags print this command's contract, rather than a sibling's help.
+        for flag in ["--help", "-h"]:
+            response: Option[str] = command_help(surface, command, prefix + [flag])
+            match response:
+                None => fail(f"{synopsis}: missing help")
+                Some(text) =>
+                    assert text.split("\n")[0] == f"usage: {synopsis}"
+                    assert "\nOptions:\n" in text
+                    assert "\nExample:\n  " in text
+        # The overview and detailed help agree on the complete synopsis.
+        assert synopsis in overview
+
+
+pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[None, str]:
+    """
+    Check help text without loading a project, compiler or installed toolchain.
+
+    1. Each `incan` command's detailed help begins with its documented synopsis and includes an example.
+    2. Each `oven` command's does too, and the project commands both surfaces run name the invoked surface.
+    3. Program arguments, option values and unknown commands never become help requests.
+    """
+    # 1. The language surface.
+    assert_help(
+        "incan",
+        [
+            ("run", "incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
+            ("explain", "incan explain CODE"),
+            ("test", "incan test PATH [UNIT OPTIONS]"),
+            ("build", "incan build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("fmt", "incan fmt [--check] PATH..."),
+            ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
+            ("mcp", "incan mcp PATH [--profile NAME]"),
+            ("toolchain pack", "incan toolchain pack OUT"),
+            ("toolchain install", "incan toolchain install ARCHIVE"),
+            ("--version", "incan --version"),
+        ],
+    )
+    # 2. The project surface.
+    assert_help(
+        "oven",
+        [
+            ("run", "oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "oven check PATH [--format text|json] [UNIT OPTIONS]"),
+            ("lock", "oven lock [--versions lowest|lowest-direct|newest] [PATH]"),
+            ("trust", "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"),
+            ("test", "oven test PATH [UNIT OPTIONS]"),
+            ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
+            ("build", "oven build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("owner stop", "oven owner stop"),
+            ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
+            ("inspect dependencies", "oven inspect dependencies PATH [UNIT OPTIONS]"),
+            ("--version", "oven --version"),
+        ],
+    )
+    # 3. Help flags in value or program positions retain their ordinary meaning.
+    assert command_help("incan", "run", ["src/main.incn", "--", "--help"]) == None
+    assert command_help("incan", "run", ["--argv0", "--help", "src/main.incn"]) == None
+    assert command_help("oven", "check", ["--profile", "--help", "src/main.incn"]) == None
+    assert command_help("incan", "inspect", ["codegraph", ".", "--profile", "--help"]) == None
+    assert command_help("incan", "mcp", [".", "--profile", "--help"]) == None
+    assert command_help("incan", "fmt", ["--", "--help"]) == None
+    assert command_help("incan", "inspect", ["codegraph", ".", "--query", "defs", "--help"]) == None
+    assert command_help("incan", "nonexistent", ["--help"]) == None
+    assert command_help("oven", "owner", ["nonexistent", "--help"]) == None
+    assert command_help("oven", "bakery", ["status", "--format", "--help"]) == None
+    incan_run = command_help("incan", "run", ["--help"])
+    oven_run = command_help("oven", "run", ["--help"])
+    match incan_run:
+        None => fail("incan run help is missing")
+        Some(text) =>
+            assert "--direct" in text
+    match oven_run:
+        None => fail("oven run help is missing")
+        Some(text) =>
+            assert "--direct" not in text
+    selected = mcp_options([".", "--profile", "release"])?
+    assert selected.path.0 == "." and selected.profile == "release"
+    assert mcp_options(["."]).map((selected) => selected.profile) == Ok("debug")
+    return Ok(None)
+
+
+pub def test_each_surface_runs_only_its_own_commands() -> None:
+    """
+    A command only the other surface runs has no help there and is refused: an Oven command is unknown to `incan`, and
+    `oven` names the `incan` command that runs a language command. The project commands run on both, and `--version`
+    names the invoked surface.
+    """
+    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["lock"], ["trust", "list"]]:
+        assert command_help("incan", command[0], command[1:] + ["--help"]) == None
+        assert misplaced("incan", command[0], command[1:]) == Some(f"incan: unknown command `{command[0]}`")
+        assert misplaced("oven", command[0], command[1:]) == None
+    for inspection in ["dependencies", "run"]:
+        assert command_help("incan", "inspect", [inspection, "--help"]) == None
+        unknown = misplaced("incan", "inspect", [inspection, "ID", "--proofs"])
+        assert unknown == Some(f"incan inspect: unknown command `{inspection}`")
+        assert misplaced("oven", "inspect", [inspection]) == None
+    for command in [["explain"], ["fmt"], ["mcp"], ["toolchain", "pack"], ["inspect", "codegraph"]]:
+        assert command_help("oven", command[0], command[1:] + ["--help"]) == None
+        match misplaced("oven", command[0], command[1:]):
+            None => fail(f"oven {command[0]} was not refused")
+            Some(reason) =>
+                assert reason.startswith("oven: `oven ") and "is a language command: run `incan " in reason, reason
+        assert misplaced("incan", command[0], command[1:]) == None
+    for command in ["run", "check", "test", "build", "--version", "help"]:
+        assert misplaced("incan", command, []) == None and misplaced("oven", command, []) == None
+    assert version_text("oven").startswith("oven 0.6.")
+    assert version_text("incan").startswith("incan 0.6.")

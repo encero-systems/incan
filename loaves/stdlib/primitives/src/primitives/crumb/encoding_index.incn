@@ -1,0 +1,157 @@
+"""Validate every offset once, then address selected retained cell ranges directly."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.encoding_buffer import offset_width, offset_table_length, valid_offset_width
+from crate.primitives.crumb.encoding_cursor import EncodingCursor
+from crate.primitives.crumb.descriptions import StoredField
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.types import AbsentPolicy
+from crate.primitives.views import MappedView
+
+
+pub model CellIndex:
+    """Operation-local checked table and data anchors; public admission never accepts a supplied index as proof."""
+
+    pub table: MappedView
+    pub data: MappedView
+    pub table_origin: int
+    pub data_origin: int
+    pub width: int
+    pub count: int
+
+
+pub model RecordIndex:
+    """One validated bitmap and the physical table of present fields, without materialized field values."""
+
+    pub bitmap: MappedView
+    pub bitmap_origin: int
+    pub cells: CellIndex
+
+
+pub def read_index(mut cursor: EncodingCursor, count: int, mut budget: Budget) -> Result[CellIndex, BinaryError]:
+    """Check full table bounds/order/completeness and minimum width before permitting any cell lookup."""
+    offset = cursor.absolute()
+    width = cursor.byte(budget)?
+    if not valid_offset_width(width):
+        return Err(failure(BinaryFailure.InvalidOffsetWidth, offset))
+    size = offset_table_length(count, width).map_err((e) => primitive(e, offset))?
+    budget.charge_elements(count).map_err((e) => primitive(e, offset))?
+    table_origin = cursor.absolute()
+    table = cursor.take(size, budget)?
+    data_origin = cursor.absolute()
+    data = cursor.take(cursor.remaining(), budget)?
+    mut previous = 0
+    for index in range(count + 1):
+        current = offset_at(table, index, width, table_origin, budget)?
+        if (index == 0 and current != 0) or current < previous or current > data.len():
+            return Err(failure(BinaryFailure.InvalidOffsets, table_origin + index * width))
+        previous = current
+    if previous != data.len():
+        return Err(failure(BinaryFailure.InvalidOffsets, table_origin + count * width))
+    minimal = offset_width(previous).map_err((e) => primitive(e, offset))?
+    if width != minimal:
+        return Err(failure(BinaryFailure.NonminimalOffsetWidth, offset))
+    return Ok(
+        CellIndex(table=table, data=data, table_origin=table_origin, data_origin=data_origin, width=width, count=count),
+    )
+
+
+pub def offset_at(
+    table: MappedView,
+    index: int,
+    width: int,
+    origin: int,
+    mut budget: Budget,
+) -> Result[int, BinaryError]:
+    """Read one offset with checked address arithmetic; an offset outside host size cannot fit this frame."""
+    if not valid_offset_width(width) or index < 0 or index >= table.len() // width:
+        return Err(failure(BinaryFailure.InvalidOffsets, origin))
+    position = index * width
+    budget.charge_bytes(width).map_err((e) => primitive(e, origin + position))?
+    budget.charge_elements(1).map_err((e) => primitive(e, origin + position))?
+    mut value: u64 = 0
+    for byte_index in range(width - 1, -1, -1):
+        observed = table.read_u8(position + byte_index)
+        match observed:
+            None => return Err(failure(BinaryFailure.InvalidOffsets, origin + position))
+            Some(byte) => value = value * 256u64 + byte.saturating_resize[u64]()
+    converted: Option[int] = value.try_resize()
+    match converted:
+        None => return Err(failure(BinaryFailure.InvalidOffsets, origin + position))
+        Some(result) => return Ok(result)
+
+
+pub def selected(index: CellIndex, position: int, mut budget: Budget) -> Result[tuple[MappedView, int], BinaryError]:
+    """Use exactly two offsets; returning a retained view never copies the cell bytes."""
+    if position < 0 or position >= index.count:
+        return Err(failure(BinaryFailure.InvalidOffsets, index.table_origin))
+    left = offset_at(index.table, position, index.width, index.table_origin, budget)?
+    right = offset_at(index.table, position + 1, index.width, index.table_origin, budget)?
+    if right < left or right > index.data.len():
+        return Err(failure(BinaryFailure.InvalidOffsets, index.table_origin))
+    view = index.data.slice(left, right - left)
+    match view:
+        None => return Err(failure(BinaryFailure.InvalidOffsets, index.data_origin))
+        Some(result) => return Ok((result, index.data_origin + left))
+
+
+pub def read_record_index(
+    fields: list[StoredField],
+    mut cursor: EncodingCursor,
+    mut budget: Budget,
+) -> Result[RecordIndex, BinaryError]:
+    """Only absent-policy fields consume bitmap bits; required fields always have a physical cell."""
+    mut eligible = 0
+    mut required = 0
+    for field in fields:
+        budget.charge_elements(1).map_err((e) => primitive(e, cursor.absolute()))?
+        if field.shape.absent == AbsentPolicy.Required:
+            required += 1
+        else:
+            eligible += 1
+    bitmap_size = eligible // 8
+    mut size = bitmap_size + 0
+    if eligible % 8 != 0:
+        size += 1
+    origin = cursor.absolute()
+    bitmap = cursor.take(size, budget)?
+    if eligible % 8 != 0:
+        last = bitmap_byte(bitmap, size - 1, origin)?
+        if last >> (eligible % 8) != 0:
+            return Err(failure(BinaryFailure.BitmapPadding, origin + size - 1))
+    present = required + rank(bitmap, eligible, origin, budget)?
+    return Ok(RecordIndex(bitmap=bitmap, bitmap_origin=origin, cells=read_index(cursor, present, budget)?))
+
+
+pub def rank(bitmap: MappedView, before: int, origin: int, mut budget: Budget) -> Result[int, BinaryError]:
+    """Count eligible present bits before a field; this scan is explicit, not advertised as constant time."""
+    if before < 0 or before // 8 > bitmap.len() or (before // 8 == bitmap.len() and before % 8 != 0):
+        return Err(failure(BinaryFailure.InvalidOffsets, origin))
+    mut count = 0
+    for index in range(before // 8):
+        budget.charge_elements(1).map_err((e) => primitive(e, origin + index))?
+        mut byte = bitmap_byte(bitmap, index, origin)?
+        while byte != 0:
+            count += byte & 1
+            byte = byte >> 1
+    if before % 8 != 0:
+        byte = bitmap_byte(bitmap, before // 8, origin)?
+        for bit in range(before % 8):
+            count += (byte >> bit) & 1
+    return Ok(count)
+
+
+pub def bit(bitmap: MappedView, position: int, origin: int) -> Result[bool, BinaryError]:
+    """Read one already admitted eligible presence bit without touching the offset table."""
+    if position < 0:
+        return Err(failure(BinaryFailure.InvalidOffsets, origin))
+    byte = bitmap_byte(bitmap, position // 8, origin)?
+    return Ok(((byte >> (position % 8)) & 1) != 0)
+
+
+def bitmap_byte(bitmap: MappedView, index: int, origin: int) -> Result[int, BinaryError]:
+    """Map a missing native byte to a format boundary failure rather than indexing unchecked storage."""
+    observed = bitmap.read_u8(index)
+    match observed:
+        None => return Err(failure(BinaryFailure.InvalidOffsets, origin))
+        Some(value) => return Ok(int(value))

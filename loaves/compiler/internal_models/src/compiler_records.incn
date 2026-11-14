@@ -1,0 +1,230 @@
+"""
+Incan-owned compiler declaration identities and source origins.
+
+These records carry the checked meaning selected by the compiler. Crumb's K, N and S selectors identify these record
+types and their fields; they never replace the program declaration identity stored inside a record.
+
+The current `incan_semantics_core` Rust carriers remain the source adapter generation. Native consumers keep using
+those carriers until each consumer moves to these declarations. The adapter must allocate owned text and path lists;
+Rust `Arc` allocation identity is deliberately absent from this contract. Derived equality owns structural identity.
+"""
+
+pub const IDENTITY_ADAPTER_PROFILE: str = "incan.compiler-identities/1"
+pub const IDENTITY_ADAPTER_SOURCE: str = "incan_semantics_core identities at executable representation 53"
+pub const IDENTITY_ADAPTER_GENERATION: int = 1
+pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "remove only after every direct native identity and source-span consumer accepts the Incan-owned declarations"
+
+
+@derive(Eq)
+pub enum SymbolNamespace:
+    """How a checked binding is resolved; equal spellings in different namespaces remain different identities."""
+
+    OrdinaryLexical
+    Member
+    ModulePath
+
+
+@derive(Eq)
+pub model PackageIdentity:
+    """The selected package name and immutable version owning one published declaration."""
+
+    pub name: str
+    pub version: str
+
+
+@derive(Eq)
+pub enum SymbolOrigin:
+    """The semantic owner of a declaration, independent of the source spelling used to reach it."""
+
+    Module(list[str])
+    Package(PackageIdentity, list[str])
+    RustCrate(list[str])
+    Builtin
+
+
+@derive(Eq)
+pub enum DeclarationKind:
+    """Every declaration category carried by the native `SemanticSourceTargetKind` source enum."""
+
+    Function
+    Model
+    Class
+    Newtype
+    Rusttype
+    Enum
+    TypeAlias
+    Partial
+    Variant
+    Trait
+    Capability
+    Field
+    Method
+    Property
+    Const
+    Static
+    Local
+    Parameter
+    Receiver
+    GenericBinder
+    Module
+    RustItem
+    Builtin
+    Other(str)
+
+
+@derive(Eq)
+pub model HirSourceSpan:
+    """An owned source file, inclusive-exclusive byte range and optional 32-byte expansion identity."""
+
+    pub file: str
+    pub start: int
+    pub end: int
+    pub expansion: Option[list[int]] = None
+
+
+@derive(Eq)
+pub model PlanSourceSpanRecord:
+    """The record-boundary projection of a native Plan source location, with allocation sharing removed."""
+
+    pub file: str
+    pub line: int
+    pub column: int
+
+
+@derive(Eq)
+pub model CanonicalSymbolId:
+    """One compilation's checked declaration identity, retaining its exact source and expansion origin."""
+
+    pub namespace: SymbolNamespace
+    pub origin: SymbolOrigin
+    pub declaration_name: str
+    pub kind: DeclarationKind
+    pub scope_discriminant: Option[int]
+    pub declaration_span: HirSourceSpan
+
+
+@derive(Eq)
+pub model DeclarationSignature:
+    """The checked, span-free signature spelling separating declarations that otherwise share one identity."""
+
+    pub spelling: str
+
+
+@derive(Eq)
+pub model StableDeclarationComponent:
+    """One stable owner in a root-to-nearest-owner path, including its ordinal within its own parent when nested."""
+
+    pub namespace: SymbolNamespace
+    pub origin: SymbolOrigin
+    pub declaration_name: str
+    pub kind: DeclarationKind
+    pub binding_ordinal: Option[int]
+    pub signature: Option[DeclarationSignature]
+
+
+@derive(Eq)
+pub enum StableDeclarationLocation:
+    """A module-level declaration or a nested declaration with its complete stable owner path and local ordinal."""
+
+    ModuleLevel
+    Nested(list[StableDeclarationComponent], int)
+
+
+@derive(Eq)
+pub model StableDeclarationId:
+    """A declaration identity that excludes source positions while preserving owner, kind, scope and signature."""
+
+    pub namespace: SymbolNamespace
+    pub origin: SymbolOrigin
+    pub declaration_name: str
+    pub kind: DeclarationKind
+    pub location: StableDeclarationLocation
+    pub signature: Option[DeclarationSignature]
+
+
+pub def valid_hir_source_span(span: HirSourceSpan) -> bool:
+    """Require an owned file, an ordered range and either no expansion or exactly one 32-byte expansion identity."""
+    if span.file == "" or span.start < 0 or span.end < span.start:
+        return false
+    match span.expansion:
+        Some(expansion) => return len(expansion) == 32 and byte_values(expansion)
+        None => return true
+
+
+pub def valid_canonical_symbol_id(identity: CanonicalSymbolId) -> bool:
+    """Validate the complete canonical identity without interpreting K, N or S as declaration identity fields."""
+    return (
+        identity.declaration_name != ""
+        and valid_origin(identity.origin)
+        and valid_scope(identity.scope_discriminant)
+        and valid_hir_source_span(identity.declaration_span)
+    )
+
+
+pub def valid_stable_declaration_id(identity: StableDeclarationId) -> bool:
+    """Require a complete span-free identity and a nonempty, well-ordered owner path for every nested declaration."""
+    if identity.declaration_name == "" or not valid_origin(identity.origin):
+        return false
+    match identity.signature:
+        Some(signature) =>
+            if signature.spelling == "":
+                return false
+        None => pass
+    match identity.location:
+        StableDeclarationLocation.ModuleLevel => return true
+        StableDeclarationLocation.Nested(owners, binding_ordinal) =>
+            if binding_ordinal < 0 or not valid_stable_owner_path(owners):
+                return false
+            return true
+
+
+def valid_stable_component(component: StableDeclarationComponent) -> bool:
+    """Validate one owner-path component without recursively allocating another identity tree."""
+    if component.declaration_name == "" or not valid_origin(component.origin):
+        return false
+    if not valid_scope(component.binding_ordinal):
+        return false
+    match component.signature:
+        Some(signature) => return signature.spelling != ""
+        None => return true
+
+
+def valid_stable_owner_path(owners: list[StableDeclarationComponent]) -> bool:
+    """Require a root without an ordinal followed by nested owners with non-negative binding ordinals."""
+    if len(owners) == 0:
+        return false
+    for index in range(len(owners)):
+        if not valid_stable_component(owners[index]):
+            return false
+        match owners[index].binding_ordinal:
+            None =>
+                if index != 0:
+                    return false
+            Some(_ordinal) =>
+                if index == 0:
+                    return false
+    return true
+
+
+def valid_origin(origin: SymbolOrigin) -> bool:
+    """Require structured origin ownership, including the selected version for package declarations."""
+    match origin:
+        SymbolOrigin.Module(_path) => return true
+        SymbolOrigin.Package(package, _module_path) => return package.name != "" and package.version != ""
+        SymbolOrigin.RustCrate(path) => return len(path) > 0
+        SymbolOrigin.Builtin => return true
+
+
+def valid_scope(scope: Option[int]) -> bool:
+    """Accept an absent module-level scope or a nonnegative nested binding discriminator."""
+    match scope:
+        Some(value) => return value >= 0
+        None => return true
+
+
+def byte_values(values: list[int]) -> bool:
+    """Require every expansion component to fit the native fixed-width byte array exactly."""
+    for value in values:
+        if value < 0 or value > 255:
+            return false
+    return true

@@ -1,0 +1,67 @@
+"""A consumer's models adopt the dependency's trait under one spelling and meet bounds that name it under another."""
+
+import pub::tags as t
+from pub::tags import Tag, Tagging
+from pub::tags import Tag as Tagged
+
+
+def name_of[T with Tagging](value: T) -> str:
+    return value.tag()
+
+
+def shout[T with Tagged](value: T) -> str:
+    return value.loud()
+
+
+def quiet[T with t.Tag](value: T) -> str:
+    return value.tag()
+
+
+model Mine with Tagged:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+model Ours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "ours"
+
+    def loud(self) -> str:
+        return "OURS"
+
+
+model Theirs with Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "theirs"
+
+    def loud(self) -> str:
+        return "THEIRS"
+
+
+pub def run_bound_spellings() -> None:
+    """Print each bound's result for the models that adopt the trait under the other spellings."""
+    println(name_of(Mine(id=1)))
+    println(shout(Yours(id=2)))
+    println(quiet(Mine(id=1)))
+    println(shout(Ours(id=3)))
+    println(name_of(Theirs(id=4)))
+    println(quiet(Theirs(id=4)))

@@ -6,7 +6,8 @@ A function of this module that takes a task requires the task's result to have t
 
 ## Importing std.async
 
-- `async` and `await` are keywords after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`; see [Soft keywords](../imports_and_modules.md#soft-keywords).
+- `async def`, `await`, and `race for <name>:` are language syntax and need no import. Import `std.async` only for the task, timer, race, channel, and synchronization APIs documented here.
+- `import std.async` and `from std import async` bind the root module, so calls such as `async.sleep(0.1)` resolve through the ordinary module namespace.
 - `from std.async import NAME` imports a name that the root module re-exports; the names are listed under [`std.async` re-exports](#stdasync-re-exports).
 - `std.async.prelude` is the root module under another path: `from std.async.prelude import NAME` imports the same names as `from std.async import NAME`, and `import std.async.prelude` binds `prelude` to the root module.
 - Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports.
@@ -17,6 +18,10 @@ from std.async.prelude import spawn, Mutex             # accepted
 from std.async.channel import SenderPermit             # accepted
 from std.async import SenderPermit                     # refused: std.async does not re-export SenderPermit (INCAN-I0001)
 ```
+
+## Runtime
+
+A program runs all of its async code on one runtime for the program's whole lifetime. A task spawned, or a handle or channel created, while one async operation runs stays valid in every later one, also when the program enters async code from synchronous code more than once.
 
 ## Task arguments
 

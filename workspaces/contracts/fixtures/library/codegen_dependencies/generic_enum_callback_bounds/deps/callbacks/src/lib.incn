@@ -1,0 +1,4 @@
+pub enum Callback[T]:
+    """A function pointer is cloneable independently of its input type."""
+
+    Apply((T) -> int)

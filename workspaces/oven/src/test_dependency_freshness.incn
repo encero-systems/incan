@@ -1,0 +1,1108 @@
+"""Dependency reuse contracts: a changed dependency artifact, worker or installed interface rekeys its consumers."""
+
+from rust::std::fs import metadata, remove_dir_all, rename
+from rust::std::process import Command
+from rust::std::time import Instant
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.io import BytesIO
+from std.json import JsonValue, parse
+from pub::incan_platform.trace import flush as flush_trace
+from std.environ import get_or
+from installation_check import verify_runtime
+from toolchain_archive import admit_archive_member, require_rust_components, stage_loaves
+from installation_page import recall as recall_installation, begin_command, end_command
+from home_paths import installation_catalog
+from installation_codec import decode as decode_installation, encode as encode_installation
+from trace_adapter import count_work, finish_counting
+from page_codec import Reader, put_texts
+from files import json_text, make_directory, read, read_json, remove
+from json_fields import required_items
+from store_path_conversion import payload_path
+from bakery import bakery, library_directory
+from observation import file_digest, observe
+from vocabulary import published_workers, stage_vocabulary
+from native_closure_input import NativeClosureInput, native_bindings
+from standalone_rust import published_bindings
+from scratch import scratch_directory
+from rust_target import decoded
+from toolchain import (
+    NativeCrate,
+    Toolchain,
+    read_toolchain,
+    prepare_installation,
+    finish_installation,
+    load_toolchain_at,
+)
+from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
+from unit_rust import add_extern, compile_library_unit, prepare_linked
+from unit_publication import published_identity, record_path, record_payload, verified_payload, relocate_payload
+from unit_freshness import ArtifactIdentities, artifact_files, record, fingerprint
+from engine_client import service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from freshness_fixtures import fixture, make_executable, reconcile, unit_key, write
+
+
+pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
+    """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    first = reconcile(scratch.path(), setup)?
+    verify_closure_readings(scratch.path().joinpath("closure.json"))?
+    verify_toolchain_interface_admission(scratch.path(), setup.toolchain)?
+    dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
+    write(dependency[0], "dependency rebuilt with different code")?
+    record_payload(dependency[0], fingerprint(["rebuilt dependency"])?)?
+    record_payload(dependency[1], fingerprint(["rebuilt dependency"])?)?
+    rebuilt = reconcile(scratch.path(), setup)?
+    assert rebuilt.key != first.key
+    assert rebuilt.hashed == 0
+    standard_artifacts = artifact_files(Path(setup.unit.loaves[1].dir), "std")?
+    write(standard_artifacts[1], "{\"fixture\":\"standard package recompiled\"}")?
+    record_payload(standard_artifacts[1], fingerprint(["rebuilt standard"])?)?
+    recompiled = reconcile(scratch.path(), setup)?
+    assert recompiled.key != rebuilt.key
+    # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
+    standard = Path(setup.unit.loaves[1].dir)
+    manifest = standard.joinpath("std.incnlib")
+    write(manifest, "{\"vocab\": {\"desugarer_artifact\": {\"artifact_kind\": \"NativeWorker\"}}}")?
+    assert "vocab-worker" in [artifact.name() for artifact in artifact_files(standard, "std")?]
+    write(manifest, "{}")?
+    assert "vocab-worker" not in [artifact.name() for artifact in artifact_files(standard, "std")?]
+    write(manifest, "malformed manifest")?
+    match artifact_files(standard, "std"):
+        Ok(_) =>
+            assert false, "a malformed manifest cannot authorize an incomplete artifact set"
+        Err(_) => pass
+    verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    verify_worker_publication(scratch.path().joinpath("workers"))?
+    verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
+    verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    verify_checked_product_context(scratch.path().joinpath("checked-products"))?
+    verify_request_artifact_identities(scratch.path().joinpath("artifact-identities"))?
+    verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
+    return Ok(None)
+
+
+@derive(Eq)
+enum SemanticEdit(str):
+    """The fixed E2 source-edit matrix; each spelling is stable evidence in failures and timing rows."""
+
+    Body = "body-only"
+    Signature = "signature"
+    AddDeclaration = "add-declaration"
+    RemoveDeclaration = "remove-declaration"
+    RenameDeclaration = "rename-declaration"
+    FieldType = "field-type"
+    Import = "import"
+    Documentation = "documentation"
+    GenericInstantiation = "generic-instantiation"
+    Dependency = "dependency"
+
+
+@derive(Eq)
+enum MatrixFixture(str):
+    """The three Incan-only fixture shapes whose compiler records E2 compares."""
+
+    Hello = "hello"
+    Siblings = "siblings"
+    Library = "library"
+
+
+@derive(Eq)
+enum MatrixBuildKind(str):
+    """The three builds that establish one matrix row's retained and cold states."""
+
+    Base = "base"
+    Warm = "warm"
+    Cold = "cold"
+
+
+model MatrixCase:
+    """One edit's complete base and edited source trees and the build request that observes them."""
+
+    edit: SemanticEdit
+    fixture: MatrixFixture
+    target: str
+    base: Dict[str, str]
+    edited: Dict[str, str]
+
+
+model PhaseCounts:
+    """Actual producer work at the five executing compiler phases retained by the existing work trace."""
+
+    declarations: int = 0
+    bodies: int = 0
+    body_ir: int = 0
+    lowering: int = 0
+    llvm: int = 0
+
+    def display(self) -> str:
+        """Render one stable compact count row for a failure or timing receipt."""
+        return f"{self.declarations}/{self.bodies}/{self.body_ir}/{self.lowering}/{self.llvm}"
+
+    def after(self, before: PhaseCounts) -> PhaseCounts:
+        """Return work added after an earlier cumulative trace snapshot from the same records service."""
+        return PhaseCounts(
+            declarations=self.declarations - before.declarations,
+            bodies=self.bodies - before.bodies,
+            body_ir=self.body_ir - before.body_ir,
+            lowering=self.lowering - before.lowering,
+            llvm=self.llvm - before.llvm,
+        )
+
+
+model MatrixBuild:
+    """The comparable outputs and work evidence from one completed edited or cold build."""
+
+    artifacts: Dict[str, str]
+    counts: PhaseCounts
+    wall_ms: int
+
+
+model SemanticEditMatrix:
+    """Own one E2 run's fixtures, compiler process, failures and optional measurement rows."""
+
+    root: Path
+    binary: str
+    failures: list[str] = []
+    rows: list[str] = []
+
+    pub def verify(mut self) -> Result[None, str]:
+        """
+        Compare every warm edit with a target-clean cold build of the edited source.
+
+        1. Build the unedited source and then the edit against its retained private compiler records.
+        2. Keep exact digests of the warm records and selected native artifacts, then remove only this scratch target.
+        3. Build the edited source cold and require every cold record and artifact to have identical warm bytes.
+        """
+        for scenario in semantic_edit_cases():
+            match self.verify_case(scenario):
+                Ok(_) => pass
+                Err(reason) => self.failures.append(f"{scenario.edit.value()}: {reason}")
+        self.write_rows()?
+        if len(self.failures) != 0:
+            return Err("E2 cold-oracle differences:\n- " + "\n- ".join(self.failures))
+        return Ok(None)
+
+    def verify_case(mut self, scenario: MatrixCase) -> Result[None, str]:
+        """Run one warm/cold pair, retaining the edit name in every reported mismatch."""
+        project = self.root.joinpath(scenario.edit.value())
+        self.write_sources(project, scenario.base)?
+        base = self.build(scenario, project, MatrixBuildKind.Base)?
+        self.write_sources(project, scenario.edited)?
+        mut warm = self.build(scenario, project, MatrixBuildKind.Warm)?
+        warm.counts = warm.counts.after(base.counts)
+        self.stop_engine(project.joinpath("warm-store"))?
+        target = project.joinpath("target")
+        if not target.is_dir():
+            return Err("warm build produced no target directory")
+        remove_dir_all(target.0).map_err((error) => str(error))?
+        cold = self.build(scenario, project, MatrixBuildKind.Cold)?
+        self.stop_engine(project.joinpath("cold-store"))?
+        for path in cold.artifacts.keys():
+            if path not in warm.artifacts:
+                return Err(f"cold output {path} is absent from the incremental build")
+            if cold.artifacts[path] != warm.artifacts[path]:
+                return Err(f"incremental and cold bytes differ for {path}")
+        if len(cold.artifacts) == 0:
+            return Err("the cold build exposed no compiler records or selected artifacts")
+        self.rows.append(
+            "\t".join(
+                [
+                    scenario.edit.value(),
+                    scenario.fixture.value(),
+                    warm.counts.display(),
+                    str(warm.wall_ms),
+                    str(cold.wall_ms),
+                    "identical",
+                ],
+            ),
+        )
+        return Ok(None)
+
+    def write_sources(self, project: Path, sources: Dict[str, str]) -> Result[None, str]:
+        """Materialize one complete source state under its owned scratch fixture."""
+        for relative in sources.keys():
+            write(project.joinpath(relative), sources[relative])?
+        return Ok(None)
+
+    def build(self, scenario: MatrixCase, project: Path, kind: MatrixBuildKind) -> Result[MatrixBuild, str]:
+        """Build one matrix state with compiler-work tracing and retain only semantic records and selected artifacts."""
+        mut trace_name = "retained"
+        if kind == MatrixBuildKind.Cold:
+            trace_name = "cold"
+        trace = project.joinpath(f"e2-trace-{trace_name}")
+        trace.mkdir(true, true).map_err((error) => error.message())?
+        native = project.joinpath(f"e2-native-{trace_name}.trace")
+        target = project.joinpath(scenario.target)
+        mut store = project.joinpath("warm-store")
+        if kind == MatrixBuildKind.Cold:
+            store = project.joinpath("cold-store")
+        started = Instant.now()
+        output = Command
+            .new(self.binary)
+            .arg("build")
+            .arg(target.0)
+            .args(["--profile", "release"])
+            .env("OVEN_OWNER", "off")
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_NATIVE_TIMING", "1")
+            .env("INCAN_TRACE_DIR", trace.0)
+            .env("OVEN_TRACE", native.0)
+            .output()
+            .map_err((error) => str(error))?
+        wall_ms = int(started.elapsed().as_millis())
+        if not output.status.success():
+            stdout = decoded(output.stdout)
+            stderr = decoded(output.stderr)
+            return Err(f"{kind.value()} build refused: status={output.status.code()} stdout={stdout} stderr={stderr}")
+        return Ok(
+            MatrixBuild(
+                artifacts=self.artifact_digests(project.joinpath("target"))?,
+                counts=self.phase_counts(trace, native)?,
+                wall_ms=wall_ms,
+            ),
+        )
+
+    def stop_engine(self, store: Path) -> Result[None, str]:
+        """Stop one disposable records service after its final matrix request has completed."""
+        mut identity = service_identity(store)?
+        identity.service_generation = fingerprint([self.binary, observe(Path(self.binary))?.stamp])?
+        mut channel = connect_with(store, identity, self.binary).map_err((error) => error.detail)?
+        channel
+            .send(zero_id(), Message.Stop(Stop(reason="semantic edit matrix row completed")))
+            .map_err((error) => error.detail)?
+        stopped = channel.receive().map_err((error) => error.detail)?
+        match stopped.message:
+            Message.Event(value) =>
+                if value.status != "Stopping":
+                    return Err(f"records service returned stop status {value.status}")
+            _ => return Err("records service did not acknowledge matrix stop")
+        _ = channel.transport.close()
+        return Ok(None)
+
+    def artifact_digests(self, target: Path) -> Result[Dict[str, str], str]:
+        """Hash compiler records and final artifacts, excluding mutable receipts and observations."""
+        mut result: Dict[str, str] = {}
+        mut pending: list[Path] = [target]
+        while len(pending) > 0:
+            directory = pending.pop()
+            for entry in directory.iterdir().map_err((error) => error.message())?:
+                if entry.is_dir():
+                    pending.append(entry)
+                elif entry.is_file():
+                    relative = entry.0[len(target.0) + 1:]
+                    if comparable_matrix_output(relative):
+                        result[relative] = file_digest(entry)?
+        return Ok(result)
+
+    def phase_counts(self, traces: Path, native: Path) -> Result[PhaseCounts, str]:
+        """Count actual work observations from the edited build, never inventories of retained products."""
+        mut counts = PhaseCounts()
+        for trace in traces.iterdir().map_err((error) => error.message())?:
+            if not trace.is_file():
+                continue
+            for line in trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+                if "\"phase\":\"checking\"" in line and "\"action\":\"declaration\"" in line:
+                    counts.declarations += 1
+                elif "\"phase\":\"checking\"" in line and "\"action\":\"body\"" in line:
+                    counts.bodies += 1
+                elif "\"phase\":\"body_ir\"" in line and "\"action\":\"built\"" in line:
+                    counts.body_ir += 1
+        if native.is_file():
+            for line in native.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+                if line.startswith("redo-item: lowering\t"):
+                    counts.lowering += 1
+                elif line.startswith("redo-codegen: "):
+                    document = parse(line[len("redo-codegen: "):]).map_err((error) => error.message())?
+                    execution = document.require("execution").map_err((error) => error.message())?.expect_str().map_err(
+                        (error) => error.message(),
+                    )?
+                    if execution == "all_on_success":
+                        partitions = document.require("partitions").map_err((error) => error.message())?
+                        counts.llvm += partitions.expect_int().map_err((error) => error.message())?
+        return Ok(counts)
+
+    def write_rows(self) -> Result[None, str]:
+        """Write optional development-loop samples without changing the test's verdict or ordinary console."""
+        destination = get_or("INCAN_E2_MATRIX_REPORT", "")
+        if destination != "":
+            header = "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\twarm_ms\tcold_ms\tverdict\n"
+            Path(destination)
+                .write_text(header + "\n".join(self.rows) + "\n", "utf-8", "strict", None)
+                .map_err((error) => error.message())?
+        return Ok(None)
+
+
+def verify_semantic_edit_matrix(root: Path) -> Result[None, str]:
+    """Run DD-0015's fixed Incan-only E2 matrix through the installed compiler selected by this Oven test."""
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return SemanticEditMatrix(root=root, binary=binary).verify()
+
+
+def comparable_matrix_output(relative: str) -> bool:
+    """Select semantic compiler records and final artifact bytes while excluding ledgers and publication receipts."""
+    if "/.products/" in "/" + relative:
+        return relative.endswith(".incnitems") or relative.endswith(".incnfunction")
+    if "/release/bin/" in "/" + relative:
+        return true
+    if not relative.startswith("incan/loaves/") or "/release/" not in relative:
+        return false
+    for suffix in [".rlib", ".incnlib", ".incnbody", ".incngraph", ".native.json", ".rustabi"]:
+        if relative.endswith(suffix):
+            return true
+    return false
+
+
+def semantic_edit_cases() -> list[MatrixCase]:
+    """Define the fixed E2 matrix over hello, sibling declarations and one sibling library module."""
+    return [
+        MatrixCase(
+            edit=SemanticEdit.Body,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+            edited={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hullo\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Signature,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                ["def value() -> str:", "    return \"one\"", "", "", "def main() -> None:", "    println(value())"],
+            )},
+            edited={"hello.incn": fixture_source(
+                ["def value() -> int:", "    return 1", "", "", "def main() -> None:", "    println(value())"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.AddDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(["def main() -> None:", "    println(\"stable\")"])},
+            edited={"fixture.incn": fixture_source(
+                ["def other() -> int:", "    return 2", "", "", "def main() -> None:", "    println(\"stable\")"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.RemoveDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["def other() -> int:", "    return 2", "", "", "def main() -> None:", "    println(\"stable\")"],
+            )},
+            edited={"fixture.incn": fixture_source(["def main() -> None:", "    println(\"stable\")"])},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.RenameDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["def changed() -> int:", "    return 2", "", "", "def main() -> None:", "    println(changed())"],
+            )},
+            edited={"fixture.incn": fixture_source(
+                ["def renamed() -> int:", "    return 2", "", "", "def main() -> None:", "    println(renamed())"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.FieldType,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["model Item:", "    value: int", "", "", "def main() -> None:", "    println(Item(value=1).value)"],
+            )},
+            edited={"fixture.incn": fixture_source(
+                [
+                    "model Item:",
+                    "    value: str",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(Item(value=\"one\").value)",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Import,
+            fixture=MatrixFixture.Siblings,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                ["from helper import greeting", "", "", "def main() -> None:", "    println(greeting())"],
+            ), "helper.incn": fixture_source(
+                [
+                    "pub def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "pub def salutation() -> str:",
+                    "    return \"hello\"",
+                ],
+            )},
+            edited={"main.incn": fixture_source(
+                ["from helper import salutation", "", "", "def main() -> None:", "    println(salutation())"],
+            ), "helper.incn": fixture_source(
+                [
+                    "pub def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "pub def salutation() -> str:",
+                    "    return \"hello\"",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Documentation,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+            edited={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    \"\"\"Return the greeting.\"\"\"",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.GenericInstantiation,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                [
+                    "def identity[T](value: T) -> T:",
+                    "    return value",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(identity[int](1))",
+                ],
+            )},
+            edited={"fixture.incn": fixture_source(
+                [
+                    "def identity[T](value: T) -> T:",
+                    "    return value",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(identity[str](\"one\"))",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Dependency,
+            fixture=MatrixFixture.Library,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                ["from values import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "values.incn": fixture_source(
+                ["pub def selected() -> int:", "    return 1", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+            edited={"main.incn": fixture_source(
+                ["from values import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "values.incn": fixture_source(
+                ["pub def selected() -> int:", "    return 2", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+        ),
+    ]
+
+
+def fixture_source(lines: list[str]) -> str:
+    """Render readable source-line fixtures with one final newline."""
+    return "\n".join(lines) + "\n"
+
+
+def verify_checked_product_context(scratch: Path) -> Result[None, str]:
+    """Unchanged semantic inputs retain one selection; unrelated frozen toolchain files do not rekey it."""
+    mut setup = fixture(scratch)?
+    toolchain_search = scratch.joinpath("toolchain").joinpath("search")
+    unrelated = toolchain_search.joinpath("libunrelated.rlib")
+    write(unrelated, "unrelated toolchain payload one")?
+    selected_search = scratch.joinpath("toolchain").joinpath("selected-search")
+    selected = selected_search.joinpath("libselected.rlib")
+    write(selected, "selected toolchain payload")?
+    setup.toolchain.search = [toolchain_search.0]
+    mut library = setup.unit
+    library.kind = "library"
+    library.loaves = []
+    library.search = [selected_search.0]
+    count_work(selected_search.0 + "/")
+    first_library = prepare_linked(library, setup.toolchain)?
+    observed = finish_counting()
+    assert observed.identities == 0, "frozen toolchain search artifacts were observed again"
+    write(unrelated, "unrelated toolchain payload two")?
+    write(selected, "selected toolchain payload two")?
+    second_library = prepare_linked(library, setup.toolchain)?
+    assert first_library.checked_context is not None
+    assert first_library.checked_context == second_library.checked_context
+    assert first_library.checked_products == second_library.checked_products
+    mut program = setup.unit
+    program.kind = "program"
+    program.loaves = []
+    first_program = prepare_linked(program, setup.toolchain)?
+    second_program = prepare_linked(program, setup.toolchain)?
+    assert first_program.checked_context is not None
+    assert first_program.checked_context == second_program.checked_context
+    assert first_program.checked_products == second_program.checked_products
+    return Ok(None)
+
+
+def verify_request_artifact_identities(scratch: Path) -> Result[None, str]:
+    """One request observes each artifact once and refuses a generation changed before the request commits."""
+    artifact = scratch.joinpath("libshared.rlib")
+    write(artifact, "first generation")?
+    identities = ArtifactIdentities()
+    count_work(scratch.0 + "/")
+    first = identities.identity(artifact)?
+    assert identities.identity(artifact)? == first
+    observed = finish_counting()
+    assert observed.identities == 1, f"shared artifact was identified {observed.identities} times"
+    write(artifact, "second generation")?
+    match identities.verify():
+        Ok(_) =>
+            assert false, "an artifact changed within one request retained its first identity"
+        Err(reason) =>
+            assert artifact.0 in reason
+    assert ArtifactIdentities().identity(artifact)? != first
+    return Ok(None)
+
+
+def verify_worker_publication(scratch: Path) -> Result[None, str]:
+    """Carried workers keep their baked identity; payload admission stays separate from library identity."""
+    setup = fixture(scratch)?
+    worker = scratch.joinpath("vocabulary/desugar")
+    write(worker, "one native worker")?
+    worker_id = fingerprint(["worker producer"])?
+    registration_id = fingerprint(["registration producer"])?
+    record_payload(worker, "sha256:" + worker_id)?
+    digest = file_digest(worker)?
+    metadata = scratch.joinpath("vocabulary/registration.json")
+    prepared = f"{{\"crate_path\":\"syntax.incn\",\"package_name\":\"app\",\"unit_identity\":\"{registration_id}\",\"metadata\":{{}},\"worker\":{{\"artifact_kind\":\"NativeWorker\",\"abi_version\":1,\"relative_path\":\"vocab-worker\",\"unit_identity\":\"{worker_id}\",\"sha256\":\"{digest}\"}}}}"
+    write(metadata, prepared)?
+    mut unit = setup.unit
+    unit.vocab = Some(metadata.0)
+    before = unit_key(unit, setup.toolchain)?
+    directory = scratch.joinpath("library")
+    stage_vocabulary(unit, directory)?
+    carried = directory.joinpath("vocab-worker")
+    record(directory.joinpath("library.inputs"), before, [carried], published_workers(unit, directory)?)?
+    assert published_identity(carried)? == "sha256:" + worker_id
+    write(metadata, prepared.replace(digest, fingerprint(["another payload"])?))?
+    assert unit_key(unit, setup.toolchain)?.digest == before.digest
+    match stage_vocabulary(unit, scratch.joinpath("refused")):
+        Ok(_) =>
+            assert false, "payload checksum changes require admission, never a fabricated unit identity"
+        Err(reason) =>
+            assert "payload changed" in reason
+    return Ok(None)
+
+
+def verify_requested_loaf_roots(scratch: Path) -> Result[None, str]:
+    """Requested native roots keep their offered identity; unrelated published bindings do not become graph anchors."""
+    setup = fixture(scratch)?
+    mut unit = setup.unit
+    unit.loaves = [unit.loaves[0]]
+    directory = Path(unit.loaves[0].dir)
+    closure = directory.joinpath("dep.native.json")
+    write(closure, "{\"externs\":[[\"wanted\",\"libwanted.rlib\"],[\"private\",\"libprivate.rlib\"]]}")?
+    assert published_bindings(unit, setup.toolchain, ["wanted"])? == [directory.joinpath("libwanted.rlib").0]
+    assert published_bindings(unit, setup.toolchain, ["other"])? == []
+    return Ok(None)
+
+
+def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
+    """Retain one alias for byte-identical relocated artifacts, refusing different or unreadable candidates."""
+    setup = fixture(scratch)?
+    selected = setup.toolchain.externs[0]
+    assert len(add_extern(setup.unit, selected)?.externs) == 1
+    copy = scratch.joinpath("relocated.rlib")
+    write(copy, read(Path(selected.path))?)?
+    candidate = NativeCrate(name=selected.name, path=copy.0)
+    retained = add_extern(setup.unit, candidate)?
+    assert len(retained.externs) == 1
+    assert retained.externs[0].path == selected.path
+    write(copy, "different runtime")?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a shared alias cannot select different artifact bytes"
+        Err(reason) =>
+            assert "names conflicting artifacts" in reason
+    remove(copy)?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a missing candidate cannot prove artifact identity"
+        Err(reason) =>
+            assert copy.0 in reason
+    return Ok(None)
+
+
+def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
+    """
+    Reuse a library whose first compilation creates its indexed Rust ABI cache.
+
+    1. Count a compiler that cannot start a worker and publishes the complete library artifact set, including a new
+       ABI cache.
+    2. Compile the prepared library twice without changing its inputs.
+    3. Require one compiler invocation and retain the published ABI cache.
+    """
+    # 1. The optional cache appears only after the first compiler invocation.
+    setup = fixture(scratch)?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(setup.toolchain.driver)
+    mut script = "#!/bin/sh\nset -eu\n[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
+    script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
+    script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
+    script += "printf published > \"$directory/$name\"\ndone\n"
+    script += "printf '{}' > \"$directory/app.incnlib\"\n"
+    write(driver, script)?
+    make_executable(driver)?
+    # 2. The completed stamp must include the cache that publication added.
+    mut library = setup.unit
+    library.kind = "library"
+    output = setup.root.joinpath("target").joinpath("published").joinpath("libapp.rlib")
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
+    assert read(attempts)? == "x"
+    assert output.parent().joinpath("app.rustabi").is_file()
+    # An unbaked replacement must not inherit a previous portable view's fact selection.
+    remove(record_path(Path(setup.toolchain.externs[0].path)))?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert not output.parent().joinpath("fact.json").is_file()
+    assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
+    assert read(attempts)? == "xx"
+    return Ok(None)
+
+
+def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
+    """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
+    verify_archive_members(scratch)?
+    verify_staged_loaf_artifacts(scratch)?
+    verify_rust_prerequisites(scratch)?
+    original = scratch.joinpath("producer/runtime.incnlib")
+    write(original, "runtime interface")?
+    record_payload(original, "runtime producer")?
+    directory = Path(toolchain.driver).parent()
+    copied = directory.joinpath("runtime.incnlib")
+    write(copied, read(original)?)?
+    write(record_path(copied), read(record_path(original))?)?
+    standard = directory.joinpath("loaves/standard/debug/libstandard.rlib")
+    write(standard, read(original)?)?
+    write(record_path(standard), read(record_path(original))?)?
+    registry = directory.joinpath("registry/libregistry.rlib")
+    write(registry, read(original)?)?
+    write(
+        directory.joinpath("registry/closure.json"),
+        "{\"externs\":{\"registry producer\":{\"path\":\"libregistry.rlib\",\"payload_digest\":\"" + file_digest(
+            original,
+        )? + "\"}}}",
+    )?
+    document = JsonValue.object(
+        {"schema": JsonValue.string("incan.toolchain/1"), "driver": JsonValue.string(toolchain.driver), "sysroot": JsonValue.string(
+            toolchain.sysroot,
+        ), "rust_abi": JsonValue.array([JsonValue.string(path) for path in toolchain.rust_abi]), "externs": JsonValue.array(
+            [native.to_json() for native in toolchain.externs],
+        ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json"), "codegraph_on_request": JsonValue.bool(
+            true,
+        )},
+    )
+    write(directory.joinpath("toolchain.json"), json_text(document)?)?
+    write(registry, "damaged during transport")?
+    match read_toolchain(directory):
+        Ok(_) =>
+            assert false, "a damaged transported registry payload was admitted"
+        Err(_) => pass
+    write(registry, read(original)?)?
+    selected = read_toolchain(directory)?
+    assert selected.codegraph_on_request
+    verify_renamed_admission(scratch, original)?
+    verify_published_installation(scratch, original)?
+    verify_installation_check(scratch)?
+    assert published_identity(copied)? == "runtime producer"
+    assert published_identity(standard)? == "runtime producer"
+    assert published_identity(registry)? == "registry producer"
+    for payload in [copied, standard, registry]:
+        write(payload, "changed payload")?
+        match read_toolchain(directory):
+            Ok(_) =>
+                assert false, "a changed payload cannot retain its transported producer identity"
+            Err(_) => pass
+        write(payload, read(original)?)?
+    return Ok(None)
+
+
+def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]:
+    """A published installation retains verified generations and refuses replacements without reading payload bytes again."""
+    stage = scratch.joinpath("admission-stage")
+    payload = stage.joinpath("library.rlib")
+    compiler = stage.joinpath("driver")
+    write(payload, read(original)?)?
+    record_payload(payload, "renamed producer")?
+    write(compiler, "compiler generation")?
+    admit_fact(compiler)?
+    admitted_payload = verified_payload(payload)?
+    admitted_compiler = verified_fact(compiler)?
+    target = scratch.joinpath("admission-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    installed_payload = target.joinpath("library.rlib")
+    installed_compiler = target.joinpath("driver")
+    relocate_payload(installed_payload, admitted_payload)?
+    relocate_fact(installed_compiler, admitted_compiler)?
+    assert published_identity(installed_payload)? == "renamed producer"
+    assert fact_identity(installed_compiler)? == admitted_compiler.digest
+    write(installed_payload, "damaged payload")?
+    write(installed_compiler, "damaged compiler")?
+    match relocate_payload(installed_payload, admitted_payload):
+        Ok(_) =>
+            assert false, "changed payload retained installation admission"
+        Err(_) => pass
+    match relocate_fact(installed_compiler, admitted_compiler):
+        Ok(_) =>
+            assert false, "changed compiler retained installation admission"
+        Err(_) => pass
+    return Ok(None)
+
+
+def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
+    """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
+    stage = scratch.joinpath("installation-stage")
+    write(stage.joinpath("driver"), "fixture compiler")?
+    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
+    write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
+    write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(stage.joinpath("library.rlib"), read(original)?)?
+    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
+    record_payload(stage.joinpath("library.rlib"), "installed producer")?
+    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
+    write(
+        stage.joinpath("toolchain.json"),
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true}",
+    )?
+    _, admission = prepare_installation(stage)?
+    assert len(admission.payloads) == 1 and len(admission.facts) == 2
+    target = scratch.joinpath("installation-published")
+    rename(stage.0, target.0).map_err((error) => str(error))?
+    finish_installation(target, admission)?
+    installed = load_toolchain_at(target)?
+    assert installed.driver == target.joinpath("driver").0
+    assert installed.codegraph_on_request
+    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
+    verify_installation_page(target)?
+    _ = flush_trace()
+    return Ok(None)
+
+
+def verify_installation_page(directory: Path) -> Result[None, str]:
+    """Warm selections read the admitted page, preserve full intent, refresh edits and refuse page damage."""
+    page = match recall_installation(directory)?:
+        None => return Err("installation did not publish an admitted page")
+        Some(found) => found
+
+    assert len(page.manifests) == 1
+    assert page.manifests[0].intent.name == "primitives"
+    assert len(page.manifests[0].digest) == 64
+    # Repeated source-level selections emit no reads, decodes or hashes of these installed inputs.
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+        assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
+        assert len(required_items(read_json(directory.joinpath("library.native.json"))?, "search")?) == 0
+    work = finish_counting()
+    assert work.reads == 0 and work.hashes == 0
+    assert work.parses == 0 and work.decodes == 0
+    assert work.stats > 0
+    assert work.pages <= 1
+    # A command captures once; ending it restores generation checks for later library or resident requests.
+    begin_command()
+    _ = load_toolchain_at(directory)?
+    count_work(directory.0 + "/")
+    for _index in range(2):
+        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+    captured = finish_counting()
+    end_command()
+    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0
+    encoded = encode_installation(page)?
+    fixture = directory.parent().joinpath("installation-page.bin")
+    fixture.write_bytes(encoded).map_err((error) => error.message())?
+    mapped = fixture.map_read().map_err((error) => error.message())?
+    match mapped.view(0, mapped.len()):
+        None => return Err("fixture has no whole mapped range")
+        Some(view) =>
+            decoded = decode_installation(view)?
+            assert encode_installation(decoded)? == encoded
+            assert decoded.toolchain.codegraph_on_request
+            assert decoded.manifests[0].intent == page.manifests[0].intent
+    verify_page_refusals(fixture, encoded)?
+    verify_page_vectors(fixture)?
+    digest = fingerprint_page(encoded)
+    canonical = payload_path(installation_catalog()?, digest)
+    canonical.chmod(false).map_err((error) => error.message())?
+    canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
+    match recall_installation(directory):
+        Ok(_) => return Err("damaged installation page was silently reused or reproduced")
+        Err(_) => pass
+    canonical.write_bytes(encoded).map_err((error) => error.message())?
+    manifest = directory.joinpath("stdlib/primitives/loaf.toml")
+    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
+    match recall_installation(directory)?:
+        None => pass
+        Some(_) => return Err("changed manifest retained its preceding admission")
+    _ = load_toolchain_at(directory)?
+    refreshed = match recall_installation(directory)?:
+        None => return Err("changed installation was not re-admitted")
+        Some(found) => found
+
+    assert refreshed.manifests[0].intent.version == "2.0.0"
+    write(manifest, "[project\n")?
+    match load_toolchain_at(directory):
+        Ok(_) => return Err("a damaged standard manifest retained admission")
+        Err(_) => pass
+    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
+    _ = load_toolchain_at(directory)?
+    # Source preparation can publish a new producer of unchanged bytes during one command.
+    record_payload(directory.joinpath("library.rlib"), "refreshed producer")?
+    assert published_identity(directory.joinpath("library.rlib"))? == "refreshed producer"
+    native = directory.joinpath("library.native.json")
+    write(native, "{\"search\":[\"refreshed\"],\"externs\":[],\"macro_externs\":[]}")?
+    assert len(required_items(read_json(native)?, "search")?) == 1
+    _ = load_toolchain_at(directory)?
+    producer = record_path(directory.joinpath("library.rlib"))
+    original = read(producer)?
+    write(producer, "damaged producer record")?
+    match published_identity(directory.joinpath("library.rlib")):
+        Ok(_) => return Err("changed producer record retained its admitted identity")
+        Err(_) => pass
+    write(producer, original)?
+    _ = load_toolchain_at(directory)?
+    return Ok(None)
+
+
+def fingerprint_page(data: bytes) -> str:
+    """The exact value digest used by the sealed page's immutable revision."""
+    return hexlify(sha256.digest(data))
+
+
+def verify_page_refusals(path: Path, data: bytes) -> Result[None, str]:
+    """Malformed page scalars, versions, truncation and trailing bytes refuse before they can supply facts."""
+    extended = BytesIO(b"")
+    extended.write_bytes(data).map_err((error) => error.message())?
+    extended.write_bytes(b"\x00").map_err((error) => error.message())?
+    for bytes in [b"invalid", data[:16], extended.getvalue()]:
+        path.write_bytes(bytes).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        if let Some(view) = mapped.view(0, mapped.len()):
+            match decode_installation(view):
+                Ok(_) => return Err("malformed installation page was accepted")
+                Err(_) => pass
+    return Ok(None)
+
+
+def verify_page_vectors(path: Path) -> Result[None, str]:
+    """Packed vectors retain empty and Unicode strings; separator contents use the canonical length form."""
+    for values in [[], [""], ["first", "λ", ""], ["embedded\\x00value", ""]]:
+        buffer = BytesIO(b"")
+        put_texts(buffer, values)?
+        path.write_bytes(buffer.getvalue()).map_err((error) => error.message())?
+        mapped = path.map_read().map_err((error) => error.message())?
+        match mapped.view(0, mapped.len()):
+            None => return Err("vector fixture has no mapped range")
+            Some(view) =>
+                mut reader = Reader(view=view)
+                assert reader.texts()? == values
+                assert reader.offset == view.len()
+    return Ok(None)
+
+
+def verify_installation_check(scratch: Path) -> Result[None, str]:
+    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
+    directory = scratch.joinpath("checked-installation")
+    make_directory(directory)?
+    oven = scratch.joinpath("installation-oven")
+    calls = scratch.joinpath("installation-calls")
+    mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
+    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
+    script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
+    script += "printf 'incan installation verified\\n'\n"
+    write(oven, script)?
+    make_executable(oven)?
+    verify_runtime(oven.0, directory)?
+    assert read(calls)? == "x"
+    # A refused runtime is reported after removing the check's project too.
+    write(oven, script + "exit 1\n")?
+    make_executable(oven)?
+    match verify_runtime(oven.0, directory):
+        Ok(_) =>
+            assert false, "installation accepted a failed runtime"
+        Err(_) => pass
+    assert read(calls)? == "xx"
+    for path in scratch.iterdir().map_err((error) => error.message())?:
+        assert not path.name().startswith(".installation-check-")
+    return Ok(None)
+
+
+def verify_closure_readings(path: Path) -> Result[None, str]:
+    """Reuse exact linking fields, refresh rewrites, and never let deleted or malformed input serve old fields."""
+    readings = NativeClosureInput()
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    first = readings.read(path)?
+    match first.get("unused_receipt"):
+        Some(_) =>
+            assert false, "linking fields must exclude unrelated receipt payloads"
+        None => pass
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    assert first.get("externs") != None
+    assert native_bindings(path, readings)? == [("serde", "libserde.rlib")]
+    write(path, "{\"externs\":[[\"missing_artifact\"]]}")?
+    match native_bindings(path, readings):
+        Ok(_) =>
+            assert false, "a native binding without its artifact was accepted"
+        Err(reason) =>
+            assert "native extern must contain a name and artifact" in reason
+    write(path, "{\"search\":[\"other\"],\"macro_externs\":[]}")?
+    assert json_text(readings.read(path)?)? != json_text(first)?
+    selected = first.require("search").map_err((error) => error.message())?
+    assert json_text(selected)? == "[\"first\"]"
+    write(path, "malformed")?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "malformed native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    remove(path)?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "a deleted native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    return Ok(None)
+
+
+def verify_archive_members(scratch: Path) -> Result[None, str]:
+    """
+    Archive installation admits a nested C sysroot and protects the root host link and staging boundary.
+
+    1. Check the complete member rule, including each refusal's offending-member message.
+    2. Pack real nested and root-link members with a manifest that stops before toolchain admission.
+    3. Check the public installer in an isolated home and verify its staging cleanup.
+    """
+    # 1. A nested C sysroot stays ordinary content; no root-link or staging escape spelling is admitted.
+    for member in ["c/sysroot", "./c/sysroot", "c/sysroot/usr/include/stdio.h"]:
+        admit_archive_member(member)?
+    for member in ["sysroot", "./sysroot", "sysroot/lib/rustlib", "../outside", "c/../../outside", "/outside"]:
+        match admit_archive_member(member):
+            Ok(_) =>
+                assert false, f"unsafe archive member was admitted: {member}"
+            Err(reason) =>
+                assert reason == f"unsafe toolchain archive member: {member}", reason
+    # 2. The deliberate name mismatch proves an allowed member was unpacked and reached manifest verification.
+    root = scratch.joinpath("archive-members")
+    write(root.joinpath("c/sysroot/include/payload"), "nested C sysroot")?
+    write(root.joinpath("sysroot/payload"), "refused host link")?
+    write(root.joinpath("toolchain.json"), "{\"name\":\"archive-member-probe\"}")?
+    archive = scratch.joinpath("members.tar")
+    home = scratch.joinpath("archive-home")
+    prior = home.joinpath("toolchains/0.6.0-dev.8/prior")
+    write(prior, "unchanged")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    # 3. Each refusal leaves both the prior installation and its sibling staging directory unchanged.
+    for member, refused in [
+        ("c/sysroot", false),
+        ("./c/sysroot", false),
+        ("sysroot", true),
+        ("./sysroot", true),
+        ("sysroot/payload", true),
+    ]:
+        mut pack = Command.new("tar")
+        pack.args(["-cf", archive.0, "-C", root.0, "toolchain.json", member])
+        packed = pack.output().map_err((error) => str(error))?
+        assert packed.status.success(), decoded(packed.stderr)
+        mut install = Command.new(binary)
+        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0).env("OVEN_OWNER", "off")
+        install.env("INCAN_ENGINE", "legacy").env_remove("INCAN_STDLIB")
+        output = install.output().map_err((error) => str(error))?
+        assert output.status.code() == Some(1i32), member
+        message = decoded(output.stderr)
+        if refused:
+            assert f"unsafe toolchain archive member: {member}" in message, message
+        else:
+            assert "archive toolchain archive-member-probe does not match" in message, message
+        assert read(prior)? == "unchanged"
+        for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
+            assert not entry.name().startswith(".install-"), entry.0
+    return Ok(None)
+
+
+def verify_staged_loaf_artifacts(scratch: Path) -> Result[None, str]:
+    """Archive staging preserves compiled Loaf files while leaving builder logs and unit descriptions at source."""
+    source = scratch.joinpath("staged-loaf-source")
+    stage = scratch.joinpath("staged-loaf-target")
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        write(original.joinpath("example.incnlib"), "checked interface")?
+        write(original.joinpath("example.incnbody"), "executable bodies")?
+        write(original.joinpath("libexample.rlib"), "native library")?
+        write(original.joinpath("build.log"), f"warning INCAN-T0125 at {scratch.0}/private/source.incn:1")?
+        write(original.joinpath("example.unit.json"), "builder unit")?
+    stage_loaves(source, stage)?
+    for profile in ["debug", "release"]:
+        original = source.joinpath("example").joinpath(profile)
+        packed = stage.joinpath("loaves/example").joinpath(profile)
+        assert read(packed.joinpath("example.incnlib"))? == "checked interface"
+        assert read(packed.joinpath("example.incnbody"))? == "executable bodies"
+        assert read(packed.joinpath("libexample.rlib"))? == "native library"
+        assert not packed.joinpath("build.log").exists()
+        assert not packed.joinpath("example.unit.json").exists()
+        assert original.joinpath("build.log").is_file()
+    return Ok(None)
+
+
+def verify_rust_prerequisites(scratch: Path) -> Result[None, str]:
+    """Toolchain admission accepts Rust with its compiler libraries and gives one exact repair command without them."""
+    sysroot = scratch.joinpath("rust-prerequisites")
+    components = sysroot.joinpath("lib/rustlib/components")
+    write(components, "rustc-dev-aarch64-apple-darwin\n")?
+    require_rust_components(sysroot)?
+    write(components, "rustc-aarch64-apple-darwin\n")?
+    match require_rust_components(sysroot):
+        Ok(_) =>
+            assert false, "a sysroot without rustc-dev must be refused before compiler verification"
+        Err(reason) =>
+            assert "missing required component rustc-dev" in reason, reason
+            assert "rustup component add --toolchain 1.98.0 rustc-dev" in reason, reason
+    return Ok(None)

@@ -1,0 +1,21 @@
+# behavior: models and classes imported from other modules construct by their exact module identity: models use their public fields while imported classes with required private state use provider-owned public factories, including same-named classes from two modules and a two-hop facade (RFC 149: private fields reserve construction and hide data; RFC 122: inaccessible private state cannot be bound through another construction path)
+# expect-stdout:
+#   public sealed r1
+#   open 2
+#   text r7 6
+#   5 provider-default 42
+#   exported r7 3
+
+from text_vaults import Vault
+from number_vaults import Vault as NumberVault
+from public_api import ExportedVault as ConsumerVault
+from sealed_models import Sealed, Open
+
+
+def main() -> None:
+    println(Sealed(label="public").describe())
+    open = Open(label="open", revision=2)
+    println(f"{open.label} {open.revision}")
+    println(Vault.create(secret="hidden", label="text").describe())
+    println(NumberVault.create(secret=42, label=5).describe())
+    println(ConsumerVault.create(secret="key", label="exported").describe())

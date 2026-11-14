@@ -1,0 +1,15 @@
+"""A provider's same-named trait stays ordinary, even beside a forwarded standard callable."""
+
+pub trait Callable1[A, R]:
+    def apply(self, value: A) -> R
+
+
+pub class Adder with Callable1[int, int]:
+    pub amount: int
+
+    def apply(self, value: int) -> int:
+        return value + self.amount
+
+
+pub def apply_custom[F with Callable1[int, int]](operation: F, value: int) -> int:
+    return operation.apply(value)

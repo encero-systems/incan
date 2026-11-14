@@ -1,0 +1,302 @@
+"""Render retained development-loop samples without repeating measured commands."""
+
+from rust::std::env import current_exe
+from rust::std::env::consts import ARCH, OS
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from std.datetime.civil import DateTime
+from std.encoding.hex import hexlify
+from std.environ import args
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+
+
+pub model Settings:
+    """Retained samples, report path, measured Oven and home, and selected timing table."""
+
+    pub samples: Path
+    pub report: Path
+    pub oven: Path
+    pub home: Path
+    pub table: Path
+
+
+pub model Sample:
+    """One retained subject, metric, round, timing, status, and target row."""
+
+    pub subject: str
+    pub metric: str
+    pub sample: int
+    pub first_ms: Option[float]
+    pub completion_ms: float
+    pub status: int
+    pub target: Option[float]
+
+
+def main() -> None:
+    """Parse the historical operands, write the Markdown report, and refuse any failed sample."""
+    arguments = args().unwrap_or([])
+    match parse(arguments[1:]):
+        Ok(settings) =>
+            match render(settings):
+                Ok(path) =>
+                    println(path.0)
+                    exit(0)
+                Err(message) =>
+                    println(f"dev-loop report: {message}")
+                    exit(1)
+        Err(message) =>
+            println(f"dev-loop report: {message}")
+            exit(2)
+
+
+pub def parse(arguments: list[str]) -> Result[Settings, str]:
+    """Parse `SAMPLES_DIR OUTPUT.md OVEN INCAN_HOME [TIMES.tsv]`."""
+    if len(arguments) < 4 or len(arguments) > 5:
+        return Err("expected SAMPLES_DIR OUTPUT.md OVEN INCAN_HOME [TIMES.tsv]")
+    samples = Path(arguments[0])
+    mut table = samples.joinpath("times.tsv")
+    if len(arguments) == 5:
+        table = Path(arguments[4])
+    return Ok(
+        Settings(
+            samples=samples,
+            report=Path(arguments[1]),
+            oven=Path(arguments[2]),
+            home=Path(arguments[3]),
+            table=table,
+        ),
+    )
+
+
+pub def render(settings: Settings) -> Result[Path, str]:
+    """
+    Render one development-loop report.
+
+    1. Read and group retained TSV samples without changing them.
+    2. Identify the exact harness, driver, Oven, and host.
+    3. Write medians, spread, target counts, and successful sample counts.
+    4. Refuse the run after publishing its report when any measured command failed.
+    """
+    # 1. The retained table is the only timing authority.
+    samples = parse_samples(read(settings.table)?)?
+    groups = grouped(samples)
+
+    # 2. Report identities make independently rendered corrections auditable.
+    root = repository_root()?
+    manifest = JsonValue.parse(read(settings.samples.joinpath("toolchain.json"))?).map_err((error) => error.message())?
+    driver_value = required_text(manifest, "driver")?
+    mut driver = Path(driver_value)
+    if not driver_value.startswith("/"):
+        driver = settings.home.joinpath(f"toolchains/0.6.0-dev.8/{driver_value}")
+    driver_digest = hexlify(file_digest(driver, "sha256").map_err((error) => error.message())?)
+    oven_digest = hexlify(file_digest(settings.oven, "sha256").map_err((error) => error.message())?)
+    commit = require("git", ["rev-parse", "HEAD"], root)?.stdout.strip()
+
+    # 3. Each row uses passing samples for timing and every sample for its success denominator.
+    mut lines = ["# Development-loop measurements", ""]
+    lines.append(f"Report generated: {DateTime.utc_now().isoformat()}Z. Harness checkout: {commit}. Host: {OS} {ARCH}.")
+    lines.append("")
+    lines.append(f"Driver SHA-256: {driver_digest}. Oven SHA-256: {oven_digest}.")
+    lines.append("")
+    lines.append(
+        f"Raw samples, load readings and command output: {settings.samples.name()} under BENCH_SCRATCH. Table: {settings.table.name()}.",
+    )
+    lines.append("")
+    lines.append(
+        "Run metrics measure time to the first verified output line. Other metrics measure completion. Each command starts a new CLI process; project owners may be reused. Subjects rotate within each round to interleave load. Spread is minimum to maximum. Failed commands have no passing timing.",
+    )
+    lines.append("")
+    lines.append(
+        "Direct first/repeat launches isolate a newly compiled executable from its repeated execution. Their difference includes system assessment and cache effects; no fixed OS-cost subtraction is applied.",
+    )
+    lines.append("")
+    lines.append(
+        "The dev.7 handoff measured small unchanged commands at 11–15 ms and one check at 12.76 ms. Other rows have no matched historical baseline.",
+    )
+    lines.append("")
+    lines.append("| Subject | Metric | Target ms | dev.7 ms | dev.8 median ms | Spread ms | Met target | Successful |")
+    lines.append("| --- | --- | ---: | --- | ---: | --- | --- | --- |")
+    for key in sorted([key for key in groups.keys()]):
+        lines.append(render_group(groups[key]))
+    settings.report.parent().mkdir(true, true).map_err((error) => error.message())?
+    settings.report.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())?
+
+    # 4. The report remains useful evidence even when one or more commands refused.
+    failed = [sample for sample in samples if sample.status != 0]
+    if len(failed) > 0:
+        return Err(f"{len(failed)} measured commands failed; report: {settings.report.0}")
+    return Ok(settings.report)
+
+
+def parse_samples(source: str) -> Result[list[Sample], str]:
+    """Decode the stable seven-column timing table."""
+    mut samples: list[Sample] = []
+    lines = source.split("\n")
+    for index in range(1, len(lines)):
+        if lines[index] == "":
+            continue
+        fields = lines[index].split("\t")
+        if len(fields) != 7:
+            return Err(f"timing row {index + 1} has {len(fields)} fields")
+        samples.append(
+            Sample(
+                subject=fields[0],
+                metric=fields[1],
+                sample=decimal(fields[2], "sample")?,
+                first_ms=optional_float(fields[3])?,
+                completion_ms=number(fields[4], "completion")?,
+                status=decimal(fields[5], "status")?,
+                target=optional_float(fields[6])?,
+            ),
+        )
+    if len(samples) == 0:
+        return Err("timing table has no samples")
+    return Ok(samples)
+
+
+def grouped(samples: list[Sample]) -> Dict[str, list[Sample]]:
+    """Group samples by subject, metric, and target without reordering within a group."""
+    mut groups: Dict[str, list[Sample]] = {}
+    for sample in samples:
+        key = f"{sample.subject}\t{sample.metric}\t{target_text(sample.target)}"
+        mut values = groups.get(key).unwrap_or([])
+        values.append(sample)
+        groups[key] = values
+    return groups
+
+
+def render_group(samples: list[Sample]) -> str:
+    """Render one metric's passing median, spread, target count, and success denominator."""
+    subject = str(samples[0].subject)
+    metric = str(samples[0].metric)
+    mut values: list[float] = []
+    mut met = 0
+    for sample in samples:
+        if sample.status != 0:
+            continue
+        mut value = float(sample.completion_ms)
+        if let Some(first_output) = sample.first_ms:
+            value = first_output
+        values.append(value)
+        if let Some(target) = sample.target:
+            if value < target:
+                met += 1
+    values = sorted(values)
+    mut measured = "refused"
+    mut spread = "refused"
+    if len(values) > 0:
+        measured = thousandths(median(values))
+        spread = f"{thousandths(values[0])}-{thousandths(values[len(values) - 1])}"
+    mut baseline = "unmeasured"
+    if metric == "run_unchanged":
+        baseline = "11-15 (small workloads)"
+    elif metric == "check_unchanged":
+        baseline = "12.76 (one workload)"
+    target = target_text(samples[0].target)
+    mut met_target = "n/a"
+    if samples[0].target is not None:
+        met_target = f"{met}/{len(samples)}"
+    return f"| {subject} | {metric} | {target} | {baseline} | {measured} | {spread} | {met_target} | {len(values)}/{len(
+        samples,
+    )} |"
+
+
+def median(values: list[float]) -> float:
+    """Return the middle passing timing, averaging the two middle values for an even count."""
+    middle = len(values) // 2
+    if len(values) % 2 == 1:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2.0
+
+
+def optional_float(value: str) -> Result[Option[float], str]:
+    """Decode `-` as absent and every other field as a decimal timing."""
+    if value == "-":
+        return Ok(None)
+    return Ok(Some(number(value, "timing")?))
+
+
+def number(value: str, label: str) -> Result[float, str]:
+    """Parse one finite non-negative decimal field."""
+    if value == "":
+        return Err(f"{label} is empty")
+    mut dots = 0
+    for character in value:
+        if character == ".":
+            dots += 1
+        elif character not in "0123456789":
+            return Err(f"invalid {label}: {value}")
+    if dots > 1:
+        return Err(f"invalid {label}: {value}")
+    return Ok(float(value))
+
+
+def decimal(value: str, label: str) -> Result[int, str]:
+    """Parse one non-negative decimal integer field."""
+    if value == "":
+        return Err(f"{label} is empty")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"invalid {label}: {value}")
+    return Ok(int(value))
+
+
+def target_text(value: Option[float]) -> str:
+    """Render an absent target as `-` and a whole-millisecond target without a decimal suffix."""
+    match value:
+        Some(target) => return str(int(target))
+        None => return "-"
+
+
+def thousandths(value: float) -> str:
+    """Format a non-negative timing with exactly three decimal places."""
+    scaled = int(value * 1000.0 + 0.5)
+    mut fraction = str(scaled % 1000)
+    while len(fraction) < 3:
+        fraction = "0" + fraction
+    return f"{scaled // 1000}.{fraction}"
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read one strict UTF-8 retained artifact."""
+    return path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")
+
+
+def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required JSON string field without leaking the JSON error type."""
+    return value.require(key).and_then((entry) => entry.expect_str()).map_err((error) => error.message())
+
+
+pub model Captured:
+    """One successful external command's decoded standard output."""
+
+    pub stdout: str
+
+
+def require(command: str, arguments: list[str], directory: Path) -> Result[Captured, str]:
+    """Run one identity command and require successful termination."""
+    mut process = Command.new(command)
+    process.current_dir(directory.0)
+    for argument in arguments:
+        process.arg(argument)
+    output = process.output().map_err((error) => f"cannot run {command}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    if not output.status.success():
+        stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+        return Err(f"{command} failed: {stderr.strip()}")
+    return Ok(Captured(stdout=stdout))
+
+
+def repository_root() -> Result[Path, str]:
+    """Find the repository above this report program's output directory."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while true:
+        if directory.joinpath("AGENTS.md").is_file() and directory.joinpath("workspaces/benchmarks").is_dir():
+            return Ok(directory)
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return Err("cannot find the repository above the dev-loop report program")
+        directory = parent

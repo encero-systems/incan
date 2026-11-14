@@ -5,6 +5,10 @@ use super::{
     traits::{self, TraitId},
 };
 
+mod tables;
+
+pub use tables::*;
+
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
 
@@ -29,8 +33,8 @@ pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
 
 /// The proc-macro crate that backs `std.web.routing.route`.
 ///
-/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
-/// the same binding to know which decorated functions are route handlers and to check their signatures.
+/// The directly imported `route` attribute macro is retained as a passthrough Rust attribute; the checker uses its
+/// inspected canonical path to identify route handlers and check their signatures.
 pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
 
 /// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.
@@ -72,22 +76,19 @@ pub const STDLIB_JSON: &str = "json";
 pub const STDLIB_RESULT: &str = "result";
 /// `std.serde` module name.
 pub const STDLIB_SERDE: &str = "serde";
+/// The standard-library namespace declaring `Registry` and `RegistryEntry` (RFC 113).
+pub const STDLIB_REGISTRY: &str = "registry";
 /// Dynamic JSON value type exported by `std.json`.
 pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 /// Runtime Rust path carried by `std.json.JsonValue`.
 pub const JSON_VALUE_RUST_PATH: &str = "incan_std_data::json::JsonValue";
 
-/// The standard library's Rust facets: the runtime crates generated code links.
-///
-/// Each facet is the `rust/` crate of one component in `sdk-components.toml`, named `incan_std_<component>` after the
-/// component's `stdlib-<component>` id. The mandatory `core` facet serves the language itself — reflection, frozen
-/// constants, numerics, strings, collection helpers, the version check — and every generated program links it; the
-/// others serve the namespaces their component owns, and a generated program links one only when it reaches such a
-/// namespace. Cargo features on a single runtime crate used to play this role; a facet is a crate, so the compiler
-/// records crates, not flags.
+/// The standard library's compiled native artifacts, named by the standard Loaves' published runtime contracts.
+/// The mandatory primitive artifact serves foundational carriers and helpers; other artifacts serve their owning
+/// namespaces. A unit's selected artifacts are explicit compiler inputs.
 pub mod facets {
-    /// The mandatory facet every generated program links.
-    pub const CORE: &str = "incan_std_core";
+    /// The mandatory foundational facet every generated program links.
+    pub const PRIMITIVES: &str = "incan_std_primitives";
     /// `std.json`, `std.serde` and the ordinal-map helpers behind `std.collections`.
     pub const DATA: &str = "incan_std_data";
     /// `std.async`.
@@ -97,25 +98,27 @@ pub mod facets {
     /// `std.testing`.
     pub const TESTING: &str = "incan_std_testing";
     /// Every facet, the mandatory one first.
-    pub const ALL: [&str; 5] = [CORE, DATA, ASYNC, WEB, TESTING];
+    pub const ALL: [&str; 5] = [PRIMITIVES, DATA, ASYNC, WEB, TESTING];
 
-    /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory core facet.
+    /// The facet a namespace's generated code links: the namespace's own facet, or the mandatory primitive facet.
     pub fn for_namespace(namespace: &str) -> &'static str {
         super::find_namespace(namespace)
             .and_then(|entry| entry.facet)
-            .unwrap_or(CORE)
+            .unwrap_or(PRIMITIVES)
     }
 
     /// Whether a namespace's runtime module is the crate root of its facet rather than a module inside it.
     ///
-    /// The core and data facets keep one module per namespace (`incan_std_core::strings`, `incan_std_data::json`);
+    /// The primitive and data facets keep one module per responsibility (`incan_std_primitives::strings`,
+    /// `incan_std_data::json`);
     /// the async, web and testing facets serve a single namespace and are that module themselves, so a path into
     /// them starts at the crate (`incan_std_async::task`, never `incan_std_async::r#async::task`).
     pub fn namespace_is_facet_root(namespace: &str) -> bool {
         matches!(for_namespace(namespace), ASYNC | WEB | TESTING)
     }
 
-    /// Whether a `::`-qualified Rust path starts with one of the facets, as `incan_std_core::strings::str_len` does.
+    /// Whether a `::`-qualified Rust path starts with one of the facets, as
+    /// `incan_std_primitives::strings::str_len` does.
     pub fn path_names_a_facet(path: &str) -> bool {
         path.split("::").next().is_some_and(is_facet)
     }
@@ -134,21 +137,6 @@ pub mod facets {
         ALL.iter()
             .copied()
             .find(|facet| facet.strip_prefix("incan_std_") == Some(name))
-    }
-
-    /// The facet that serves a runtime requirement named by a vocab manifest's `required_stdlib_features`.
-    ///
-    /// The vocab contract predates the facets and spells requirements as the runtime crate's old feature names;
-    /// those names stay the contract, and this is where they resolve. A facet name is accepted as its own
-    /// requirement so a manifest written after the split needs no translation.
-    pub fn for_requirement(requirement: &str) -> Option<&'static str> {
-        match requirement {
-            "json" | "ordinal" => Some(DATA),
-            "async" => Some(ASYNC),
-            "web" => Some(WEB),
-            "testing" => Some(TESTING),
-            facet => ALL.iter().copied().find(|known| *known == facet),
-        }
     }
 }
 
@@ -247,7 +235,7 @@ pub fn stdlib_json_trait_id_from_path(segments: &[String]) -> Option<StdlibJsonT
     stdlib_json_trait_id(&segments.join("."))
 }
 
-/// Return the stdlib JSON trait id when generated Rust must import the trait module for method resolution.
+/// Return the stdlib JSON trait id when a compiled unit must import the trait module for method resolution.
 #[must_use]
 pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId> {
     match name {
@@ -306,38 +294,19 @@ pub fn is_graph_constructor_type(name: &str) -> bool {
 pub struct StdlibNamespace {
     /// Top-level namespace name (e.g., `"web"`, `"testing"`, `"async"`).
     pub name: &'static str,
-    /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
-    /// the core facet serves it.
+    /// Ordinary standard Loaf permitted to publish this root; compiler-only namespaces have no issuer.
+    pub package: Option<&'static str>,
+    /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::PRIMITIVES`], or `None`
+    /// when the primitive facet serves it.
     pub facet: Option<&'static str>,
-    /// Rust extern ownership names used by this namespace; component Loaf manifests own registry requirements and
-    /// features.
-    pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
     /// When `true`, this namespace is handled entirely by the typechecker with no corresponding `.incn` stub file or
-    /// emitted Rust module. Items are resolved symbolically at import time.
+    /// native module. Items are resolved symbolically at import time.
     ///
     /// `std.rust` is the canonical example: `Send`, `Sync`, etc. map to native Rust traits that are already in scope
     /// and must not be re-declared or imported in generated code.
     pub typechecker_only: bool,
-}
-
-/// Additional crate dependency needed by a stdlib namespace.
-#[derive(Debug, Clone, Copy)]
-pub struct StdlibExtraCrateDep {
-    /// Cargo dependency key.
-    pub crate_name: &'static str,
-    /// Namespace ownership of a declared registry Loaf or a local toolchain support path.
-    pub source: StdlibExtraCrateSource,
-}
-
-/// Source descriptor for a namespace-provided extra crate dependency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdlibExtraCrateSource {
-    /// Path dependency rooted at compiler workspace root.
-    Path(&'static str),
-    /// Registry Loaf whose requirement and features belong to its component manifest.
-    Declared,
 }
 
 /// Builtin trait identity for stdlib method-stub lookup.
@@ -372,495 +341,9 @@ pub struct StdlibTraitMethodModule {
     pub module_segments: &'static [&'static str],
 }
 
-const STDLIB_DERIVES_COPYING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "copying"];
-const STDLIB_DERIVES_STRING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "string"];
-const STDLIB_DERIVES_COMPARISON_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "comparison"];
-
-/// Builtin stdlib trait-method fallback registry.
-///
-/// This intentionally covers only the derive-tree source-defined traits that previously needed fallback from empty
-/// symbol-table stubs. Other stdlib trait families, such as `std.traits.convert`, do not get implicit fallback unless
-/// they are added here deliberately.
-pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Clone),
-        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Derive(DeriveId::Copy),
-        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Default),
-        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Debug),
-        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Display),
-        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Eq),
-        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialEq),
-        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Ord),
-        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialOrd),
-        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
-    },
-    StdlibTraitMethodModule {
-        owner: StdlibTraitMethodOwner::Trait(TraitId::Hash),
-        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
-    },
-];
-
-/// Registry of top-level stdlib namespaces.
-///
-/// Submodule stub paths are derived by convention, so this list stays compact even as the stdlib grows. Adding a new
-/// submodule (e.g. `std.async.broadcast`) requires adding the `.incn` file and appending the name to the parent
-/// namespace's `submodules` array.
-pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
-    StdlibNamespace {
-        name: "web",
-        facet: Some(facets::WEB),
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: STDLIB_WEB_MACROS_CRATE,
-                source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
-            },
-            StdlibExtraCrateDep {
-                crate_name: "inventory",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "axum",
-                source: StdlibExtraCrateSource::Declared,
-            },
-        ],
-        submodules: &["app", "routing", "request", "response", "macros", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "testing",
-        facet: Some(facets::TESTING),
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "logging",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "registry",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "telemetry",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &["core"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "environ",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "async",
-        facet: Some(facets::ASYNC),
-        extra_crate_deps: &[],
-        submodules: &["time", "task", "channel", "race", "sync", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: STDLIB_INTEROP,
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "serde",
-        facet: Some(facets::DATA),
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "serde",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &["json"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: STDLIB_JSON,
-        facet: Some(facets::DATA),
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "serde",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "toml",
-        facet: None,
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: "toml_edit",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "serde_path_to_error",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "toml",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "serde",
-                source: StdlibExtraCrateSource::Declared,
-            },
-        ],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "reflection",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "result",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "derives",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &["string", "comparison", "copying", "collection"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "traits",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "math",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "libm",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "fs",
-        facet: None,
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: "encoding_rs",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "rustix",
-                source: StdlibExtraCrateSource::Declared,
-            },
-        ],
-        submodules: &["path", "file", "locking", "metadata", "glob", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "datetime",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[
-            "runtime",
-            "civil",
-            "civil.intervals",
-            "civil.naive",
-            "civil.offset",
-            "error",
-            "prelude",
-        ],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "runtime",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[
-            "prelude",
-            "host",
-            "host.clock",
-            "host.env",
-            "host.fs",
-            "host.http",
-            "host.model",
-            "host.process",
-            "host.tool",
-        ],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "graph",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "uuid",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "rand",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "regex",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "regex",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &["_core", "_replacement", "types", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "collections",
-        // The source-level ordinal map implementation calls the xxh3 key helpers in
-        // `incan_std_data::collections::__private`, so every generated program that imports `std.collections` links
-        // the data facet; without it, a direct-rustc Oven unit would compile a source closure whose helpers no
-        // crate supplies.
-        facet: Some(facets::DATA),
-        extra_crate_deps: &[],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "io",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "byteorder",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "encoding",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[
-            "_shared", "prelude", "hex", "base32", "base64", "base85", "base58", "bech32",
-        ],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "checksum",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "crc32fast",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "hash",
-        facet: None,
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: "blake2",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "blake3",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "hmac",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "md5",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "sha1",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "sha2",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "sha3",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "xxhash_rust",
-                source: StdlibExtraCrateSource::Declared,
-            },
-        ],
-        submodules: &["_core", "_hmac", "_streaming", "prelude"],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "compression",
-        facet: None,
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: "flate2",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "zstd",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "bzip2",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "xz2",
-                source: StdlibExtraCrateSource::Declared,
-            },
-            StdlibExtraCrateDep {
-                crate_name: "snap",
-                source: StdlibExtraCrateSource::Declared,
-            },
-        ],
-        submodules: &[
-            "_core",
-            "_auto",
-            "gzip",
-            "zlib",
-            "deflate",
-            "zstd",
-            "bz2",
-            "lzma",
-            "snappy",
-            "snappy.raw",
-        ],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "tempfile",
-        facet: None,
-        extra_crate_deps: &[StdlibExtraCrateDep {
-            crate_name: "tempfile",
-            source: StdlibExtraCrateSource::Declared,
-        }],
-        submodules: &[],
-        typechecker_only: false,
-    },
-    StdlibNamespace {
-        name: "rust",
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        // Capability bounds (Send, Sync, Static, Fn, FnMut, FnOnce) are native Rust traits already in scope in all
-        // generated code. They have no .incn stub and no emitted Rust module.
-        typechecker_only: true,
-    },
-    StdlibNamespace {
-        name: STDLIB_BUILTINS,
-        facet: None,
-        extra_crate_deps: &[],
-        submodules: &[],
-        // `std.builtins.<name>(...)` is an explicit call escape to the compiler's builtin-function registry. Builtin
-        // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
-        typechecker_only: true,
-    },
-];
-
-/// Authored stdlib Loaf manifests, embedded without duplicating their dependency facts.
-///
-/// The provider layer admits these through Oven's manifest grammar. Namespace metadata here contains ownership
-/// names only; it cannot supply requirements or features independently of these declarations.
-pub const COMPONENT_MANIFESTS: &[(&str, &str)] = &[
-    ("async", include_str!("../../../../stdlib/async/loaf.toml")),
-    ("codecs", include_str!("../../../../stdlib/codecs/loaf.toml")),
-    ("compression", include_str!("../../../../stdlib/compression/loaf.toml")),
-    ("core", include_str!("../../../../stdlib/core/loaf.toml")),
-    ("data", include_str!("../../../../stdlib/data/loaf.toml")),
-    ("interop", include_str!("../../../../stdlib/interop/loaf.toml")),
-    (
-        "observability",
-        include_str!("../../../../stdlib/observability/loaf.toml"),
-    ),
-    ("system", include_str!("../../../../stdlib/system/loaf.toml")),
-    ("testing", include_str!("../../../../stdlib/testing/loaf.toml")),
-    ("web", include_str!("../../../../stdlib/web/loaf.toml")),
-];
-
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
-}
-
-/// Look up an extra Cargo crate dependency declared by any registered stdlib namespace.
-///
-/// This is the registry boundary for compiler subsystems that need stdlib-managed dependency metadata without
-/// duplicating namespace traversal or crate version knowledge.
-#[must_use]
-pub fn find_extra_crate_dep(crate_name: &str) -> Option<&'static StdlibExtraCrateDep> {
-    extra_crate_deps().find(|dep| dep.crate_name == crate_name)
-}
-
-/// Return whether a crate is supplied by the workspace as a stdlib-managed path dependency.
-#[must_use]
-pub fn is_path_extra_crate_dep(crate_name: &str) -> bool {
-    find_extra_crate_dep(crate_name).is_some_and(|dep| matches!(dep.source, StdlibExtraCrateSource::Path(_)))
-}
-
-/// Return the published Cargo package name when a stdlib-managed Rust crate imports under a different crate key.
-#[must_use]
-pub fn extra_crate_package_alias(crate_name: &str) -> Option<&'static str> {
-    match crate_name {
-        "md5" => Some("md-5"),
-        "xxhash_rust" => Some("xxhash-rust"),
-        _ => None,
-    }
-}
-
-/// Iterate over every extra Cargo crate dependency declared by registered stdlib namespaces.
-///
-/// Consumers that need to filter by dependency source can use this iterator while keeping namespace traversal
-/// centralized in the stdlib registry.
-pub fn extra_crate_deps() -> impl Iterator<Item = &'static StdlibExtraCrateDep> {
-    STDLIB_NAMESPACES.iter().flat_map(|ns| ns.extra_crate_deps)
 }
 
 /// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
@@ -890,7 +373,7 @@ pub fn soft_keywords_for_import(path: &[String]) -> Vec<keywords::KeywordId> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return Vec::new();
     }
-    keywords::soft_keywords_for_namespace(&path[1])
+    keywords::soft_keywords_for_namespace(&path[1..].join("."))
 }
 
 /// Check if a module path matches a known Incan stdlib module.
@@ -947,7 +430,7 @@ pub fn known_stdlib_modules_for_hint() -> Vec<String> {
     known
 }
 
-/// The Rust facet a stdlib module path links beyond the mandatory core facet, or `None` when core serves it.
+/// The Rust facet a stdlib module path links beyond the mandatory primitive facet, or `None` when primitives serve it.
 pub fn stdlib_facet_for(path: &[String]) -> Option<&'static str> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return None;
@@ -958,8 +441,8 @@ pub fn stdlib_facet_for(path: &[String]) -> Option<&'static str> {
 /// Returns `true` when a stdlib module path refers to a typechecker-only namespace.
 ///
 /// Typechecker-only namespaces (`std.rust`) are handled entirely by the frontend: their items are resolved
-/// symbolically at import time and have no corresponding `.incn` stub file or emitted Rust module. The dependency
-/// resolver and emission layer must skip them.
+/// symbolically at import time and have no corresponding `.incn` stub file or native module. The dependency
+/// resolver and lowering must skip them.
 #[must_use]
 pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
@@ -968,7 +451,10 @@ pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
     find_namespace(&path[1]).is_some_and(|ns| ns.typechecker_only)
 }
 
-/// Resolve the relative stub `.incn` file path for a stdlib module path.
+/// Resolve a stdlib module's historical monolithic stub-layout path.
+///
+/// These are logical compatibility paths, not current repository locations. Source packages now live under
+/// `loaves/stdlib/`; their manifests and namespace policy select the source files.
 ///
 /// Uses convention-based resolution:
 /// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
@@ -996,487 +482,4 @@ pub fn stdlib_stub_path(path: &[String]) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn segs(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn known_stdlib_modules_cover_existing_surface_paths() {
-        assert!(is_known_stdlib_module(&segs(&["std", "testing"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "web"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "web", "app"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "web", "routing"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "web", "request"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "web", "response"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "async"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "async", "prelude"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "json"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "result"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "environ"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "runtime"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil"])));
-        assert!(is_known_stdlib_module(&segs(&[
-            "std",
-            "datetime",
-            "civil",
-            "intervals"
-        ])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "naive"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "uuid"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "regex"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "regex", "_core"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "regex", "_replacement"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "regex", "types"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "io"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "_shared"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "hex"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base32"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base64"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base85"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base58"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "bech32"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "checksum"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "hash"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "compression"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "compression", "_core"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "compression", "_auto"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "compression", "gzip"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "compression", "snappy", "raw"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
-    }
-
-    #[test]
-    fn graph_constructor_types_are_registry_owned() {
-        assert!(is_graph_constructor_type("DiGraph"));
-        assert!(is_graph_constructor_type("Dag"));
-        assert!(is_graph_constructor_type("MultiDiGraph"));
-        assert!(!is_graph_constructor_type("NodeId"));
-        assert!(!is_graph_constructor_type("EdgeId"));
-    }
-
-    /// #1561: a namespace's `prelude` path names the namespace; `std.prelude` stays a module of its own.
-    #[test]
-    fn a_namespace_prelude_path_names_the_namespace() {
-        assert_eq!(
-            stdlib_prelude_module_namespace(&segs(&["std", "async", "prelude"])),
-            Some(segs(&["std", "async"]).as_slice())
-        );
-        assert_eq!(
-            stdlib_prelude_module_namespace(&segs(&["std", "traits", "prelude"])),
-            Some(segs(&["std", "traits"]).as_slice())
-        );
-        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "prelude"])), None);
-        assert_eq!(stdlib_prelude_module_namespace(&segs(&["std", "async", "time"])), None);
-        assert_eq!(
-            stdlib_prelude_module_namespace(&segs(&["app", "models", "prelude"])),
-            None
-        );
-    }
-
-    #[test]
-    fn unknown_stdlib_modules_are_rejected() {
-        assert!(!is_known_stdlib_module(&segs(&["std", "f64", "consts"])));
-        assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
-        assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
-        assert!(!is_known_stdlib_module(&segs(&["std", "collections", "deque"])));
-        assert!(!is_known_stdlib_module(&segs(&["std", "datetime", "civil", "missing"])));
-    }
-
-    #[test]
-    fn stub_paths_follow_namespace_conventions() {
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "testing"])),
-            Some("stdlib/testing.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "web"])),
-            Some("stdlib/web/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "web", "app"])),
-            Some("stdlib/web/app.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "async", "prelude"])),
-            Some("stdlib/async/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "fs"])),
-            Some("stdlib/fs/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "fs", "path"])),
-            Some("stdlib/fs/path.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "graph"])),
-            Some("stdlib/graph.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "uuid"])),
-            Some("stdlib/uuid.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "regex"])),
-            Some("stdlib/regex/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "regex", "_core"])),
-            Some("stdlib/regex/_core.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "datetime"])),
-            Some("stdlib/datetime/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "datetime", "runtime"])),
-            Some("stdlib/datetime/runtime.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "datetime", "civil", "naive"])),
-            Some("stdlib/datetime/civil/naive.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "io"])),
-            Some("stdlib/io.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "environ"])),
-            Some("stdlib/environ.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "encoding"])),
-            Some("stdlib/encoding/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "encoding", "base64"])),
-            Some("stdlib/encoding/base64.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "hash"])),
-            Some("stdlib/hash/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "checksum"])),
-            Some("stdlib/checksum.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "compression"])),
-            Some("stdlib/compression/prelude.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "compression", "_core"])),
-            Some("stdlib/compression/_core.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "compression", "_auto"])),
-            Some("stdlib/compression/_auto.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "compression", "gzip"])),
-            Some("stdlib/compression/gzip.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "compression", "snappy", "raw"])),
-            Some("stdlib/compression/snappy/raw.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "tempfile"])),
-            Some("stdlib/tempfile.incn".to_string())
-        );
-        assert_eq!(
-            stdlib_stub_path(&segs(&["std", "collections"])),
-            Some("stdlib/collections.incn".to_string())
-        );
-    }
-
-    #[test]
-    fn typechecker_only_namespace_std_rust_has_no_stub_path() {
-        assert_eq!(stdlib_stub_path(&segs(&["std", "rust"])), None);
-        assert_eq!(stdlib_stub_path(&segs(&["std", "builtins"])), None);
-        assert!(is_typechecker_only_stdlib(&segs(&["std", "rust"])));
-        assert!(is_typechecker_only_stdlib(&segs(&["std", "builtins"])));
-        assert!(!is_typechecker_only_stdlib(&segs(&["std", "testing"])));
-        assert!(!is_typechecker_only_stdlib(&segs(&["std", "async"])));
-        assert!(!is_typechecker_only_stdlib(&segs(&["not", "stdlib"]))); // non-stdlib path
-    }
-
-    #[test]
-    fn known_modules_hint_is_registry_driven_and_sorted() {
-        let hint = known_stdlib_modules_for_hint();
-        assert!(hint.windows(2).all(|w| w[0] <= w[1]));
-        assert!(hint.contains(&"std.derives".to_string()));
-        assert!(hint.contains(&"std.fs".to_string()));
-        assert!(hint.contains(&"std.graph".to_string()));
-        assert!(hint.contains(&"std.io".to_string()));
-        assert!(hint.contains(&"std.uuid".to_string()));
-        assert!(hint.contains(&"std.hash".to_string()));
-        assert!(hint.contains(&"std.tempfile".to_string()));
-        assert!(hint.contains(&"std.rust".to_string()));
-        assert!(hint.contains(&"std.web.app".to_string()));
-        assert!(hint.contains(&"std.async.prelude".to_string()));
-        assert!(hint.contains(&"std.datetime.civil.naive".to_string()));
-        assert!(hint.contains(&"std.builtins".to_string()));
-        assert!(hint.contains(&"std.collections".to_string()));
-    }
-
-    #[test]
-    fn trait_method_module_lookup_preserves_derive_fallback_surface() {
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Clone)),
-            Some(segs(&["std", "derives", "copying"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(derives::as_str(DeriveId::Copy)),
-            Some(segs(&["std", "derives", "copying"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Default)),
-            Some(segs(&["std", "derives", "copying"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Debug)),
-            Some(segs(&["std", "derives", "string"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Display)),
-            Some(segs(&["std", "derives", "string"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Eq)),
-            Some(segs(&["std", "derives", "comparison"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::PartialEq)),
-            Some(segs(&["std", "derives", "comparison"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Ord)),
-            Some(segs(&["std", "derives", "comparison"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::PartialOrd)),
-            Some(segs(&["std", "derives", "comparison"]))
-        );
-        assert_eq!(
-            trait_method_module_segments(traits::as_str(TraitId::Hash)),
-            Some(segs(&["std", "derives", "comparison"]))
-        );
-    }
-
-    #[test]
-    fn trait_method_module_lookup_leaves_other_builtin_traits_unmapped() {
-        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::From)), None);
-        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::Into)), None);
-        assert_eq!(trait_method_module_segments("Serialize"), None);
-    }
-
-    #[test]
-    fn stdlib_json_trait_lookup_covers_source_and_qualified_names_only() {
-        for name in ["Serialize", "json.Serialize", "std.serde.json.Serialize"] {
-            assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Serialize));
-        }
-
-        for name in ["Deserialize", "json.Deserialize", "std.serde.json.Deserialize"] {
-            assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Deserialize));
-        }
-
-        // An import alias is a binding, resolved by identity rather than by spelling (#1712).
-        assert_eq!(stdlib_json_trait_id("JsonSerialize"), None);
-        assert_eq!(stdlib_json_trait_id("JsonDeserialize"), None);
-        let json_module = ["std", "serde", "json"].map(String::from);
-        assert_eq!(
-            stdlib_json_trait_id_for_identity(&json_module, "Serialize"),
-            Some(StdlibJsonTraitId::Serialize)
-        );
-        assert_eq!(stdlib_json_trait_id_for_identity(&json_module, "JsonSerialize"), None);
-        assert_eq!(stdlib_json_trait_id("yaml.Serialize"), None);
-        assert_eq!(stdlib_json_trait_scope_import_id("Serialize"), None);
-        assert_eq!(stdlib_json_trait_scope_import_id("JsonSerialize"), None);
-        assert_eq!(
-            stdlib_json_trait_scope_import_id("json.Serialize"),
-            Some(StdlibJsonTraitId::Serialize)
-        );
-        let json_trait_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
-        assert!(is_stdlib_json_trait_module_path(&json_trait_module));
-        assert_eq!(
-            stdlib_json_trait_id_for_identity(&json_trait_module, "Serialize"),
-            Some(StdlibJsonTraitId::Serialize)
-        );
-        assert_eq!(
-            stdlib_json_trait_id_for_identity(&json_trait_module, "Deserialize"),
-            Some(StdlibJsonTraitId::Deserialize)
-        );
-        assert_eq!(
-            stdlib_json_trait_id_for_identity(&json_trait_module, "JsonSerialize"),
-            None
-        );
-        assert_eq!(stdlib_json_trait_id_for_identity(&segs(&["main"]), "Serialize"), None);
-        assert_eq!(
-            stdlib_json_trait_id_for_identity(&segs(&["std", "toml"]), "Serialize"),
-            None
-        );
-        let serialize_path = vec![
-            "std".to_string(),
-            "serde".to_string(),
-            "json".to_string(),
-            "Serialize".to_string(),
-        ];
-        assert_eq!(
-            stdlib_json_trait_id_from_path(&serialize_path),
-            Some(StdlibJsonTraitId::Serialize)
-        );
-    }
-
-    #[test]
-    fn extra_crate_dependency_lookup_is_registry_driven() {
-        let axum = find_extra_crate_dep("axum");
-        assert_eq!(axum.map(|dep| dep.crate_name), Some("axum"));
-        assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Declared));
-
-        let macros = find_extra_crate_dep("incan_web_macros");
-        assert_eq!(
-            macros.map(|dep| dep.source),
-            Some(StdlibExtraCrateSource::Path("crates/incan_web_macros"))
-        );
-        assert!(is_path_extra_crate_dep("incan_web_macros"));
-        assert!(!is_path_extra_crate_dep("axum"));
-
-        assert!(find_extra_crate_dep("not_a_stdlib_dependency").is_none());
-    }
-
-    #[test]
-    fn stdlib_registry_keeps_phase_023_metadata() {
-        let async_ns = find_namespace("async");
-        let reflection_ns = find_namespace("reflection");
-        let fs_ns = find_namespace("fs");
-        let tempfile_ns = find_namespace("tempfile");
-        let traits_ns = find_namespace("traits");
-        let math_ns = find_namespace("math");
-        let graph_ns = find_namespace("graph");
-        let uuid_ns = find_namespace("uuid");
-        let serde_ns = find_namespace("serde");
-        let json_ns = find_namespace(STDLIB_JSON);
-        let hash_ns = find_namespace("hash");
-        let checksum_ns = find_namespace("checksum");
-        let datetime_ns = find_namespace("datetime");
-        let collections_ns = find_namespace("collections");
-        let compression_ns = find_namespace("compression");
-
-        assert_eq!(async_ns.and_then(|ns| ns.facet), Some(facets::ASYNC));
-        // The facet's layout decides the module path: async is its own crate root, json is a module of data,
-        // strings a module of core.
-        assert!(facets::namespace_is_facet_root("async"));
-        assert!(facets::namespace_is_facet_root("testing"));
-        assert!(!facets::namespace_is_facet_root("json"));
-        assert!(!facets::namespace_is_facet_root("collections"));
-        assert_eq!(facets::for_requirement("ordinal"), Some(facets::DATA));
-        assert_eq!(facets::for_component("stdlib-web"), Some(facets::WEB));
-        assert_eq!(facets::for_component("stdlib-system"), None);
-        assert!(facets::path_names_a_facet("incan_std_core::strings::str_len"));
-        assert!(!facets::path_names_a_facet("incan_stdlib_core::anything"));
-        assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
-        assert_eq!(fs_ns.and_then(|ns| ns.facet), None);
-        assert_eq!(
-            fs_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["encoding_rs", "rustix"])
-        );
-        assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(tempfile_ns.and_then(|ns| ns.facet), None);
-        assert_eq!(
-            tempfile_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["tempfile"])
-        );
-        assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
-        assert_eq!(
-            math_ns
-                .and_then(|ns| ns.extra_crate_deps.first())
-                .map(|dep| dep.crate_name),
-            Some("libm")
-        );
-        assert_eq!(graph_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(uuid_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(
-            uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["rand"])
-        );
-        assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(
-            serde_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["serde"])
-        );
-        assert_eq!(
-            json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["serde"])
-        );
-        assert_eq!(collections_ns.and_then(|ns| ns.facet), Some(facets::DATA));
-        assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
-        assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(
-            find_namespace("io")
-                .and_then(|ns| ns.extra_crate_deps.first())
-                .map(|dep| dep.crate_name),
-            Some("byteorder")
-        );
-        assert_eq!(hash_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(
-            hash_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec![
-                "blake2",
-                "blake3",
-                "hmac",
-                "md5",
-                "sha1",
-                "sha2",
-                "sha3",
-                "xxhash_rust",
-            ])
-        );
-        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
-        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
-        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
-        assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(checksum_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(
-            checksum_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["crc32fast"])
-        );
-        assert_eq!(checksum_ns.map(|ns| ns.submodules.is_empty()), Some(true));
-        assert_eq!(checksum_ns.map(|ns| ns.typechecker_only), Some(false));
-        assert_eq!(compression_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
-        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_auto")), Some(true));
-        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"gzip")), Some(true));
-        assert_eq!(
-            compression_ns.map(|ns| ns.submodules.contains(&"snappy.raw")),
-            Some(true)
-        );
-        assert_eq!(
-            compression_ns
-                .and_then(|ns| ns.extra_crate_deps.first())
-                .map(|dep| dep.crate_name),
-            Some("flate2")
-        );
-        assert_eq!(datetime_ns.map(|ns| ns.facet), Some(None));
-        assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
-        assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
-    }
-}
+mod tests;

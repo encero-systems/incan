@@ -43,6 +43,6 @@ Mermaid diagrams are stored as DSL-only `.mmd` files and included via snippets. 
 Before opening a PR:
 
 - ensure `make docs` works locally
-- run a strict build: `make docs-build`
+- run a strict build from the repository root: `make docs`
 - review the page's Divio intent and public API coverage separately; a strict build cannot establish either
 - keep snippets reusable and scoped (don’t copy/paste long command sequences everywhere)

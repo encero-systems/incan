@@ -1,0 +1,255 @@
+"""Write typed cells and presence-indexed records using one admitted local dictionary."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.crumb.ordering import compare, order_values, order_entries, compare_selectors
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.description_dictionary import Dictionary, slot
+from crate.primitives.crumb.scalar_cells import scalar_cell, decimal_cell
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
+from crate.primitives.crumb.values import Value, ValueField, Projection
+from crate.primitives.hex import hexlify
+
+
+pub def root(
+    description: StoredDescription,
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Encode a record or enum after original logical-value validation and dictionary admission."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = root_inner(description, value, dictionary, budget)
+    budget.leave()?
+    return result
+
+
+def root_inner(
+    description: StoredDescription,
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Enum slots follow admitted identity order, independently of their declaration positions."""
+    match value:
+        Value.Record(fields) =>
+            if description.kind == NominalKind.Record:
+                return record_row(description.fields, fields, dictionary, budget)
+        Value.Enum(identity, fields) =>
+            if description.kind == NominalKind.Enum:
+                for index in range(len(description.variants)):
+                    budget.charge_elements(1)?
+                    if description.variants[index].identity == identity:
+                        mut output = EncodingBuffer.create()
+                        output.count(index, budget)?
+                        output.append(
+                            record_row(description.variants[index].fields, fields, dictionary, budget)?,
+                            budget,
+                        )?
+                        return output.finish(budget)
+        _ => pass
+    return Err(CrumbError.invalid_input("root value or enum variant"))
+
+
+def record_row(
+    shape: list[StoredField],
+    fields: list[ValueField],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Validate the exact stored field set, then remove only explicitly declared outer absence."""
+    if len(shape) != len(fields):
+        return Err(CrumbError.invalid_input("record field count"))
+    mut by_id: dict[str, int] = {}
+    for index in range(len(fields)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        if len(fields[index].identity) != 6:
+            return Err(CrumbError.invalid_input("record field identity width"))
+        key = hexlify(fields[index].identity)
+        if key in by_id:
+            return Err(CrumbError.invalid_input("duplicate record field"))
+        by_id[key] = index
+    mut bitmap: list[u8] = []
+    mut cells: list[bytes] = []
+    mut eligible = 0
+    for field in shape:
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        key = hexlify(field.shape.identity)
+        if key not in by_id:
+            return Err(CrumbError.invalid_input("record field identity"))
+        source_index = by_id[key]
+        if fields[source_index].canonical != field.shape.canonical or fields[source_index].absent != field.shape.absent:
+            return Err(CrumbError.invalid_input("record field contract"))
+        absent = is_absent(field, fields[source_index].value)
+        if field.shape.absent != AbsentPolicy.Required:
+            if eligible % 8 == 0:
+                budget.charge_bytes(1)?
+                bitmap.append(0u8)
+            if not absent:
+                last = len(bitmap) - 1
+                bitmap[last] = (int(bitmap[last]) | (1 << (eligible % 8))).saturating_resize[u8]()
+            eligible += 1
+        if not absent:
+            budget.charge_elements(1)?
+            cells.append(field_cell(field, fields[source_index].value, dictionary, budget)?)
+    mut output = EncodingBuffer.create()
+    output.append(bitmap, budget)?
+    output.append(indexed(cells, budget)?, budget)?
+    return output.finish(budget)
+
+
+def is_absent(field: StoredField, value: Value) -> bool:
+    """Do not hide a wrong collection kind behind its coincidentally empty payload."""
+    if field.shape.absent == AbsentPolicy.NoneValue:
+        match value:
+            Value.NoneValue => return true
+            _ => return false
+    if field.shape.absent == AbsentPolicy.Empty:
+        match (field.shape.storage_type, value):
+            (TypeNode.Container(ContainerKind.List, _), Value.List(items)) => return len(items) == 0
+            (TypeNode.Container(ContainerKind.Set, _), Value.Set(items)) => return len(items) == 0
+            (TypeNode.Container(ContainerKind.Map, _), Value.Map(items)) => return len(items) == 0
+            _ => pass
+    return false
+
+
+def field_cell(
+    field: StoredField,
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """A presence bit substitutes for one outer Option tag, preserving any inner absence tag."""
+    if field.shape.absent == AbsentPolicy.NoneValue:
+        match (field.shape.storage_type, value):
+            (TypeNode.Container(ContainerKind.Option, types), Value.Some(values)) =>
+                if len(types) == 1 and len(values) == 1:
+                    return cell(types[0], values[0], dictionary, budget)
+            _ => pass
+        return Err(CrumbError.invalid_input("present optional field"))
+    return cell(field.shape.storage_type, value, dictionary, budget)
+
+
+pub def cell(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """One recursive typed cell shares depth/work/storage limits with its entire envelope."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = cell_inner(node, value, dictionary, budget)
+    budget.leave()?
+    return result
+
+
+def cell_inner(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Physical tags occur only for option/union/enum selection; scalar types come from the description."""
+    match node:
+        TypeNode.Scalar(kind) => return scalar_cell(kind, value, budget)
+        TypeNode.Decimal(precision, scale) => return decimal_cell(precision, scale, value, budget)
+        TypeNode.Reference(arguments) =>
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            return scalar_cell(ScalarKind.Reference, value, budget)
+        TypeNode.Nominal(_, _, _, _) =>
+            index = slot(dictionary, closed_selector(node, budget)?, budget)?
+            return root(dictionary.entries[index], value, dictionary, budget)
+        TypeNode.Container(kind, arguments) => return container(kind, arguments, value, dictionary, budget)
+        _ => return Err(CrumbError.invalid_input("unsupported cell type"))
+
+
+def container(
+    kind: ContainerKind,
+    arguments: list[TypeNode],
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Keep sequence cardinality, map pairing and selector choice explicit in the physical cell."""
+    mut output = EncodingBuffer.create()
+    if kind == ContainerKind.Option:
+        match value:
+            Value.NoneValue => output.octet(0, budget)?
+            Value.Some(items) =>
+                if len(items) != 1:
+                    return Err(CrumbError.invalid_input("optional cell arity"))
+                output.octet(1, budget)?
+                output.frame(cell(arguments[0], items[0], dictionary, budget)?, budget)?
+            _ => return Err(CrumbError.invalid_input("optional cell type"))
+        return output.finish(budget)
+    if kind == ContainerKind.Union:
+        return union_cell(arguments, value, dictionary, budget)
+    mut cells: list[bytes] = []
+    match (kind, value):
+        (ContainerKind.List, Value.List(items)) =>
+            output.count(len(items), budget)?
+            for item in items:
+                cells.append(cell(arguments[0], item, dictionary, budget)?)
+        (ContainerKind.Set, Value.Set(items)) =>
+            output.count(len(items), budget)?
+            order = order_values(items, Projection.Object, budget)?
+            for position in range(len(order)):
+                if (
+                    position > 0
+                    and compare(items[order[position - 1]], items[order[position]], Projection.Object, budget)? == 0
+                ):
+                    return Err(CrumbError.invalid_input("duplicate set element"))
+                cells.append(cell(arguments[0], items[order[position]], dictionary, budget)?)
+        (ContainerKind.Tuple, Value.Tuple(items)) =>
+            if len(items) != len(arguments):
+                return Err(CrumbError.invalid_input("tuple cell arity"))
+            output.count(len(items), budget)?
+            for index in range(len(items)):
+                cells.append(cell(arguments[index], items[index], dictionary, budget)?)
+        (ContainerKind.Map, Value.Map(entries)) =>
+            if len(entries) > (9223372036854775807 - 1) // 2:
+                return Err(CrumbError.limit("map offset count"))
+            output.count(len(entries), budget)?
+            order = order_entries(entries, Projection.Object, budget)?
+            for position in range(len(order)):
+                if (
+                    position > 0
+                    and compare(
+                        entries[order[position - 1]].key,
+                        entries[order[position]].key,
+                        Projection.Object,
+                        budget,
+                    )? == 0
+                ):
+                    return Err(CrumbError.invalid_input("duplicate map key"))
+                cells.append(cell(arguments[0], entries[order[position]].key, dictionary, budget)?)
+                cells.append(cell(arguments[1], entries[order[position]].value, dictionary, budget)?)
+        _ => return Err(CrumbError.invalid_input("collection cell type"))
+    output.append(indexed(cells, budget)?, budget)?
+    return output.finish(budget)
+
+
+def union_cell(
+    arguments: list[TypeNode],
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Count selectors preceding the chosen member under crumb1 ordering, not declaration order."""
+    match value:
+        Value.Union(member, values) =>
+            if len(values) != 1:
+                return Err(CrumbError.invalid_input("union cell arity"))
+            selected = selector_spelling(member, budget)?
+            mut found = false
+            mut position = 0
+            for candidate in arguments:
+                if selector_spelling(candidate, budget)? == selected:
+                    found = true
+                if compare_selectors(candidate, member, budget)? < 0:
+                    position += 1
+            if not found:
+                return Err(CrumbError.invalid_input("union member not admitted"))
+            mut output = EncodingBuffer.create()
+            output.count(position, budget)?
+            output.append(cell(member, values[0], dictionary, budget)?, budget)?
+            return output.finish(budget)
+        _ => return Err(CrumbError.invalid_input("union cell type"))

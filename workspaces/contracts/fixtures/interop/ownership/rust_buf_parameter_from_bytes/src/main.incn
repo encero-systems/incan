@@ -1,0 +1,12 @@
+# behavior: an Incan bytes value handed to a Rust function taking a Buf is read through that trait, and the bytes are still usable afterwards
+# expect-stdout:
+#   3
+#   3
+
+from rust::tiny_buf import remaining
+
+
+def main() -> None:
+    payload = b"abc"
+    println(remaining(payload))
+    println(len(payload))

@@ -1,0 +1,680 @@
+"""
+Worker host contracts: what a caller of a compiler worker observes on its socket.
+
+Each case connects its callers and sends their frames before the host reads them, so one thread plays both sides.
+"""
+
+from rust::std::env import temp_dir
+from rust::std::fs import File, create_dir_all, metadata, remove_dir_all, remove_file
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::process import id
+from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.json import JsonValue, parse
+from pub::incan_platform.ipc import Connection, dial, listen
+from host import (
+    HostSettings,
+    WorkerActivation,
+    WorkerHost,
+    complete,
+    complete_record,
+    host_for,
+    next_activation,
+    next_request,
+)
+from lifecycle import ActivationOutcome, Bounds, FOOTPRINT_CEILING, FOOTPRINT_MARGIN, Retirement, lifecycle
+from protocol import (
+    MISMATCH,
+    PANIC_STATUS,
+    SCHEMA,
+    CompileRequest,
+    Reply,
+    WorkerCommand,
+    completion,
+    encode_ready,
+    encode_reply,
+    ready,
+    request_document,
+    retired,
+)
+from record_protocol import (
+    RECORD_SCHEMA,
+    RecordMessage,
+    Prepare,
+    Prepared,
+    NeedPrerequisite,
+    Evaluate,
+    Produced,
+    SemanticRefusal,
+    CompilerFault,
+    accept_record_reply,
+    decode_record_message,
+    encode_record_message,
+)
+
+const GENERATION: str = "0123456789abcdef"
+
+
+def socket_path(name: str) -> str:
+    """A fresh socket path for one case, short enough to bind."""
+    path = temp_dir().join(f"iwh-{id()}-{name}.sock").to_string_lossy().into_owned()
+    discard(path)
+    return path
+
+
+def discard(path: str) -> None:
+    """Remove a scratch file; one that is absent needs nothing."""
+    _ = remove_file(path)
+
+
+def own_uid() -> Result[int, str]:
+    """The user running the cases, read from a file it creates."""
+    path = socket_path("uid")
+    created = File.create(path).map_err((error) => f"cannot create {path}: {error}")?
+    uid = int(metadata(path).map_err((error) => f"cannot read {path}: {error}")?.uid())
+    discard(path)
+    return Ok(uid)
+
+
+def settings(socket: str, idle_millis: int, margin: int, owner: Option[u32]) -> HostSettings:
+    """A host that announces itself to nobody, with a footprint baseline of one thousand bytes."""
+    return HostSettings(
+        socket=socket,
+        generation=GENERATION,
+        ready="",
+        home=temp_dir().to_string_lossy().into_owned(),
+        baseline=1000,
+        bounds=Bounds(idle_millis=idle_millis, margin=margin, ceiling=FOOTPRINT_CEILING),
+        owner=owner,
+    )
+
+
+def request_text(generation: str, command: str, retire_after: bool = false) -> str:
+    """A request document for a formatting run, as Oven sends it."""
+    arguments = f"[\"{command}\",\"/p/unit.json\",\"src/main.incn\",\"--check\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    mut policy = ""
+    if retire_after:
+        policy = ",\"retire_after\":true"
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}{policy}}}"
+
+
+def caller(socket: str, payload: str) -> Result[Connection, str]:
+    """A caller that sent one framed payload and waits at most five seconds for its reply."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    connected.send(payload.encode("utf-8"))?
+    return Ok(connected)
+
+
+def raw_caller(socket: str, sent: bytes) -> Result[Connection, str]:
+    """A caller that wrote exactly these bytes, as a broken client does."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    connected.write_part(sent, "raw bytes")?
+    return Ok(connected)
+
+
+def record_caller(socket: str, request: RecordMessage) -> Result[Connection, str]:
+    """A version-two caller that sent one framed request and waits for its typed reply."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    connected.send(encode_record_message(request, GENERATION))?
+    return Ok(connected)
+
+
+def reply(mut connected: Connection) -> Result[JsonValue, str]:
+    """The reply document a caller received."""
+    payload = connected.receive()?
+    match RustString.from_utf8(payload):
+        Ok(text) => return parse(str(text)).map_err((error) => error.message())
+        Err(_) => return Err("the reply is not UTF-8")
+
+
+def exit_of(document: JsonValue) -> int:
+    """The reply's exit status, or -1 without one."""
+    match document.get("exit"):
+        Some(value) =>
+            match value.as_int():
+                Some(code) => return code
+                None => return -1
+        None => return -1
+
+
+def reason_of(document: JsonValue) -> str:
+    """The reply's reason."""
+    match document.get("reason"):
+        Some(value) =>
+            match value.as_str():
+                Some(text) => return text
+                None => return ""
+        None => return ""
+
+
+def withdrawn(socket: str) -> bool:
+    """Whether the worker's socket file is gone."""
+    match metadata(socket):
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def served(mut host: WorkerHost) -> Result[CompileRequest, str]:
+    """The next request the host hands its compiler entry."""
+    match next_request(host):
+        Some(request) => return Ok(request)
+        None => return Err("the host retired instead of serving a request")
+
+
+def served_record(mut host: WorkerHost) -> Result[RecordMessage, str]:
+    """The next version-two request the host hands its compiler record entry."""
+    match next_activation(host):
+        Some(WorkerActivation.Record(request)) => return Ok(request)
+        Some(WorkerActivation.Compile(_)) => return Err("the host substituted a compile request")
+        None => return Err("the host retired instead of serving a record request")
+
+
+def record_reply(mut connected: Connection) -> Result[RecordMessage, str]:
+    """Decode one version-two reply from the host under this test's worker generation."""
+    return decode_record_message(connected.receive()?, GENERATION)
+
+
+def ended(mut host: WorkerHost) -> bool:
+    """Whether the host retired instead of handing out another request."""
+    match next_request(host):
+        Some(_) => return false
+        None => return true
+
+
+def stays(settled: Option[Retirement]) -> bool:
+    """Whether an activation leaves the worker serving."""
+    match settled:
+        Some(_) => return false
+        None => return true
+
+
+def is_format(request: CompileRequest) -> bool:
+    """Whether the request is a formatting run."""
+    match request.command:
+        WorkerCommand.Format => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+        WorkerCommand.SourceFiles => return false
+
+
+def is_discovery(request: CompileRequest) -> bool:
+    """Whether the request lists a formatting run's sources."""
+    match request.command:
+        WorkerCommand.SourceFiles => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+        WorkerCommand.Format => return false
+
+
+pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
+    """Requests, replies and readiness keep their wire bytes; malformed completions authorize no replay."""
+    completed = f"{{\"exit\":0,\"reason\":\"\",\"schema\":\"{SCHEMA}\"}}"
+    assert encode_reply(Reply.Completed(0), false) == completed.encode("utf-8")
+    refused = f"{{\"exit\":1,\"reason\":\"missing `cwd`\",\"retired\":true,\"schema\":\"{SCHEMA}\"}}"
+    assert encode_reply(Reply.Refused("missing `cwd`"), true) == refused.encode("utf-8")
+    ready_text = f"{{\"generation\":\"{GENERATION}\",\"pid\":42,\"schema\":\"{SCHEMA}\",\"status\":\"ready\"}}"
+    assert encode_ready(GENERATION, 42) == ready_text.encode("utf-8")
+    ready_document(GENERATION, 42)?
+    assert completion(parse(completed).map_err((error) => error.message())?)? == 0
+    refused_document = parse(refused).map_err((error) => error.message())?
+    assert retired(refused_document)
+    match completion(refused_document):
+        Err(reason) =>
+            assert reason == "missing `cwd`"
+        Ok(_) =>
+            assert false
+    for code in [0, 101, 255]:
+        document = parse(str(RustString.from_utf8(encode_reply(Reply.Completed(code), false)).map_err((_) => "UTF-8")?)).map_err(
+            (error) => error.message(),
+        )?
+        assert completion(document)? == code
+        assert not retired(document)
+    for invalid in [
+        "{}",
+        "{\"schema\":\"other\",\"exit\":0}",
+        f"{{\"schema\":\"{SCHEMA}\",\"exit\":256}}",
+        f"{{\"schema\":\"{SCHEMA}\",\"exit\":-1}}",
+    ]:
+        match completion(parse(invalid).map_err((error) => error.message())?):
+            Err(_) => pass
+            Ok(_) =>
+                assert false
+    unserved = "a compiler worker accepts only --unit, --check, --fmt and --source-files requests"
+    assert encode_reply(Reply.Refused(unserved), false) == f"{{\"exit\":1,\"reason\":\"{unserved}\",\"schema\":\"{SCHEMA}\"}}".encode(
+        "utf-8",
+    )
+    assert encode_reply(Reply.Refused(MISMATCH), false) == f"{{\"exit\":1,\"reason\":\"{MISMATCH}\",\"schema\":\"{SCHEMA}\"}}".encode(
+        "utf-8",
+    )
+    request = request_document(
+        GENERATION,
+        ["--fmt", "/p/unit.json", "src/main.incn", "--check"],
+        "/p",
+        "/p/r.out",
+        "/p/r.err",
+    )
+    expected = f"{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
+    assert request.to_json().map_err((error) => error.message())? == expected
+    # Only a request that requires teardown after its activation names that lifetime.
+    retiring = request_document(
+        GENERATION,
+        ["--fmt", "/p/unit.json", "src/main.incn", "--check"],
+        "/p",
+        "/p/r.out",
+        "/p/r.err",
+        true,
+    )
+    retiring_text = expected.replace(",\"schema\"", ",\"retire_after\":true,\"schema\"")
+    assert retiring.to_json().map_err((error) => error.message())? == retiring_text
+    return Ok(None)
+
+
+pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[None, str]:
+    """Every request and reply body round-trips only under the record worker schema."""
+    prepare = RecordMessage.Prepare(Prepare(stage="declaration", snapshot="s", demand_root="d", producer_profile="p"))
+    prepared = decode_record_message(encode_record_message(prepare, GENERATION), GENERATION)?
+    match prepared:
+        RecordMessage.Prepare(value) =>
+            assert value.stage == "declaration" and value.snapshot == "s"
+        _ => return Err("worker record Prepare changed family")
+
+    prerequisite = RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=7))
+    match decode_record_message(encode_record_message(prerequisite, GENERATION), GENERATION)?:
+        RecordMessage.NeedPrerequisite(value) =>
+            assert value.keys_root == "keys" and value.earlier_rank == 7
+        _ => return Err("worker record NeedPrerequisite changed family")
+
+    prepared_reply = RecordMessage.Prepared(Prepared(prepared_root="prepared"))
+    match decode_record_message(encode_record_message(prepared_reply, GENERATION), GENERATION)?:
+        RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
+        _ => return Err("worker record Prepared changed family")
+
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=9,
+        ),
+    )
+    match decode_record_message(encode_record_message(evaluate, GENERATION), GENERATION)?:
+        RecordMessage.Evaluate(value) =>
+            assert value.work_root == "work" and value.cancellation_generation == 9
+        _ => return Err("worker record Evaluate changed family")
+
+    produced = RecordMessage.Produced(
+        Produced(staged_root="staged", witness_root="w", diagnostic_root="d", counter_root="c"),
+    )
+    match decode_record_message(encode_record_message(produced, GENERATION), GENERATION)?:
+        RecordMessage.Produced(value) =>
+            assert value.staged_root == "staged" and value.witness_root == "w"
+        _ => return Err("worker record Produced changed family")
+
+    refusal = RecordMessage.SemanticRefusal(
+        SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses"),
+    )
+    match decode_record_message(encode_record_message(refusal, GENERATION), GENERATION)?:
+        RecordMessage.SemanticRefusal(value) =>
+            assert value.diagnostic_root == "diagnostics" and value.witness_root == "witnesses"
+        _ => return Err("worker record SemanticRefusal changed family")
+
+    fault = RecordMessage.CompilerFault(CompilerFault(fault_root="fault"))
+    match decode_record_message(encode_record_message(fault, GENERATION), GENERATION)?:
+        RecordMessage.CompilerFault(value) => assert value.fault_root == "fault"
+        _ => return Err("worker record CompilerFault changed family")
+
+    wrong = f"{{\"generation\":\"{GENERATION}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}"
+    match decode_record_message(wrong.encode("utf-8"), GENERATION):
+        Err(_) => pass
+        Ok(_) => return Err("the worker admitted an engine protocol record body")
+    assert RECORD_SCHEMA == "incan.compiler-worker/2"
+    return Ok(None)
+
+
+pub def test_record_request_reply_sets_are_closed() -> Result[None, str]:
+    """Prepare and Evaluate accept only their settled replies; a cross-request reply is a protocol fault."""
+    prepare = RecordMessage.Prepare(Prepare(stage="local", snapshot="s", demand_root="d", producer_profile="p"))
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=0,
+        ),
+    )
+    for reply in [
+        RecordMessage.Prepared(Prepared(prepared_root="prepared")),
+        RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=1)),
+        RecordMessage.SemanticRefusal(SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses")),
+        RecordMessage.CompilerFault(CompilerFault(fault_root="fault")),
+    ]:
+        _ = accept_record_reply(prepare, reply)?
+    for reply in [
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        RecordMessage.SemanticRefusal(SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses")),
+        RecordMessage.CompilerFault(CompilerFault(fault_root="fault")),
+    ]:
+        _ = accept_record_reply(evaluate, reply)?
+    match accept_record_reply(
+        prepare,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+    ):
+        Err(reason) => assert reason == "compiler worker record reply does not match its request"
+        Ok(_) => return Err("Prepare accepted an Evaluate-only reply")
+    match accept_record_reply(evaluate, RecordMessage.Prepared(Prepared(prepared_root="prepared"))):
+        Err(reason) => assert reason == "compiler worker record reply does not match its request"
+        Ok(_) => return Err("Evaluate accepted a Prepare-only reply")
+    return Ok(None)
+
+
+pub def test_record_requests_cross_the_host_with_their_closed_replies() -> Result[None, str]:
+    """The host serves both request kinds, returns their allowed replies, and closes on a cross-request reply."""
+    socket = socket_path("records")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    prepare = RecordMessage.Prepare(Prepare(stage="local", snapshot="s", demand_root="d", producer_profile="p"))
+    mut preparing = record_caller(socket, prepare)?
+    match served_record(host)?:
+        RecordMessage.Prepare(value) => assert value.stage == "local"
+        _ => return Err("the host changed the Prepare request")
+    complete_record(host, RecordMessage.Prepared(Prepared(prepared_root="prepared")), -1)
+    match record_reply(preparing)?:
+        RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
+        _ => return Err("the host changed the Prepared reply")
+
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=0,
+        ),
+    )
+    mut evaluating = record_caller(socket, evaluate)?
+    match served_record(host)?:
+        RecordMessage.Evaluate(value) => assert value.work_root == "work"
+        _ => return Err("the host changed the Evaluate request")
+    complete_record(
+        host,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        -1,
+    )
+    match record_reply(evaluating)?:
+        RecordMessage.Produced(value) => assert value.staged_root == "staged"
+        _ => return Err("the host changed the Produced reply")
+
+    mut faulty = record_caller(socket, prepare)?
+    _ = served_record(host)?
+    complete_record(
+        host,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        -1,
+    )
+    match record_reply(faulty):
+        Err(reason) => assert reason != ""
+        Ok(_) => return Err("the host answered a Prepare request with Produced")
+    assert ended(host)
+    return Ok(None)
+
+
+def ready_document(generation: str, pid: int) -> Result[None, str]:
+    """Read the host's own readiness through the shared client contract."""
+    payload = RustString.from_utf8(encode_ready(generation, pid)).map_err((_) => "not UTF-8")?
+    return ready(parse(str(payload)).map_err((error) => error.message())?, generation, pid)
+
+
+pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Result[None, str]:
+    """
+    A header that is not a length, a length over the frame bound, a payload that is not JSON and an unserved command
+    are each refused with a reason; the formatting run and the source listing queued behind them are served.
+    """
+    socket = socket_path("frames")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut not_a_length = raw_caller(socket, "12ab5678".encode("utf-8"))?
+    mut over_bound = raw_caller(socket, "99999999".encode("utf-8"))?
+    mut not_json = caller(socket, "{not json")?
+    mut unserved = caller(socket, request_text(GENERATION, "--run"))?
+    invalid_policy = request_text(GENERATION, "--fmt").replace("\"cwd\"", "\"retire_after\":\"yes\",\"cwd\"")
+    mut invalid_lifetime = caller(socket, invalid_policy)?
+    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    listing = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{sinks}}}"
+    mut discovery = caller(socket, listing)?
+    request = served(host)?
+    assert is_format(request)
+    assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]
+    assert request.cwd == "/p" and request.stdout == "/p/r.out" and request.stderr == "/p/r.err"
+    for refused in [
+        reply(not_a_length)?,
+        reply(over_bound)?,
+        reply(not_json)?,
+        reply(unserved)?,
+        reply(invalid_lifetime)?,
+    ]:
+        assert exit_of(refused) == 1
+        assert reason_of(refused) != ""
+        assert not retired(refused)
+    complete(host, ActivationOutcome.Exited(0), -1)
+    answered = reply(valid)?
+    assert exit_of(answered) == 0 and reason_of(answered) == "" and not retired(answered)
+    listed = served(host)?
+    assert is_discovery(listed) and listed.arguments == ["src"]
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(discovery)?) == 0
+    assert not withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_peer_of_another_user_is_closed_unanswered() -> Result[None, str]:
+    """A caller the OS reports as another user is never served or answered; the worker then retires when idle."""
+    socket = socket_path("peer")
+    other: u32 = (own_uid()? + 1).wrapping_resize()
+    mut host = host_for(settings(socket, 300, 16777216, Some(other)))?
+    mut foreign = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert ended(host)
+    match reply(foreign):
+        Ok(_) => return Err("a foreign peer was answered")
+        Err(_) => pass
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_an_idle_worker_retires_and_withdraws_its_socket() -> Result[None, str]:
+    """A worker that serves nothing for its idle period retires and removes its socket."""
+    socket = socket_path("idle")
+    started = Instant.now()
+    mut host = host_for(settings(socket, 300, 16777216, None))?
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) >= 300
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_worker_retires_once_its_socket_or_home_is_gone() -> Result[None, str]:
+    """
+    A worker whose socket path is removed, replaced or whose home is deleted retires within about a second, long
+    before its idle period, and withdraws only a socket file that is still its own.
+    """
+    # The socket path goes: nothing can reach the worker any more.
+    socket = socket_path("socketless")
+    mut socketless = host_for(settings(socket, 60000, 16777216, None))?
+    discard(socket)
+    assert ended_within(socketless, 5000)
+    # Another listener takes the path: the worker retires and leaves the replacement's socket alone.
+    replaced = socket_path("replaced")
+    mut displaced = host_for(settings(replaced, 60000, 16777216, None))?
+    discard(replaced)
+    mut replacement = listen(replaced, true)?
+    assert ended_within(displaced, 5000)
+    assert not withdrawn(replaced)
+    discard(replaced)
+    # The home goes: the worker serves nobody any more, and removes its own socket.
+    home = temp_dir().join(f"iwh-{id()}-home").to_string_lossy().into_owned()
+    create_dir_all(home).map_err((error) => f"cannot create {home}: {error}")?
+    homeless_socket = socket_path("homeless")
+    mut homeless_settings = settings(homeless_socket, 60000, 16777216, None)
+    homeless_settings.home = home
+    mut homeless = host_for(homeless_settings)?
+    remove_dir_all(home).map_err((error) => f"cannot remove {home}: {error}")?
+    assert ended_within(homeless, 5000)
+    assert withdrawn(homeless_socket)
+    return Ok(None)
+
+
+def ended_within(mut host: WorkerHost, millis: int) -> bool:
+    """Whether the host retired, instead of serving another request, within `millis` milliseconds."""
+    started = Instant.now()
+    return ended(host) and int(started.elapsed().as_millis()) < millis
+
+
+pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_its_queue() -> Result[None, str]:
+    """
+    An activation that lasts longer than the socket's queue of callers could hold neither loses idle retirement nor
+    delays the next request: the worker answers it and still retires once idle.
+    """
+    socket = socket_path("long")
+    mut host = host_for(settings(socket, 40, 16777216, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    # 2 s is longer than any idle period of this case, and the worker checks its own clock again once it waits.
+    sleep(Duration.from_millis(2000))
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(first)?) == 0
+    started = Instant.now()
+    assert ended(host)
+    assert int(started.elapsed().as_millis()) < 2000
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
+    """
+    A footprint more than the margin above the baseline after two activations in a row retires the worker: its second
+    reply is marked retired, its socket is withdrawn, and the request already queued is still answered, also retired.
+    """
+    socket = socket_path("footprint")
+    mut host = host_for(settings(socket, 10000, 100, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1101)
+    assert not retired(reply(first)?)
+    mut second = caller(socket, request_text(GENERATION, "--fmt"))?
+    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    second_reply = reply(second)?
+    assert exit_of(second_reply) == 0 and retired(second_reply)
+    assert withdrawn(socket)
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    assert retired(reply(queued)?)
+    assert ended(host)
+    return Ok(None)
+
+
+pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[None, str]:
+    """Excess footprint must persist across consecutive activations; one back within the margin resets it."""
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=FOOTPRINT_CEILING))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1050).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), -1).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("two consecutive activations over the margin did not retire the worker")
+    return Ok(None)
+
+
+pub def test_a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Result[None, str]:
+    """A footprint above the ceiling after any activation retires the worker after that activation alone."""
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 5000).retirement)
+    match policy.settle(ActivationOutcome.Panicked, 5001).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a footprint over the ceiling did not retire the worker")
+    check_one_activation_retirement()?
+    return Ok(None)
+
+
+def check_one_activation_retirement() -> Result[None, str]:
+    """A caller can require process teardown after one successful activation, even with no measured footprint."""
+    socket = socket_path("one-activation")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, request_text(GENERATION, "--fmt", true))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), -1)
+    completed = reply(client)?
+    assert exit_of(completed) == 0 and retired(completed)
+    assert withdrawn(socket)
+    assert ended(host)
+    return Ok(None)
+
+
+pub def test_a_compiler_panic_is_a_fault_and_the_next_request_is_served() -> Result[None, str]:
+    """A panic contained by the compiler entry is answered as a compiler fault; the worker serves the next request."""
+    socket = socket_path("panic")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut panicked = caller(socket, request_text(GENERATION, "--fmt"))?
+    mut next = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Panicked, -1)
+    fault = reply(panicked)?
+    assert exit_of(fault) == PANIC_STATUS and reason_of(fault) == "" and not retired(fault)
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(3), -1)
+    assert exit_of(reply(next)?) == 3
+    assert not withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_a_request_of_another_generation_ends_the_worker() -> Result[None, str]:
+    """A request of another compiler generation is refused, its reply marked retired, and the worker exits."""
+    socket = socket_path("generation")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut stranger = caller(socket, request_text("fedcba9876543210", "--fmt"))?
+    assert ended(host)
+    refusal = reply(stranger)?
+    assert exit_of(refusal) == 1 and reason_of(refusal) == MISMATCH and retired(refusal)
+    assert withdrawn(socket)
+    return Ok(None)
+
+
+pub def test_an_unrestored_process_serves_nothing_more() -> Result[None, str]:
+    """
+    An activation after which the process could not be restored is answered and retires the worker at once; so does
+    an entry that asks for another request without completing the open one.
+    """
+    socket = socket_path("unsafe")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(host)?)
+    complete(host, ActivationOutcome.UnsafeCleanup("compiler console restore failed: closed"), -1)
+    failed = reply(first)?
+    assert exit_of(failed) == 1 and reason_of(failed) == "compiler console restore failed: closed" and retired(failed)
+    assert withdrawn(socket)
+    assert ended(host)
+    again = socket_path("unsafe-again")
+    mut second_host = host_for(settings(again, 10000, 16777216, None))?
+    mut open = caller(again, request_text(GENERATION, "--fmt"))?
+    assert is_format(served(second_host)?)
+    assert ended(second_host)
+    assert retired(reply(open)?)
+    return Ok(None)

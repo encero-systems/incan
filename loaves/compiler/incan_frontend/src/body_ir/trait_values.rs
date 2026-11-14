@@ -4,12 +4,12 @@
 //! identity, and each checked call retains the concrete carrier occupying that input's declaration slot.
 
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod inference;
 
 /// One checked function's hidden input slots, appended after its explicitly declared type parameters.
-struct TraitInputs {
+pub(super) struct TraitInputs {
     explicit_count: usize,
     parameters: Vec<String>,
     slots: Vec<usize>,
@@ -23,6 +23,7 @@ pub(super) fn retain_inputs(
     program: &ast::Program,
     facts: &TypeCheckInfo,
     context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
 ) {
     let adoptions = super::collect::collect_trait_argument_witnesses(program, facts, &module.nominal_declarations);
     let mut signatures = HashMap::new();
@@ -33,57 +34,80 @@ pub(super) fn retain_inputs(
         if identity.kind != SemanticSourceTargetKind::Function {
             continue;
         }
-        retain_annotation_identities(body, program, facts);
-        let inputs = retain_body_inputs(body);
+        let inputs = if super::body_is_selected(body, selected) {
+            published_inputs(body)
+        } else {
+            retain_annotation_identities(body, program, facts);
+            retain_body_inputs(body)
+        };
         if !inputs.slots.is_empty() {
             signatures.insert(identity, inputs);
         }
     }
-    for body in context.iter().flat_map(|module| &module.bodies) {
-        let slots = body
-            .params
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, param)| {
-                let IncanType::TypeVar(name) = &param.ty else {
-                    return None;
-                };
-                body.named_type_identities
-                    .get(name)
-                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
-                    .map(|_| slot)
-            })
-            .collect::<Vec<_>>();
+    for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
+        let inputs = published_inputs(body);
         if let Some(identity) = &body.canonical
-            && !slots.is_empty()
+            && !inputs.slots.is_empty()
         {
-            signatures.insert(
-                identity.clone(),
-                TraitInputs {
-                    explicit_count: body.type_parameters.len().saturating_sub(slots.len()),
-                    parameters: body.type_parameters[..body.type_parameters.len().saturating_sub(slots.len())].to_vec(),
-                    annotations: Vec::new(),
-                    slots,
-                },
-            );
+            signatures.insert(identity.clone(), inputs);
         }
     }
     for body in &mut module.bodies {
-        retain_block_inputs(
-            &mut body.block,
-            &mut body.locals,
-            &signatures,
-            &module.nominal_declarations,
-            &adoptions,
-            &body.named_type_identities,
-        );
+        if super::body_is_selected(body, selected) {
+            continue;
+        }
+        retain_body_arguments(body, &signatures, &module.nominal_declarations, &adoptions);
     }
+}
+
+/// Read one authenticated provider frame's hidden input contract without inspecting its executable body. Empty
+/// contracts remain explicit native values; record schema/profile/evidence belong to the publishing adapter.
+pub(super) fn published_inputs(body: &bir::Body) -> TraitInputs {
+    let slots = body
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, param)| {
+            let IncanType::TypeVar(name) = &param.ty else {
+                return None;
+            };
+            body.named_type_identities
+                .get(name)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
+                .map(|_| slot)
+        })
+        .collect::<Vec<_>>();
+    let explicit_count = body.type_parameters.len().saturating_sub(slots.len());
+    TraitInputs {
+        explicit_count,
+        parameters: body.type_parameters[..explicit_count].to_vec(),
+        annotations: Vec::new(),
+        slots,
+    }
+}
+
+/// Apply already selected trait input and adoption contracts to one body's arguments. The caller owns declaration
+/// and candidate selection; this operation does not collect signatures or inspect any sibling body.
+pub(super) fn retain_body_arguments(
+    body: &mut bir::Body,
+    signatures: &HashMap<CanonicalSymbolId, TraitInputs>,
+    nominals: &[bir::NominalDeclaration],
+    adoptions: &BTreeMap<(CanonicalSymbolId, CanonicalSymbolId), Vec<IncanType>>,
+) {
+    retain_block_inputs(
+        &mut body.block,
+        &mut body.locals,
+        signatures,
+        nominals,
+        adoptions,
+        &body.named_type_identities,
+    );
 }
 
 /// Retain identities from the checked annotation spans rather than widening legacy's nominal-only identity table.
 fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, facts: &TypeCheckInfo) {
     let Some(function) = program.declarations.iter().find_map(|declaration| {
-        if declaration.span.start != body.span.start || declaration.span.end != body.span.end {
+        if declaration.span != body.span {
             return None;
         }
         match &declaration.node {
@@ -105,12 +129,12 @@ fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, fa
             IncanType::Generic { base, .. } => base,
             _ => continue,
         };
-        body.named_type_identities.insert(name.clone(), identity.clone());
+        std::sync::Arc::make_mut(&mut body.named_type_identities).insert(name.clone(), identity.clone());
     }
 }
 
 /// Mint one distinct hidden binder for each canonically proven trait parameter, preserving parameter order.
-fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
+pub(super) fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
     let explicit_count = body.type_parameters.len();
     let parameters = body.type_parameters.clone();
     let mut slots = Vec::new();
@@ -136,7 +160,7 @@ fn retain_body_inputs(body: &mut bir::Body) -> TraitInputs {
         }
         annotations.push((parameter.ty.clone(), identity.clone()));
         body.type_parameters.push(hidden.clone());
-        body.named_type_identities.insert(hidden.clone(), identity);
+        std::sync::Arc::make_mut(&mut body.named_type_identities).insert(hidden.clone(), identity);
         parameter.ty = IncanType::TypeVar(hidden);
         body.locals[parameter.local.index()].ty = parameter.ty.clone();
         slots.push(slot);
@@ -228,7 +252,9 @@ fn retain_call_inputs(
     let Some(inputs) = target.canonical.as_ref().and_then(|identity| signatures.get(identity)) else {
         return;
     };
-    let bir::ArgumentBinding::Resolved { arguments, .. } = &target.binding else {
+    // A named call written out of declaration order keeps its declaration-order binding; carriers map by slot either
+    // way.
+    let Some(arguments) = target.binding.slot_arguments() else {
         return;
     };
     let carriers = inputs

@@ -1,0 +1,10 @@
+"""Register an empty vocabulary without observing the invoking shell."""
+
+from std.environ import get_or
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Refuse a leaked contract sentinel before returning the dependency's empty surface."""
+    assert get_or("INCAN_REGISTRATION_SECRET", "") == ""
+    return VocabRegistration.new()

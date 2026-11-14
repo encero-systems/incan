@@ -1,0 +1,21 @@
+# behavior: imported models with required private fields remain incomplete, and direct construction from another module or a child class cannot name an imported class's private field (RFC 149: private fields reserve construction and hide data; RFC 122: diagnostics for inaccessible required state do not direct callers to set it)
+# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0135
+
+from vaults import Vault, Sealed, ClassVault
+
+
+class ChildVault extends ClassVault:
+    @staticmethod
+    pub def bypass() -> ClassVault:
+        """Attempt to bypass the parent class's public construction surface."""
+        return ClassVault(secret="child", label="child")
+
+
+def main() -> None:
+    vault = Vault(label="x")
+    sealed = Sealed(label="y")
+    class_vault = ClassVault(secret="external", label="outside")
+    println(vault.label)
+    println(sealed.label)
+    println(class_vault.label)

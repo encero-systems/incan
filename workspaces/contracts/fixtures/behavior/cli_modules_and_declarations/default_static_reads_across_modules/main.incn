@@ -1,0 +1,36 @@
+# behavior: a default, a method default, a method-partial preset and a static method's default that read a static of their module, or a static their module imports, take that static's value where another module omits the argument, also when that module declares a static of the same name
+# expect-stdout:
+#   3
+#   7
+#   4
+#   5
+#   4
+#   3
+#   3
+#   13
+#   1
+#   true
+#   2
+#   1
+
+from caller import run
+from helpers import Box, first, has, size, take, wrap
+
+static COUNT: int = 7
+static LIMIT: int = 5
+static ITEMS: list[str] = ["a"]
+
+
+def main() -> None:
+    println(take())
+    println(COUNT)
+    println(wrap())
+    println(LIMIT)
+    println(Box(v=0).fetch())
+    println(Box(v=0).capped())
+    println(Box.make().v)
+    println(run())
+    println(first())
+    println(has())
+    println(size())
+    println(len(ITEMS))

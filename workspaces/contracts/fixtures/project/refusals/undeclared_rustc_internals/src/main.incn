@@ -1,0 +1,17 @@
+# behavior: a Loaf that does not declare rustc-internal access cannot check or run a program that enters rustc's own driver
+# cli-commands:
+#   check src/main.incn
+#   run src/main.incn -- --print cfg
+# expect-exit: 1
+# expect-stderr-contains:
+#   Rust facts require an exact `rustc_driver` artifact in the unit's native closure
+
+from rust::rustc_driver import main as rustc_main
+from rust::std::process import ExitCode, exit
+
+
+def main() -> None:
+    """Run rustc with this program's arguments and keep its failure as the program's."""
+    outcome = rustc_main()
+    if not outcome.eq(ExitCode.SUCCESS):
+        exit(1i32)

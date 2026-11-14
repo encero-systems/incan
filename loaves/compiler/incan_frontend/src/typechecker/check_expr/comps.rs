@@ -43,6 +43,7 @@ impl TypeChecker {
             | ResolvedType::FrozenBytes
             | ResolvedType::Unit
             | ResolvedType::Named(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::SelfType
             | ResolvedType::RustPath(_)
             | ResolvedType::CallSiteInfer
@@ -50,12 +51,13 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a generator expression and return `Generator[T]`.
+    /// Type-check a generator expression and retain each clause's checked nominal element for Body IR bindings.
     pub(in crate::typechecker::check_expr) fn check_generator_expr(
         &mut self,
         generator: &GeneratorExpr,
         _span: Span,
     ) -> ResolvedType {
+        self.note_lazy_result_body();
         self.symbols.enter_scope(ScopeKind::Block);
         let mut previous_views = None;
 
@@ -73,6 +75,7 @@ impl TypeChecker {
                     // source destructured by a statement `for` would bind them concretely (#1161).
                     self.record_expr_type(pattern.span, elem_ty.clone());
                     self.define_for_pattern_bindings(pattern, &elem_ty);
+                    self.retain_body_ir_iteration_binding(pattern, iter);
                     let entered = self.enter_item_views(item_views);
                     previous_views.get_or_insert(entered);
                 }
@@ -92,8 +95,18 @@ impl TypeChecker {
         generator_ty(result_elem_ty)
     }
 
-    /// Type-check a list comprehension and return `List[T]`.
-    pub(in crate::typechecker::check_expr) fn check_list_comp(&mut self, comp: &ListComp, _span: Span) -> ResolvedType {
+    /// Type-check a list comprehension and retain its iterable's checked nominal element under the clause binding.
+    ///
+    /// An expected list destination checks the produced expression against that list's element type, just as it does
+    /// for a list literal. Nested comprehensions receive the nested element destination recursively, so an open
+    /// constructor such as `None` is settled by the annotation at every level rather than reaching Body IR as
+    /// `Option[?]`.
+    pub(in crate::typechecker::check_expr) fn check_list_comp(
+        &mut self,
+        comp: &ListComp,
+        _span: Span,
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         self.plan_comprehension_collection_source(&comp.iter, &iter_ty);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
@@ -104,13 +117,15 @@ impl TypeChecker {
         // See `check_generator_expr` for why the element type is recorded at the pattern's span.
         self.record_expr_type(comp.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
+        self.retain_body_ir_iteration_binding(&comp.pattern, &comp.iter);
         let previous_views = self.enter_item_views(item_views);
 
         if let Some(filter) = &comp.filter {
             self.check_expr(filter);
         }
 
-        let result_elem_ty = self.check_expr(&comp.expr);
+        let expected_elem_ty = self.list_expected_element_type(expected);
+        let result_elem_ty = self.check_expr_with_expected(&comp.expr, expected_elem_ty.as_ref());
         // A side an `Ok(...)` or `Err(...)` element leaves open is built with a type all the same (#1561).
         let result_elem_ty = self.settle_open_constructor_side(&comp.expr, result_elem_ty);
         self.exit_pattern_views(previous_views);
@@ -119,7 +134,7 @@ impl TypeChecker {
         list_ty(result_elem_ty)
     }
 
-    /// Type-check a dict comprehension and return `Dict[K, V]`, refusing a key type without `Eq` and `Hash` (#1758).
+    /// Check a dict comprehension, preserving checked nominal element owners and refusing unhashable keys (#1758).
     pub(in crate::typechecker::check_expr) fn check_dict_comp(&mut self, comp: &DictComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         self.plan_comprehension_collection_source(&comp.iter, &iter_ty);
@@ -131,6 +146,7 @@ impl TypeChecker {
         // See `check_generator_expr` for why the element type is recorded at the pattern's span.
         self.record_expr_type(comp.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
+        self.retain_body_ir_iteration_binding(&comp.pattern, &comp.iter);
         let previous_views = self.enter_item_views(item_views);
 
         if let Some(filter) = &comp.filter {
@@ -198,6 +214,27 @@ impl TypeChecker {
             self.retain_body_ir_implicit_closure_parameters(params, &param_types, &return_ty, body, span);
         }
         ResolvedType::Function(param_types, Box::new(return_ty))
+    }
+
+    /// Infer implicit closure parameters only when the expected union contains one callable shape of that arity.
+    /// Competing callable shapes retain ordinary closure checking rather than selecting one by member order.
+    pub(in crate::typechecker::check_expr) fn check_closure_with_union_expected(
+        &mut self,
+        params: &[Spanned<Param>],
+        body: &Spanned<Expr>,
+        members: &[ResolvedType],
+        span: Span,
+    ) -> ResolvedType {
+        let mut candidates = members.iter().filter_map(|member| match member {
+            ResolvedType::Function(inputs, result) if inputs.len() == params.len() => Some((inputs, result)),
+            _ => None,
+        });
+        if let Some((inputs, result)) = candidates.next()
+            && candidates.next().is_none()
+        {
+            return self.check_closure_with_expected(params, body, inputs, result, span);
+        }
+        self.check_closure(params, body, span)
     }
 
     /// Type-check a closure expression against an expected function shape.

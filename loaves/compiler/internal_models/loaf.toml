@@ -1,0 +1,15 @@
+[project]
+name = "internal_models"
+version = "0.6.0-dev.8"
+description = "The compiler's shared record contracts: canonical checker records, scoped record reads and the producer interface"
+
+[dependencies]
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_platform = { path = "../../platform" }
+
+# Canonical record controls call the frontend's native fixture adapter only in tests.
+[envs.test.dependencies]
+incan_frontend = { loaf = "incan_frontend", path = "../incan_frontend" }
+
+[build]
+rust-edition = "2024"

@@ -1,0 +1,14 @@
+# behavior: a library retains an Arc AsRef loan of its source model across modules (#2256)
+# expect-stdout:
+#   true
+
+from rust::std::sync import Arc
+from pub::indices import Index, check_view
+
+
+def main() -> None:
+    """Observe both maps through the library's borrowed Arc view."""
+    owner = Arc.new(Index(owners={"first": 7}, generic_owners={"generic": 9}))
+    result = check_view(owner)
+    println(result)
+    assert result

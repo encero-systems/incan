@@ -1,0 +1,15 @@
+# behavior: a mut str parameter accepts a literal and a variable, the callee reads the text it was given, and the caller's variable is unchanged afterwards
+# expect-stdout:
+#   hello!
+#   name!
+#   name
+
+def bump(mut text: str) -> None:
+    println(text + "!")
+
+
+def main() -> None:
+    bump("hello")
+    mut name = "name"
+    bump(name)
+    println(name)

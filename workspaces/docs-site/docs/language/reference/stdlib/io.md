@@ -1,12 +1,36 @@
 # std.io reference
 
-`std.io` provides in-memory binary streams for byte buffers that are already in memory.
+`std.primitives.io` provides owned byte storage without higher-level stream policy. `std.io` provides the compatible in-memory stream surface and typed numeric I/O.
 
 ```incan
 from std.io import BinaryReader, BytesIO, Endian, IoError, ReaderChunks
 ```
 
 Use `BytesIO` for parser fixtures, protocol payloads, generated binary blobs, and format readers that should not depend on filesystem paths. `std.fs` gets bytes into or out of files; `std.io` moves a cursor through bytes that already exist.
+
+## Primitive owned buffers
+
+```incan
+from std.primitives.io import ByteReader, Endian, IoError, WriteBuffer
+```
+
+`WriteBuffer` owns growable storage and one mutable cursor. `snapshot()` is the operation that copies its complete backing bytes. Reads return owned bytes and never expose a view into storage that a later write may reallocate.
+
+| API | Returns | Description |
+| --- | --- | --- |
+| `WriteBuffer.from_bytes(initial: bytes)` | `WriteBuffer` | Take owned initial bytes and start at cursor position `0`. |
+| `WriteBuffer.empty()` | `WriteBuffer` | Construct empty owned storage at cursor position `0`. |
+| `buffer.read(size: int = -1)` | `Result[bytes, IoError]` | Read at most `size` owned bytes, or all remaining bytes when `size` is negative. |
+| `buffer.write(data: bytes)` | `Result[int, IoError]` | Write all bytes at the cursor and return the accepted count. |
+| `buffer.tell()` | `int` | Return the cursor position. |
+| `buffer.seek(offset: int, whence: int = 0)` | `Result[int, IoError]` | Seek from the start, current position, or end for `whence` values `0`, `1`, or `2`. |
+| `buffer.truncate(size: Option[int] = None)` | `Result[int, IoError]` | Resize to `size`, or to the cursor when omitted; growth zero-fills and shrinking clamps the cursor. |
+| `buffer.snapshot()` | `bytes` | Copy the complete backing storage without changing the cursor. |
+| `buffer.remaining()` | `int` | Return the unread byte count from the cursor to the end. |
+
+`ByteReader.from_bytes(data)` takes owned immutable bytes and starts at offset `0`. `read_u16_le()`, `read_u32_le()`, and `read_u64_le()` return `Option` and leave the offset unchanged when the complete scalar is unavailable. `read_exact(size)` returns `IoError(kind="invalid_input")` for a negative size and `IoError(kind="truncated")` when the complete range is unavailable. `read_length_prefixed(max_length)` reads a little-endian `u64` length and its payload; it returns `truncated` for incomplete bytes and `limit_exceeded` before reading a payload longer than the nonnegative caller bound. Failed reads leave the offset at the start of the operation.
+
+`IoError` carries `kind: str`, `detail: str`, `operation: str = "io"`, `position: int = -1`, and `path: Option[str] = None`. `Endian` has `Little` and `Big` variants. `std.io` reexports these same declarations; it does not define parallel compatibility types.
 
 ## BytesIO
 

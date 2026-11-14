@@ -29,10 +29,7 @@ impl TypeChecker {
                 if !self.is_bare_builtin_collection_annotation(name) {
                     return false;
                 }
-                if self
-                    .unknown_source_type_names_emitted
-                    .insert((name.clone(), ty.span.start, ty.span.end))
-                {
+                if self.unknown_source_type_names_emitted.insert((name.clone(), ty.span)) {
                     self.errors
                         .push(errors::collection_annotation_requires_type_arguments(name, ty.span));
                 }

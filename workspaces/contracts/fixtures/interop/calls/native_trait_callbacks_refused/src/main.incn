@@ -1,0 +1,27 @@
+# behavior: a borrowed mutable Rust trait object is refused for an immutable native or source binding and for a native value without the trait (#2481)
+# expect-exit: 1
+# expect-stderr-contains:
+#   Rust parameter requires a mutable borrow of 'native'
+#   Rust parameter requires a mutable borrow of 'hooks'
+#   found 'rust::std::process::ExitCode'
+
+"""Refuse callbacks the host cannot borrow mutably, or that do not implement its trait."""
+
+from rust::std::process import ExitCode
+from rust::tiny_driver import Callbacks, Quiet, run_compiler
+
+
+class Hooks with Callbacks:
+    """Keep every default the Rust trait provides."""
+
+    marker: int = 0
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    native = Quiet.default()
+    run_compiler(["native"], native)
+    hooks = Hooks()
+    run_compiler(["source"], hooks)
+    mut status = ExitCode.SUCCESS
+    run_compiler(["status"], status)

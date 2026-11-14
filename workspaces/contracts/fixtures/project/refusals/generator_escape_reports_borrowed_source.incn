@@ -1,0 +1,21 @@
+# behavior: an escaping generator over a borrowed field reports its origin and escape once with an owned-source remedy (#2426)
+# cli-commands:
+#   check src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   INCAN-T0001
+#   cannot let the generator expression escape while it is still reading `values.items`
+#   the generator expression reads `values.items` and escapes here
+#   move an owned list into the escaping generator, or iterate over `values.items.clone()` to give it an independent copy
+# expect-exit: 1
+
+model Values:
+    items: list[int]
+
+
+def from_field(values: Values) -> Generator[int]:
+    return (item for item in values.items)
+
+
+def main() -> None:
+    println(from_field(Values(items=[1, 2, 3])).sum())

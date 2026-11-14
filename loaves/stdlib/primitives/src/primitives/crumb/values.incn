@@ -1,0 +1,82 @@
+"""Explicit logical values and metadata, independent of physical encodings and generated model hooks."""
+
+from crate.primitives.crumb.types import AbsentPolicy, TypeNode
+
+
+pub enum Projection(str):
+    """Object keeps all stored fields; Canonical omits fields excluded by their description."""
+
+    Object = "object"
+    Canonical = "canonical"
+
+
+pub enum IntegerValue:
+    """One fixed-width logical integer, retaining whether its declared domain is signed or unsigned."""
+
+    Signed(i128)
+    Unsigned(u128)
+
+
+pub enum Value:
+    """
+    Owned format values supplied after binding admission, not executable runtime objects.
+
+    Integers use native i128/u128 carriers and decimals use a native i128 coefficient with an
+    integer scale. Float inputs retain their IEEE bits and width. Some and Union carry exactly one
+    child. Record fields retain their original identities and absent policies; references retain
+    only opaque identities.
+    """
+
+    NoneValue
+    Some(list[Value])
+    Boolean(bool)
+    Integer(IntegerValue)
+    Float(int, bytes)
+    Decimal(i128, int)
+    Text(str)
+    Binary(bytes)
+    Withheld
+    List(list[Value])
+    Tuple(list[Value])
+    Set(list[Value])
+    Map(list[MapEntry])
+    Record(list[ValueField])
+    Enum(bytes, list[ValueField])
+    Union(TypeNode, list[Value])
+    Reference(bytes, bytes)
+
+
+pub model ValueField:
+    """One logical stored field; names and storage offsets never replace its established identity."""
+
+    pub identity: bytes
+    pub canonical: bool
+    pub absent: AbsentPolicy
+    pub value: Value
+
+
+pub model MapEntry:
+    """A pair remains explicit so duplicate keys can be refused instead of overwritten by a host map."""
+
+    pub key: Value
+    pub value: Value
+
+
+pub enum Metadata:
+    """The complete D metadata tree; map entries retain read order until digest encoding sorts their keys."""
+
+    Null
+    Boolean(bool)
+    Integer(i128)
+    Text(str)
+    Binary(bytes)
+    Symbol(str)
+    List(list[Metadata])
+    Map(list[MetadataEntry])
+
+
+pub model MetadataEntry:
+    """A property-name key and value, preserving every supplied property before canonical ordering."""
+
+    pub key: str
+    pub value: Metadata

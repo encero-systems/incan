@@ -3,12 +3,13 @@
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Place as OperandPlace
 from frame import Builder
-from models import model_prefix, field_projection
+from models import model_prefix, field_step_type
 from tuples import is_tuple_type
-from lowering import projected_element_read
+from list_values import projected_element_read
+from table_views import borrowed_table, borrowed_at
 
 
-pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+pub def model_list_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
     """Read an index or slice after a retained nominal field or tuple element prefix, cloning its result instead of moving the parent."""
     match structural_prefix(builder, source)?:
         None => return Ok(None)
@@ -20,7 +21,7 @@ pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSp
             return Ok(Some(prefixed_list_read(builder, source, count, span)?))
 
 
-pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
+pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
     """
     Count the leading field, payload and tuple-element steps of a place rooted at a model, enum or tuple.
 
@@ -33,20 +34,15 @@ pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option
     match source.local_id():
         None => return Ok(None)
         Some(local) =>
-            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            root = borrowed_at(builder.locals, int(local.index()) + 1 + builder.local_offset).ty
             match root:
-                PlanType.Model(_owner, _name) =>
-                    ty = root
-                PlanType.Enum(_owner, _name) =>
-                    ty = root
-                PlanType.Tuple(_elements) =>
-                    ty = root
-                PlanType.TupleMutRef(elements) =>
-                    ty = PlanType.Tuple(elements)
-                PlanType.ModelRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
-                PlanType.ModelMutRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
+                PlanType.Model(_owner, _name) => ty = root
+                PlanType.Enum(_owner, _name) => ty = root
+                PlanType.Tuple(_elements) => ty = root
+                PlanType.TupleMutRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
                 _ => return Ok(None)
     mut count = 0
     for projection in source.projection:
@@ -60,28 +56,43 @@ pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option
                 if not is_tuple_type(ty):
                     break
             _ => break
-        ty = field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty
+        ty = field_step_type(
+            builder.constructors,
+            builder.nominals,
+            ty,
+            projection,
+            builder.enums,
+            builder.unions,
+            builder.intrinsics,
+        )?
         count += 1
     return Ok(Some((count, through_tuple)))
 
 
-pub def prefix_place(builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[OperandPlace, str]:
+pub def prefix_place(
+    mut builder: Builder,
+    source: RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[OperandPlace, str]:
     """Project the first `count` structural steps of a place without reading or copying anything."""
     mut place = model_prefix(
+        builder.constructors,
         builder.nominals,
-        builder.locals[builder.local_offset:],
+        borrowed_table(builder.locals),
         source,
         count,
         span,
         builder.enums,
         builder.unions,
         builder.intrinsics,
+        builder.local_offset,
     )?
     place.local += builder.local_offset
     return Ok(place)
 
 
-def prefixed_list_read(mut builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[Operand, str]:
+def prefixed_list_read(mut builder: Builder, source: RustPlace, count: int, span: SourceSpan) -> Result[Operand, str]:
     """Read the list indexes, slices and element fields that follow a structural prefix, cloning an owned result."""
     container = prefix_place(builder, source, count, span)?
     return projected_element_read(builder, source, container, count, span)

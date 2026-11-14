@@ -20,7 +20,7 @@ This page specifies the numeric types and their aliases, numeric literals, decim
 | `usize` | Unsigned integer | `usize` | The platform's pointer-sized unsigned range |
 | `f32` | Binary float | `f32` | Finite IEEE 754 binary32 values |
 | `f64` | Binary float | `f64` | IEEE 754 binary64 values, NaN and infinity included |
-| `decimal[p, s]` | Decimal | `incan_std_core::num::Decimal128` | Base-10 values with precision `p` and scale `s` (see [Decimal types](#decimal-types)) |
+| `decimal[p, s]` | Decimal | `incan_std_primitives::num::Decimal128` | Base-10 values with precision `p` and scale `s` (see [Decimal types](#decimal-types)) |
 
 ## Aliases
 

@@ -1,0 +1,27 @@
+# behavior: primitive callers preserve copies, checked positions, output failures and generated lists (#2501)
+# expect-stdout:
+#   primitive stdout
+#   checked access refused
+#   checked replacement refused
+#   2 8 2 1 1
+#   output failure retained
+#   5
+# expect-stderr:
+#   primitive stderr
+
+"""Exercise runtime foundations through a separately compiled primitive-only standard-package provider."""
+
+from pub::runtime_foundations import collection_summary, output_failure, write_stderr, write_stdout
+
+
+def main() -> Result[None, str]:
+    """Print provider observations and retain ordinary generated list behavior through the current lowering route."""
+    write_stdout("primitive stdout")?
+    write_stderr("primitive stderr")?
+    write_stdout(collection_summary()?)?
+    write_stdout(output_failure("loaf.toml")?)?
+
+    mut generated = [4]
+    generated.append(5)
+    write_stdout(str(generated[-1]))?
+    return Ok(None)

@@ -1,0 +1,100 @@
+"""Execute literal row inputs, exact refusals, independent logical expectations and actual re-encoding."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_reader import RowSet, read_rows
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.values import Projection
+from std.primitives.hex import hexlify
+from encoding_test_support import backing
+from case_data import CaseTransform, ExpectedStatus, array, expected_status, field, hex_bytes, text
+from fixture_adapter import metadata, metadata_notation, record_value
+from row_read_data import category
+
+
+pub def check_reader(example: JsonValue) -> Result[bool, str]:
+    """Expand every proper prefix into its own real decode with a fresh shared operation budget."""
+    data = hex_bytes(text(example, "input_hex")?)?
+    mut supplied: list[Description] = []
+    for item in array(example, "supplied_descriptions")?:
+        supplied.append(Description(metadata=metadata(item)?, mode=DescriptionMode.Reference))
+    if let Some(transform) = example.get("transform"):
+        selected = match CaseTransform.from_value(transform.expect_str().map_err((e) => e.message())?):
+            Some(value) => value
+            None => return Err("unknown binary corpus transform")
+
+        if selected != CaseTransform.AllProperPrefixes:
+            return Err("unsupported binary corpus transform")
+        for length in range(len(data)):
+            if not check_one(example, data[0:length], supplied)?:
+                return Err("proper prefix mismatch at length " + str(length))
+        return Ok(true)
+    return check_one(example, data, supplied)
+
+
+def case_budget(example: JsonValue) -> Result[Budget, str]:
+    """One processing budget spans description admission, cells, ordering and seal verification."""
+    mut elements = 1048576
+    mut depth = 128
+    if let Some(limits) = example.get("limits"):
+        if let Some(value) = limits.get("elements"):
+            elements = value.expect_int().map_err((e) => e.message())?
+        if let Some(value) = limits.get("depth"):
+            depth = value.expect_int().map_err((e) => e.message())?
+    return Budget.create(bytes=16777216, elements=elements, depth=depth).map_err((e) => e.message())
+
+
+def check_one(example: JsonValue, data: bytes, supplied: list[Description]) -> Result[bool, str]:
+    """Only a typed production refusal satisfies a negative case; notation/setup errors are failures."""
+    mut budget = case_budget(example)?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    mut require_sealed = false
+    if let Some(value) = example.get("require_sealed"):
+        require_sealed = value.expect_bool().map_err((e) => e.message())?
+    expected = field(example, "expected")?
+    view = backing(data)?
+    decoded = read_rows(view, supplied, registry, require_sealed, budget)
+    match decoded:
+        Err(error) =>
+            if expected_status(expected)? != ExpectedStatus.Refused:
+                return Err(error.message())
+            wanted = text(expected, "kind")?
+            actual = category(error.kind)
+            if actual != wanted:
+                return Err("expected " + wanted + ", got " + actual + " at " + str(error.offset))
+            return Ok(true)
+        Ok(rows) =>
+            if expected_status(expected)? != ExpectedStatus.Accepted:
+                return Err("decoder accepted an independently refused input")
+            return check_accepted(rows, expected, data)
+
+
+def check_accepted(rows: RowSet, expected: JsonValue, original: bytes) -> Result[bool, str]:
+    """Compare expected logical records, then re-encode decoded facts/values rather than echoing input bytes."""
+    sealed = field(expected, "sealed")?.expect_bool().map_err((e) => e.message())?
+    records = array(expected, "records")?
+    if rows.len() != len(records) or rows.is_sealed() != sealed:
+        return Err("decoded count or seal status differs")
+    mut budget = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((e) => e.message())?
+    descriptions = rows.descriptions(budget).map_err((e) => e.message())?
+    notation = [metadata_notation(description.metadata) for description in descriptions]
+    mut decoded: list[RowRecord] = []
+    for index in range(rows.len()):
+        actual = rows.read_record(index, budget).map_err((e) => e.message())?
+        if hexlify(actual.key) != text(records[index], "selector_hex")?:
+            return Err("decoded nominal selector differs")
+        wanted = record_value(records[index], notation)?
+        actual_hash = value_hash(actual.value, Projection.Object, budget).map_err((e) => e.message())?
+        wanted_hash = value_hash(wanted, Projection.Object, budget).map_err((e) => e.message())?
+        if actual_hash.digest != wanted_hash.digest:
+            return Err("decoded logical value differs")
+        decoded.append(actual)
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    encoded = write_rows(descriptions, decoded, registry, sealed, budget).map_err((e) => e.message())?
+    if encoded != original:
+        return Err("actual decoded records/descriptions do not re-encode to the original literal bytes")
+    return Ok(true)

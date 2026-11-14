@@ -1,0 +1,42 @@
+# behavior: moved nominal declarations and checked generic binders preserve identity-selected match behavior
+# expect-stdout:
+#   42
+
+
+"""Executes identity selected nominal and fieldless enum match patterns."""
+model Pair:
+  """Hold left and right used by this fixture."""
+  left: int
+  right: int
+
+def classify(pair: Pair, signal: Signal) -> int:
+  """Match the fixture alternatives and return the selected result."""
+  match pair:
+    case Pair(left=40, right=2):
+      match signal:
+        case Signal.Ready:
+          return 42
+        case Signal.Stop:
+          return 0
+    case _:
+      return 0
+  return 0
+
+# A nominal may move below its users without changing their source signatures.
+enum Signal:
+  """Represent the Ready, Stop alternatives in this fixture."""
+  Ready
+  Stop
+
+def identity_pair[T](value: T) -> T:
+    """Keep a generic binder distinct from nominal source references."""
+    return value
+
+def program_result() -> int:
+    """Return the fixture expression `classify(Pair(left=40, right=2), Signal.Ready)`."""
+    return classify(identity_pair(Pair(left=40, right=2)), Signal.Ready)
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

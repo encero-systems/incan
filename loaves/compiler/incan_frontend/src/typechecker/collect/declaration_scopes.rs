@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{LibraryManifest, resolved_type_from_manifest_type_ref};
 use crate::symbols::{SymbolKind, TypeInfo};
 use crate::typechecker::{TypeChecker, canonical_public_library_type_name};
 use incan_semantics_core::CanonicalSymbolId;
@@ -36,13 +36,17 @@ impl TypeChecker {
         canonical_public_library_type_name(library, &path)
     }
 
-    /// Follow the spelling `name` in the checked API module `module_path` to the model, class, enum or newtype it
-    /// declares, returning the declaring module and the declared name.
+    /// Follow the spelling `name` in the checked API module `module_path` to its type or trait declaration, returning
+    /// the declaring module and the declared name.
     ///
     /// An alias, public or private, is followed to its target as the module wrote it, through as many modules as the
-    /// chain crosses. A spelling that reaches no nominal declaration of this package, such as an import from another
-    /// package, a function or a cycle, yields `None`.
+    /// chain crosses. The selected Loaf's namespace grant authenticates same-package imports before its binding root
+    /// translates them to manifest paths; a matching package name alone grants no ownership.
+    /// A spelling that reaches no type or trait declaration of this package, such as an import from another package,
+    /// a function or a cycle, yields `None`.
     fn api_nominal_declaration_path(
+        &self,
+        library: &str,
         api: &CheckedApiMetadataPackage,
         module_path: &[String],
         name: &str,
@@ -64,9 +68,20 @@ impl TypeChecker {
                 ApiDeclaration::Model(_)
                 | ApiDeclaration::Class(_)
                 | ApiDeclaration::Enum(_)
-                | ApiDeclaration::Newtype(_) => return Some((module_path, name)),
+                | ApiDeclaration::Newtype(_)
+                | ApiDeclaration::TypeAlias(_)
+                | ApiDeclaration::Trait(_) => return Some((module_path, name)),
                 ApiDeclaration::Alias(alias) => {
                     let target = resolve_api_alias_target(&module_path, &alias.target_path);
+                    let binding_root = self
+                        .loaves
+                        .entry(library)
+                        .filter(|entry| entry.owns(&target))
+                        .map(|entry| entry.binding_root());
+                    let target = binding_root
+                        .as_ref()
+                        .and_then(|root| target.strip_prefix(root.as_slice()))
+                        .unwrap_or(&target);
                     let (target_name, target_module) = target.split_last()?;
                     name = target_name.clone();
                     module_path = target_module.to_vec();
@@ -83,6 +98,7 @@ impl TypeChecker {
     /// including a consumer's own import of that name, keeps spelling it. A manifest without canonical identities
     /// gives no evidence that two paths name one declaration and yields no entries.
     fn build_pub_library_declaration_scopes(
+        &self,
         library: &str,
         manifest: &LibraryManifest,
     ) -> HashMap<Vec<String>, HashMap<String, String>> {
@@ -102,7 +118,7 @@ impl TypeChecker {
             for declaration in &module.declarations {
                 let name = Self::api_declaration_name(declaration);
                 let Some((declaring_module, declared_name)) =
-                    Self::api_nominal_declaration_path(api, &module.module_path, name)
+                    self.api_nominal_declaration_path(library, api, &module.module_path, name)
                 else {
                     continue;
                 };
@@ -129,14 +145,14 @@ impl TypeChecker {
     }
 
     /// Return the declaration scope of one checked API module of `library`, building the library's scopes once.
-    fn pub_library_declaration_scope(
+    pub(super) fn pub_library_declaration_scope(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
         module_path: &[String],
     ) -> HashMap<String, String> {
         if !self.pub_library_declaration_scopes.contains_key(library) {
-            let scopes = Self::build_pub_library_declaration_scopes(library, manifest);
+            let scopes = self.build_pub_library_declaration_scopes(library, manifest);
             self.pub_library_declaration_scopes.insert(library.to_string(), scopes);
         }
         self.pub_library_declaration_scopes
@@ -151,7 +167,7 @@ impl TypeChecker {
     ///
     /// The identity graph's direct entry for the declaration names its declaring module. Names the scope does not
     /// cover are left for the caller's root and import remapping.
-    pub(super) fn remap_symbol_kind_through_declaring_module(
+    pub(in crate::typechecker) fn remap_symbol_kind_through_declaring_module(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
@@ -179,6 +195,10 @@ impl TypeChecker {
     ///
     /// These keys are what the declaration scopes map spellings to, so a field whose type only a submodule publishes
     /// resolves to that declaration's fields and methods. A key another path registered first keeps its entry.
+    ///
+    /// Every member lookup through a public module calls this for the whole library. A registered key is therefore
+    /// skipped before its identity is read: that read scans the library's identity graph several times, and repeating
+    /// it per lookup made this most of a large unit's typecheck.
     pub(super) fn register_pub_library_declarations(
         &mut self,
         library: &str,
@@ -190,10 +210,7 @@ impl TypeChecker {
         };
         let graph = &manifest.contract_metadata.identity_graph;
         for module in &api.modules {
-            if is_package_root_module(&module.module_path) {
-                continue;
-            }
-            let scope = self.pub_library_declaration_scope(library, manifest, &module.module_path);
+            let mut scope = None;
             for declaration in &module.declarations {
                 if !matches!(
                     declaration,
@@ -201,39 +218,96 @@ impl TypeChecker {
                         | ApiDeclaration::Class(_)
                         | ApiDeclaration::Enum(_)
                         | ApiDeclaration::Newtype(_)
+                        | ApiDeclaration::TypeAlias(_)
+                        | ApiDeclaration::Trait(_)
                 ) {
+                    continue;
+                }
+                if is_package_root_module(&module.module_path)
+                    && !matches!(declaration, ApiDeclaration::TypeAlias(_) | ApiDeclaration::Trait(_))
+                {
                     continue;
                 }
                 let name = Self::api_declaration_name(declaration);
                 let key = Self::declaration_type_key(library, &module.module_path, name);
-                let mut source_path = module.module_path.clone();
-                source_path.push(name.to_string());
-                let public_path = std::iter::once(manifest.name.clone())
-                    .chain(source_path.iter().cloned())
-                    .collect::<Vec<_>>();
-                let identity = self.admitted_public_type_identity(
-                    library,
-                    &source_path,
-                    graph.canonical_for_public_path(&public_path),
-                );
-                self.public_library_type_identities
-                    .entry(key.clone())
-                    .or_insert(identity);
-                if self.transitive_pub_types.contains_key(&key) {
-                    continue;
+                if !self.public_library_type_identities.contains_key(&key) {
+                    let mut source_path = module.module_path.clone();
+                    source_path.push(name.to_string());
+                    let public_path = std::iter::once(manifest.name.clone())
+                        .chain(source_path.iter().cloned())
+                        .collect::<Vec<_>>();
+                    let identity = self.admitted_public_type_identity(
+                        library,
+                        &source_path,
+                        graph.canonical_for_public_path(&public_path),
+                    );
+                    self.public_library_type_identities.insert(key.clone(), identity);
                 }
-                let Some(mut kind) = self.symbol_kind_from_api_declaration(Some(api), declaration) else {
-                    continue;
-                };
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &scope);
-                self.remap_symbol_kind_with_import_aliases(&mut kind, root_remapping);
-                Self::mark_compiled_class_field_provider(&mut kind, library);
-                if let SymbolKind::Type(info) = kind
-                    && !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin)
+                if self.transitive_pub_types.contains_key(&key)
+                    || self.transitive_pub_traits.contains_key(&key)
+                    || self.type_aliases.contains_key(&key)
                 {
-                    self.transitive_pub_types.entry(key).or_default().push(info);
+                    continue;
                 }
+                let scope = scope.get_or_insert_with(|| {
+                    let mut module_scope = root_remapping.clone();
+                    module_scope.extend(self.pub_library_declaration_scope(library, manifest, &module.module_path));
+                    module_scope
+                });
+                self.cache_declared_library_type(library, manifest, key, declaration, scope);
             }
+        }
+    }
+
+    /// Cache each type in its checked declaration scope, including transparent aliases referenced by signatures
+    /// without an explicit consumer import. Source aliases resolve through the same scope as fields and methods.
+    fn cache_declared_library_type(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+        key: String,
+        declaration: &ApiDeclaration,
+        scope: &HashMap<String, String>,
+    ) {
+        if let ApiDeclaration::TypeAlias(item) = declaration {
+            let mut target = resolved_type_from_manifest_type_ref(&item.type_alias.target);
+            Self::remap_resolved_type_with_import_aliases(&mut target, scope);
+            self.type_aliases.insert(
+                key,
+                crate::typechecker::TypeAliasTarget {
+                    nominal_identities: Default::default(),
+                    type_params: item
+                        .type_alias
+                        .type_params
+                        .iter()
+                        .map(|param| param.name.clone())
+                        .collect(),
+                    target,
+                },
+            );
+            return;
+        }
+        let Some(mut kind) =
+            self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+        else {
+            return;
+        };
+        self.remap_symbol_kind_with_import_aliases(&mut kind, scope);
+        Self::mark_compiled_class_field_provider(&mut kind, library);
+        match kind {
+            SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+                let declaration = self
+                    .public_library_type_identities
+                    .get(&key)
+                    .and_then(|identity| identity.canonical.as_ref())
+                    .cloned();
+                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
+                self.transitive_pub_types.entry(key).or_default().push(info);
+            }
+            SymbolKind::Trait(info) => {
+                self.transitive_pub_traits.entry(key).or_default().push(info);
+            }
+            _ => {}
         }
     }
 }

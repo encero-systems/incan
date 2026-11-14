@@ -7,6 +7,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::lang::types::collections::{self, CollectionTypeId};
 
+mod ancestral_paths;
+mod signature_rules;
+mod source_bounds;
+mod type_shapes;
+
+pub use ancestral_paths::*;
+pub use signature_rules::*;
+pub use source_bounds::*;
+pub use type_shapes::*;
+
 /// Return whether a Rust display names the canonical owned `String` type.
 ///
 /// Rust metadata can expose `String` with implementation-only allocator arguments. Classify only the three canonical
@@ -44,7 +54,7 @@ pub enum RustItemKind {
     },
     /// A `trait` definition and its associated items.
     Trait(RustTraitInfo),
-    /// A procedural derive macro and the exact trait implementations observed on its compiler-owned probe.
+    /// An exported procedural macro, with any independently observed derive probe implementations.
     Macro(RustMacroInfo),
     /// Placeholder for Rust items not yet represented by a narrower metadata variant.
     Unsupported { description: String },
@@ -56,7 +66,7 @@ pub struct RustItemMetadata {
     /// Canonical path as Incan already models it, e.g. `std::collections::HashMap`.
     pub canonical_path: String,
     /// Underlying Rust definition path after resolving re-exports, when rust-analyzer can provide one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub definition_path: Option<String>,
     pub visibility: RustVisibility,
     pub kind: RustItemKind,
@@ -76,6 +86,18 @@ pub enum RustCollectionFamily {
 }
 
 impl RustCollectionFamily {
+    /// The standard native owner of a source collection projection. Borrowed Dict and Set values use the same
+    /// metadata-selected method contracts as their owned Rust counterparts.
+    #[must_use]
+    pub const fn canonical_path(self) -> &'static str {
+        match self {
+            Self::HashMap => "std::collections::HashMap",
+            Self::BTreeMap => "std::collections::BTreeMap",
+            Self::HashSet => "std::collections::HashSet",
+            Self::BTreeSet => "std::collections::BTreeSet",
+        }
+    }
+
     /// Classify a canonical Rust path into a supported collection family.
     #[must_use]
     pub fn for_canonical_path(path: &str) -> Option<Self> {
@@ -128,342 +150,6 @@ impl RustItemMetadata {
     }
 }
 
-/// Borrow shape for a metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeMethodArgBorrowPolicy {
-    Shared,
-    Mutable,
-    /// Preserve string literals as `&str` and adapt owned Incan strings with `.as_str()`.
-    StringAsStr,
-}
-
-/// Receiver class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeReceiverClass {
-    IoValue,
-    EncodingInstance,
-    TokenizerInstance,
-    ExternalAssociated,
-}
-
-/// Argument class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeArgClass {
-    StringBuffer,
-    ByteBuffer,
-    Any,
-}
-
-/// Borrow compatibility rule for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodBorrowRule {
-    pub methods: &'static [&'static str],
-    pub receiver: MetadataFreeReceiverClass,
-    pub arg: MetadataFreeArgClass,
-    pub policy: MetadataFreeMethodArgBorrowPolicy,
-}
-
-/// One parameter in a metadata-free Rust method signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodParamRule {
-    pub name: Option<&'static str>,
-    pub type_display: &'static str,
-}
-
-/// Complete callable signature for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodSignatureRule {
-    pub receiver_path: &'static str,
-    pub method: &'static str,
-    pub params: &'static [MetadataFreeMethodParamRule],
-    pub return_type: &'static str,
-    pub is_async: bool,
-    pub is_unsafe: bool,
-}
-
-/// One parameter in a registry-backed Rust free-function signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RustFunctionParamRule {
-    pub name: Option<&'static str>,
-    pub type_display: &'static str,
-}
-
-/// Complete callable contract for one registry-backed Rust free-function surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RustFunctionSignatureRule {
-    pub path: &'static str,
-    pub params: &'static [RustFunctionParamRule],
-    pub return_type: &'static str,
-    pub is_async: bool,
-    pub is_unsafe: bool,
-}
-
-/// Metadata-free external method borrow policies used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &[
-    MetadataFreeMethodBorrowRule {
-        methods: &["read_to_string"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["read", "read_to_end", "read_exact", "read_buf", "read_buf_exact"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write_all"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["for_label", "encode", "decode"],
-        receiver: MetadataFreeReceiverClass::EncodingInstance,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["encode"],
-        receiver: MetadataFreeReceiverClass::TokenizerInstance,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::StringAsStr,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["decode"],
-        receiver: MetadataFreeReceiverClass::ExternalAssociated,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-];
-
-/// Metadata-free external method signatures used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] = &[
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "encoding_rs::Encoding",
-        method: "for_label",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("label"),
-            type_display: "&[u8]",
-        }],
-        return_type: "Option<&'static encoding_rs::Encoding>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "std::path::Path",
-        method: "new",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("path"),
-            type_display: "&impl AsRef<std::ffi::OsStr>",
-        }],
-        return_type: "&std::path::Path",
-        is_async: false,
-        is_unsafe: false,
-    },
-];
-
-/// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
-pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
-    RustFunctionSignatureRule {
-        path: "incan_std_core::strings::str_slice_byte_range",
-        params: &[
-            RustFunctionParamRule {
-                name: Some("s"),
-                type_display: "&str",
-            },
-            RustFunctionParamRule {
-                name: Some("start"),
-                type_display: "i64",
-            },
-            RustFunctionParamRule {
-                name: Some("end"),
-                type_display: "i64",
-            },
-        ],
-        return_type: "String",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "incan_std_core::strings::str_slice_from_byte_offset",
-        params: &[
-            RustFunctionParamRule {
-                name: Some("s"),
-                type_display: "&str",
-            },
-            RustFunctionParamRule {
-                name: Some("start"),
-                type_display: "i64",
-            },
-        ],
-        return_type: "String",
-        is_async: false,
-        is_unsafe: false,
-    },
-];
-
-/// Metadata-free Rust free-function signatures used when rust-inspect cannot inspect a stable Rust surface.
-///
-/// rust-inspect intentionally indexes Cargo workspace crates and path/registry dependencies; sysroot crates such as
-/// `std` are not always available as ordinary metadata roots. Keep this table to stable APIs whose signatures are part
-/// of Rust's public contract and whose result shapes matter for Incan source typing.
-pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
-    RustFunctionSignatureRule {
-        path: "std::io::stdin",
-        params: &[],
-        return_type: "std::io::Stdin",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::io::stdout",
-        params: &[],
-        return_type: "std::io::Stdout",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::metadata",
-        params: &[RustFunctionParamRule {
-            name: Some("path"),
-            type_display: "impl AsRef<std::path::Path>",
-        }],
-        return_type: "std::io::Result<std::fs::Metadata>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::symlink_metadata",
-        params: &[RustFunctionParamRule {
-            name: Some("path"),
-            type_display: "impl AsRef<std::path::Path>",
-        }],
-        return_type: "std::io::Result<std::fs::Metadata>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::read",
-        params: &[RustFunctionParamRule {
-            name: Some("path"),
-            type_display: "impl AsRef<std::path::Path>",
-        }],
-        return_type: "std::io::Result<Vec<u8>>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::read_dir",
-        params: &[RustFunctionParamRule {
-            name: Some("path"),
-            type_display: "impl AsRef<std::path::Path>",
-        }],
-        return_type: "std::io::Result<std::fs::ReadDir>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::read_to_string",
-        params: &[RustFunctionParamRule {
-            name: Some("path"),
-            type_display: "impl AsRef<std::path::Path>",
-        }],
-        return_type: "std::io::Result<String>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    RustFunctionSignatureRule {
-        path: "std::fs::write",
-        params: &[
-            RustFunctionParamRule {
-                name: Some("path"),
-                type_display: "impl AsRef<std::path::Path>",
-            },
-            RustFunctionParamRule {
-                name: Some("contents"),
-                type_display: "impl AsRef<[u8]>",
-            },
-        ],
-        return_type: "std::io::Result<()>",
-        is_async: false,
-        is_unsafe: false,
-    },
-];
-
-/// Return conservative callable metadata for Rust surfaces the stdlib must compile against even when rust-inspect
-/// cannot recover full crate metadata in generated smoke projects.
-#[must_use]
-pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-    let rule = METADATA_FREE_METHOD_SIGNATURE_RULES
-        .iter()
-        .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
-    Some(RustFunctionSig {
-        receiver_contract: None,
-        type_params: Vec::new(),
-        params: rule
-            .params
-            .iter()
-            .map(|param| RustParam {
-                name: param.name.map(str::to_string),
-                type_display: param.type_display.to_string(),
-            })
-            .collect(),
-        return_type: rule.return_type.to_string(),
-        is_async: rule.is_async,
-        is_unsafe: rule.is_unsafe,
-    })
-}
-
-/// Return conservative callable metadata for Rust free functions whose signatures are stable but unavailable through
-/// rust-inspect's Cargo-workspace view.
-#[must_use]
-pub fn metadata_free_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
-    let rule = METADATA_FREE_FUNCTION_SIGNATURE_RULES
-        .iter()
-        .find(|rule| rule.path == rust_path)?;
-    Some(function_signature_from_rule(rule))
-}
-
-/// Return the authoritative callable contract for a compiler-owned Rust runtime helper.
-///
-/// These helpers are part of the compiler/runtime ABI, so their source typing must not vary with the availability or
-/// freshness of optional rust-inspect metadata. Keep this set deliberately narrow: ordinary Rust dependencies remain
-/// owned by their extracted metadata.
-#[must_use]
-pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunctionSig> {
-    let rule = COMPILER_OWNED_FUNCTION_SIGNATURE_RULES
-        .iter()
-        .find(|rule| rule.path == rust_path)?;
-    Some(function_signature_from_rule(rule))
-}
-
-/// Materialize a portable callable signature from one registry rule.
-fn function_signature_from_rule(rule: &RustFunctionSignatureRule) -> RustFunctionSig {
-    RustFunctionSig {
-        receiver_contract: None,
-        type_params: Vec::new(),
-        params: rule
-            .params
-            .iter()
-            .map(|param| RustParam {
-                name: param.name.map(str::to_string),
-                type_display: param.type_display.to_string(),
-            })
-            .collect(),
-        return_type: rule.return_type.to_string(),
-        is_async: rule.is_async,
-        is_unsafe: rule.is_unsafe,
-    }
-}
-
 /// A single parameter in a Rust function signature (display strings only for Phase 1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustParam {
@@ -483,10 +169,13 @@ pub struct RustFunctionSig {
     /// Method or function type parameters in source declaration order.
     ///
     /// Rust permits type arguments on a callable independently from generics on its receiver type. Retaining this
-    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before generated Rust reaches
+    /// declaration-level arity lets Incan reject incomplete explicit method turbofishes before the call reaches
     /// rustc.
     #[serde(default)]
     pub type_params: Vec<String>,
+    /// Declared trait predicates, including callable inputs and associated output equalities.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
     pub params: Vec<RustParam>,
     pub return_type: String,
     pub is_async: bool,
@@ -509,16 +198,52 @@ pub struct RustReceiverContract {
 pub struct RustMethodSig {
     pub name: String,
     pub signature: RustFunctionSig,
+    /// The enclosing impl's type parameters in native argument order, before the method's own parameters.
+    #[serde(default)]
+    pub impl_type_params: Vec<String>,
+    /// The impl's self type with its declared parameters, used to infer arguments from a checked receiver.
+    #[serde(default)]
+    pub impl_self_type: Option<String>,
 }
 
-/// One trait implementation rust-inspect can associate with a concrete Rust type.
+/// One trait implementation extracted Rust metadata associates with a concrete type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustImplementedTrait {
     /// Canonical Rust trait path, for example `std::fmt::Display`.
     pub path: String,
     /// Whether the implementation is proven for `&mut Self` instead of `Self`.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub mutable_reference: bool,
+    /// Impl self template; conditional implementations are candidates, not unconditional proof.
+    pub self_type: String,
+    /// Native impl type binders, before substitution into the trait reference.
+    pub type_params: Vec<String>,
+    /// Trait arguments after Self, in native declaration order.
+    pub type_arguments: Vec<String>,
+    /// Conditions that must hold before this implementation applies.
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated type definitions instantiated with the impl's identity arguments.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+/// A Rust trait predicate with its exact Self, arguments, and associated type equalities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustTraitBound {
+    /// The type constrained by this predicate, usually a declared generic parameter.
+    pub self_type: String,
+    /// Canonical trait identity from rustc metadata.
+    pub path: String,
+    /// Type arguments after Self; lifetimes carry no layout.
+    pub type_arguments: Vec<String>,
+    /// Projection equalities, including FnOnce::Output for closure expressions.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+impl RustImplementedTrait {
+    /// Whether this record proves a closed implementation without solving generic predicates.
+    pub fn is_unconditional(&self) -> bool {
+        self.type_params.is_empty() && self.bounds.is_empty()
+    }
 }
 
 /// One concrete associated-type value attached to an inspected trait implementation.
@@ -536,20 +261,59 @@ pub struct RustExpandedDeriveTrait {
     /// Canonical Rust trait path implemented by the expansion.
     pub path: String,
     /// Concrete associated-type values declared by the generated implementation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
 }
 
-/// Semantic output observed by expanding one procedural derive macro on a compiler-owned empty probe type.
+/// The invocation form of an exported procedural macro, which selects where a source declaration may name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RustMacroForm {
+    /// `#[derive(Name)]` on a type declaration.
+    Derive,
+    /// `#[name(...)]` on an item declaration.
+    Attribute,
+}
+
+/// An exported procedural macro and, for a derive, optional semantic output observed on a compiler-owned probe type.
+/// An empty output list grants passthrough to rustc only, never an assumed implementation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMacroInfo {
+    /// The invocation forms this export supports. Facts written before attribute macros were inspected record only
+    /// derives, so an absent field means a derive.
+    #[serde(default = "RustMacroInfo::derive_forms")]
+    pub forms: Vec<RustMacroForm>,
     /// Trait implementations observed from the macro expansion on the compiler-owned probe.
     ///
     /// A derive macro may emit more than one implementation, so this remains a collection rather than assuming the
-    /// macro shares a name or canonical path with a single trait. The generated-Rust build remains authoritative for
+    /// macro shares a name or canonical path with a single trait. The native build remains authoritative for
     /// any input-sensitive behavior or predicates attached to those implementations on the real Incan-authored type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_traits: Vec<RustExpandedDeriveTrait>,
+}
+
+impl RustMacroInfo {
+    /// The forms of a derive-only export, the default for facts that predate attribute macros.
+    fn derive_forms() -> Vec<RustMacroForm> {
+        vec![RustMacroForm::Derive]
+    }
+
+    /// An export of exactly the given forms, with no observed expansion.
+    pub fn with_forms(forms: Vec<RustMacroForm>) -> Self {
+        Self {
+            forms,
+            expanded_traits: Vec::new(),
+        }
+    }
+
+    /// Whether the export can appear in `#[derive(...)]`.
+    pub fn is_derive(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Derive)
+    }
+
+    /// Whether the export can appear as `#[name(...)]` on an item.
+    pub fn is_attribute(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Attribute)
+    }
 }
 
 /// One associated-type equality required by a structural mutable-reference implementation.
@@ -561,728 +325,6 @@ pub struct RustAssociatedTypeRequirement {
     pub name: String,
     /// Canonical Rust path required for the associated type value.
     pub value_path: String,
-}
-
-/// Canonical Rust display spelling for the uninhabited never type.
-pub const RUST_NEVER_TYPE_DISPLAY: &str = "!";
-
-/// Structured Rust type information used by Incan interop consumers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RustTypeShape {
-    /// Rust's uninhabited never type (`!`).
-    Never,
-    /// Any Rust `bool`.
-    Bool,
-    /// Any floating-point scalar. Width is intentionally erased at this layer.
-    Float,
-    /// Any signed or unsigned integer scalar. Width is intentionally erased at this layer.
-    Int,
-    /// UTF-8 string data such as `str` or `String`.
-    Str,
-    /// Byte buffers such as `Vec<u8>` or `&[u8]`.
-    Bytes,
-    /// The unit type `()`.
-    Unit,
-    /// An `Option<T>`-like wrapper.
-    Option(Box<RustTypeShape>),
-    /// A `Result<T, E>`-like wrapper.
-    Result(Box<RustTypeShape>, Box<RustTypeShape>),
-    /// A tuple shape with one entry per element.
-    Tuple(Vec<RustTypeShape>),
-    /// A shared or mutable reference.
-    Ref(Box<RustTypeShape>),
-    /// A concrete Rust path plus any generic arguments preserved by the extractor.
-    RustPath { path: String, args: Vec<RustTypeShape> },
-    /// A generic type parameter such as `T`.
-    TypeParam(String),
-    /// Metadata recovery could not determine a stable semantic shape.
-    Unknown,
-}
-
-/// Fallback for a parsed Rust type name after structured primitives, wrappers, and path resolution have failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RustTypeShapePathFallback {
-    /// Leave unresolved names as unknown. Use this when an extractor has an authoritative name resolver.
-    Unknown,
-    /// Preserve unresolved names as Rust paths. Use this for generated Rust surfaces that already canonicalized text.
-    RustPath,
-}
-
-/// Parse a Rust type display into the shared structural shape used by Rust interop consumers.
-///
-/// Callers own path resolution because HIR extraction can resolve source-relative names, while generated Rust fallback
-/// surfaces have already normalized module paths textually. Keeping the parser here prevents those two routes from
-/// reimplementing primitive, wrapper, tuple, reference, and byte-buffer classification independently.
-#[must_use]
-pub fn parse_rust_type_shape_text<F>(
-    text: &str,
-    mut resolve_path: F,
-    fallback: RustTypeShapePathFallback,
-) -> RustTypeShape
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    parse_rust_type_shape_text_inner(text, &mut resolve_path, fallback)
-}
-
-/// Parse normalized Rust type-display text recursively while preserving the caller's path-resolution policy.
-fn parse_rust_type_shape_text_inner<F>(
-    text: &str,
-    resolve_path: &mut F,
-    fallback: RustTypeShapePathFallback,
-) -> RustTypeShape
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let text = strip_rust_borrow_lifetimes(text).trim().replace(' ', "");
-    if text.is_empty() {
-        return RustTypeShape::Unknown;
-    }
-    if text == RUST_NEVER_TYPE_DISPLAY {
-        return RustTypeShape::Never;
-    }
-    match text.as_str() {
-        "bool" => return RustTypeShape::Bool,
-        "f32" | "f64" => return RustTypeShape::Float,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-            return RustTypeShape::Int;
-        }
-        "str" | "String" | "std::string::String" | "alloc::string::String" => return RustTypeShape::Str,
-        "()" => return RustTypeShape::Unit,
-        "[u8]" => return RustTypeShape::Bytes,
-        _ => {}
-    }
-
-    if let Some(inner) = text.strip_prefix('&') {
-        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
-        return RustTypeShape::Ref(Box::new(parse_rust_type_shape_text_inner(
-            inner,
-            resolve_path,
-            fallback,
-        )));
-    }
-
-    if text.starts_with('(') && text.ends_with(')') {
-        let inner = &text[1..text.len() - 1];
-        if inner.is_empty() {
-            return RustTypeShape::Unit;
-        }
-        return RustTypeShape::Tuple(
-            split_top_level_rust_args(inner)
-                .into_iter()
-                .map(|arg| parse_rust_type_shape_text_inner(arg, resolve_path, fallback))
-                .collect(),
-        );
-    }
-
-    if let Some(start) = text.find('<')
-        && text.ends_with('>')
-    {
-        let raw_base = &text[..start];
-        let base = resolve_path(raw_base).unwrap_or_else(|| raw_base.to_string());
-        let inner = &text[start + 1..text.len() - 1];
-        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
-            .into_iter()
-            .map(|arg| parse_rust_type_shape_text_inner(arg, resolve_path, fallback))
-            .collect();
-        match base.as_str() {
-            "Option" | "std::option::Option" | "core::option::Option" => {
-                return RustTypeShape::Option(Box::new(args.into_iter().next().unwrap_or(RustTypeShape::Unknown)));
-            }
-            "Result" | "std::result::Result" | "core::result::Result" => {
-                let mut it = args.into_iter();
-                return RustTypeShape::Result(
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                    Box::new(it.next().unwrap_or(RustTypeShape::Unknown)),
-                );
-            }
-            "Vec" | "std::vec::Vec" | "alloc::vec::Vec"
-                if matches!(args.first(), Some(RustTypeShape::Int)) && text.ends_with("<u8>") =>
-            {
-                return RustTypeShape::Bytes;
-            }
-            _ => {}
-        }
-        return RustTypeShape::RustPath { path: base, args };
-    }
-
-    if let Some(path) = resolve_path(text.as_str()) {
-        return RustTypeShape::RustPath { path, args: Vec::new() };
-    }
-
-    if rust_type_shape_text_looks_like_type_param(text.as_str()) {
-        return RustTypeShape::TypeParam(text);
-    }
-
-    match fallback {
-        RustTypeShapePathFallback::Unknown => RustTypeShape::Unknown,
-        RustTypeShapePathFallback::RustPath => RustTypeShape::RustPath {
-            path: text,
-            args: Vec::new(),
-        },
-    }
-}
-
-/// Return whether unresolved type text has the shape of a Rust generic type parameter.
-fn rust_type_shape_text_looks_like_type_param(text: &str) -> bool {
-    !text.is_empty()
-        && !text.contains("::")
-        && !text.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
-        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && text.chars().next().is_some_and(|ch| ch.is_ascii_uppercase())
-}
-
-/// Render `path` with generic arguments as `path<A, B, ...>` for stable Rust-like display.
-#[must_use]
-pub fn render_rust_type_shape_path(path: &str, args: &[RustTypeShape]) -> String {
-    if args.is_empty() {
-        return path.to_string();
-    }
-    let rendered_args: Vec<String> = args.iter().map(render_rust_type_shape).collect();
-    format!("{path}<{}>", rendered_args.join(", "))
-}
-
-/// Pretty-print a [`RustTypeShape`] as a stable Rust-like type string.
-#[must_use]
-pub fn render_rust_type_shape(shape: &RustTypeShape) -> String {
-    match shape {
-        RustTypeShape::Never => RUST_NEVER_TYPE_DISPLAY.to_string(),
-        RustTypeShape::Bool => "bool".to_string(),
-        RustTypeShape::Float => "f64".to_string(),
-        RustTypeShape::Int => "i64".to_string(),
-        RustTypeShape::Str => "String".to_string(),
-        RustTypeShape::Bytes => "Vec<u8>".to_string(),
-        RustTypeShape::Unit => "()".to_string(),
-        RustTypeShape::Option(inner) => format!("Option<{}>", render_rust_type_shape(inner)),
-        RustTypeShape::Result(ok, err) => {
-            format!(
-                "Result<{}, {}>",
-                render_rust_type_shape(ok),
-                render_rust_type_shape(err)
-            )
-        }
-        RustTypeShape::Tuple(items) => {
-            let rendered: Vec<String> = items.iter().map(render_rust_type_shape).collect();
-            format!("({})", rendered.join(", "))
-        }
-        RustTypeShape::Ref(inner) => format!("&{}", render_rust_type_shape(inner)),
-        RustTypeShape::RustPath { path, args } => render_rust_type_shape_path(path, args),
-        RustTypeShape::TypeParam(name) => name.clone(),
-        RustTypeShape::Unknown => "?".to_string(),
-    }
-}
-
-/// Remove Rust lifetime labels that decorate borrowed display types.
-#[must_use]
-pub fn strip_rust_borrow_lifetimes(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        out.push(ch);
-        if ch != '&' {
-            continue;
-        }
-        while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-        }
-        if !matches!(chars.peek(), Some('\'')) {
-            continue;
-        }
-        chars.next();
-        while matches!(chars.peek(), Some(next) if next.is_ascii_alphanumeric() || *next == '_') {
-            chars.next();
-        }
-        while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
-            chars.next();
-        }
-    }
-    out
-}
-
-/// Split a comma-separated Rust generic/tuple argument list without splitting inside nested generic, tuple, or slice
-/// delimiters.
-#[must_use]
-pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
-    let mut args = Vec::new();
-    let mut start = 0usize;
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            ',' if angle == 0 && paren == 0 && bracket == 0 => {
-                args.push(text[start..idx].trim());
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    let tail = text[start..].trim();
-    if !tail.is_empty() {
-        args.push(tail);
-    }
-    args
-}
-
-/// Return whether `display` is a Rust callable bound display such as `impl FnMut(&mut T)`.
-#[must_use]
-pub fn rust_display_is_callable_bound(display: &str) -> bool {
-    let mut display = display.trim();
-    if let Some(rest) = display.strip_prefix("impl")
-        && rust_source_keyword_boundary(display, "impl".len())
-    {
-        display = rest.trim_start();
-    } else if let Some(rest) = display.strip_prefix("dyn")
-        && rust_source_keyword_boundary(display, "dyn".len())
-    {
-        display = rest.trim_start();
-    }
-    split_top_level_rust_bounds(display)
-        .into_iter()
-        .any(rust_callable_bound_has_signature)
-}
-
-/// Return a source function's callable `Fn*` bound for a generic parameter, if one is declared.
-#[must_use]
-pub fn rust_source_callable_bound_for_type_param<F>(
-    function_source: &str,
-    type_param: &str,
-    mut normalize_type: F,
-) -> Option<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let type_param = rust_simple_type_param_name(type_param)?;
-    let header = rust_source_function_header(function_source)?;
-    if let Some(generic_params) = header.generic_params {
-        for generic in split_top_level_rust_args(generic_params) {
-            let Some((name, bounds)) = generic.split_once(':') else {
-                continue;
-            };
-            if name.trim() == type_param {
-                for bound in split_top_level_rust_bounds(bounds) {
-                    if let Some(display) = rust_source_callable_bound_display(bound, &mut normalize_type) {
-                        return Some(display);
-                    }
-                }
-            }
-        }
-    }
-
-    let where_idx = find_top_level_rust_keyword(header.tail, "where")?;
-    for predicate in split_top_level_rust_args(&header.tail[where_idx + "where".len()..]) {
-        let Some((name, bounds)) = predicate.split_once(':') else {
-            continue;
-        };
-        if name.trim() == type_param {
-            for bound in split_top_level_rust_bounds(bounds) {
-                if let Some(display) = rust_source_callable_bound_display(bound, &mut normalize_type) {
-                    return Some(display);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Return whether a source function's generic parameter is constrained by Rust's `AsFd` trait.
-///
-/// `AsFd` exposes a borrowed file descriptor, so an Incan call may pass a retained descriptor by shared borrow even
-/// when the Rust function writes its parameter as a by-value generic. Rust's source signature does not preserve that
-/// ownership distinction after generic substitution; keep the constraint available to interop metadata instead of
-/// forcing Incan source to introduce a Rust-owned wrapper merely to retain the descriptor.
-#[must_use]
-pub fn rust_source_type_param_has_as_fd_bound(function_source: &str, type_param: &str) -> bool {
-    let Some(type_param) = rust_simple_type_param_name(type_param) else {
-        return false;
-    };
-    let Some(header) = rust_source_function_header(function_source) else {
-        return false;
-    };
-
-    let has_as_fd_bound = |bounds: &str| {
-        split_top_level_rust_bounds(bounds).into_iter().any(|bound| {
-            bound
-                .trim()
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| name.trim() == "AsFd")
-        })
-    };
-
-    if let Some(generic_params) = header.generic_params {
-        for generic in split_top_level_rust_args(generic_params) {
-            let Some((name, bounds)) = generic.split_once(':') else {
-                continue;
-            };
-            if name.trim() == type_param && has_as_fd_bound(bounds) {
-                return true;
-            }
-        }
-    }
-
-    let Some(where_idx) = find_top_level_rust_keyword(header.tail, "where") else {
-        return false;
-    };
-    split_top_level_rust_args(&header.tail[where_idx + "where".len()..])
-        .into_iter()
-        .filter_map(|predicate| predicate.split_once(':'))
-        .any(|(name, bounds)| name.trim() == type_param && has_as_fd_bound(bounds))
-}
-
-/// Preserve a borrowed generic parameter's source trait bounds as an `&impl Trait` metadata display.
-///
-/// Rust-analyzer can erase a source parameter such as `value: &S` into an inferred concrete display. That loses the
-/// borrow boundary Incan must reproduce when calling the API. Source metadata is authoritative here: retain the
-/// borrowed shape and the generic bounds so typechecking records a shared or mutable borrow for code generation.
-#[must_use]
-pub fn rust_source_borrowed_type_param_bound_display(function_source: &str, parameter_type: &str) -> Option<String> {
-    let (is_mut, type_param) = rust_borrowed_simple_type_param(parameter_type)?;
-    let header = rust_source_function_header(function_source)?;
-
-    let bounds = header
-        .generic_params
-        .and_then(|declarations| rust_source_type_param_bounds(declarations, type_param))
-        .or_else(|| {
-            let where_idx = find_top_level_rust_keyword(header.tail, "where")?;
-            rust_source_type_param_bounds(&header.tail[where_idx + "where".len()..], type_param)
-        })?;
-    let bounds = split_top_level_rust_bounds(bounds)
-        .into_iter()
-        .filter(|bound| {
-            let bound = bound.trim();
-            !bound.is_empty() && !bound.starts_with('?')
-        })
-        .collect::<Vec<_>>();
-    if bounds.is_empty() {
-        return None;
-    }
-    let borrow = if is_mut { "&mut " } else { "&" };
-    Some(format!("{borrow}impl {}", bounds.join(" + ")))
-}
-
-struct RustSourceFunctionHeader<'a> {
-    generic_params: Option<&'a str>,
-    tail: &'a str,
-}
-
-/// Recover the generic parameter list and post-parameter header tail from a Rust function item source string.
-fn rust_source_function_header(function_source: &str) -> Option<RustSourceFunctionHeader<'_>> {
-    for (fn_idx, _) in function_source.match_indices("fn") {
-        if !rust_source_keyword_at(function_source, fn_idx, "fn") {
-            continue;
-        }
-        let mut idx = skip_rust_source_whitespace(function_source, fn_idx + "fn".len());
-        if let Some(rest) = function_source.get(idx..).and_then(|rest| rest.strip_prefix("r#")) {
-            idx = function_source.len() - rest.len();
-        }
-        let Some(after_name) = skip_rust_source_ident(function_source, idx) else {
-            continue;
-        };
-        idx = after_name;
-        idx = skip_rust_source_whitespace(function_source, idx);
-        let Some(rest) = function_source.get(idx..) else {
-            continue;
-        };
-        let generic_params = if rest.starts_with('<') {
-            let Some(generic_end) = matching_rust_angle_end(function_source, idx) else {
-                continue;
-            };
-            let params = &function_source[idx + 1..generic_end];
-            idx = skip_rust_source_whitespace(function_source, generic_end + 1);
-            Some(params)
-        } else {
-            None
-        };
-        let Some(rest) = function_source.get(idx..) else {
-            continue;
-        };
-        if !rest.starts_with('(') {
-            continue;
-        }
-        let Some(params_end) = matching_rust_paren_end(function_source, idx) else {
-            continue;
-        };
-        let tail_start = params_end + 1;
-        let Some(tail) = function_source.get(tail_start..) else {
-            continue;
-        };
-        let tail_end = find_top_level_rust_header_end(tail).unwrap_or(tail.len());
-        return Some(RustSourceFunctionHeader {
-            generic_params,
-            tail: &tail[..tail_end],
-        });
-    }
-    None
-}
-
-/// Return a single uppercase generic type-parameter identifier when `text` has no path or compound type syntax.
-fn rust_simple_type_param_name(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
-    (!trimmed.is_empty()
-        && !trimmed.contains("::")
-        && !trimmed.contains(['<', '>', '(', ')', '[', ']', '&', ' '])
-        && trimmed.chars().all(rust_source_ident_char)
-        && trimmed.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
-    .then_some(trimmed)
-}
-
-/// Return mutability plus a generic parameter name from a Rust source borrow such as `&S` or `&'a mut S`.
-fn rust_borrowed_simple_type_param(text: &str) -> Option<(bool, &str)> {
-    let mut text = text.trim().strip_prefix('&')?.trim_start();
-    if text.starts_with('\'') {
-        let end = text.find(char::is_whitespace)?;
-        text = text[end..].trim_start();
-    }
-    let (is_mut, text) = if let Some(rest) = text.strip_prefix("mut")
-        && rest.chars().next().is_none_or(char::is_whitespace)
-    {
-        (true, rest.trim_start())
-    } else {
-        (false, text)
-    };
-    Some((is_mut, rust_simple_type_param_name(text)?))
-}
-
-/// Find the trait-bound text assigned to one generic parameter in an inline or `where` declaration list.
-fn rust_source_type_param_bounds<'a>(declarations: &'a str, type_param: &str) -> Option<&'a str> {
-    for declaration in split_top_level_rust_args(declarations) {
-        let (name, bounds) = declaration.split_once(':')?;
-        if name.trim() == type_param {
-            return Some(bounds);
-        }
-    }
-    None
-}
-
-/// Return whether one top-level bound starts with a callable trait and a parenthesized argument list.
-fn rust_callable_bound_has_signature(bound: &str) -> bool {
-    let Some((_, after_name)) = rust_callable_bound_name_and_tail(bound) else {
-        return false;
-    };
-    after_name.starts_with('(') && matching_rust_paren_end(after_name, 0).is_some()
-}
-
-/// Normalize one source `Fn*` bound into the stable `impl Fn*(...)` display form used by Rust metadata.
-fn rust_source_callable_bound_display<F>(bound: &str, mut normalize_type: F) -> Option<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let (name, after_name) = rust_callable_bound_name_and_tail(bound)?;
-    if !after_name.starts_with('(') {
-        return None;
-    }
-    let args_end = matching_rust_paren_end(after_name, 0)?;
-    let args_inner = &after_name[1..args_end];
-    let mut args = Vec::new();
-    for arg in split_top_level_rust_args(args_inner) {
-        args.push(normalize_type(arg)?);
-    }
-    let after_args = after_name[args_end + 1..].trim_start();
-    let ret = if let Some(ret) = after_args.strip_prefix("->") {
-        Some(normalize_type(
-            split_top_level_rust_bounds(ret).first().copied().unwrap_or(ret),
-        )?)
-    } else {
-        None
-    };
-    Some(match ret {
-        Some(ret) => format!("impl {name}({}) -> {ret}", args.join(", ")),
-        None => format!("impl {name}({})", args.join(", ")),
-    })
-}
-
-/// Split a Rust callable bound into its unqualified callable trait name and the remaining signature text.
-fn rust_callable_bound_name_and_tail(bound: &str) -> Option<(&'static str, &str)> {
-    let bound = bound.trim();
-    for name in ["FnOnce", "FnMut", "Fn"] {
-        if let Some(rest) = bound.strip_prefix(name) {
-            return Some((name, rest.trim_start()));
-        }
-        for prefix in ["std::ops::", "core::ops::"] {
-            if let Some(rest) = bound.strip_prefix(prefix).and_then(|rest| rest.strip_prefix(name)) {
-                return Some((name, rest.trim_start()));
-            }
-        }
-    }
-    None
-}
-
-/// Split Rust trait bounds joined with top-level `+` without splitting inside generic or function syntax.
-fn split_top_level_rust_bounds(text: &str) -> Vec<&str> {
-    let mut bounds = Vec::new();
-    let mut start = 0usize;
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            '+' if angle == 0 && paren == 0 && bracket == 0 => {
-                let bound = text[start..idx].trim();
-                if !bound.is_empty() {
-                    bounds.push(bound);
-                }
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    let tail = text[start..].trim();
-    if !tail.is_empty() {
-        bounds.push(tail);
-    }
-    bounds
-}
-
-/// Return the matching `>` for a generic parameter list, ignoring arrows inside callable return types.
-fn matching_rust_angle_end(text: &str, open_idx: usize) -> Option<usize> {
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text[open_idx..].char_indices() {
-        match ch {
-            '<' if paren == 0 && bracket == 0 => angle += 1,
-            '>' if paren == 0 && bracket == 0 && previous_rust_source_char(text, open_idx + idx) != Some('-') => {
-                angle = angle.checked_sub(1)?;
-                if angle == 0 {
-                    return Some(open_idx + idx);
-                }
-            }
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Return the matching `)` for a parenthesized Rust source region.
-fn matching_rust_paren_end(text: &str, open_idx: usize) -> Option<usize> {
-    let mut depth = 0usize;
-    for (idx, ch) in text[open_idx..].char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(open_idx + idx);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Find the top-level `{` or `;` that ends a Rust function header.
-fn find_top_level_rust_header_end(text: &str) -> Option<usize> {
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            '{' | ';' if angle == 0 && paren == 0 && bracket == 0 => return Some(idx),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Find a keyword token outside nested generic, function, and slice delimiters.
-fn find_top_level_rust_keyword(text: &str, keyword: &str) -> Option<usize> {
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            _ if angle == 0
-                && paren == 0
-                && bracket == 0
-                && text[idx..].starts_with(keyword)
-                && rust_source_keyword_at(text, idx, keyword) =>
-            {
-                return Some(idx);
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Skip Rust source whitespace starting at `idx`.
-fn skip_rust_source_whitespace(text: &str, mut idx: usize) -> usize {
-    while let Some(ch) = text.get(idx..).and_then(|rest| rest.chars().next()) {
-        if !ch.is_whitespace() {
-            break;
-        }
-        idx += ch.len_utf8();
-    }
-    idx
-}
-
-/// Skip a simple Rust identifier starting at `idx`.
-fn skip_rust_source_ident(text: &str, mut idx: usize) -> Option<usize> {
-    let mut saw_ident = false;
-    while let Some(ch) = text.get(idx..).and_then(|rest| rest.chars().next()) {
-        if !rust_source_ident_char(ch) {
-            break;
-        }
-        saw_ident = true;
-        idx += ch.len_utf8();
-    }
-    saw_ident.then_some(idx)
-}
-
-/// Return whether `keyword` starts at `idx` with identifier-token boundaries on both sides.
-fn rust_source_keyword_at(text: &str, idx: usize, keyword: &str) -> bool {
-    text.get(idx..).is_some_and(|rest| rest.starts_with(keyword))
-        && previous_rust_source_char(text, idx).is_none_or(|ch| !rust_source_ident_char(ch))
-        && rust_source_keyword_boundary(text, idx + keyword.len())
-}
-
-/// Return whether `idx` is at an identifier boundary in Rust source text.
-fn rust_source_keyword_boundary(text: &str, idx: usize) -> bool {
-    text.get(idx..)
-        .and_then(|rest| rest.chars().next())
-        .is_none_or(|ch| !rust_source_ident_char(ch))
-}
-
-/// Return whether `ch` belongs to the simple ASCII identifier vocabulary this source scanner accepts.
-fn rust_source_ident_char(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
-}
-
-/// Return the source character immediately before `idx`.
-fn previous_rust_source_char(text: &str, idx: usize) -> Option<char> {
-    text.get(..idx).and_then(|prefix| prefix.chars().next_back())
 }
 
 /// A public field surfaced on a Rust struct/union-like type.
@@ -1316,14 +358,22 @@ pub enum RustPayloadCarrier {
 
 /// One enum variant and its payload field types.
 ///
-/// Payload shapes are normalized for matching. For example, prost-style `Box<T>` payloads are recorded as `T` because
-/// that is what Incan binds in constructor patterns; the stripped carrier is remembered in `field_carriers`.
+/// Payload shapes retain source-facing pattern types. Exact native displays preserve storage before normalization,
+/// and `field_carriers` records wrappers omitted from the shapes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustVariantInfo {
     /// Variant name as it appears in Rust.
     pub name: String,
-    /// Positional payload field shapes in declaration order.
+    /// Payload field shapes in declaration order, for both tuple and struct variants.
     pub fields: Vec<RustTypeShape>,
+    /// Exact native payload templates, before source shape normalization. Direct-route patterns retain integer
+    /// widths, references and native owner binders from these displays; an absent record grants no payload layout.
+    #[serde(default)]
+    pub field_type_displays: Vec<String>,
+    /// Field names in declaration order for a struct variant; empty for tuple and unit variants. Names select the
+    /// same payload slots as `fields`, independently of the order written in a source pattern.
+    #[serde(default)]
+    pub field_names: Vec<String>,
     /// Storage carrier per payload field, parallel to `fields`. Entries an older cache did not record mean
     /// [`RustPayloadCarrier::Direct`].
     #[serde(default)]
@@ -1347,16 +397,16 @@ pub struct RustMutableReferenceTypeParam {
     /// Name of the owner generic parameter, for example `T` in `Foreign<T: ForeignData>`.
     pub type_param: String,
     /// Unparameterized trait paths the supplied argument can satisfy without adding a reference.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub direct_trait_bounds: Vec<String>,
     /// Mutable-reference implementations admitted by the owner's direct trait bounds.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_candidates: Vec<RustMutableReferenceCandidate>,
     /// Tuple arities for which the direct owner trait composes element-by-element.
     ///
     /// Consumers may recurse into tuple leaves only when the foreign trait itself declares the corresponding
     /// structural implementation. An empty list keeps composite arguments fail-closed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub tuple_composition_arities: Vec<usize>,
 }
 
@@ -1364,41 +414,45 @@ pub struct RustMutableReferenceTypeParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMutableReferenceCandidate {
     /// Trait paths the inner `T` must satisfy for this `&mut T` implementation to apply.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_traits: Vec<String>,
     /// Canonical associated-type equalities represented by this metadata record.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_associated_type_bindings: Vec<RustAssociatedTypeRequirement>,
     /// Whether the complete source predicate set is represented by `required_traits` and associated-type bindings.
     ///
     /// False is deliberately fail-closed: a direct consumer must defer to the Rust trait solver instead of reducing
     /// an unsupported generic, const, lifetime, or higher-ranked predicate to a trait-name match.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub fallback_is_complete: bool,
 }
 
 /// Method, field, and variant surface for a Rust ADT or builtin type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RustTypeInfo {
+    /// Whether this owner declares lifetime parameters. Erasing their labels does not authorize a borrowed source
+    /// signature: that boundary requires a retained lifetime contract.
+    #[serde(default)]
+    pub has_lifetime_params: bool,
     /// Source-declared type parameters in declaration order, with lifetimes elided.
     ///
     /// These belong to the Rust type declaration, not to one method. Associated calls such as
     /// `Fft.new[f32](...)` specialize this receiver surface while method-level generic parameters remain recorded on
     /// [`RustFunctionSig`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_params: Vec<String>,
     /// Declared default type argument for each source type parameter, aligned with [`Self::type_params`].
     ///
     /// The vector is empty when no type parameter has a default. Otherwise `None` preserves a required parameter that
     /// precedes a later default, while `Some` carries the canonical Rust type display used when source omits that
     /// argument.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_param_defaults: Vec<Option<String>>,
     /// Source-owned rules for generic parameters that admit a mutable-reference implementation.
     ///
     /// They let the frontend distinguish an owned foreign argument from a mutable-reference alternative without
     /// provider-specific matching. Complete foreign obligation checking remains with rustc.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_type_params: Vec<RustMutableReferenceTypeParam>,
     /// Exact unconditional trait implementations emitted by successfully expanded Rust derive macros.
     ///
@@ -1406,65 +460,82 @@ pub struct RustTypeInfo {
     /// resolves the generated `impl` syntax through HIR and records its actual trait identity plus concrete
     /// associated-type values here. Derive macro names and unexpanded source attributes supply no implementation
     /// evidence; conditional generated implementations remain solver-only.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_derive_traits: Vec<RustExpandedDeriveTrait>,
     /// Whether the declaration contains const parameters that occupy Rust turbofish positions.
     ///
     /// Incan v0.5 can specialize type-only receivers. Retaining this fact makes const-bearing owners fail closed
     /// rather than shifting a later type argument into a const slot.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub has_const_params: bool,
     /// Pretty-printed target type when this item is a Rust `type` alias.
     ///
     /// Ordinary structs, enums, traits, and builtins leave this empty. Alias targets are metadata, not a substitute
     /// type identity: callers should use them only when the alias itself is the expected surface and the target shape
     /// is needed for contextual typing or boundary planning.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alias_target: Option<String>,
     /// Completeness of the recorded type surface.
-    #[serde(default, skip_serializing_if = "RustTypeMetadataCompleteness::is_complete")]
+    #[serde(default)]
     pub metadata_completeness: RustTypeMetadataCompleteness,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
-    /// Trait implementations rust-inspect can prove for this Rust type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Trait implementations extracted metadata proves for this Rust type.
+    #[serde(default)]
     pub implemented_traits: Vec<RustImplementedTrait>,
-    /// Public fields for struct/union-like types.
+    /// Native fields for struct-like types. The completeness record restricts source reads of private slots;
+    /// their retained types and order exist only to verify native field projections.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
 }
 
-/// Return whether a serialized compatibility flag is disabled.
-fn bool_is_false(value: &bool) -> bool {
-    !value
-}
-
-/// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Which operations an extracted Rust type surface proves independently of readable fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RustTypeMetadataCompleteness {
-    /// Full rust-inspect HIR metadata, including methods and proven trait impls when available.
+    /// Extracted Rust metadata, including methods and proven trait impls when available.
     #[default]
     Complete,
     /// Syntax-only metadata from generated source, limited to public fields and enum variants.
     FieldsAndVariantsOnly,
+    /// Complete signatures and readable fields, without authority to construct a struct layout.
+    /// Includes cross-crate non-exhaustive structs and items that are not structs.
+    CompleteWithoutConstruction,
+    /// Complete native layout and signatures with the named fields unavailable to source reads or construction.
+    CompleteWithPrivateFields(Vec<String>),
 }
 
 impl RustTypeMetadataCompleteness {
-    /// Return whether this metadata can be treated as a full rust-inspect type surface.
+    /// Return whether this metadata supplies the complete extracted Rust type surface.
     pub const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete)
+        matches!(
+            self,
+            Self::Complete | Self::CompleteWithoutConstruction | Self::CompleteWithPrivateFields(_)
+        )
     }
 
     /// Return whether this metadata can prove inherent methods.
-    pub const fn has_methods(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_methods(&self) -> bool {
+        self.is_complete()
     }
 
     /// Return whether this metadata can prove trait implementations.
-    pub const fn has_trait_impls(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_trait_impls(&self) -> bool {
+        self.is_complete()
+    }
+
+    /// Return whether the field list proves an externally constructible native layout.
+    pub const fn has_constructible_layout(&self) -> bool {
+        matches!(self, Self::Complete | Self::FieldsAndVariantsOnly)
+    }
+
+    /// Return whether a retained native field is visible to a source read or assignment.
+    pub fn field_is_public(&self, name: &str) -> bool {
+        match self {
+            Self::CompleteWithPrivateFields(private) => !private.iter().any(|field| field == name),
+            _ => true,
+        }
     }
 }
 
@@ -1499,523 +570,32 @@ pub enum RustTraitAssoc {
     Constant { name: String, type_display: String },
 }
 
+/// A native trait's declared callable surface and implementation templates. Templates belong to the trait's ABI
+/// too, so a later extension trait can describe implementations on a type whose own ABI was compiled earlier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
+    /// Whether rustc's Rust 2024 prelude imports this exact trait identity.
+    pub is_in_prelude: bool,
+    /// Trait type binders after Self, in native declaration order.
+    pub type_params: Vec<String>,
+    /// Supertrait predicates and associated output equalities on this trait's Self parameter.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated functions, types, and constants declared by this trait.
     pub items: Vec<RustTraitAssoc>,
+    /// Positive implementation templates supplied by the native trait's metadata; predicates remain obligations.
+    #[serde(default)]
+    pub implementations: Vec<RustImplementedTrait>,
     /// Co-located derive-macro namespace metadata for this same Rust path, when invoked by the project.
     ///
     /// Rust permits a trait and derive macro to share a spelling. Keeping the macro expansion separate prevents an
     /// ordinary trait-namespace lookup from hiding a macro that implements a differently named trait.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub derive_macro: Option<RustMacroInfo>,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn dummy_type_metadata(path: &str) -> RustItemMetadata {
-        RustItemMetadata {
-            canonical_path: path.to_string(),
-            definition_path: Some(path.to_string()),
-            visibility: RustVisibility::Public,
-            kind: RustItemKind::Type(RustTypeInfo {
-                type_params: Vec::new(),
-                type_param_defaults: Vec::new(),
-                mutable_reference_type_params: Vec::new(),
-                expanded_derive_traits: Vec::new(),
-                has_const_params: false,
-                alias_target: None,
-                metadata_completeness: Default::default(),
-                methods: Vec::new(),
-                implemented_traits: Vec::new(),
-                fields: Vec::new(),
-                variants: Vec::new(),
-            }),
-        }
-    }
-
-    #[test]
-    fn collection_family_matches_supported_map_and_set_paths() {
-        for (path, expected) in [
-            ("std::collections::HashMap", RustCollectionFamily::HashMap),
-            ("hashbrown::HashMap", RustCollectionFamily::HashMap),
-            ("hashbrown::map::HashMap<K, V>", RustCollectionFamily::HashMap),
-            ("std::collections::BTreeMap", RustCollectionFamily::BTreeMap),
-            ("std::collections::HashSet", RustCollectionFamily::HashSet),
-            ("hashbrown::set::HashSet<T>", RustCollectionFamily::HashSet),
-            ("std::collections::BTreeSet", RustCollectionFamily::BTreeSet),
-            ("std::collections::HashMap<String, i64>", RustCollectionFamily::HashMap),
-        ] {
-            let meta = dummy_type_metadata(path);
-            assert_eq!(meta.collection_family(), Some(expected), "path `{path}`");
-        }
-    }
-
-    #[test]
-    fn collection_family_matches_incan_and_imported_type_names() {
-        for (name, expected) in [
-            ("Dict", RustCollectionFamily::HashMap),
-            ("HashMap", RustCollectionFamily::HashMap),
-            ("Set", RustCollectionFamily::HashSet),
-            ("BTreeMap", RustCollectionFamily::BTreeMap),
-            ("BTreeSet", RustCollectionFamily::BTreeSet),
-        ] {
-            assert_eq!(
-                RustCollectionFamily::for_type_name(name),
-                Some(expected),
-                "name `{name}`"
-            );
-        }
-    }
-
-    #[test]
-    fn collection_family_reports_lookup_methods_that_preserve_arg_shape() {
-        assert!(RustCollectionFamily::HashMap.preserves_lookup_arg_shape("get"));
-        assert!(RustCollectionFamily::HashMap.preserves_lookup_arg_shape("contains_key"));
-        assert!(!RustCollectionFamily::HashMap.preserves_lookup_arg_shape("insert"));
-        assert!(RustCollectionFamily::HashSet.preserves_lookup_arg_shape("contains"));
-        assert!(!RustCollectionFamily::HashSet.preserves_lookup_arg_shape("insert"));
-    }
-
-    #[test]
-    fn parse_rust_type_shape_text_classifies_shared_structural_shapes() {
-        let shape = parse_rust_type_shape_text(
-            "&'static Result<Vec<u8>, demo::Error>",
-            |path| (path == "demo::Error").then(|| "demo::Error".to_string()),
-            RustTypeShapePathFallback::Unknown,
-        );
-
-        assert_eq!(
-            shape,
-            RustTypeShape::Ref(Box::new(RustTypeShape::Result(
-                Box::new(RustTypeShape::Bytes),
-                Box::new(RustTypeShape::RustPath {
-                    path: "demo::Error".to_string(),
-                    args: Vec::new(),
-                }),
-            )))
-        );
-    }
-
-    #[test]
-    fn parse_rust_type_shape_text_keeps_source_and_generated_fallbacks_distinct() {
-        assert_eq!(
-            parse_rust_type_shape_text("missing_type", |_| None, RustTypeShapePathFallback::Unknown),
-            RustTypeShape::Unknown,
-        );
-        assert_eq!(
-            parse_rust_type_shape_text("missing_type", |_| None, RustTypeShapePathFallback::RustPath),
-            RustTypeShape::RustPath {
-                path: "missing_type".to_string(),
-                args: Vec::new(),
-            },
-        );
-        assert_eq!(
-            parse_rust_type_shape_text("T", |_| None, RustTypeShapePathFallback::RustPath),
-            RustTypeShape::TypeParam("T".to_string()),
-        );
-    }
-
-    #[test]
-    fn parse_rust_type_shape_text_preserves_never_type() {
-        let shape = parse_rust_type_shape_text(RUST_NEVER_TYPE_DISPLAY, |_| None, RustTypeShapePathFallback::RustPath);
-
-        assert_eq!(shape, RustTypeShape::Never);
-        assert_eq!(render_rust_type_shape(&shape), RUST_NEVER_TYPE_DISPLAY);
-    }
-
-    fn normalize_probe_type(text: &str) -> Option<String> {
-        let normalized = text.trim().replace(' ', "");
-        if let Some(inner) = normalized.strip_prefix("&mut") {
-            return normalize_probe_type(inner).map(|inner| format!("&mut {inner}"));
-        }
-        if let Some(inner) = normalized.strip_prefix('&') {
-            return normalize_probe_type(inner).map(|inner| format!("&{inner}"));
-        }
-        Some(match normalized.as_str() {
-            "Data" => "source_dep::audio::Data".to_string(),
-            "OutputCallbackInfo" => "source_dep::audio::OutputCallbackInfo".to_string(),
-            other => other.to_string(),
-        })
-    }
-
-    #[test]
-    fn rust_source_callable_bound_for_type_param_reads_inline_generic_bounds() {
-        let source = r#"
-pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(callback: D) {
-    let _ = callback;
-}
-"#;
-
-        assert_eq!(
-            rust_source_callable_bound_for_type_param(source, "D", normalize_probe_type).as_deref(),
-            Some("impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)")
-        );
-    }
-
-    #[test]
-    fn rust_source_callable_bound_for_type_param_reads_where_bounds() {
-        let source = r#"
-pub fn run_where<D, E>(callback: D, error: E)
-where
-    D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
-    E: FnMut(String),
-{
-    let _ = callback;
-    let _ = error;
-}
-"#;
-
-        assert_eq!(
-            rust_source_callable_bound_for_type_param(source, "D", normalize_probe_type).as_deref(),
-            Some("impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)")
-        );
-        assert_eq!(
-            rust_source_callable_bound_for_type_param(source, "E", normalize_probe_type).as_deref(),
-            Some("impl FnMut(String)")
-        );
-    }
-
-    #[test]
-    fn rust_source_type_param_has_as_fd_bound_reads_inline_and_where_bounds() {
-        let inline = r#"
-pub fn lock<Fd: std::os::fd::AsFd>(fd: Fd) {
-    let _ = fd;
-}
-"#;
-        let where_bound = r#"
-pub fn lock<Fd>(fd: Fd)
-where
-    Fd: AsFd + Send,
-{
-    let _ = fd;
-}
-"#;
-
-        assert!(rust_source_type_param_has_as_fd_bound(inline, "Fd"));
-        assert!(rust_source_type_param_has_as_fd_bound(where_bound, "Fd"));
-        assert!(!rust_source_type_param_has_as_fd_bound(inline, "Other"));
-    }
-
-    #[test]
-    fn rust_source_borrowed_type_param_bound_display_preserves_shared_and_mutable_bounds() {
-        let shared = r#"
-pub fn shared<S: AsRef<OsStr> + ?Sized>(path: &S) {}
-"#;
-        let mutable = r#"
-pub fn mutable<S>(path: &mut S)
-where
-    S: AsMut<[u8]> + Send,
-{}
-"#;
-
-        assert_eq!(
-            rust_source_borrowed_type_param_bound_display(shared, "&S").as_deref(),
-            Some("&impl AsRef<OsStr>")
-        );
-        assert_eq!(
-            rust_source_borrowed_type_param_bound_display(mutable, "&mut S").as_deref(),
-            Some("&mut impl AsMut<[u8]> + Send")
-        );
-    }
-
-    #[test]
-    fn rust_source_callable_bound_for_type_param_accepts_qualified_fn_traits() {
-        let source = r#"
-pub fn run_qualified<D: std::ops::FnOnce(Data) -> OutputCallbackInfo>(callback: D);
-"#;
-
-        assert_eq!(
-            rust_source_callable_bound_for_type_param(source, "D", normalize_probe_type).as_deref(),
-            Some("impl FnOnce(source_dep::audio::Data) -> source_dep::audio::OutputCallbackInfo")
-        );
-    }
-
-    #[test]
-    fn rust_source_callable_bound_for_type_param_skips_incidental_fn_tokens() {
-        let source = r#"
-const SAMPLE: &str = "fn ";
-
-pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
-    let _ = callback;
-}
-"#;
-
-        assert_eq!(
-            rust_source_callable_bound_for_type_param(source, "D", normalize_probe_type).as_deref(),
-            Some("impl FnMut(&mut source_dep::audio::Data, &source_dep::audio::OutputCallbackInfo)")
-        );
-    }
-
-    #[test]
-    fn rust_display_is_callable_bound_detects_only_callable_bound_displays() {
-        assert!(rust_display_is_callable_bound(
-            "impl FnMut(&mut demo::Data, &demo::Info) + Send"
-        ));
-        assert!(rust_display_is_callable_bound("dyn std::ops::Fn(String)"));
-        assert!(!rust_display_is_callable_bound("impl Buf"));
-        assert!(!rust_display_is_callable_bound("implBuf"));
-    }
-
-    #[test]
-    fn metadata_free_function_signature_describes_stable_std_result_surfaces() {
-        let signature = metadata_free_function_signature("std::fs::metadata")
-            .expect("std::fs::metadata should have a metadata-free signature");
-
-        assert_eq!(signature.return_type, "std::io::Result<std::fs::Metadata>");
-        assert_eq!(signature.params.len(), 1);
-        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
-        assert_eq!(signature.params[0].type_display, "impl AsRef<std::path::Path>");
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
-        assert!(metadata_free_function_signature("std::fs::remove_file").is_none());
-    }
-
-    #[test]
-    fn compiler_owned_function_signatures_preserve_owned_stdlib_slice_results() -> Result<(), String> {
-        let expected = [
-            (
-                "incan_std_core::strings::str_slice_byte_range",
-                vec![(Some("s"), "&str"), (Some("start"), "i64"), (Some("end"), "i64")],
-            ),
-            (
-                "incan_std_core::strings::str_slice_from_byte_offset",
-                vec![(Some("s"), "&str"), (Some("start"), "i64")],
-            ),
-        ];
-
-        for (path, expected_params) in expected {
-            let signature = compiler_owned_function_signature(path)
-                .ok_or_else(|| format!("{path} should have a compiler-owned signature"))?;
-            assert!(signature.type_params.is_empty(), "{path}");
-            assert_eq!(signature.return_type, "String", "{path}");
-            assert_eq!(signature.params.len(), expected_params.len(), "{path}");
-            for (actual, (expected_name, expected_type)) in signature.params.iter().zip(expected_params) {
-                assert_eq!(actual.name.as_deref(), expected_name, "{path}");
-                assert_eq!(actual.type_display, expected_type, "{path}");
-            }
-            assert!(!signature.is_async, "{path}");
-            assert!(!signature.is_unsafe, "{path}");
-        }
-        assert!(compiler_owned_function_signature("demo::str_slice_byte_range").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn metadata_free_method_signature_preserves_path_new_borrow_shape() -> Result<(), String> {
-        let signature = metadata_free_method_signature("std::path::Path", "new")
-            .ok_or_else(|| "std::path::Path::new should have a metadata-free signature".to_string())?;
-
-        assert_eq!(signature.return_type, "&std::path::Path");
-        assert_eq!(signature.params.len(), 1);
-        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
-        assert_eq!(signature.params[0].type_display, "&impl AsRef<std::ffi::OsStr>");
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
-        Ok(())
-    }
-
-    #[test]
-    fn metadata_free_function_signature_preserves_stdin_receiver_type() -> Result<(), String> {
-        let Some(signature) = metadata_free_function_signature("std::io::stdin") else {
-            return Err("std::io::stdin should have a metadata-free signature".to_string());
-        };
-
-        assert_eq!(signature.return_type, "std::io::Stdin");
-        assert!(signature.params.is_empty());
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
-        Ok(())
-    }
-
-    #[test]
-    fn metadata_free_function_signature_preserves_stdout_receiver_type() -> Result<(), String> {
-        let Some(signature) = metadata_free_function_signature("std::io::stdout") else {
-            return Err("std::io::stdout should have a metadata-free signature".to_string());
-        };
-
-        assert_eq!(signature.return_type, "std::io::Stdout");
-        assert!(signature.params.is_empty());
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
-        Ok(())
-    }
-}
-
-/// `std` re-exports of items that `core` and `alloc` define.
-///
-/// Rust spells one item several ways: `std::boxed::Box`, `alloc::boxed::Box`, a prelude `Box`, and any crate that
-/// re-exports the standard library for `no_std` consumers (`prost::alloc::boxed::Box`). rust-analyzer resolves all of
-/// them to the defining crate, so metadata records the ancestral spelling; Incan source imports the `std` one. The two
-/// can only unify if comparison happens in the ancestral namespace, and this table is the whole of that knowledge —
-/// facts about the standard library, not a list of downstream crates. It mirrors the lookup aliases rust-inspect keeps.
-const STD_REEXPORT_ROOTS: &[(&str, &str)] = &[
-    ("std::option::", "core::option::"),
-    ("std::result::", "core::result::"),
-    ("std::boxed::", "alloc::boxed::"),
-    ("std::vec::", "alloc::vec::"),
-    ("std::string::", "alloc::string::"),
-    ("std::rc::", "alloc::rc::"),
-    ("std::cell::", "core::cell::"),
-    // Only the `alloc`-defined items of `std::sync`; `Mutex`, `RwLock`, and friends are `std`'s own.
-    ("std::sync::Arc", "alloc::sync::Arc"),
-    ("std::sync::Weak", "alloc::sync::Weak"),
-];
-
-/// Prelude spellings of the items in [`STD_REEXPORT_ROOTS`], as rust-analyzer displays them inside the crate that
-/// defines them and as generated Rust commonly writes them.
-const PRELUDE_ROOTS: &[(&str, &str)] = &[
-    ("Box", "alloc::boxed::Box"),
-    ("Option", "core::option::Option"),
-    ("Result", "core::result::Result"),
-    ("Vec", "alloc::vec::Vec"),
-    ("String", "alloc::string::String"),
-];
-
-/// Rewrite one Rust item path to the crate that defines it.
-///
-/// Strips Incan's synthetic `rust::` surface namespace first, then folds a `std` re-export onto its `core`/`alloc`
-/// origin. Paths that are already ancestral, or that name ordinary crates, pass through unchanged.
-#[must_use]
-pub fn ancestral_rust_path(path: &str) -> String {
-    let path = path.strip_prefix("rust::").unwrap_or(path);
-    // A bare prelude name is one more spelling of the same item: metadata that reads `Box<T>` names
-    // `alloc::boxed::Box<T>` exactly as a `std::boxed::Box` import does.
-    if let Some(ancestral) = PRELUDE_ROOTS
-        .iter()
-        .find_map(|(name, ancestral)| (*name == path).then_some(*ancestral))
-    {
-        return ancestral.to_string();
-    }
-    for (reexport, ancestral) in STD_REEXPORT_ROOTS {
-        if let Some(rest) = path.strip_prefix(reexport) {
-            return format!("{ancestral}{rest}");
-        }
-    }
-    path.to_string()
-}
-
-/// Return whether a recorded Rust path names the `Box` storage carrier, through any re-export.
-///
-/// `alloc::boxed::Box` reaches metadata under many spellings: the prelude `Box`, `std::boxed::Box`, and the
-/// re-exports generated code leans on (`prost::alloc::boxed::Box`, or a crate's `pub extern crate alloc`). They are
-/// one item, so the recorders that strip a variant payload's carrier decide through this rule rather than a spelling.
-pub fn is_box_carrier_path(path: &str) -> bool {
-    let ancestral = ancestral_rust_path(path);
-    ancestral == "alloc::boxed::Box"
-        || ancestral.ends_with("::alloc::boxed::Box")
-        || ancestral.ends_with("::std::boxed::Box")
-}
-
-/// Rewrite every item path inside a Rust type display — generic arguments included — to its ancestral spelling.
-///
-/// `std::option::Option<std::boxed::Box<T>>` and `core::option::Option<alloc::boxed::Box<T>>` name the same type;
-/// nominal comparison of displays must see them as equal.
-#[must_use]
-pub fn ancestral_rust_display(display: &str) -> String {
-    // rust-analyzer spells the standard collections with their defaulted allocator (`Vec<T, alloc::Global>`,
-    // `Box<T, A = Global>` rendered as `Box<T, alloc::Global>`); written Rust and Incan source never do. The
-    // default is not part of the item's identity, so drop it before comparing.
-    let display = strip_defaulted_global_allocator(display);
-    let display = display.as_str();
-    let mut out = String::with_capacity(display.len());
-    let mut token = String::new();
-    let flush = |token: &mut String, out: &mut String| {
-        if !token.is_empty() {
-            out.push_str(&ancestral_rust_path(token));
-            token.clear();
-        }
-    };
-    for ch in display.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || ch == '#' {
-            token.push(ch);
-        } else {
-            flush(&mut token, &mut out);
-            out.push(ch);
-        }
-    }
-    flush(&mut token, &mut out);
-    out
-}
-
-/// Remove a trailing `, alloc::Global` / `, std::alloc::Global` generic argument wherever it appears in a display.
-fn strip_defaulted_global_allocator(display: &str) -> String {
-    let mut out = display.to_string();
-    for spelling in [
-        ", alloc::Global>",
-        ",alloc::Global>",
-        ", std::alloc::Global>",
-        ",std::alloc::Global>",
-    ] {
-        while let Some(index) = out.find(spelling) {
-            out.replace_range(index..index + spelling.len() - 1, "");
-        }
-    }
-    out
-}
+mod tests;
 
 #[cfg(test)]
-mod ancestral_path_tests {
-    use super::is_box_carrier_path;
-    use super::{ancestral_rust_display, ancestral_rust_path};
-
-    #[test]
-    fn box_carrier_paths_are_recognized_through_every_reexport() {
-        for spelling in [
-            "Box",
-            "std::boxed::Box",
-            "alloc::boxed::Box",
-            "prost::alloc::boxed::Box",
-            "carrier::alloc::boxed::Box",
-            "::std::boxed::Box",
-        ] {
-            assert!(is_box_carrier_path(spelling), "{spelling} names the Box carrier");
-        }
-        for other in ["Rc", "alloc::rc::Rc", "demo::Box", "std::boxed::BoxLike"] {
-            assert!(!is_box_carrier_path(other), "{other} is not the Box carrier");
-        }
-    }
-
-    /// Every spelling of one standard item must fold onto the crate that defines it.
-    #[test]
-    fn std_reexports_fold_onto_their_defining_crate() {
-        assert_eq!(ancestral_rust_path("std::boxed::Box"), "alloc::boxed::Box");
-        assert_eq!(ancestral_rust_path("rust::std::boxed::Box"), "alloc::boxed::Box");
-        assert_eq!(ancestral_rust_path("alloc::boxed::Box"), "alloc::boxed::Box");
-        assert_eq!(ancestral_rust_path("std::option::Option"), "core::option::Option");
-        assert_eq!(ancestral_rust_path("std::rc::Rc"), "alloc::rc::Rc");
-        assert_eq!(ancestral_rust_path("std::sync::Arc"), "alloc::sync::Arc");
-        assert_eq!(ancestral_rust_path("std::sync::Mutex"), "std::sync::Mutex");
-        assert_eq!(ancestral_rust_path("std::cell::RefCell"), "core::cell::RefCell");
-        assert_eq!(ancestral_rust_path("Box"), "alloc::boxed::Box");
-        assert_eq!(ancestral_rust_path("rust::Box"), "alloc::boxed::Box");
-        assert_eq!(ancestral_rust_path("Boxed"), "Boxed");
-        assert_eq!(
-            ancestral_rust_path("datafusion::common::Column"),
-            "datafusion::common::Column"
-        );
-    }
-
-    /// Displays that differ only in re-export spelling compare equal after rewriting.
-    #[test]
-    fn displays_unify_across_reexport_spellings() {
-        assert_eq!(
-            ancestral_rust_display("std::option::Option<std::boxed::Box<substrait::proto::Type>>"),
-            ancestral_rust_display("core::option::Option<alloc::boxed::Box<substrait::proto::Type>>"),
-        );
-        assert_eq!(
-            ancestral_rust_display("&mut rust::std::vec::Vec<u8>"),
-            "&mut alloc::vec::Vec<u8>"
-        );
-        assert_eq!(
-            ancestral_rust_display("Box<datafusion_expr::expr::Expr>"),
-            ancestral_rust_display("std::boxed::Box<datafusion_expr::expr::Expr>"),
-        );
-        assert_eq!(
-            ancestral_rust_display("rust::alloc::rc::Rc<std::cell::RefCell<std::fs::File>,alloc::Global>"),
-            ancestral_rust_display("std::rc::Rc<std::cell::RefCell<std::fs::File>>"),
-        );
-        assert_eq!(ancestral_rust_display("Vec<u8, alloc::Global>"), "alloc::vec::Vec<u8>");
-    }
-}
+mod ancestral_path_tests;

@@ -47,7 +47,7 @@ pub enum NumericFamily {
 }
 
 /// Stable identifier for an RFC 009 integer overflow-helper family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntegerHelperFamily {
     /// Helpers that return `Option[T]` and report overflow as `None`.
     Checked,
@@ -58,7 +58,7 @@ pub enum IntegerHelperFamily {
 }
 
 /// Operation performed by an RFC 009 integer overflow helper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IntegerHelperOperation {
     /// Addition with an operand of the receiver's type.
     Add,
@@ -68,6 +68,19 @@ pub enum IntegerHelperOperation {
     Mul,
     /// Exponentiation with Rust's `u32` exponent contract.
     Pow,
+}
+
+/// Stable identifier for an RFC 009 numeric resize policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum NumericResizeMethodId {
+    /// Resize only when every source value is representable by the target.
+    Lossless,
+    /// Return `None` when the source value is outside the target range.
+    Try,
+    /// Resize with modular integer wrapping.
+    Wrapping,
+    /// Resize by clamping to the target integer range.
+    Saturating,
 }
 
 /// Metadata for one RFC 009 integer overflow helper.
@@ -89,6 +102,8 @@ pub struct NumericTypeInfo {
     pub id: NumericTypeId,
     pub canonical: &'static str,
     pub aliases: &'static [&'static str],
+    /// The spelling type descriptors show: `canonical` unless the entry names another (`Int` for `i64`).
+    pub descriptor: &'static str,
     pub description: &'static str,
     pub family: NumericFamily,
     pub bit_width: Option<u16>,
@@ -151,7 +166,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         "Signed 64-bit integer type.",
         NumericFamily::SignedInteger,
         Some(64),
-    ),
+    )
+    .described_as("Int"),
     info(
         NumericTypeId::I128,
         "i128",
@@ -215,7 +231,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         "64-bit binary floating-point type.",
         NumericFamily::BinaryFloat,
         Some(64),
-    ),
+    )
+    .described_as("Float"),
     info(
         NumericTypeId::ISize,
         "isize",
@@ -241,7 +258,8 @@ pub const NUMERIC_TYPES: &[NumericTypeInfo] = &[
         None,
         RFC::_000,
         Since(0, 1),
-    ),
+    )
+    .described_as("Bool"),
 ];
 
 /// Registry of decimal type constructors.
@@ -312,12 +330,15 @@ pub const INTEGER_HELPERS: &[IntegerHelperInfo] = &[
 /// ## Notes
 /// - Matching is **case-insensitive ASCII**.
 pub fn from_str(name: &str) -> Option<NumericTypeId> {
-    if let Some(t) = NUMERIC_TYPES.iter().find(|t| t.canonical.eq_ignore_ascii_case(name)) {
+    if let Some(t) = NUMERIC_TYPES
+        .iter()
+        .find(|t| super::spelling_matches(t.canonical, name))
+    {
         return Some(t.id);
     }
     NUMERIC_TYPES
         .iter()
-        .find(|t| t.aliases.iter().any(|a| a.eq_ignore_ascii_case(name)))
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -328,13 +349,13 @@ pub fn from_str(name: &str) -> Option<NumericTypeId> {
 pub fn decimal_constructor_from_str(name: &str) -> Option<DecimalTypeConstructorId> {
     if let Some(t) = DECIMAL_TYPE_CONSTRUCTORS
         .iter()
-        .find(|t| t.canonical.eq_ignore_ascii_case(name))
+        .find(|t| super::spelling_matches(t.canonical, name))
     {
         return Some(t.id);
     }
     DECIMAL_TYPE_CONSTRUCTORS
         .iter()
-        .find(|t| t.aliases.iter().any(|a| a.eq_ignore_ascii_case(name)))
+        .find(|t| t.aliases.iter().any(|a| super::spelling_matches(a, name)))
         .map(|t| t.id)
 }
 
@@ -347,6 +368,11 @@ pub fn decimal_constructor_from_str(name: &str) -> Option<DecimalTypeConstructor
 /// - The canonical spelling (e.g. `"int"`).
 pub fn as_str(id: NumericTypeId) -> &'static str {
     info_for(id).canonical
+}
+
+/// Return the spelling type descriptors show for a builtin type (`Int`, `Str`, `Tuple`).
+pub fn descriptor(id: NumericTypeId) -> &'static str {
+    info_for(id).descriptor
 }
 
 /// Return the Rust primitive spelling for a numeric builtin type.
@@ -370,6 +396,45 @@ pub fn is_binary_float(id: NumericTypeId) -> bool {
 /// Resolve an integer overflow-helper spelling to its registry entry.
 pub fn integer_helper_from_str(name: &str) -> Option<IntegerHelperInfo> {
     INTEGER_HELPERS.iter().copied().find(|helper| helper.canonical == name)
+}
+
+/// Return the canonical spelling for a selected integer overflow helper.
+pub fn integer_helper_as_str(family: IntegerHelperFamily, operation: IntegerHelperOperation) -> &'static str {
+    match (family, operation) {
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Add) => "checked_add",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Sub) => "checked_sub",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Mul) => "checked_mul",
+        (IntegerHelperFamily::Checked, IntegerHelperOperation::Pow) => "checked_pow",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Add) => "wrapping_add",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Sub) => "wrapping_sub",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Mul) => "wrapping_mul",
+        (IntegerHelperFamily::Wrapping, IntegerHelperOperation::Pow) => "wrapping_pow",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Add) => "saturating_add",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Sub) => "saturating_sub",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Mul) => "saturating_mul",
+        (IntegerHelperFamily::Saturating, IntegerHelperOperation::Pow) => "saturating_pow",
+    }
+}
+
+/// Resolve a numeric resize spelling to its stable policy identifier.
+pub fn resize_method_from_str(name: &str) -> Option<NumericResizeMethodId> {
+    match name {
+        "resize" => Some(NumericResizeMethodId::Lossless),
+        "try_resize" => Some(NumericResizeMethodId::Try),
+        "wrapping_resize" => Some(NumericResizeMethodId::Wrapping),
+        "saturating_resize" => Some(NumericResizeMethodId::Saturating),
+        _ => None,
+    }
+}
+
+/// Return the canonical spelling for a numeric resize policy.
+pub const fn resize_method_as_str(method: NumericResizeMethodId) -> &'static str {
+    match method {
+        NumericResizeMethodId::Lossless => "resize",
+        NumericResizeMethodId::Try => "try_resize",
+        NumericResizeMethodId::Wrapping => "wrapping_resize",
+        NumericResizeMethodId::Saturating => "saturating_resize",
+    }
 }
 
 /// Return whether a numeric type supports a registered integer overflow helper.
@@ -416,6 +481,13 @@ pub fn decimal_constructor_info_for(id: DecimalTypeConstructorId) -> DecimalType
 }
 
 /// Build RFC 009 metadata for a canonical numeric type.
+impl NumericTypeInfo {
+    /// Show this type as `descriptor` in type descriptors; the spelling still names the same type.
+    const fn described_as(self, descriptor: &'static str) -> Self {
+        NumericTypeInfo { descriptor, ..self }
+    }
+}
+
 const fn info(
     id: NumericTypeId,
     canonical: &'static str,
@@ -428,6 +500,7 @@ const fn info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         family,
         bit_width,
@@ -454,6 +527,7 @@ const fn legacy_info(
         id,
         canonical,
         aliases,
+        descriptor: canonical,
         description,
         family,
         bit_width,

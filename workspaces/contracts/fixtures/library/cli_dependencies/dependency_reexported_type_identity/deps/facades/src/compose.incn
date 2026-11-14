@@ -1,0 +1,6 @@
+import helpers
+
+
+pub def compose(name: str) -> str:
+    """Resolve the function through its module binding."""
+    return helpers.greeting(name)

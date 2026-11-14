@@ -1,0 +1,190 @@
+"""Materialize explicit input contracts without legacy repair copies or ownership inference."""
+
+from rust::incan_semantics_core import IncanInputAccess
+from rust::incan_semantics_core::body_ir import BodyIrModule, CallableParam, OwnershipFact, Body as RustBody
+from pub::incan_mir_plan import Local, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan, FieldProjection
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, place_type, dereferenced_place
+from numerics import numeric_carrier
+from program_context import body_at
+from table_views import borrowed_at
+
+
+pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
+    """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
+    match body.returned_view:
+        Some(view) =>
+            if view.access != IncanInputAccess.Owned and len(view.component) == 0:
+                return Some(view.access)
+        None => pass
+    return None
+
+
+pub def validate_source_input_call(module: &BodyIrModule, builder: &Builder, callee: &RustBody) -> Result[None, str]:
+    """Authenticate source-authored input modes; compiler-inferred shared access needs no source permission."""
+    # A returned view obliges its caller to alias the substituted place under a checked profile.
+    mut explicit = callee.returned_view.is_some()
+    for parameter in callee.params:
+        if parameter.input_access in [IncanInputAccess.Shared, IncanInputAccess.Exclusive, IncanInputAccess.Owned]:
+            explicit = true
+    if not explicit:
+        return Ok(None)
+    match builder.callable_identity:
+        None => return Err("unsupported Body IR explicit source call without a declared caller")
+        Some(identity) =>
+            match builder.program.body_indices.unique(identity):
+                None => return Err("unsupported Body IR explicit source call without a unique checked caller")
+                Some(index) =>
+                    caller = body_at(module.bodies, index)
+                    if caller.canonical != Some(identity.clone()):
+                        return Err("unsupported Body IR explicit source caller identity mismatch")
+                    match caller.input_call_profile_gap(callee):
+                        Some(reason) => return Err(f"unsupported Body IR {reason}")
+                        None => return Ok(None)
+
+
+pub def parameter_accesses(parameters: &list[CallableParam], offset: int) -> Result[list[IncanInputAccess], str]:
+    """Keep declaration-order access slots aligned when a method's separately lowered receiver is omitted."""
+    if offset < 0 or offset > len(parameters):
+        return Err("invalid Body IR input access parameter offset")
+    mut accesses: list[IncanInputAccess] = []
+    for index in range(offset, len(parameters)):
+        accesses.append(parameters[index].input_access)
+    return Ok(accesses)
+
+
+pub def argument_access(accesses: list[IncanInputAccess], count: int, slot: int) -> Result[IncanInputAccess, str]:
+    """An absent source contract denotes the ordinary/native route; a supplied contract must cover every slot."""
+    if slot < 0 or slot >= count or (len(accesses) != 0 and len(accesses) != count):
+        return Err("invalid Body IR argument input access slots")
+    if len(accesses) == 0:
+        return Ok(IncanInputAccess.Inferred)
+    return Ok(accesses[slot])
+
+
+pub def explicit_place_argument(
+    mut builder: Builder,
+    source: Place,
+    fact: OwnershipFact,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Emit a checked move or a fresh loan of the exact selected storage; never call a cloning/materialization helper."""
+    operation = explicit_input_operation(builder.locals, source, fact, expected, access, span)?
+    match operation:
+        RvalueKind.Use(operand) => return Ok(operand)
+        _ => pass
+    reference = temporary(builder, expected, span)
+    builder.emit(plan_assign(reference, operation, span))
+    return Ok(read_place(reference, access == IncanInputAccess.Exclusive, span))
+
+
+pub def explicit_input_operation(
+    locals: list[Local],
+    source: Place,
+    fact: OwnershipFact,
+    expected: PlanType,
+    access: IncanInputAccess,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """
+    Require both the checked access fact and the actual carrier before selecting an operation.
+
+    An explicit owned input may consume a whole owner or copy a primitive Copy value. Moving a field remains
+    refused until partial-move cleanup is represented. Borrowed inputs retain structural field paths and reborrow
+    existing references; a shared path can never supply an exclusive loan. No conversion or snapshot is implicit.
+    """
+    if source.local < 0 or source.local >= len(locals):
+        return Err("invalid Body IR explicit argument local")
+    actual = place_type(locals, source)
+    if access == IncanInputAccess.Owned:
+        if actual != expected:
+            return Err("unsupported Body IR explicit owned argument carrier mismatch")
+        if fact == OwnershipFact.Copy and (numeric_carrier(actual) or actual in [PlanType.Bool, PlanType.Unit]):
+            return Ok(RvalueKind.Use(read_place(source, false, span)))
+        if fact != OwnershipFact.Move or source.projection != Projection.Whole:
+            return Err("unsupported Body IR explicit owned argument without a whole moved owner")
+        return Ok(RvalueKind.Use(read_place(source, true, span)))
+    exclusive = access == IncanInputAccess.Exclusive
+    if access not in [IncanInputAccess.Shared, IncanInputAccess.InferredShared] and not exclusive:
+        return Err("invalid Body IR explicit argument access")
+    if (exclusive and fact != OwnershipFact.MutBorrow) or (not exclusive and fact != OwnershipFact.Borrow):
+        return Err("unsupported Body IR explicit argument without its checked borrow fact")
+    referent, writable = reference_contract(expected)?
+    if writable != exclusive:
+        return Err("invalid Body IR explicit input reference contract")
+    mut borrowed = source
+    if actual != referent:
+        held, held_writable = reference_contract(actual)?
+        if held != referent or (exclusive and not held_writable):
+            return Err("unsupported Body IR explicit argument reborrow contract")
+        borrowed = dereferenced_place(source, referent, span)?
+    if exclusive:
+        require_writable_path(locals, borrowed)?
+        return Ok(RvalueKind.MutBorrow(borrowed))
+    return Ok(RvalueKind.Borrow(borrowed))
+
+
+pub def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
+    """Recover the exact referent and write authority from supported native reference carriers."""
+    match ty:
+        PlanType.StringRef => return Ok((PlanType.String, false))
+        PlanType.StringMutRef => return Ok((PlanType.String, true))
+        PlanType.ModelRef(owner, name) => return Ok((PlanType.Model(owner, name), false))
+        PlanType.ModelMutRef(owner, name) => return Ok((PlanType.Model(owner, name), true))
+        PlanType.EnumRef(owner, name) => return Ok((PlanType.Enum(owner, name), false))
+        PlanType.EnumMutRef(owner, name) => return Ok((PlanType.Enum(owner, name), true))
+        PlanType.TupleRef(elements) => return Ok((PlanType.Tuple(elements), false))
+        PlanType.TupleMutRef(elements) => return Ok((PlanType.Tuple(elements), true))
+        PlanType.ListRef(leaf, depth) => return Ok((PlanType.List(leaf, depth), false))
+        PlanType.ListMutRef(leaf, depth) => return Ok((PlanType.List(leaf, depth), true))
+        PlanType.SetRef(leaf) => return Ok((PlanType.Set(leaf), false))
+        PlanType.SetMutRef(leaf) => return Ok((PlanType.Set(leaf), true))
+        PlanType.DictRef(key, value) => return Ok((PlanType.Dict(key, value), false))
+        PlanType.DictMutRef(key, value) => return Ok((PlanType.Dict(key, value), true))
+        PlanType.ScalarRef(elements) =>
+            if len(elements) == 1:
+                return Ok((elements[0], false))
+        PlanType.ScalarMutRef(elements) =>
+            if len(elements) == 1:
+                return Ok((elements[0], true))
+        PlanType.FrozenCollectionRef(name, elements) => return Ok((PlanType.FrozenCollection(name, elements), false))
+        PlanType.NativeArrayRef(elements, length) => return Ok((PlanType.NativeArray(elements, length), false))
+        PlanType.NativeArrayMutRef(elements, length) => return Ok((PlanType.NativeArray(elements, length), true))
+        PlanType.SliceRef(elements) => return Ok((PlanType.NativeSlice(elements), false))
+        PlanType.SliceMutRef(elements) => return Ok((PlanType.NativeSlice(elements), true))
+        PlanType.ValidationErrorRef => return Ok((PlanType.ValidationError, false))
+        _ => pass
+    return Err(f"unsupported Body IR explicit reference carrier {ty:?}")
+
+
+def require_writable_path(locals: &list[Local], source: Place) -> Result[None, str]:
+    """Check each dereferenced layer, including a shared reference stored inside an otherwise writable model."""
+    mut current = borrowed_at(locals, source.local).ty
+    mut fields: list[FieldProjection] = []
+    match source.projection:
+        Projection.Deref(_referent) =>
+            _ = writable_referent(current)?
+            return Ok(None)
+        Projection.DerefField(_slot, _ty) =>
+            _ = writable_referent(current)?
+            return Ok(None)
+        Projection.DerefFields(path) =>
+            current = writable_referent(current)?
+            fields = path
+        Projection.Fields(path) => fields = path
+        _ => return Ok(None)
+    for field in fields:
+        for _level in range(field.dereferences):
+            current = writable_referent(current)?
+        current = field.ty
+    return Ok(None)
+
+
+def writable_referent(ty: PlanType) -> Result[PlanType, str]:
+    """Refuse a mutable projection through any shared reference even when later fields are themselves mutable."""
+    referent, writable = reference_contract(ty)?
+    if not writable:
+        return Err("unsupported Body IR exclusive argument through shared storage")
+    return Ok(referent)

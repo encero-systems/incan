@@ -1,0 +1,215 @@
+"""Dispatch command help using the same synopses and option policy as each surface's public commands (RFC 118)."""
+
+from cli_help import overview, render, requested
+from formatting import USAGE as FORMAT_USAGE, help_text as format_help
+from graph_inspection import USAGE as GRAPH_USAGE, VALUE_OPTIONS as GRAPH_VALUE_OPTIONS, help_text as graph_help
+from graph_mcp import USAGE as MCP_USAGE, help_text as mcp_help
+from home_paths import TOOLCHAIN
+from surfaces import OVEN, owner_of
+from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
+
+# The project commands both surfaces run follow the invoked surface's name.
+const RUN_OPERANDS: str = "run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const INCAN_RUN_OPERANDS: str = "run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
+const TEST_OPERANDS: str = "test PATH [UNIT OPTIONS]"
+const BUILD_OPERANDS: str = "build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const EXPLAIN_USAGE: str = "incan explain CODE"
+const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
+const OWNER_USAGE: str = "oven owner stop"
+const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
+const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
+const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
+const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
+pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
+    "--profile",
+    "--features",
+    "--substitute",
+    "--program-entry",
+    "--argv0",
+]
+
+
+pub def usage(surface: str) -> str:
+    """The surface's overview, composed from the same synopses each command's detailed help uses."""
+    project = [f"{surface} --version", f"{surface} {run_operands(surface)}", f"{surface} {CHECK_OPERANDS}"]
+    if surface == OVEN:
+        return overview(
+            surface,
+            project + [
+                f"oven {TEST_OPERANDS}",
+                DESCRIBE_USAGE,
+                f"oven {BUILD_OPERANDS}",
+                OWNER_USAGE,
+                BAKERY_USAGE,
+                DEPENDENCIES_USAGE,
+                LOCK_USAGE,
+                TRUST_USAGE,
+            ],
+        )
+    return overview(
+        surface,
+        project + [
+            EXPLAIN_USAGE,
+            f"incan {TEST_OPERANDS}",
+            f"incan {BUILD_OPERANDS}",
+            FORMAT_USAGE,
+            GRAPH_USAGE,
+            MCP_USAGE,
+            PACK_USAGE,
+            INSTALL_USAGE,
+        ],
+    )
+
+
+pub def command_help(surface: str, command: str, arguments: list[str]) -> Option[str]:
+    """
+    Answer help only for a command `surface` runs, respecting value operands and the program argument separator.
+    A command only the other surface runs has no help here.
+    """
+    if owner_of(command, arguments) not in ["", surface]:
+        return None
+    if command in ["run", "check", "test", "describe-unit", "build"]:
+        if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
+            return Some(unit_help(surface, command))
+    elif command == "explain" and requested(arguments):
+        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "lock" and requested(arguments, ["--versions"]):
+        return Some(
+            render(
+                LOCK_USAGE,
+                ["  --versions MODE  Select lowest, lowest-direct or newest; an omitted mode remains sticky."],
+                "oven lock --versions lowest .",
+            ),
+        )
+    elif command == "trust" and requested(arguments):
+        return Some(render(TRUST_USAGE, [], "oven trust add publisher acme"))
+    elif (
+        command == "bakery"
+        and len(arguments) > 0
+        and arguments[0] == "status"
+        and requested(arguments[1:], ["--format"])
+    ):
+        return Some(
+            render(
+                BAKERY_USAGE,
+                ["  --format text|json  Status report format (default text)."],
+                "oven bakery status --format json",
+            ),
+        )
+    elif command == "bakery":
+        for subcommand in ["gc", "verify", "repair-payload"]:
+            if nested_help(arguments, subcommand):
+                return Some(render(BAKERY_USAGE, [], "oven bakery verify"))
+    elif command == "fmt" and requested(arguments):
+        return Some(format_help())
+    elif command == "mcp" and requested(arguments, ["--profile"]):
+        return Some(mcp_help())
+    elif command in ["--version", "version"] and requested(arguments):
+        return Some(render(f"{surface} --version", [], f"{surface} --version"))
+    elif command == "owner" and nested_help(arguments, "stop"):
+        return Some(render(OWNER_USAGE, [], "oven owner stop"))
+    elif command == "inspect":
+        return inspection_help(surface, arguments)
+    elif command == "toolchain":
+        if nested_help(arguments, "pack"):
+            return Some(archive_help("pack"))
+        if nested_help(arguments, "install"):
+            return Some(archive_help("install"))
+    return None
+
+
+def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
+    """Help for the inspection the surface runs: semantic codegraph facts on `incan`, operational facts on `oven`."""
+    if surface != OVEN and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
+        return Some(graph_help())
+    if surface == OVEN and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
+        return Some(unit_help(surface, "inspect dependencies"))
+    if surface == OVEN and nested_help(arguments, "run"):
+        return Some(
+            render(
+                "oven inspect run ID --proofs",
+                [],
+                "INCAN_ENGINE=records oven inspect run 0123456789abcdef0123456789abcdef --proofs",
+            ),
+        )
+    return None
+
+
+def nested_help(arguments: list[str], subcommand: str, valued: list[str] = []) -> bool:
+    """Recognize a group's help or help for its named subcommand, preserving unknown-command errors."""
+    if arguments == ["--help"] or arguments == ["-h"]:
+        return true
+    return len(arguments) > 0 and arguments[0] == subcommand and requested(arguments[1:], valued)
+
+
+def unit_help(surface: str, command: str) -> str:
+    """Describe common unit options and only the additional flags accepted by the selected command."""
+    options = [
+        "  --profile NAME         Select the artifact profile (default debug).",
+        "  --features A,B         Add public root-package features.",
+        "  --no-default-features  Disable the root package's default feature.",
+        "  --all-features         Select every declared root-package feature.",
+    ]
+    if command == "run":
+        return render(
+            f"{surface} {run_operands(surface)}",
+            options + direct_options(surface) + [
+                "  --argv0 TEXT          Set the program's argument zero.",
+                "  --program-entry PATH  Add a program entry; repeatable.",
+                "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
+                "  --locked              Refuse a missing or stale oven.lock.",
+                "  --                    Pass remaining arguments to the program.",
+            ],
+            f"{surface} run src/main.incn -- hello",
+        )
+    if command == "check":
+        return render(
+            f"{surface} {CHECK_OPERANDS}",
+            options + ["  --format text|json    Report format (default text)."],
+            f"{surface} check src/main.incn --format json",
+        )
+    if command == "test":
+        return render(
+            f"{surface} {TEST_OPERANDS}",
+            options + ["  --locked              Refuse a missing or stale oven.lock."],
+            f"{surface} test tests/test_example.incn",
+        )
+    if command == "describe-unit":
+        return render(
+            DESCRIBE_USAGE,
+            options + ["  --unattended  Stop before compile-time code that no trust entry covers."],
+            "oven describe-unit --unattended src/main.incn",
+        )
+    if command == "inspect dependencies":
+        return render(DEPENDENCIES_USAGE, options, "oven inspect dependencies src/main.incn")
+    return render(
+        f"{surface} {BUILD_OPERANDS}",
+        options + [
+            "  --codegraph            Publish an Incan library's checked graph for source-independent inspection.",
+            "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
+            "  --program-entry PATH   Add a program entry to a program build; repeatable.",
+            "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
+            "  --locked               Refuse a missing or stale oven.lock.",
+        ],
+        f"{surface} build src/main.incn --profile debug",
+    )
+
+
+def run_operands(surface: str) -> str:
+    """Select the run synopsis for the invoked surface."""
+    if surface == OVEN:
+        return RUN_OPERANDS
+    return INCAN_RUN_OPERANDS
+
+
+def direct_options(surface: str) -> list[str]:
+    """Expose direct source execution only on the Incan surface."""
+    if surface == OVEN:
+        return []
+    return ["  --direct               Run PATH as one source file without Oven planning."]
+
+
+pub def version_text(surface: str) -> str:
+    """What `--version` prints on `surface`: its name and the toolchain this Oven builds with."""
+    return f"{surface} {TOOLCHAIN}"

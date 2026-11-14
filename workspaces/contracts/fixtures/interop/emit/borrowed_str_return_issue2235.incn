@@ -1,0 +1,31 @@
+# behavior: a Rust borrowed string becomes owned Incan text where Incan needs it: a borrowed string returned by a Rust method becomes an owned Incan str at a return (#2235), and a string literal is accepted as the default of a Rust method's Option of borrowed str (#2232)
+# expect-stdout:
+#   borrowed
+#   present
+
+from rust::std::path import PathBuf
+
+
+def returned_text() -> str:
+    """Return the text independently of the temporary path's lifetime."""
+    path: PathBuf = PathBuf.from("borrowed")
+    match path.to_str():
+        Some(value) => return value
+        None => return "missing"
+
+
+def show_returned_text() -> None:
+    """Read the materialized return value after the path is gone."""
+    println(returned_text())
+
+
+def show_literal_default() -> None:
+    """Supply a literal default to an inspected borrowed-string option."""
+    path: PathBuf = PathBuf.from("present")
+    println(path.to_str().unwrap_or("fallback"))
+
+
+def main() -> None:
+    """Run each borrowed-text observation in the order of the cases it carries."""
+    show_returned_text()
+    show_literal_default()

@@ -1,0 +1,10 @@
+# behavior: a successful Result returned by async main exits successfully
+# expect-stdout:
+#   completed
+
+
+
+async def main() -> Result[None, str]:
+    """Return a successful entry result."""
+    println("completed")
+    return Ok(None)

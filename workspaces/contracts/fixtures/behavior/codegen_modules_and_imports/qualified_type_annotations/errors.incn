@@ -1,0 +1,22 @@
+pub model TomlError:
+    pub message: str
+
+
+pub def make() -> TomlError:
+    return TomlError(message="x")
+
+
+pub enum DbError:
+    Failed(str)
+
+
+pub def fetch() -> Result[int, DbError]:
+    return Err(DbError.Failed("nothing stored"))
+
+
+pub model Envelope[T]:
+    pub value: T
+
+
+pub def envelope() -> Envelope[int]:
+    return Envelope[int](value=7)

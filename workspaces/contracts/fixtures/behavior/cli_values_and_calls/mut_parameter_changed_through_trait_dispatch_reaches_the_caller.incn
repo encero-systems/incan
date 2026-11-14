@@ -1,0 +1,33 @@
+# behavior: a mut list parameter changed by an adopter's override, reached through a generic trait bound or through self in a trait default, changes the caller's mut list
+# expect-stdout:
+#   3
+#   3
+#   4
+#   4
+
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        return len(items)
+
+    def regrow(self, mut items: list[int]) -> int:
+        return self.grow(items)
+
+
+model Box with Grower:
+    id: int
+
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
+
+
+def run[T with Grower](grower: T, mut items: list[int]) -> int:
+    return grower.grow(items)
+
+
+def main() -> None:
+    mut items: list[int] = [1, 2]
+    println(run(Box(id=1), items))
+    println(len(items))
+    println(Box(id=1).regrow(items))
+    println(len(items))

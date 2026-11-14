@@ -1,0 +1,9 @@
+[project]
+name = "dependency_key_differs_from_package"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tools = { path = "deps/toolkit" }

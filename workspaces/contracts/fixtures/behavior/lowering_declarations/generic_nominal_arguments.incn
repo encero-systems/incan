@@ -1,0 +1,33 @@
+# behavior: a generic model keeps a nominal type argument, and inside a generic callable a name that is a type parameter stays generic while another name stays the nominal type it spells
+# expect-stdout:
+#   boxed leaf
+#   first 4
+#   first x
+#   value 9
+
+model Node:
+    label: str
+
+
+model Wrapper[T]:
+    inner: T
+
+
+model Value:
+    amount: int
+
+
+def first[K with Clone](items: list[K]) -> K:
+    return items[0]
+
+
+def amount_of[K](key: K, value: Value) -> int:
+    return value.amount
+
+
+def main() -> None:
+    boxed = Wrapper[Node](inner=Node(label="leaf"))
+    println(f"boxed {boxed.inner.label}")
+    println(f"first {first([4, 5])}")
+    println(f"first {first(["x", "y"])}")
+    println(f"value {amount_of("k", Value(amount=9))}")

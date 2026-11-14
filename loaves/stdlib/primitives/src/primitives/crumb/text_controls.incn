@@ -1,0 +1,29 @@
+"""Closed Unicode controls shared by COMIC token admission and canonical printing."""
+
+
+pub const BIDIRECTIONAL_CONTROLS: FrozenSet[str] = {
+    "\u{202a}",
+    "\u{202b}",
+    "\u{202c}",
+    "\u{202d}",
+    "\u{202e}",
+    "\u{2066}",
+    "\u{2067}",
+    "\u{2068}",
+    "\u{2069}",
+}
+
+
+pub def bidirectional_escape(character: str) -> Option[str]:
+    """Return the canonical escape for one bidirectional control without encoding or hexadecimal allocation."""
+    match character:
+        "\u{202a}" => return Some("\\u{202a}")
+        "\u{202b}" => return Some("\\u{202b}")
+        "\u{202c}" => return Some("\\u{202c}")
+        "\u{202d}" => return Some("\\u{202d}")
+        "\u{202e}" => return Some("\\u{202e}")
+        "\u{2066}" => return Some("\\u{2066}")
+        "\u{2067}" => return Some("\\u{2067}")
+        "\u{2068}" => return Some("\\u{2068}")
+        "\u{2069}" => return Some("\\u{2069}")
+        _ => return None

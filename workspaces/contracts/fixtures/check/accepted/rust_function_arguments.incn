@@ -1,0 +1,12 @@
+# behavior: a Rust function infers its result type from its generic argument
+# expect-accepted:
+
+"""Rust function results retain inferred type arguments."""
+
+from rust::std::convert import identity
+
+
+def main() -> None:
+    """Use the inferred result as an ordinary integer."""
+    inferred = identity(7)
+    value: int = inferred

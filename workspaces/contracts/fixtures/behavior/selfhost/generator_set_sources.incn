@@ -1,0 +1,38 @@
+# behavior: generator expressions own their first set snapshot and evaluate later set sources only as their outer items are drawn
+# expect-stdout:
+#   created
+#   [1, 2]
+#   3
+#   expand 1
+#   [1, 11]
+#   expand 2
+#   [2, 12]
+
+
+def expand(value: int) -> set[int]:
+    """Expose the time each later set source is evaluated, including duplicate elimination."""
+    println(f"expand {value}")
+    return {value, value, value + 10}
+
+
+def flattened(expansion: (int) -> set[int]) -> Generator[int]:
+    """Evaluate each nested source once when its outer value is polled."""
+    return (item for value in [1, 2] for item in expansion(value))
+
+
+def main() -> None:
+    """Mutate the first source after capture, then consume each later set independently."""
+    mut source: set[int] = {1, 2}
+    first = (item for item in source)
+    mut values = flattened(expand)
+    source.add(3)
+    println("created")
+    println(sorted(list(first)))
+    println(len(source))
+    mut batch: list[int] = []
+    for item in values:
+        batch.append(item)
+        if len(batch) == 2:
+            break
+    println(sorted(batch))
+    println(sorted(list(values)))

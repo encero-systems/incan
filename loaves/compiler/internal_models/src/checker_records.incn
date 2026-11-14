@@ -1,0 +1,1291 @@
+"""Canonical field records for the initial free-function checker profile; native objects never enter the codec."""
+
+from std.encoding.hex import hexlify, unhexlify
+from std.hash import sha256
+
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/15"
+const MAX_RECORD_BYTES: int = 65536
+const MAX_FIELDS: int = 4096
+const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/6"
+# One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
+# 64 MiB while individual checker records retain their narrower 64 KiB limit.
+const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
+
+
+@derive(Eq)
+pub enum CheckedFamily:
+    """Declaration/default output, pending local output and settled output have distinct contracts."""
+
+    Declaration
+    Local
+    Final
+
+
+@derive(Eq)
+pub model CanonicalField:
+    """A schema-owned field: node is a structural role or stable binding reference; values follow its typed grammar."""
+
+    pub family: str
+    pub node: str
+    pub selector: str
+    pub values: list[str]
+
+
+@derive(Eq)
+pub model CheckedRecord:
+    """One checked owner; owner is its checked stable source identity, root its position-free semantic syntax."""
+
+    pub profile: str
+    pub owner: str
+    pub root: str
+    pub family: CheckedFamily
+    pub fields: list[CanonicalField]
+
+
+pub model GraphBodyValue:
+    """One graph-selected owner's checker values and opaque kernel-owned executable frame."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+
+
+pub model GraphBodyFields:
+    """One validated graph-selected owner projected into native checker fields plus its opaque Body IR frame."""
+
+    pub identity: str
+    pub local: list[list[str]]
+    pub final_fields: list[list[str]]
+    pub body_ir: bytes
+
+
+pub model CompiledBodyValue:
+    """One compiler-produced checker triple and kernel-owned Body IR frame with its projected source owner."""
+
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub declaration: bytes
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+    pub dependency_reads: list[CompiledBodyDependencyRead] = []
+
+
+@derive(Eq)
+pub model CompiledBodyDependencyRead:
+    """One exact package or project declaration record witnessed by a compiled owner."""
+
+    pub package: Option[str]
+    pub module: str
+    pub name: str
+    pub identity: str
+
+
+@derive(Eq)
+pub model CompiledBodyFallback:
+    """One checked owner that cannot enter the record fast path, retaining absence when identity production failed."""
+
+    pub module: str
+    pub name: str
+    pub identity: Option[str]
+    pub reason: str
+
+
+pub model CompiledBodyOutputs:
+    """Every record-eligible value and explicit full-source fallback from one successful compilation."""
+
+    pub values: list[CompiledBodyValue]
+    pub fallbacks: list[CompiledBodyFallback]
+
+
+@derive(Eq)
+pub enum CodecFault:
+    """Infrastructure/capability refusals; none is a source-language diagnostic or a legacy fallback request."""
+
+    Malformed
+    ProfileMismatch
+    OwnerMismatch
+    BodyChanged
+    Unsupported(str)
+    Limit
+
+
+pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
+    """
+    Encode one bounded field-addressable record, independently of native object layout.
+
+    1. Validate the supported schema and canonical field ordering.
+    2. Frame UTF-8 fields with decimal byte lengths and a colon.
+    3. Refuse a record requiring a larger schema page.
+    """
+    # 1. Validate the supported schema and canonical field ordering.
+    validate(record)?
+    # 2. Frame UTF-8 fields with decimal byte lengths and a colon.
+    mut tokens = [CHECKER_SCHEMA, record.profile, record.owner, record.root, family_name(record.family)]
+    tokens.append(str(len(record.fields)))
+    for field in record.fields:
+        tokens += [field.family, field.node, field.selector, str(len(field.values))] + field.values
+    mut fragments: list[str] = []
+    mut size = 0
+    for token in tokens:
+        raw = token.encode()
+        prefix = str(len(raw)) + ":"
+        fragments.append(prefix + token)
+        size += len(prefix) + len(raw)
+        if size > MAX_RECORD_BYTES:
+            return Err(CodecFault.Limit)
+    # 3. Refuse a record requiring a larger schema page.
+    return Ok("".join(fragments).encode())
+
+
+pub def decode_record(encoded: bytes, profile: str, owner: str, root: str) -> Result[CheckedRecord, CodecFault]:
+    """
+    Decode a complete canonical record, then bind its semantic identity without accepting stale coordinates.
+
+    1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
+    2. Decode the schema's ordered fields and validate their capabilities.
+    3. Check the requested profile, owner and body root.
+    """
+    # 1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
+    tokens = frames(encoded)?
+    if len(tokens) < 6 or tokens[0] != CHECKER_SCHEMA:
+        return Err(CodecFault.Malformed)
+    # 2. Decode the schema's ordered fields and validate their capabilities.
+    family = read_family(tokens[4])?
+    count = decimal(tokens[5])?
+    if count > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut fields: list[CanonicalField] = []
+    mut offset = 6
+    for _ in range(count):
+        if offset + 4 > len(tokens):
+            return Err(CodecFault.Malformed)
+        size = decimal(tokens[offset + 3])?
+        if size > MAX_FIELDS or offset + 4 + size > len(tokens):
+            return Err(CodecFault.Malformed)
+        fields.append(
+            CanonicalField(
+                family=tokens[offset],
+                node=tokens[offset + 1],
+                selector=tokens[offset + 2],
+                values=tokens[offset + 4:offset + 4 + size],
+            ),
+        )
+        offset += 4 + size
+    if offset != len(tokens):
+        return Err(CodecFault.Malformed)
+    record = CheckedRecord(profile=tokens[1], owner=tokens[2], root=tokens[3], family=family, fields=fields)
+    validate(record)?
+    # 3. Check the requested profile, owner and body root.
+    if record.profile != profile:
+        return Err(CodecFault.ProfileMismatch)
+    if record.owner != owner:
+        return Err(CodecFault.OwnerMismatch)
+    if record.root != root:
+        return Err(CodecFault.BodyChanged)
+    return Ok(record)
+
+
+pub def semantic_digest(record: CheckedRecord) -> Result[str, CodecFault]:
+    """Hash precisely the canonical fields, including schema/profile and excluding source revision and positions."""
+    return Ok("sha256:" + hexlify(sha256.digest(encode_record(record)?)))
+
+
+def validate(record: CheckedRecord) -> Result[None, CodecFault]:
+    """Reject unknown capabilities and duplicate/unsorted fields; an empty supported family remains explicit."""
+    if record.profile != CHECKER_PROFILE:
+        return Err(CodecFault.ProfileMismatch)
+    if record.owner == "" or not full_digest(record.root):
+        return Err(CodecFault.Malformed)
+    if len(record.fields) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut previous_family = ""
+    mut previous_node = ""
+    mut previous_selector = ""
+    for field in record.fields:
+        # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
+        if field.family not in [
+            "type",
+            "type-identity",
+            "binding",
+            "binding-type",
+            "reference",
+            "write",
+            "builtin",
+            "parameter",
+            "signature",
+            "diagnostic",
+            "status",
+            "default",
+            "final-type",
+            "native-call",
+            "target",
+            "identifier",
+            "effect",
+            "mutation",
+            "ownership",
+            "input-call",
+            "input-local",
+            "input-flow",
+            "input-copy",
+        ]:
+            return Err(CodecFault.Unsupported(field.family))
+        if (
+            field.family < previous_family
+            or (field.family == previous_family and field.node < previous_node)
+            or (field.family == previous_family and field.node == previous_node and field.selector <= previous_selector)
+            or len(field.values) > MAX_FIELDS
+        ):
+            return Err(CodecFault.Malformed)
+        validate_field(field)?
+        previous_family = field.family
+        previous_node = field.node
+        previous_selector = field.selector
+    return Ok(None)
+
+
+def family_name(family: CheckedFamily) -> str:
+    """The persistent stage tag is independent of compiler enum discriminants."""
+    match family:
+        CheckedFamily.Declaration => return "declaration"
+        CheckedFamily.Local => return "local"
+        CheckedFamily.Final => return "final"
+
+
+def read_family(value: str) -> Result[CheckedFamily, CodecFault]:
+    """Unknown stage tags require a new admitted codec profile."""
+    match value:
+        "declaration" => return Ok(CheckedFamily.Declaration)
+        "local" => return Ok(CheckedFamily.Local)
+        "final" => return Ok(CheckedFamily.Final)
+        _ => return Err(CodecFault.Unsupported(value))
+
+
+def frames(encoded: bytes) -> Result[list[str], CodecFault]:
+    """Parse canonical byte-length frames without integer conversion panics or accepting noncanonical lengths."""
+    if len(encoded) > MAX_RECORD_BYTES:
+        return Err(CodecFault.Limit)
+    mut offset = 0
+    mut tokens: list[str] = []
+    while offset < len(encoded):
+        mut end = offset
+        while end < len(encoded) and encoded[end] != 58:
+            end += 1
+        if end == len(encoded):
+            return Err(CodecFault.Malformed)
+        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
+        size = decimal(prefix)?
+        offset = end + 1
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
+        offset += size
+    return Ok(tokens)
+
+
+def decimal(text: str) -> Result[int, CodecFault]:
+    """Accept only a bounded unsigned canonical decimal spelling, including the one-byte zero."""
+    if text == "" or len(text) > 5 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    return Ok(value)
+
+
+pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Convert native field primitives into the Incan-owned schema; this boundary never accepts native dump bytes."""
+    if len(rows) == 0 or len(rows[0]) != 5 or rows[0][0] != "header":
+        return Err(CodecFault.Malformed)
+    header = rows[0]
+    mut fields: list[CanonicalField] = []
+    for row in rows[1:]:
+        if len(row) < 4:
+            return Err(CodecFault.Malformed)
+        fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
+    record = CheckedRecord(
+        profile=header[4],
+        owner=header[1],
+        root=header[2],
+        family=read_family(header[3])?,
+        fields=fields,
+    )
+    validate(record)?
+    return Ok(record)
+
+
+pub def from_native_local_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Assign the schema-owned pending family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Local)
+
+
+pub def from_native_final_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Assign the schema-owned settled family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Final)
+
+
+def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[CheckedRecord, CodecFault]:
+    """Attach or verify one family on fresh producer rows or a decoded graph value retained for re-publication."""
+    if len(rows) == 0 or len(rows[0]) == 0 or rows[0][0] != "header":
+        return Err(CodecFault.Malformed)
+    header = rows[0]
+    mut profile = ""
+    if len(header) == 4:
+        profile = header[3]
+    elif len(header) == 5 and header[3] == family_name(family):
+        profile = header[4]
+    else:
+        return Err(CodecFault.Malformed)
+    mut fields: list[CanonicalField] = []
+    for row in rows[1:]:
+        if len(row) < 4:
+            return Err(CodecFault.Malformed)
+        fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
+    record = CheckedRecord(profile=profile, owner=header[1], root=header[2], family=family, fields=fields)
+    validate(record)?
+    return Ok(record)
+
+
+pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
+    """Project decoded canonical fields for the narrow rebinding adapter, retaining every field and ordered value."""
+    validate(record)?
+    mut rows = [["header", record.owner, record.root, family_name(record.family), record.profile]]
+    for field in record.fields:
+        rows.append([field.family, field.node, field.selector] + field.values)
+    return Ok(rows)
+
+
+pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, CodecFault]:
+    """
+    Encode graph-selected body pairs independently of the unit description and callable-body product cache.
+
+    Each pair is decoded before framing, so an owner mismatch, changed body root or crossed local/final family cannot
+    enter the transport. Strict owner order gives equivalent selections one canonical byte representation.
+    """
+    if len(values) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [GRAPH_TRANSPORT_SCHEMA, str(len(values))]
+    mut previous = ""
+    for value in values:
+        if value.identity == "" or value.identity <= previous:
+            return Err(CodecFault.Malformed)
+        validate_graph_body_value(value)?
+        tokens += [value.identity, hexlify(value.local), hexlify(value.final), hexlify(value.body_ir)]
+        previous = value.identity
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
+    """Decode and authenticate every selected body pair before projecting its canonical native field primitives."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 2 or tokens[0] != GRAPH_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    if count > MAX_FIELDS or len(tokens) != 2 + count * 4:
+        return Err(CodecFault.Malformed)
+    mut selected: list[GraphBodyFields] = []
+    mut previous = ""
+    mut offset = 2
+    for _ in range(count):
+        identity = str(tokens[offset])
+        if identity == "" or identity <= previous:
+            return Err(CodecFault.Malformed)
+        local_bytes = unhexlify(tokens[offset + 1]).map_err((_) => CodecFault.Malformed)?
+        final_bytes = unhexlify(tokens[offset + 2]).map_err((_) => CodecFault.Malformed)?
+        body_ir = unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?
+        selected.append(decode_graph_body_page(identity, local_bytes, final_bytes, body_ir)?)
+        previous = identity
+        offset += 4
+    return Ok(selected)
+
+
+pub def decode_graph_body_page(
+    identity: str,
+    local: bytes,
+    final: bytes,
+    body_ir: bytes,
+) -> Result[GraphBodyFields, CodecFault]:
+    """Authenticate one already unframed owner page while the native #3036 framing workaround remains removable."""
+    value = GraphBodyValue(identity=identity, local=local, final=final, body_ir=body_ir)
+    records = validate_graph_body_value(value)?
+    return Ok(
+        GraphBodyFields(
+            identity=identity,
+            local=native_fields(records[0])?,
+            final_fields=native_fields(records[1])?,
+            body_ir=body_ir,
+        ),
+    )
+
+
+pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[bytes, CodecFault]:
+    """Encode eligible producer outputs and explicit full-source fallbacks after a successful native compilation."""
+    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(outputs.values)), str(len(outputs.fallbacks))]
+    mut previous = ""
+    for value in outputs.values:
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        tokens += [
+            value.module,
+            value.name,
+            value.identity,
+            hexlify(value.declaration),
+            hexlify(value.local),
+            hexlify(value.final),
+            hexlify(value.body_ir),
+            str(len(value.dependency_reads)),
+        ]
+        mut previous_read = ""
+        for read in value.dependency_reads:
+            package = optional_identity(read.package)
+            read_order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            tokens += [package, read.module, read.name, read.identity]
+            previous_read = read_order
+        previous = order
+    previous = ""
+    for fallback in outputs.fallbacks:
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in outputs.values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        tokens += [fallback.module, fallback.name, identity, fallback.reason]
+        previous = order
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutputs, CodecFault]:
+    """Decode and authenticate every eligible triple and explicit full-source fallback before graph publication."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 3 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    fallback_count = decimal(tokens[2])?
+    if count + fallback_count > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut values: list[CompiledBodyValue] = []
+    mut previous = ""
+    mut offset = 3
+    for _ in range(count):
+        if offset + 8 > len(tokens):
+            return Err(CodecFault.Malformed)
+        dependency_count = decimal(tokens[offset + 7])?
+        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 4 > len(tokens):
+            return Err(CodecFault.Malformed)
+        mut dependency_reads: list[CompiledBodyDependencyRead] = []
+        mut previous_read = ""
+        mut dependency_offset = offset + 8
+        for _ in range(dependency_count):
+            read = CompiledBodyDependencyRead(
+                package=decoded_optional_identity(tokens[dependency_offset]),
+                module=tokens[dependency_offset + 1],
+                name=tokens[dependency_offset + 2],
+                identity=tokens[dependency_offset + 3],
+            )
+            read_order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            dependency_reads.append(read)
+            previous_read = read_order
+            dependency_offset += 4
+        value = CompiledBodyValue(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=tokens[offset + 2],
+            declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
+            local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
+            final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
+            body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
+            dependency_reads=dependency_reads,
+        )
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        values.append(value)
+        previous = order
+        offset = dependency_offset
+    mut fallbacks: list[CompiledBodyFallback] = []
+    if len(tokens) != offset + fallback_count * 4:
+        return Err(CodecFault.Malformed)
+    previous = ""
+    for _ in range(fallback_count):
+        fallback = CompiledBodyFallback(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=decoded_optional_identity(tokens[offset + 2]),
+            reason=tokens[offset + 3],
+        )
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        fallbacks.append(fallback)
+        previous = order
+        offset += 4
+    return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
+
+
+def optional_identity(identity: Option[str]) -> str:
+    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
+    match identity:
+        Some(value) => return value
+        None => return ""
+
+
+def decoded_optional_identity(identity: str) -> Option[str]:
+    """Restore the fallback-only empty sentinel without inventing a stable declaration identity."""
+    if identity == "":
+        return None
+    return Some(identity)
+
+
+pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
+    """Read one validated checker record's position-free semantic root for its logical record key."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4 or not full_digest(tokens[3]):
+        return Err(CodecFault.Malformed)
+    return Ok(tokens[3])
+
+
+def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
+    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
+    declaration = decode_graph_record(value.declaration, value.identity)?
+    pair = validate_graph_body_value(
+        GraphBodyValue(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir),
+    )?
+    if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
+        return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
+    """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
+    if len(value.body_ir) == 0:
+        return Err(CodecFault.Malformed)
+    local = decode_graph_record(value.local, value.identity)?
+    final = decode_graph_record(value.final, value.identity)?
+    if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:
+        return Err(CodecFault.Malformed)
+    if local.root != final.root:
+        return Err(CodecFault.BodyChanged)
+    return Ok([local, final])
+
+
+def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
+    """Read only the canonical root needed to invoke the ordinary fully bound checker-record decoder."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4:
+        return Err(CodecFault.Malformed)
+    return decode_record(encoded, CHECKER_PROFILE, identity, tokens[3])
+
+
+def encode_transport_tokens(tokens: list[str]) -> Result[bytes, CodecFault]:
+    """Frame transport tokens with the checker codec's canonical decimal byte lengths."""
+    mut fragments: list[str] = []
+    mut size = 0
+    for token in tokens:
+        raw = token.encode()
+        prefix = str(len(raw)) + ":"
+        fragments.append(prefix + token)
+        size += len(prefix) + len(raw)
+        if size > MAX_GRAPH_TRANSPORT_BYTES:
+            return Err(CodecFault.Limit)
+    return Ok("".join(fragments).encode())
+
+
+def transport_frames(encoded: bytes) -> Result[list[str], CodecFault]:
+    """Parse a bounded graph transport using the same unambiguous framing as individual checker records."""
+    if len(encoded) > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    mut offset = 0
+    mut tokens: list[str] = []
+    while offset < len(encoded):
+        mut end = offset
+        while end < len(encoded) and encoded[end] != 58:
+            end += 1
+        if end == len(encoded):
+            return Err(CodecFault.Malformed)
+        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
+        size = transport_size(prefix)?
+        offset = end + 1
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
+        offset += size
+    return Ok(tokens)
+
+
+def transport_size(text: str) -> Result[int, CodecFault]:
+    """Read one canonical frame length up to the aggregate transport limit, including six-digit owner frames."""
+    if text == "" or len(text) > 8 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    if value > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    return Ok(value)
+
+
+def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
+    """The profile defines each primitive field grammar; unknown selectors or extra primitives are unsupported."""
+    values = field.values
+    mut end = 0
+    # Each family's values follow that family's grammar, and `end` is where it stops; a field with values left over is
+    # malformed. A type field holds one value type: an expression's, a body expression's, an assignment's or a
+    # destination's.
+    if field.family == "type":
+        if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
+            return Err(CodecFault.Unsupported(field.selector))
+        end = type_end(values, 0, 0)?
+    # One checked nominal/native identity at a structural component of an expression's resolved type.
+    elif field.family == "type-identity":
+        if field.node == "" or len(values) != 1 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        validate_type_identity_path(field.selector)?
+        end = 1
+    # A binding's type: the binding, then its type.
+    elif field.family == "binding-type":
+        if field.node == "" or len(values) == 0 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        if field.selector == "body":
+            end = type_end(values, 1, 0)?
+        elif field.selector == "parameter-requirement":
+            if len(values) < 2:
+                return Err(CodecFault.Malformed)
+            if values[1] == "none":
+                end = 2
+            elif values[1] == "some":
+                end = type_end(values, 2, 0)?
+            else:
+                return Err(CodecFault.Malformed)
+        else:
+            return Err(CodecFault.Unsupported(field.selector))
+    # What a node changes: `reassigned` is just `true`; `changed` counts the names it changes, strictly sorted.
+    elif field.family == "mutation":
+        if field.node == "":
+            return Err(CodecFault.Malformed)
+        if field.selector == "reassigned":
+            if values != ["true"]:
+                return Err(CodecFault.Malformed)
+            end = 1
+        elif field.selector == "changed":
+            if len(values) < 2 or values[0] == "":
+                return Err(CodecFault.Malformed)
+            size = decimal(values[1])?
+            if size != len(values) - 2:
+                return Err(CodecFault.Malformed)
+            mut previous = ""
+            for name in values[2:]:
+                if name <= previous:
+                    return Err(CodecFault.Malformed)
+                previous = name
+            end = len(values)
+        else:
+            return Err(CodecFault.Malformed)
+    # Explicit ownership facts: call contracts, local modes, control-flow graphs and Copy decisions, each in its own
+    # versioned grammar.
+    elif field.family in ["input-call", "input-local", "input-flow", "input-copy"]:
+        end = input_field_end(field)?
+    # A declaration's ownership contract.
+    elif field.family == "ownership":
+        if field.selector != "contract" or field.node == "":
+            return Err(CodecFault.Malformed)
+        end = ownership_end(values)?
+    # Signatures: a declaration's flag, parameters and result type; a call's parameters; or a counted list of types,
+    # its monomorphs or type arguments.
+    elif field.family == "signature":
+        if field.selector == "declaration":
+            if len(values) == 0 or values[0] not in ["true", "false"]:
+                return Err(CodecFault.Malformed)
+            end = parameters_end(values, 1, 0)?
+            end = type_end(values, end, 0)?
+        elif field.selector in ["call", "body-call"]:
+            end = parameters_end(values, 0, 0)?
+        elif field.selector in ["monomorphs", "type-arguments"]:
+            if len(values) == 0:
+                return Err(CodecFault.Malformed)
+            count = decimal(values[0])?
+            if count > len(values):
+                return Err(CodecFault.Malformed)
+            end = 1
+            for _ in range(count):
+                end = type_end(values, end, 0)?
+        else:
+            return Err(CodecFault.Unsupported(field.selector))
+    # A builtin call keeps its selected function; a builtin method also keeps its selected owner.
+    elif field.family == "builtin":
+        if field.selector == "call" and len(values) == 1 and values[0] != "":
+            end = 1
+        elif field.selector == "method" and len(values) == 2 and values[0] != "" and values[1] != "":
+            end = 2
+        else:
+            return Err(CodecFault.Malformed)
+    # Facts that hold one nonempty value.
+    elif field.family in ["binding", "reference", "write", "default"]:
+        if len(values) != 1 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        end = 1
+    # A parameter's type.
+    elif field.family == "parameter":
+        end = type_end(values, 0, 0)?
+    # An identifier's kind; only plain values are recorded.
+    elif field.family == "identifier":
+        if field.selector != "kind" or values != ["value"]:
+            return Err(CodecFault.Unsupported("identifier"))
+        end = 1
+    # A target's source: at least two values, all kept.
+    elif field.family == "target":
+        if field.selector != "source" or len(values) < 2:
+            return Err(CodecFault.Malformed)
+        end = len(values)
+    # Whether a body was refused or is pending: one flag, recorded on no node.
+    elif field.family == "status":
+        if field.node != "" or field.selector not in ["refused", "pending"] or len(values) != 1:
+            return Err(CodecFault.Malformed)
+        if values[0] not in ["true", "false"]:
+            return Err(CodecFault.Malformed)
+        end = 1
+    # A checked effect, recorded on no node.
+    elif field.family == "effect":
+        if field.node != "" or field.selector == "" or values != ["checked"]:
+            return Err(CodecFault.Malformed)
+        end = 1
+    # An empty native-call inventory, recorded on no node.
+    elif field.family == "native-call":
+        if field.node != "" or field.selector != "empty" or values != ["true"]:
+            return Err(CodecFault.Unsupported("native-call"))
+        end = 1
+    # Final types: an empty marker, or the type of an expression or a binding.
+    elif field.family == "final-type":
+        if field.selector == "empty" and values == ["true"]:
+            end = 1
+        elif field.selector == "expression":
+            end = type_end(values, 0, 0)?
+        elif field.selector == "binding" and field.node != "":
+            end = type_end(values, 0, 0)?
+        else:
+            return Err(CodecFault.Malformed)
+    # A diagnostic the body reported.
+    elif field.family == "diagnostic":
+        end = diagnostic_end(values)?
+    else:
+        return Err(CodecFault.Unsupported(field.family))
+    if end != len(values):
+        return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def validate_type_identity_path(path: str) -> Result[None, CodecFault]:
+    """Accept the canonical root marker or at most 32 dot-separated canonical component indices."""
+    if path == "root":
+        return Ok(None)
+    components = path.split(".")
+    if len(components) == 0 or len(components) > 32:
+        return Err(CodecFault.Malformed)
+    for component in components:
+        _ = decimal(component)?
+    return Ok(None)
+
+
+def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
+    """Validate one prefix-encoded type with a bounded nesting depth, independently of native type object layout."""
+    if depth > 32 or offset >= len(values):
+        return Err(CodecFault.Malformed)
+    tag = values[offset]
+    if tag in ["int", "float", "bool", "str", "bytes", "unit", "unknown"]:
+        return Ok(offset + 1)
+    if tag in ["named", "type-var"]:
+        if offset + 1 >= len(values) or values[offset + 1] == "":
+            return Err(CodecFault.Malformed)
+        return Ok(offset + 2)
+    if tag == "result":
+        after = type_end(values, offset + 1, depth + 1)?
+        return type_end(values, after, depth + 1)
+    if tag == "option":
+        return type_end(values, offset + 1, depth + 1)
+    if tag == "list":
+        return type_end(values, offset + 1, depth + 1)
+    if tag == "ownership":
+        if offset + 1 >= len(values) or values[offset + 1] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
+            return Err(CodecFault.Malformed)
+        return type_end(values, offset + 2, depth + 1)
+    if tag == "callable":
+        after = parameters_end(values, offset + 1, depth + 1)?
+        return type_end(values, after, depth + 1)
+    return Err(CodecFault.Unsupported("type:" + tag))
+
+
+def parameters_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
+    """Parameter markers retain spelling, source shape, default/preset/mutation bits and the complete checked type."""
+    if offset >= len(values):
+        return Err(CodecFault.Malformed)
+    count = decimal(values[offset])?
+    if count > len(values):
+        return Err(CodecFault.Malformed)
+    mut end = offset + 1
+    for _ in range(count):
+        if end + 6 >= len(values):
+            return Err(CodecFault.Malformed)
+        if values[end] not in ["named", "unnamed"]:
+            return Err(CodecFault.Malformed)
+        if values[end] == "unnamed" and values[end + 1] != "":
+            return Err(CodecFault.Malformed)
+        if values[end + 2] not in ["normal", "rest", "keywords"]:
+            return Err(CodecFault.Malformed)
+        for bit in values[end + 3:end + 6]:
+            if bit not in ["true", "false"]:
+                return Err(CodecFault.Malformed)
+        end = type_end(values, end + 6, depth + 1)?
+    return Ok(end)
+
+
+def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
+    """Diagnostics retain recipe prose, optional catalog code, ordered notes/hints, labels and structural ranges."""
+    if len(values) < 7 or values[0] not in ["error", "syntax", "type", "warning", "lint"]:
+        return Err(CodecFault.Malformed)
+    mut end = 3
+    for _ in range(2):
+        if end >= len(values):
+            return Err(CodecFault.Malformed)
+        count = decimal(values[end])?
+        end += 1 + count
+        if end >= len(values):
+            return Err(CodecFault.Malformed)
+    if values[end] == "primary-label":
+        end += 2
+    elif values[end] == "no-primary-label":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    if values[end] == "expected-actual":
+        end += 3
+    elif values[end] == "no-expected-actual":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    count = decimal(values[end])?
+    return Ok(end + 1 + count * 2)
+
+
+def full_digest(value: str) -> bool:
+    """A normalized node root carries the full SHA-256 spelling, not a shortened hint or nonempty placeholder."""
+    if len(value) != 71 or not value.startswith("sha256:"):
+        return false
+    for digit in value[7:].encode():
+        if not ((48 <= digit and digit <= 57) or (97 <= digit and digit <= 102)):
+            return false
+    return true
+
+
+def ownership_end(values: list[str]) -> Result[int, CodecFault]:
+    """Explicit access modes, type component paths and stable source slots survive independently of source spelling."""
+    if len(values) < 3 or values[0] != "1":
+        return Err(CodecFault.Malformed)
+    count = decimal(values[1])?
+    if count > len(values):
+        return Err(CodecFault.Malformed)
+    mut end = 2
+    for _ in range(count):
+        if end + 3 >= len(values) or values[end] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
+            return Err(CodecFault.Malformed)
+        if values[end + 1] != "result":
+            decimal(values[end + 1])?
+        size = decimal(values[end + 2])?
+        end += 3
+        if size > len(values) - end:
+            return Err(CodecFault.Malformed)
+        for component in values[end:end + size]:
+            decimal(component)?
+        end = type_end(values, end + size, 0)?
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    if values[end] == "none":
+        if count == 0:
+            return Err(CodecFault.Malformed)
+        return Ok(end + 1)
+    if values[end] == "parameter":
+        if end + 1 >= len(values):
+            return Err(CodecFault.Malformed)
+        decimal(values[end + 1])?
+        end += 2
+    elif values[end] == "receiver":
+        end += 1
+    else:
+        return Err(CodecFault.Malformed)
+    if end >= len(values):
+        return Err(CodecFault.Malformed)
+    size = decimal(values[end])?
+    end += 1
+    if size > len(values) - end:
+        return Err(CodecFault.Malformed)
+    for identity in values[end:end + size]:
+        if identity == "":
+            return Err(CodecFault.Malformed)
+    return Ok(end + size)
+
+
+class InputFields:
+    """Read bounded ownership primitives; native identities and source anchors remain opaque nonempty handles."""
+
+    values: list[str]
+    offset: int = 0
+    strict_indices: bool = true
+
+    @staticmethod
+    pub def read(values: list[str]) -> InputFields:
+        """Create a reader while keeping its cursor and index policy private to the class."""
+        return InputFields(values=values)
+
+    pub def position(self) -> int:
+        return self.offset
+
+    pub def parameters(mut self) -> Result[None, CodecFault]:
+        self.offset = parameters_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def input_evaluation(mut self) -> Result[list[int], CodecFault]:
+        """Collect producer-linked evaluation indices for bounds checking after the graph's node count is known."""
+        start = self.number()?
+        end = self.number()?
+        mut indices = [start, end]
+        if self.tag(["none", "some"])? == "some":
+            indices.append(self.number()?)
+        return Ok(indices)
+
+    pub def value_type(mut self) -> Result[None, CodecFault]:
+        self.offset = type_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def token(mut self) -> Result[str, CodecFault]:
+        if self.offset >= len(self.values):
+            return Err(CodecFault.Malformed)
+        value = self.values[self.offset]
+        self.offset += 1
+        return Ok(value)
+
+    pub def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
+        value = self.token()?
+        if value not in allowed:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    pub def handle(mut self) -> Result[None, CodecFault]:
+        if self.token()? == "":
+            return Err(CodecFault.Malformed)
+        return Ok(None)
+
+    def number(mut self) -> Result[int, CodecFault]:
+        return decimal(self.token()?)
+
+    pub def count(mut self) -> Result[int, CodecFault]:
+        value = self.number()?
+        if value > len(self.values) - self.offset:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def index(mut self, limit: int) -> Result[None, CodecFault]:
+        if self.number()? >= limit and self.strict_indices:
+            return Err(CodecFault.Malformed)
+        return Ok(None)
+
+    def optional_index(mut self, limit: int) -> Result[None, CodecFault]:
+        if self.tag(["none", "some"])? == "some":
+            self.index(limit)?
+        return Ok(None)
+
+    def root(mut self) -> Result[None, CodecFault]:
+        kind = self.tag(["binding", "temporary"])?
+        self.handle()?
+        if kind == "temporary":
+            self.handle()?
+            self.handle()?
+        return Ok(None)
+
+    def place(mut self) -> Result[None, CodecFault]:
+        self.root()?
+        size = self.count()?
+        for _ in range(size):
+            self.tag(["field", "element"])?
+            self.handle()?
+        return Ok(None)
+
+    pub def ordered(self, previous: str, start: int) -> Result[str, CodecFault]:
+        """A map key uses framed UTF-8 tokens, never native identity order or ambiguous separators."""
+        mut parts: list[str] = []
+        for value in self.values[start:self.offset]:
+            parts.append(str(len(value.encode())) + ":" + value)
+        key = "".join(parts)
+        if key <= previous:
+            return Err(CodecFault.Malformed)
+        return Ok(key)
+
+    def closures(mut self, loans: int) -> Result[list[int], CodecFault]:
+        """Each closure bound to a local: its local, captures, loan and the nodes reading its Copy captures."""
+        mut closure_nodes: list[int] = []
+        closures = self.count()?
+        mut previous = ""
+        for _ in range(closures):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            captures = self.count()?
+            for _ in range(captures):
+                self.handle()?
+            self.optional_index(loans)?
+            reads = self.count()?
+            for _ in range(reads):
+                closure_nodes.append(self.number()?)
+        return Ok(closure_nodes)
+
+    def invocations(
+        mut self,
+        loans: int,
+        receiver_dependencies: bool,
+        result_requirements: bool,
+    ) -> Result[list[int], CodecFault]:
+        """Retain invocation inputs and collect the graph nodes that their evaluations reference."""
+        mut invocation_nodes: list[int] = []
+        invocations = self.count()?
+        mut previous = ""
+        for _ in range(invocations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            if result_requirements and self.tag(["none", "some"])? == "some":
+                self.value_type()?
+            self.optional_index(loans)?
+            self.tag(["true", "false"])?
+            if self.tag(["none", "some"])? == "some":
+                self.place()?
+            if receiver_dependencies:
+                dependencies = self.count()?
+                for _ in range(dependencies):
+                    self.index(loans)?
+            arguments = self.count()?
+            for _ in range(arguments):
+                self.handle()?
+                self.number()?
+                self.number()?
+                self.tag(["inferred", "shared", "exclusive", "owned"])?
+                self.optional_index(loans)?
+                if self.tag(["none", "some"])? == "some":
+                    self.place()?
+                invocation_nodes += self.input_evaluation()?
+            if self.tag(["none", "some"])? == "some":
+                invocation_nodes += self.input_evaluation()?
+            invocation_nodes.append(self.number()?)
+            final_accesses = self.count()?
+            for _ in range(final_accesses):
+                invocation_nodes.append(self.number()?)
+        return Ok(invocation_nodes)
+
+    pub def graph(
+        mut self,
+        strict_indices: bool,
+        receiver_dependencies: bool,
+        result_requirements: bool,
+    ) -> Result[None, CodecFault]:
+        """Retain every permission, dependency, invocation and edge under the selected input-flow schema."""
+        self.strict_indices = strict_indices
+        self.handle()?
+        entry = self.number()?
+        # Permissions: each storage root in canonical order, with whether it is exclusive, writable and transferable.
+        permissions = self.count()?
+        mut previous = ""
+        for _ in range(permissions):
+            start = self.offset
+            self.root()?
+            previous = self.ordered(previous, start)?
+            for _ in range(3):
+                self.tag(["true", "false"])?
+        # Loans: each one's source place, kind, writability, parent loan and span.
+        loans = self.count()?
+        for _ in range(loans):
+            self.place()?
+            self.tag(["shared", "exclusive"])?
+            self.tag(["true", "false"])?
+            self.optional_index(loans)?
+            self.handle()?
+        # Local loans: each local in canonical order, with the loan it holds.
+        locals = self.count()?
+        previous = ""
+        for _ in range(locals):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.index(loans)?
+        # Dependent locals: each local in canonical order, followed by every retained source loan.
+        dependent_locals = self.count()?
+        previous = ""
+        for _ in range(dependent_locals):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            dependencies = self.count()?
+            for _ in range(dependencies):
+                self.index(loans)?
+        # Aggregate expressions whose physical storage retains those dependencies.
+        dependent_values = self.count()?
+        for _ in range(dependent_values):
+            self.handle()?
+        # Owned locals: each one's initializer, the place it was transferred from and the node that reads it; with
+        # strict indices a local has both or neither.
+        owned = self.count()?
+        previous = ""
+        mut initializer_nodes: list[int] = []
+        for _ in range(owned):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            self.handle()?
+            has_source = self.tag(["none", "some"])? == "some"
+            if has_source:
+                self.place()?
+            has_access = self.tag(["none", "some"])? == "some"
+            if has_access:
+                initializer_nodes.append(self.number()?)
+            if has_source != has_access and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        # Operations: each one's completion node, then each operand's span, source place, loan and final access node.
+        operations = self.count()?
+        previous = ""
+        mut operation_nodes: list[int] = []
+        for _ in range(operations):
+            start = self.offset
+            self.handle()?
+            previous = self.ordered(previous, start)?
+            operation_nodes.append(self.number()?)
+            operands = self.count()?
+            for _ in range(operands):
+                self.handle()?
+                self.place()?
+                self.index(loans)?
+                operation_nodes.append(self.number()?)
+        # Invocations: each one's callee, receiver loan and arguments (span, slot, written position, access, loan and
+        # source place).
+        invocation_nodes = self.invocations(loans, receiver_dependencies, result_requirements)?
+        # Closures bound to locals; the nodes that read their captures are checked with the others below.
+        closure_nodes = self.closures(loans)?
+        # Nodes: each one's event, successors and span. Every node index recorded above must name one of them.
+        nodes = self.count()?
+        if entry >= nodes and self.strict_indices:
+            return Err(CodecFault.Malformed)
+        for index in initializer_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in operation_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in invocation_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for index in closure_nodes:
+            if index >= nodes and self.strict_indices:
+                return Err(CodecFault.Malformed)
+        for _ in range(nodes):
+            event = self.tag(["nothing", "borrow", "access"])?
+            if event == "borrow":
+                self.index(loans)?
+            elif event == "access":
+                self.place()?
+                self.tag(["read", "write", "move", "replace"])?
+                self.optional_index(loans)?
+            successors = self.count()?
+            for _ in range(successors):
+                self.index(nodes)?
+            self.handle()?
+        return Ok(None)
+
+
+def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
+    """Versioned ownership grammar: invocation contracts, local modes and complete anchored control-flow facts."""
+    if field.node == "":
+        return Err(CodecFault.Malformed)
+    mut reader = InputFields.read(field.values)
+    # Every explicit ownership field starts with its grammar version.
+    version = reader.tag(["1", "2", "3"])?
+    input_flow = field.family == "input-flow" and field.selector == "graph"
+    if version != "1" and not input_flow:
+        return Err(CodecFault.Malformed)
+    # Copy decisions: the owner, then each value type in canonical order with whether it is Copy.
+    if field.family == "input-copy" and field.selector == "types":
+        reader.handle()?
+        size = reader.count()?
+        mut previous = ""
+        for _ in range(size):
+            start = reader.position()
+            reader.value_type()?
+            previous = reader.ordered(previous, start)?
+            reader.tag(["true", "false"])?
+    # A call contract: the callee's optional owner, the callee, its receiver's access and its parameters.
+    elif field.family == "input-call" and field.selector == "contract":
+        reader.tag(["explicit", "ordinary"])?
+        if reader.tag(["none", "some"])? == "some":
+            reader.handle()?
+        reader.handle()?
+        reader.tag(["none", "shared", "exclusive"])?
+        reader.parameters()?
+    # A local's mode: the binding, its owner, the explicit mode, whether it is writable, its annotation and its value
+    # type.
+    elif field.family == "input-local" and field.selector == "mode":
+        reader.handle()?
+        reader.handle()?
+        reader.tag(["Borrowed", "BorrowedMut", "Owned", "Reference"])?
+        reader.tag(["true", "false"])?
+        reader.handle()?
+        reader.value_type()?
+    # A body's control-flow graph: checked, invalid (the graph and its fault) or unavailable (the owner, where and why).
+    elif input_flow:
+        state = reader.tag(["checked", "invalid", "unavailable"])?
+        if state == "unavailable":
+            reader.handle()?
+            reader.handle()?
+            reader.handle()?
+        else:
+            reader.graph(state == "checked", version != "1", version == "3")?
+            if state == "invalid":
+                reader.handle()?
+    else:
+        return Err(CodecFault.Malformed)
+    return Ok(reader.position())

@@ -1,0 +1,19 @@
+# behavior: a separately compiled provider preserves one Crc32 identity across primitive and legacy imports (RFC 168)
+# expect-stdout:
+#   checksum-identity-ok
+
+"""Exercise provider returns, parameters and forwarded values through both facades."""
+
+from pub::checksums import start, observe, forward
+from std.primitives.checksum import Crc32, crc32
+from std.checksum import Crc32 as LegacyCrc32
+
+
+def main() -> None:
+    """Continue a provider-created stream through the consumer's canonical type."""
+    mut hasher: Crc32 = start()
+    hasher.update(b"c")
+    assert observe(hasher) == crc32.value(b"abc")
+    same: LegacyCrc32 = forward(hasher)
+    assert same.finalize_bytes() == crc32.digest(b"abc")
+    println("checksum-identity-ok")

@@ -1,0 +1,13 @@
+# behavior: check reports retain provider refusals and independently check the remainder of the module
+# expect-diagnostic: INCAN-P0001
+# expect-diagnostic: INCAN-T0001
+
+from pub::words import marker
+
+
+def main() -> None:
+    """Require both the expansion refusal and the unrelated authored type error in the check report."""
+    value = query:
+        FROM 1
+    remaining: int = "still checked"
+    println(marker())

@@ -1,0 +1,14 @@
+# behavior: oven commands refuse options they cannot apply before preparing any unit, pointing to oven's help
+# cli-commands:
+#   oven run src/main.incn --substitute missing=absent
+#   oven describe-unit src/main.incn --substitute missing=absent
+#   oven check /dev/null --no-default-features
+#   oven describe-unit /dev/null --features absent
+# expect-exit: 2
+# expect-stderr-contains:
+#   requires
+#   Run `oven --help` for usage.
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

@@ -1,0 +1,84 @@
+"""Shared COMIC type parsing, spelling and description lookup."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.text_tokens import TextTokens
+from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition
+from crate.primitives.crumb.types import ContainerKind, NominalKind, TypeNode
+
+
+pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
+    """Parse one type through the caller's single streaming token object."""
+    return tokens.parse_type(budget)
+
+
+pub def type_spelling(value: TypeNode) -> str:
+    """Return the canonical core spelling of one admitted text type."""
+    match value:
+        TypeNode.Scalar(kind) => return kind.value()
+        TypeNode.Nominal(_, path, _, _) => return path
+        TypeNode.Decimal(precision, scale) => return f"decimal<{precision}, {scale}>"
+        TypeNode.Container(ContainerKind.List, items) => return f"list<{type_spelling(items[0])}>"
+        TypeNode.Container(ContainerKind.Set, items) => return f"set<{type_spelling(items[0])}>"
+        TypeNode.Container(ContainerKind.Map, items) =>
+            return f"map<{type_spelling(items[0])}, {type_spelling(items[1])}>"
+        TypeNode.Container(ContainerKind.Option, items) =>
+            inner = type_spelling(items[0])
+            if option_suffix(items[0]):
+                return inner + "?"
+            return f"option<{inner}>"
+        TypeNode.Container(ContainerKind.Union, items) => return " | ".join([type_spelling(item) for item in items])
+        TypeNode.Reference(items) => return f"ref<{type_spelling(items[0])}>"
+        _ => pass
+    return ""
+
+
+def option_suffix(value: TypeNode) -> bool:
+    """Use the short suffix unless it would collapse a nested optional layer."""
+    match value:
+        TypeNode.Container(ContainerKind.Option, _) => return false
+        _ => return true
+
+
+pub def description_at(
+    descriptions: list[TextDescription],
+    path: str,
+    position: TextPosition,
+) -> Result[TextDescription, TextError]:
+    """Require exactly one value-bearing declaration at a path."""
+    mut found: list[TextDescription] = []
+    for description in descriptions:
+        if description.path == path and (description.shape == NominalKind.Record or description.shape == NominalKind.Enum):
+            found.append(description)
+    if len(found) == 0:
+        return Err(TextError(kind=TextFailure.UnknownDescription, position=position))
+    if len(found) != 1:
+        return Err(TextError(kind=TextFailure.ValueTypeNoSingleDeclaration, position=position))
+    return Ok(found[0])
+
+
+pub def resolve_named(
+    descriptions: list[TextDescription],
+    spelling: str,
+    position: TextPosition,
+) -> Result[TextDescription, TextError]:
+    """Resolve an exact path or one unambiguous final path segment."""
+    mut exact: list[TextDescription] = []
+    mut short: list[TextDescription] = []
+    for description in descriptions:
+        if description.path == spelling:
+            exact.append(description)
+        elif last_segment(description.path) == spelling:
+            short.append(description)
+    if len(exact) == 1:
+        return Ok(exact[0])
+    if len(exact) > 1:
+        return Err(TextError(kind=TextFailure.ValueTypeNoSingleDeclaration, position=position))
+    if len(short) == 1:
+        return Ok(short[0])
+    return Err(TextError(kind=TextFailure.AmbiguousOrUnknownType, position=position))
+
+
+pub def last_segment(path: str) -> str:
+    """Return the final dotted path segment."""
+    parts = path.split(".")
+    return parts[len(parts) - 1]

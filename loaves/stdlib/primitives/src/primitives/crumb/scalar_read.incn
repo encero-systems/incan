@@ -1,0 +1,207 @@
+"""Decode exact scalar cells without normalization that could conceal malformed physical bytes."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.metadata_read import read_text
+from crate.primitives.crumb.scalar_cells import float_cell, valid_integer_width
+from crate.primitives.crumb.types import ScalarKind
+from crate.primitives.crumb.values import IntegerValue, Value
+from crate.primitives.crumb.wide_integer import WideInteger
+from crate.primitives.views import MappedView
+from crate.primitives.reflection import DecimalValue
+
+
+pub def scalar(kind: ScalarKind, view: MappedView, origin: int, mut budget: Budget) -> Result[Value, BinaryError]:
+    """The admitted description supplies scalar width/type; no tag or unconsumed bytes may change it."""
+    match kind.integer_facts():
+        Some((signed, bits)) =>
+            width = bits // 8
+            if view.len() != width:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            data = copied(view, origin, budget)?
+            return Ok(Value.Integer(fixed_integer(data, signed, origin)?))
+        None => pass
+    match kind:
+        ScalarKind.Fp32 => return floating(view, 32, origin, budget)
+        ScalarKind.Fp64 => return floating(view, 64, origin, budget)
+        _ => pass
+    mut cursor = EncodingCursor.create(view, origin)?
+    mut result = Value.NoneValue
+    match kind:
+        ScalarKind.Boolean =>
+            if view.len() != 1:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            flag = cursor.byte(budget)?
+            if flag > 1:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            result = Value.Boolean(flag == 1)
+        ScalarKind.String => result = Value.Text(read_text(cursor, budget)?)
+        ScalarKind.Binary =>
+            data = cursor.frame(budget)?
+            result = Value.Binary(copied(data, origin, budget)?)
+        ScalarKind.SecretString | ScalarKind.SecretBytes =>
+            if view.len() != 1 or cursor.byte(budget)? != 0:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            result = Value.Withheld
+        ScalarKind.Reference =>
+            target = cursor.frame(budget)?
+            identity = cursor.frame(budget)?
+            result = Value.Reference(copied(target, origin, budget)?, copied(identity, origin, budget)?)
+        _ => return Err(failure(BinaryFailure.InvalidCell, origin))
+    if cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
+    return Ok(result)
+
+
+def floating(view: MappedView, width: int, origin: int, mut budget: Budget) -> Result[Value, BinaryError]:
+    """NaN canonicalization is checked against original bits, not silently applied by the decoder."""
+    if view.len() != width // 8:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    data = copied(view, origin, budget)?
+    budget.charge_bytes(len(data)).map_err((e) => primitive(e, origin))?
+    bits: bytes = [data[index] for index in range(len(data) - 1, -1, -1)]
+    canonical = float_cell(width, bits, width, budget).map_err((e) => primitive(e, origin))?
+    if canonical != data:
+        return Err(failure(BinaryFailure.NoncanonicalNan, origin))
+    return Ok(Value.Float(width, bits))
+
+
+pub def decimal(
+    precision: int,
+    scale: int,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[Value, BinaryError]:
+    """The physical coefficient is already at the declared scale; validate precision without rounding."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    groups = cursor.groups(budget)?
+    coefficient = WideInteger.from_base128(groups, budget).map_err((e) => primitive(e, origin))?.unzigzag(budget).map_err(
+        (e) => primitive(e, origin),
+    )?.to_signed()
+    mut number = 0i128
+    match coefficient:
+        None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+        Some(value) => number = value
+    digits = decimal_digits(number)
+    if precision <= 0 or precision > 38 or scale < 0 or scale > precision or digits > precision or cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    return Ok(Value.Decimal(number, scale))
+
+
+def fixed_integer(data: bytes, signed: bool, origin: int) -> Result[IntegerValue, BinaryError]:
+    """Decode a fixed little-endian integer directly into its declared native carrier."""
+    if not valid_integer_width(len(data)):
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    mut raw: u128 = 0u128
+    for index in range(len(data) - 1, -1, -1):
+        raw = raw * 256u128 + int(data[index]).wrapping_resize[u128]()
+    if not signed:
+        return Ok(IntegerValue.Unsigned(raw))
+    bits = len(data) * 8
+    negative = data[len(data) - 1] >= 128u8
+    if not negative:
+        match raw.try_resize[i128]():
+            Some(value) => return Ok(IntegerValue.Signed(value))
+            None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+    if bits < 128:
+        modulus: u128 = 1u128 << bits
+        magnitude = modulus - raw
+        return Ok(IntegerValue.Signed(0i128 - magnitude.wrapping_resize[i128]()))
+    magnitude = 340282366920938463463374607431768211455u128 - raw + 1u128
+    if magnitude == 170141183460469231731687303715884105728u128:
+        return Ok(IntegerValue.Signed(-170141183460469231731687303715884105727i128 - 1i128))
+    match magnitude.try_resize[i128]():
+        Some(value) => return Ok(IntegerValue.Signed(0i128 - value))
+        None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+
+
+pub def typed_integer(
+    kind: ScalarKind,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[IntegerValue, BinaryError]:
+    """Decode one fixed-width integer into its native carrier without a Value allocation."""
+    match kind.integer_facts():
+        None => return Err(failure(BinaryFailure.InvalidCell, origin))
+        Some((signed, bits)) =>
+            if view.len() != bits // 8:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            return fixed_integer(copied(view, origin, budget)?, signed, origin)
+
+
+pub def typed_boolean(view: MappedView, origin: int, mut budget: Budget) -> Result[bool, BinaryError]:
+    """Decode one canonical boolean cell without constructing a schema-less Value."""
+    if view.len() != 1:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    mut cursor = EncodingCursor.create(view, origin)?
+    flag = cursor.byte(budget)?
+    if flag > 1:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    return Ok(flag == 1)
+
+
+pub def typed_text(view: MappedView, origin: int, mut budget: Budget) -> Result[str, BinaryError]:
+    """Decode one canonical UTF-8 string cell directly into its typed value."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    result = read_text(cursor, budget)?
+    if cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
+    return Ok(result)
+
+
+pub def typed_bytes(view: MappedView, origin: int, mut budget: Budget) -> Result[bytes, BinaryError]:
+    """Decode one framed byte string directly into its typed value."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    data = cursor.frame(budget)?
+    if cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
+    return copied(data, origin, budget)
+
+
+pub def typed_decimal(
+    precision: int,
+    scale: int,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[DecimalValue, BinaryError]:
+    """Decode an exact decimal cell into RFC 173's native typed carrier."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    groups = cursor.groups(budget)?
+    coefficient = WideInteger.from_base128(groups, budget).map_err((e) => primitive(e, origin))?.unzigzag(budget).map_err(
+        (e) => primitive(e, origin),
+    )?.to_signed()
+    number = match coefficient:
+        None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+        Some(value) => value
+    if (
+        precision <= 0
+        or precision > 38
+        or scale < 0
+        or scale > precision
+        or decimal_digits(number) > precision
+        or cursor.remaining() != 0
+    ):
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    return DecimalValue.new(
+        coefficient=number,
+        precision=precision.saturating_resize[u8](),
+        scale=scale.saturating_resize[u8](),
+    ).map_err((_) => failure(BinaryFailure.InvalidCell, origin))
+
+
+def decimal_digits(coefficient: i128) -> int:
+    """Count native decimal digits without formatting the coefficient."""
+    mut remaining: u128 = coefficient.wrapping_resize[u128]()
+    if coefficient < 0i128:
+        remaining = (0i128 - (coefficient + 1i128)).wrapping_resize[u128]() + 1u128
+    if remaining == 0u128:
+        return 1
+    mut digits = 0
+    while remaining > 0u128:
+        remaining = remaining // 10u128
+        digits += 1
+    return digits

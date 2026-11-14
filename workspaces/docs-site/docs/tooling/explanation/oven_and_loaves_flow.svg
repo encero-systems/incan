@@ -1,0 +1,160 @@
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ovenloaves-title ovenloaves-desc">
+<title id="ovenloaves-title">Oven and Loaves: from a project to its artifacts</title>
+<desc id="ovenloaves-desc">A project supplies source files, a loaf.toml manifest and path dependency projects. The installed toolchain supplies standard Loaves and compiled registry Loaves. Oven takes the project in, prepares its dependencies, and writes a unit description, which is the boundary to the compiler. Oven then checks the inputs observed at the last build: when nothing changed it reuses the executable, and when something changed the compiler checks the unit, lowers it to a native plan and compiles it with the pinned rustc. The results are an executable and path Loaf artifacts under the project's target directory.</desc>
+<defs>
+<style>
+.ovl-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
+.ovl-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
+.ovl-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.ovl-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.ovl-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.ovl-c{text-anchor:middle}
+.ovl-m{fill:#030304}
+.ovl-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.ovl-store{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
+.ovl-focal{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
+.ovl-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.ovl-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.ovl-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1}
+.ovl-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.ovl-d{stroke-dasharray:4 3}
+.ovl-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="ovenloaves-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#030304"/>
+
+<!-- Zones, painted first -->
+<rect class="ovl-zone" x="40" y="48" width="296" height="280" rx="8"/>
+<text class="ovl-t" x="52" y="68">PROJECT</text>
+<rect class="ovl-zone" x="40" y="368" width="296" height="200" rx="8"/>
+<text class="ovl-t" x="52" y="388">INSTALLED TOOLCHAIN</text>
+<rect class="ovl-zonea" x="432" y="48" width="296" height="600" rx="8"/>
+<text class="ovl-ta" x="444" y="68">OVEN</text>
+<rect class="ovl-zone" x="824" y="48" width="416" height="312" rx="8"/>
+<text class="ovl-t" x="836" y="68">COMPILER</text>
+<rect class="ovl-zone" x="824" y="416" width="416" height="152" rx="8"/>
+<text class="ovl-t" x="836" y="558">PROJECT TARGET DIRECTORY</text>
+
+<!-- Connectors, drawn before the nodes -->
+<path class="ovl-w" d="M312,108 H456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M312,196 H376 a8,8 0 0 0 8,-8 V132 a8,8 0 0 1 8,-8 H456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M312,276 H352 a8,8 0 0 0 8,-8 V220 a8,8 0 0 1 8,-8 H456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M312,436 H384 a8,8 0 0 0 8,-8 V236 a8,8 0 0 1 8,-8 H456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M312,516 H400 a8,8 0 0 0 8,-8 V252 a8,8 0 0 1 8,-8 H456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M580,144 V200" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M580,256 V312" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M580,376 V456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M704,472 H752 a8,8 0 0 0 8,-8 V124 a8,8 0 0 1 8,-8 H848" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w ovl-d" d="M704,496 H848" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M1032,144 V184" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M1032,240 V280" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M936,336 V456" marker-end="url(#ovenloaves-arrow)"/>
+<path class="ovl-w" d="M1128,336 V456" marker-end="url(#ovenloaves-arrow)"/>
+
+<!-- Connector labels, each masked and held clear of its stroke -->
+<rect class="ovl-m" x="770" y="294" width="48" height="12" rx="2"/>
+<text class="ovl-l" x="774" y="303">CHANGED</text>
+<rect class="ovl-m" x="780" y="476" width="60" height="12" rx="2"/>
+<text class="ovl-l ovl-c" x="810" y="485">UNCHANGED</text>
+<rect class="ovl-m" x="1044" y="156" width="48" height="12" rx="2"/>
+<text class="ovl-l" x="1048" y="165">BODY IR</text>
+<rect class="ovl-m" x="1044" y="252" width="68" height="12" rx="2"/>
+<text class="ovl-l" x="1048" y="261">NATIVE PLAN</text>
+<rect class="ovl-m" x="948" y="388" width="72" height="12" rx="2"/>
+<text class="ovl-l" x="952" y="397">MACHINE CODE</text>
+
+<!-- Project -->
+<rect class="ovl-m" x="64" y="88" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="64" y="88" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="188" y="114">Source files</text>
+<text class="ovl-s ovl-c" x="188" y="130">src/*.incn, tests/*.incn</text>
+
+<rect class="ovl-m" x="64" y="168" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="64" y="168" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="188" y="194">loaf.toml</text>
+<text class="ovl-s ovl-c" x="188" y="210">identity, dependencies, features</text>
+
+<rect class="ovl-m" x="64" y="248" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="64" y="248" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="188" y="274">Path dependency projects</text>
+<text class="ovl-s ovl-c" x="188" y="290">each with its own loaf.toml</text>
+
+<!-- Installed toolchain -->
+<rect class="ovl-m" x="64" y="408" width="248" height="56" rx="6"/>
+<rect class="ovl-store" x="64" y="408" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="188" y="434">Standard Loaves</text>
+<text class="ovl-s ovl-c" x="188" y="450">std.*, one set per profile</text>
+
+<rect class="ovl-m" x="64" y="488" width="248" height="56" rx="6"/>
+<rect class="ovl-store" x="64" y="488" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="188" y="514">Registry Loaves</text>
+<text class="ovl-s ovl-c" x="188" y="530">compiled Rust units, one producer graph</text>
+
+<!-- Oven -->
+<rect class="ovl-m" x="456" y="88" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="456" y="88" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="580" y="114">Project intake</text>
+<text class="ovl-s ovl-c" x="580" y="130">find the project, select features</text>
+
+<rect class="ovl-m" x="456" y="200" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="456" y="200" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="580" y="226">Dependency preparation</text>
+<text class="ovl-s ovl-c" x="580" y="242">path Loaves first, then consumers</text>
+
+<rect class="ovl-m" x="456" y="312" width="248" height="64" rx="6"/>
+<rect class="ovl-focal" x="456" y="312" width="248" height="64" rx="6"/>
+<text class="ovl-n ovl-c" x="580" y="342">Unit description</text>
+<text class="ovl-s ovl-c" x="580" y="358">the boundary to the compiler</text>
+
+<rect class="ovl-m" x="456" y="456" width="248" height="56" rx="6"/>
+<rect class="ovl-box" x="456" y="456" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="580" y="482">Reuse check</text>
+<text class="ovl-s ovl-c" x="580" y="498">inputs observed at the last build</text>
+
+<rect class="ovl-m" x="456" y="568" width="248" height="56" rx="6"/>
+<rect class="ovl-dim" x="456" y="568" width="248" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="580" y="594">Resident owner</text>
+<text class="ovl-s ovl-c" x="580" y="610">keeps preparation between requests</text>
+
+<!-- Compiler -->
+<rect class="ovl-m" x="848" y="88" width="368" height="56" rx="6"/>
+<rect class="ovl-box" x="848" y="88" width="368" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="1032" y="114">Checker</text>
+<text class="ovl-s ovl-c" x="1032" y="130">semantic facts, checked against each Loaf's contract</text>
+
+<rect class="ovl-m" x="848" y="184" width="368" height="56" rx="6"/>
+<rect class="ovl-box" x="848" y="184" width="368" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="1032" y="210">Incan lowering</text>
+<text class="ovl-s ovl-c" x="1032" y="226">reads the facts, builds the native plan</text>
+
+<rect class="ovl-m" x="848" y="280" width="368" height="56" rx="6"/>
+<rect class="ovl-box" x="848" y="280" width="368" height="56" rx="6"/>
+<text class="ovl-n ovl-c" x="1032" y="306">Driver and pinned rustc</text>
+<text class="ovl-s ovl-c" x="1032" y="322">adapts the plan to MIR, links the Loaves' native code</text>
+
+<!-- Project target directory -->
+<rect class="ovl-m" x="848" y="456" width="176" height="88" rx="6"/>
+<rect class="ovl-box" x="848" y="456" width="176" height="88" rx="6"/>
+<text class="ovl-n ovl-c" x="936" y="492">Executable</text>
+<text class="ovl-s ovl-c" x="936" y="508">target/incan/</text>
+<text class="ovl-s ovl-c" x="936" y="522">&lt;profile&gt;/bin/</text>
+
+<rect class="ovl-m" x="1040" y="456" width="176" height="88" rx="6"/>
+<rect class="ovl-store" x="1040" y="456" width="176" height="88" rx="6"/>
+<text class="ovl-n ovl-c" x="1128" y="492">Path Loaf artifacts</text>
+<text class="ovl-s ovl-c" x="1128" y="508">target/incan/loaves/</text>
+<text class="ovl-s ovl-c" x="1128" y="522">&lt;package&gt;/&lt;profile&gt;/</text>
+
+<!-- Legend -->
+<line class="ovl-rule" x1="40" y1="680" x2="1240" y2="680"/>
+<text class="ovl-t" x="40" y="700">LEGEND</text>
+<rect class="ovl-focal" x="112" y="692" width="16" height="12" rx="2"/>
+<text class="ovl-s" x="136" y="700">boundary between Oven and the compiler</text>
+<rect class="ovl-store" x="392" y="692" width="16" height="12" rx="2"/>
+<text class="ovl-s" x="416" y="700">Loaf: contract, retained bodies, native code</text>
+<rect class="ovl-dim" x="704" y="692" width="16" height="12" rx="2"/>
+<text class="ovl-s" x="728" y="700">kept in memory</text>
+<path class="ovl-w ovl-d" d="M864,696 H904"/>
+<text class="ovl-s" x="912" y="700">reuse, nothing compiled</text>
+</svg>

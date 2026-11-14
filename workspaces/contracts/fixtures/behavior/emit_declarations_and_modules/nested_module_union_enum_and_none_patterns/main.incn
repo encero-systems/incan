@@ -1,0 +1,33 @@
+# behavior: match arms over a nested-module union, Option, and module-qualified unit and payload variants each select the right arm (#2713)
+# expect-stdout:
+#   int 1 circle some 3
+#   str two square none
+#   little
+#   approved 7
+#   rejected no
+
+import patterns
+from std import io
+from api.shapes import Shape, describe
+
+
+def endian_name(order: io.Endian) -> str:
+    """Name a standard-library unit variant through its module path."""
+    match order:
+        io.Endian.Little => return "little"
+        _ => return "big"
+
+
+def decision_name(decision: patterns.Decision) -> str:
+    """Read each payload through the enum's full module-qualified path."""
+    match decision:
+        patterns.Decision.Approved(code) => return f"approved {code}"
+        patterns.Decision.Rejected(reason) => return f"rejected {reason}"
+
+
+def main() -> None:
+    println(describe(1, Shape.Circle, Some(3)))
+    println(describe("two", Shape.Square, None))
+    println(endian_name(io.Endian.Little))
+    println(decision_name(patterns.Decision.Approved(7)))
+    println(decision_name(patterns.Decision.Rejected("no")))

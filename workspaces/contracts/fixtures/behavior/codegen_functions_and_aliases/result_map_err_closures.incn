@@ -1,0 +1,173 @@
+# behavior: map_err callbacks see concrete errors and borrow immediate read-only captures while preserving laziness and stored snapshots (#2831).
+# expect-stdout:
+#   ok:7
+#   err:disk full
+#   err:malformed
+#   err:wire:bad
+
+pub model Failure:
+    pub detail: str
+
+    pub def message(self) -> str:
+        return self.detail
+
+
+pub def describe(result: Result[int, Failure]) -> Result[int, str]:
+    return result.map_err((error) => error.message())
+
+
+pub def normalize(result: Result[int, int]) -> Result[int, str]:
+    return result.map_err((_error) => "malformed")
+
+
+def show(result: Result[int, str]) -> str:
+    match result:
+        Ok(value) => return f"ok:{value}"
+        Err(message) => return f"err:{message}"
+
+
+def main() -> None:
+    """Print scalar, model and collection error mappings in order."""
+    println(show(describe(Ok(7))))
+    println(show(describe(Err(Failure(detail="disk full")))))
+    println(show(normalize(Err(1))))
+    messages: Result[int, list[str]] = Err(["wire", "bad"])
+    println(show(messages.map_err(describe_messages)))
+    immediate_capture_controls()
+
+
+def describe_messages(messages: list[str]) -> str:
+    """Borrow a collection payload while constructing its replacement error."""
+    return messages[0] + ":" + messages[1]
+
+
+class Cursor:
+    pub items: list[int]
+    pub index: int = 0
+
+    pub def peek(self) -> int:
+        return self.items[self.index]
+
+    pub def take(mut self) -> int:
+        value = self.items[self.index]
+        self.index += 1
+        return value
+
+
+model Shape:
+    pub identity: str
+    pub metadata: list[str]
+
+
+model Field:
+    pub shape: Shape
+
+
+def parse_one(mut cursor: Cursor, outcome: Result[int, str]) -> Result[int, str]:
+    """The callback observes caller storage only on error; a later operation may still change that storage."""
+    outcome.map_err((error) => f"{error} at {cursor.peek()}")?
+    return Ok(cursor.take())
+
+
+def read_fields(fields: list[Field], outcome: Result[int, str]) -> Result[int, str]:
+    """Attach a nested field's identity to a decoding failure, as the row reader does."""
+    for field in fields:
+        value = outcome.map_err((error) => in_field(error, field.shape.identity))?
+        assert value >= 0
+    return Ok(len(fields))
+
+
+def in_field(error: str, identity: str) -> str:
+    return f"{identity}: {error}"
+
+
+def ignore_success(cursor: Cursor, outcome: Result[int, str]) -> Result[int, str]:
+    """An empty cursor is safe on success because the callback must not run or pre-read its index."""
+    return outcome.map_err((error) => f"{error} at {cursor.peek()}")
+
+
+def invoke(callback: (str) -> str) -> str:
+    """A user function may call its callback repeatedly but cannot retain it."""
+    first = callback("invalid")
+    assert first == callback("invalid")
+    return first
+
+
+class Runner:
+    pub def map_err(self, callback: (str) -> str) -> str:
+        """The name grants no built-in behavior; this method has its own checked callback contract."""
+        return callback("invalid")
+
+
+def observe(value: int, field: Field) -> None:
+    assert value == len(field.shape.metadata)
+
+
+def result_families(field: Field) -> None:
+    """All six synchronous Result callback slots share the read-only capture rule."""
+    success: Result[int, int] = Ok(1)
+    failure: Result[int, int] = Err(1)
+    assert success.map((value) => value + len(field.shape.metadata)) == Ok(2)
+    assert failure.map_err((value) => value + len(field.shape.metadata)) == Err(2)
+    assert success.and_then((value) => Ok(value + len(field.shape.metadata))) == Ok(2)
+    assert failure.or_else((value) => Ok(value + len(field.shape.metadata))) == Ok(2)
+    assert success.inspect((value) => observe(value, field)) == Ok(1)
+    assert failure.inspect_err((value) => observe(value, field)) == Err(1)
+
+
+def advance(mut cursor: Cursor, callback: () -> int) -> int:
+    """An overlapping exclusive argument prevents capture lending; the callback keeps its original snapshot."""
+    cursor.take()
+    return callback()
+
+
+def with_value(callback: () -> int, value: int) -> int:
+    """Evaluate the callback only after both caller arguments have been evaluated."""
+    return callback() + value
+
+
+def store_identity(identity: str) -> list[str]:
+    return [identity]
+
+
+def replace_message(error: str, identity: str) -> str:
+    """This callee stores its input, so a captured field cannot rely on an optimistic shared-call hypothesis."""
+    stored = store_identity(identity)
+    return f"{error}:{len(stored)}"
+
+
+def consuming_field(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => replace_message(error, field.shape.identity))
+
+
+def immediate_capture_controls() -> None:
+    """Keep error messages, post-call writes, lazy success and separately stored closure snapshots observable."""
+    mut cursor = Cursor(items=[11, 23])
+    assert parse_one(cursor, Ok(1)) == Ok(11)
+    assert cursor.index == 1
+    assert parse_one(cursor, Err("limit")) == Err("limit at 23")
+    assert cursor.index == 1
+    assert parse_one(cursor, Ok(1)) == Ok(23)
+    assert cursor.index == 2
+    assert ignore_success(Cursor(items=[]), Ok(9)) == Ok(9)
+    fields = [Field(shape=Shape(identity="address", metadata=["not part of the message"]))]
+    assert read_fields(fields, Ok(1)) == Ok(1)
+    assert read_fields(fields, Err("invalid")) == Err("address: invalid")
+    field = fields[0]
+    assert consuming_field(field, Err("invalid")) == Err("invalid:1")
+    assert invoke((error) => in_field(error, field.shape.identity)) == "address: invalid"
+    assert invoke(callback=(error) => in_field(error, field.shape.identity)) == "address: invalid"
+    runner = Runner()
+    assert runner.map_err((error) => in_field(error, field.shape.identity)) == "address: invalid"
+    result_families(field)
+    mut overlapping = Cursor(items=[53, 59])
+    assert advance(overlapping, () => overlapping.peek()) == 53
+    assert overlapping.peek() == 59
+    mut ordered = Cursor(items=[61, 67])
+    assert with_value(() => ordered.peek(), ordered.take()) == 122
+    assert ordered.peek() == 67
+    mut original = Cursor(items=[31, 47])
+    saved = () => original.peek()
+    original.index = 1
+    assert saved() == 31
+    assert original.peek() == 47

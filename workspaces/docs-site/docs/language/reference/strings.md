@@ -53,12 +53,17 @@ Escape sequences:
 | `\r` | U+000D | 0x0D |
 | `\\` | `\` | 0x5C |
 | `\"` or `\'`, the literal's own quote | The quote | The quote's byte |
+| `\u{H}` through `\u{HHHHHH}` | The Unicode scalar whose value is the one to six hexadecimal digits | Not an escape |
 | `\0` | Not an escape | 0x00 |
 | `\xNN` | Not an escape | The byte with hexadecimal value `NN` |
 
-A backslash followed by any other character is not an escape: the value holds the backslash and the character.
+A Unicode scalar escape accepts uppercase or lowercase hexadecimal digits and must name a scalar from U+0000 through U+10FFFF other than the surrogate range U+D800 through U+DFFF. It is available in ordinary strings, f-string literal parts and docstrings. A malformed scalar escape is refused with `INCAN-P0102`.
+
+A backslash followed by any other character is not an escape: the value holds the backslash and the character. In particular, `\u` without an opening `{` is ordinary text.
 
 Refused (`INCAN-P0001`): a line break inside a `"…"` or `'…'` string, an f-string or a `bytes` literal; a literal without its closing quote; a non-ASCII character in a `bytes` literal; a `\x` in a `bytes` literal that is not followed by two hexadecimal digits; a `}` in an f-string that neither closes an `{expr}` nor is part of `}}`.
+
+See [Source security](source_security.md) for the controls that must be written with a visible scalar escape rather than copied literally into source.
 
 ## Indexing and slicing
 
@@ -91,6 +96,8 @@ Refused (`INCAN-T0001`): an index or slice part that is not an `int`, and an ass
 | `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is refused (`INCAN-T0001`); a run-time label naming another codec raises `ValueError`. |
 
 Each method takes its arguments by position; `encoding` may also be passed by name: `s.encode(encoding="utf-8")`. Refused (`INCAN-T0001`): any other named argument, and an unpacked argument, on a `str` or `FrozenStr` receiver.
+
+`encode` evaluates and validates its encoding label before evaluating the receiver. An invalid run-time label raises `ValueError` without evaluating the receiver.
 
 ```incan
 def main() -> None:
@@ -133,6 +140,8 @@ def main() -> None:
 
 `encoding` and `errors` may be passed by position or by name.
 
+`decode` evaluates and validates the encoding label first, then the error policy, then the receiver, regardless of the written order of named arguments. Each expression runs once. A rejected encoding skips the policy and receiver; a rejected policy skips the receiver. These rules also apply to `FrozenBytes`.
+
 ## F-strings
 
 An f-string interpolates any expression between `{` and `}`; the value is formatted through `Display`. The only supported format spec is `?`, which selects `Debug`. Any other format spec is refused with `INCAN-T0001`.
@@ -140,7 +149,7 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 | Spec | Formatting |
 | --- | --- |
 | `{value}` | The value's display text (see [Display](#display)) |
-| `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
+| `{value:?}` | `Debug`: the value's structure, for example `Point(x=10, y=20)` |
 
 Refused in a `{value:?}` part (`INCAN-T0103`): a `Generator`, a function, and a value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
 
@@ -171,7 +180,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 | A `model`, `class`, `enum` or `newtype` that defines `__str__`, inherits it from a class it extends, or takes it from an adopted trait such as `Display` (`with Display`) | What `__str__` returns |
 | A `model`, `class`, `enum` or `newtype` that takes `Display` from a Rust derive macro named `Display`, written in `@rust.derive(...)` or imported from a Rust crate and named in `@derive(...)` | The text that derive writes |
 | An enum that declares values | The variant's value |
-| A `model`, `class`, `enum` or `newtype` that derives `Display` | Its `{value:?}` structure: `Point { x: 1, y: 2 }` |
+| A `model`, `class`, `enum` or `newtype` that derives `Display` | Its `{value:?}` structure: `Point(x=1, y=2)` |
 | A type that adopts `Error` and has no `Display` by the rows above | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
 | A value of a type parameter bounded by `Display`, by `Error`, or by a trait that declares `__str__` | The display text of the type argument's value |
 | Tuple | `(10, 20)` |
@@ -182,7 +191,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `Result` | `Ok(2)` or `Err("bad")` |
 | `FrozenList`, `FrozenSet`, `FrozenDict` | As `list`, `set` and `dict`: `[1, 2, 3]`, `{1, 2}`, `{"a": 1}` |
 
-- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), an enum value shows its variant (`[Red]`), and a union value shows its member's structure. The entry order of a set or a dict is unspecified.
+- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point(x=1, y=2)]`), an enum value shows its variant (`[Red]`), and a union value shows its member's structure. The entry order of a set or a dict is unspecified.
 - A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`); the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`); positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), and outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`); the non-finite values are `inf`, `-inf` and `nan`.
 - An `f32` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`). An `f64` is a `float` and displays as one.
 
@@ -223,7 +232,7 @@ def main() -> None:
 | --- | --- |
 | `print(items)`, `str(items)`, `f"{items}"` | `[1, 2, 3]` |
 | `f"{Level.WARN}"` | `warn` |
-| `f"{point:?}"` | `Point { x: 1, y: 2 }` |
+| `f"{point:?}"` | `Point(x=1, y=2)` |
 
 ### `Display` bounds
 

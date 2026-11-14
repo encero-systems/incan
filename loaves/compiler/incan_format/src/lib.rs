@@ -116,7 +116,7 @@ pub fn format_parsed_source_with_config(
     ast: &Program,
     config: FormatConfig,
 ) -> Result<String, FormatError> {
-    let formatter = Formatter::new(config);
+    let formatter = Formatter::new(config).with_source(source);
     let formatted = reattach_comments(source, &formatter.format(ast));
 
     // Safety guard: never allow the formatter to silently drop comments.

@@ -41,7 +41,7 @@ A page under a `reference/` directory states the public contract and nothing els
 - **Where the implementation reaches.** Lists such as "applies to the same module, imported source modules, the standard library and compiled libraries" describe coverage, not a rule. State the rule; if something is outside it, that is a limitation to fix or to state once as a rule, not an inventory.
 - **Implementation gaps phrased as rules.** "Is not judged by this rule", "is not checked yet", "a trait's default body is not judged" expose the checker's current reach. Remove them or turn them into a stated contract.
 - **Compiler-internal vocabulary.** Columns, pattern matrix, facts, projections, recorded identities, passes, lowering, the emitter. A reader of the language contract never meets these.
-- **Mechanics.** How the compiler arrives at a result: how bounds are inferred ("bounds another method of the same model put there", "receives those bounds in the same way…"), how a diagnostic is formatted ("spelled with wildcard payloads…"), what the generated Rust looks like.
+- **Mechanics.** How the compiler arrives at a result: how bounds are inferred ("bounds another method of the same model put there", "receives those bounds in the same way…"), how a diagnostic is formatted ("spelled with wildcard payloads…"), what the native code looks like.
 - **Example comments that narrate.** A comment on a reference example says accepted or refused and, if needed, the contract reason in a few words (`# refused: T does not declare Clone`). It does not explain the mechanism (`# U receives Display (from show) and Clone`) or walk through an evaluation (`# ("b", "a") is "other": the first alternative binds x`); that walkthrough belongs on the explanation page. Every annotation must hold: check each accepted or refused example against the implementation or a test, down to the modifiers it depends on (a field without `pub` is private).
 - **Advice and rationale.** "Write X instead", "use Y when", "prefer", "because…", "so that…".
 - **Comparisons.** With Python, Rust or any other language ("as Python spells it", "like Rust's `Display`").
@@ -53,13 +53,13 @@ Two rules apply to every change that touches a reference page, and each break is
 - **Move, don't delete.** A true sentence taken off a reference page moves, in the same change, to the page it belongs on: advice and task steps to the matching how-to, rationale and mechanics to the matching explanation. Check every removed line of the diff for a new home.
 - **The whole page.** A change that touches a reference page brings the whole page to contract, not only the changed lines. Read the page end to end, not the diff.
 
-`make reference-contract-check` (part of `make pre-commit-fast` and CI) catches the lexical part of the list above on every reference page a change touches; it cannot judge meaning, so this review still reads each page.
+`incan run scripts/check_reference_contract.incn` catches the lexical part of the list above on every reference page a change touches; it is a separate Makefile target, not part of `make pre-commit`. It cannot judge meaning, so this review still reads each page.
 
 ## Workflow
 
 1. Review the touched user-facing `.md` files, CLI help surfaces, examples, and scaffolds assigned by the orchestrator.
    Identify each page's Divio intent using the repository's `AGENTS.md` docs rules: tutorial, how-to, reference, or explanation. Check the content against that intent, not just its directory. For a reference, compare its inventory against the relevant public source surface and verify signatures, parameters, returns, defaults, errors, constraints, and lookup structure. A walkthrough or overview under `reference/` is a finding even when every sentence is true and MkDocs passes. Then read every changed sentence of a reference page against *Reference pages state the contract only* below: completeness and truth are necessary but not enough. Small illustrative examples are allowed; do not require four separate pages for every feature.
-2. Check actual implementation against the docs. Prefer the current code and current tests over optimistic prose, stale assumptions, or superseded branch history.
+2. Check actual implementation against the docs. Prefer the current code and current tests over optimistic prose, stale assumptions, or superseded branch history. Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep. Check named commands against the Makefile and `workspaces/oven/src/main.incn`; Oven owns builds and execution, and Cargo commands are not supported.
 3. RFC text is still canonical, but if the current branch deliberately diverges and the divergence is explicitly documented with a coherent reason, report that as a documented deviation rather than blindly calling it fiction.
 4. Flag:
    - mixed or incorrect Divio intent, including task recipes or implementation narratives replacing API reference material
@@ -70,6 +70,8 @@ Two rules apply to every change that touches a reference page, and each break is
    - short-prosed or mechanically chopped markdown
    - stale release-note inventory for implemented user-facing work
 5. If behavior is out of scope, prefer correcting the docs rather than inventing implementation in the report.
+6. If design records are touched, check that they state decisions, boundaries, consequences, and non-goals in under about 1,000 words. Change a record only when a decision changes, in a sentence or two; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
+7. Verify behavior claims with the smallest relevant contract selector from `workspaces/contracts/README.md`; affected whole families run at commit points. Use `make docs` for docs-site changes and `incan run scripts/check_reference_contract.incn` for reference pages. The fast local gate is `make pre-commit` (formatting, spelling, rustdoc, and skill-table checks); it does not run contracts or build docs.
 
 ## Slice report shape
 

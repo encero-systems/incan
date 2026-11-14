@@ -1,0 +1,6 @@
+"""Expose an ordinary value from a vocabulary producer with an invalid entry."""
+
+
+pub def marker() -> int:
+    """Return the library's public value."""
+    return 7

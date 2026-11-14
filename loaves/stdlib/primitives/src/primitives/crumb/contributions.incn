@@ -1,0 +1,133 @@
+"""Stream the shared logical V contribution after original-value admission."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_integer, encode_native_signed
+from crate.primitives.crumb.hash_stream import HashOutput
+from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
+from crate.primitives.crumb.native_numbers import normalize_decimal
+from crate.primitives.crumb.scalars import float64_bits
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.ordering import absence_depth, fields_in_order, order_values, order_entries
+
+
+pub def emit(
+    value: Value,
+    projection: Projection,
+    mut output: HashOutput,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Balance recursive depth on every error; a caller exposes the digest only after complete success."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = emit_inner(value, projection, output, budget)
+    budget.leave()?
+    return result
+
+
+def emit_inner(
+    value: Value,
+    projection: Projection,
+    mut output: HashOutput,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Tags and framing belong to the value profile, independently of any row codec or storage width."""
+    match value:
+        Value.NoneValue | Value.Some(_) =>
+            if let Some(depth) = absence_depth(value, budget)?:
+                output.write(b"\x00", budget)?
+                return output.unsigned(depth, budget)
+            if let Value.Some(items) = value:
+                return emit(items[0], projection, output, budget)
+        Value.Boolean(flag) =>
+            if flag:
+                return output.write(b"\x01\x01", budget)
+            return output.write(b"\x01\x00", budget)
+        Value.Integer(number) =>
+            output.write(b"\x02", budget)?
+            return output.write(encode_integer(number, budget)?, budget)
+        Value.Float(width, bits) =>
+            output.write(b"\x03", budget)?
+            return output.write(float64_bits(width, bits, budget)?, budget)
+        Value.Decimal(coefficient, scale) =>
+            normalized = normalize_decimal(coefficient, scale)?
+            output.write(b"\x04", budget)?
+            output.write(encode_native_signed(normalized.coefficient, budget)?, budget)?
+            return output.write(encode_native_signed(normalized.scale.wrapping_resize[i128](), budget)?, budget)
+        Value.Text(text) =>
+            output.write(b"\x05", budget)?
+            return output.text(text, budget)
+        Value.Binary(data) =>
+            output.write(b"\x06", budget)?
+            return output.framed(data, budget)
+        Value.Withheld => return output.write(b"\x07", budget)
+        Value.List(items) =>
+            output.write(b"\x08", budget)?
+            return sequence(items, projection, output, budget)
+        Value.Tuple(items) =>
+            output.write(b"\x09", budget)?
+            return sequence(items, projection, output, budget)
+        Value.Set(items) =>
+            output.write(b"\x0a", budget)?
+            output.unsigned(len(items), budget)?
+            for index in order_values(items, projection, budget)?:
+                emit(items[index], projection, output, budget)?
+        Value.Map(entries) => return emit_map(entries, projection, output, budget)
+        Value.Record(fields) => return emit_record(fields, projection, output, budget)
+        Value.Enum(identity, fields) =>
+            output.write(b"\x0d", budget)?
+            output.write(identity, budget)?
+            return emit_record(fields, projection, output, budget)
+        Value.Union(member, items) =>
+            output.write(b"\x0e", budget)?
+            output.text(selector_spelling(member, budget)?, budget)?
+            return emit(items[0], projection, output, budget)
+        Value.Reference(target, identity) =>
+            output.write(b"\x0f", budget)?
+            output.framed(target, budget)?
+            return output.framed(identity, budget)
+    return Ok(None)
+
+
+def sequence(
+    items: list[Value],
+    projection: Projection,
+    mut output: HashOutput,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Sequence order and multiplicity are significant; counts describe elements, not encoded bytes."""
+    output.unsigned(len(items), budget)?
+    for item in items:
+        emit(item, projection, output, budget)?
+    return Ok(None)
+
+
+def emit_map(
+    entries: list[MapEntry],
+    projection: Projection,
+    mut output: HashOutput,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Keep every admitted object entry even when several keys project to the same canonical value."""
+    output.write(b"\x0b", budget)?
+    output.unsigned(len(entries), budget)?
+    for index in order_entries(entries, projection, budget)?:
+        emit(entries[index].key, projection, output, budget)?
+        emit(entries[index].value, projection, output, budget)?
+    return Ok(None)
+
+
+def emit_record(
+    fields: list[ValueField],
+    projection: Projection,
+    mut output: HashOutput,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Projection chooses fields before their identity-ordered contributions are emitted."""
+    indices = fields_in_order(fields, projection, budget)?
+    output.write(b"\x0c", budget)?
+    output.unsigned(len(indices), budget)?
+    for index in indices:
+        output.write(fields[index].identity, budget)?
+        emit(fields[index].value, projection, output, budget)?
+    return Ok(None)

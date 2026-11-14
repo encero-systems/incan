@@ -1,0 +1,48 @@
+"""Precise current-process environment observations without defaults or conversion policy."""
+
+from rust::std::env import VarError, var as env_var
+from rust::std::string import String as RustString
+
+
+pub enum EnvironErrorKind(str):
+    """
+    Stable categories for environment read failures.
+
+    `Missing` reports an absent key, `InvalidKey` reports a key rejected before host lookup, `InvalidValue` reports a
+    typed conversion failure, `NotUnicode` reports a host value that cannot be represented as text, and `Other`
+    preserves forward compatibility with an unknown host category.
+    """
+
+    Missing = "missing"
+    InvalidKey = "invalid_key"
+    InvalidValue = "invalid_value"
+    NotUnicode = "not_unicode"
+    Other = "other"
+
+    pub def as_str(self) -> str:
+        """
+        Return the stable lowercase category spelling.
+
+        Returns:
+            One of `missing`, `invalid_key`, `invalid_value`, `not_unicode`, or `other`.
+        """
+        return self.value()
+
+
+pub def read(key: str) -> Result[str, EnvironErrorKind]:
+    """
+    Read a raw current-process environment value through direct Rust interop.
+
+    Returns:
+        `Ok(value)` for a present Unicode value, or `Err(kind)` with a stable `EnvironErrorKind`.
+        The non-Unicode error payload is discarded without being formatted, so observed environment values never
+        appear in an error. `EnvironErrorKind.Other` remains reserved for future host mappings.
+    """
+    # Inspect the actual UTF-8 bytes; text escape spelling must not determine key validity.
+    if len(key) == 0 or key.contains("=") or RustString.as_bytes(key).contains(0u8):
+        return Err(EnvironErrorKind.InvalidKey)
+
+    match env_var(key):
+        Ok(value) => return Ok(value)
+        Err(VarError.NotPresent) => return Err(EnvironErrorKind.Missing)
+        Err(VarError.NotUnicode(_)) => return Err(EnvironErrorKind.NotUnicode)

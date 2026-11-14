@@ -7,8 +7,8 @@ This tutorial is a lightweight, CI-friendly walkthrough for “step-based” aut
     <div><dt>Reader</dt><dd>Automation or pipeline developer</dd></div>
     <div><dt>Prerequisites</dt><dd>Getting Started and basic Result handling</dd></div>
     <div><dt>Time</dt><dd>15–20 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code>; run and tests exercised with the 0.5 release envelope</dd></div>
-    <div><dt>Status</dt><dd>Release-envelope executable</dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A deterministic typed workflow step</dd></div>
     <div><dt>Artifacts</dt><dd>Runnable step and focused tests</dd></div>
   </dl>
@@ -43,7 +43,6 @@ Create `loaf.toml`:
 [project]
 name = "pipeline_step"
 version = "0.1.0"
-requires-incan = ">=0.5.0-0,<0.6.0"
 
 [project.scripts]
 main = "src/pipeline_step.incn"
@@ -76,7 +75,7 @@ def main() -> None:
 ## Step 2: Run it
 
 ```bash
-incan run
+incan run src/pipeline_step.incn
 ```
 
 --8<-- "_snippets/callouts/no_install_fallback.md"
@@ -99,7 +98,7 @@ def test_normalize_name_err() -> None:
 Run:
 
 ```bash
-incan test
+incan test tests/test_pipeline_step.incn
 ```
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">

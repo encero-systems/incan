@@ -9,6 +9,7 @@ interchangeable.
 """
 
 from std.encoding._shared import EncodingError, _encoding_error
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _CHARSET: str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 const _GENERATOR: FrozenList[int] = [996825010, 642813549, 513874426, 1027748829, 705979059]
@@ -17,9 +18,8 @@ const _BECH32M_CONST: int = 734539939
 const _ASCII_PRINTABLE: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 const _ASCII_UPPER: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const _ASCII_LOWER: str = "abcdefghijklmnopqrstuvwxyz"
-
-
 # Public types
+
 
 pub enum Bech32Variant:
     """
@@ -62,9 +62,7 @@ pub def bech32_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
 
 
 pub def encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
-    """
-    Alias `bech32_encode` as the module's default encoder.
-    """
+    """Alias `bech32_encode` as the module's default encoder."""
     return bech32_encode(hrp, data)
 
 
@@ -135,8 +133,9 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
     _validate_hrp(hrp)?
 
     mut values: list[int] = []
-    for index in range(separator + 1, len(normalized)):
-        values.append(_charset_value(normalized[index:index + 1], index)?)
+    encoded = _encode_utf8(normalized)
+    for index in range(separator + 1, len(encoded)):
+        values.append(_charset_value_byte(int(encoded[index]), index)?)
 
     # Polymod over HRP expansion plus payload+checksum tells us which checksum constant was used.
     check = _polymod(_hrp_expand(hrp) + values)
@@ -149,9 +148,7 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
 
 
 def _checksum_variant(check: int, position: int) -> Result[Bech32Variant, EncodingError]:
-    """
-    Return the Bech32 checksum family indicated by one polymod result.
-    """
+    """Return the Bech32 checksum family indicated by one polymod result."""
     if check == _BECH32_CONST:
         return Ok(Bech32Variant.Bech32)
     if check == _BECH32M_CONST:
@@ -159,7 +156,12 @@ def _checksum_variant(check: int, position: int) -> Result[Bech32Variant, Encodi
     return Err(_error("invalid_checksum", "bech32 checksum does not match Bech32 or Bech32m", position))
 
 
-pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = true) -> Result[list[int], EncodingError]:
+pub def convertbits(
+    data: list[int],
+    from_bits: int,
+    to_bits: int,
+    pad: bool = true,
+) -> Result[list[int], EncodingError]:
     """
     Regroup integer bit fields between source and target widths.
 
@@ -283,27 +285,22 @@ def _polymod(values: list[int]) -> int:
     return chk
 
 
-def _charset_value(ch: str, position: int) -> Result[int, EncodingError]:
-    """
-    Map one Bech32 data character to its five-bit value.
-    """
-    for index, character in enumerate(_CHARSET):
-        if character == ch:
+def _charset_value_byte(code: int, position: int) -> Result[int, EncodingError]:
+    """Map one Bech32 data character to its five-bit value."""
+    charset = _encode_utf8(_CHARSET)
+    for index in range(len(charset)):
+        if int(charset[index]) == code:
             return Ok(index)
     return Err(_error("invalid_character", "character is not in the bech32 alphabet", position))
 
 
 def _charset_char(index: int) -> str:
-    """
-    Return one character from the Bech32 data alphabet.
-    """
+    """Return one character from the Bech32 data alphabet."""
     return _CHARSET[index:index + 1]
 
 
 def _last_separator(value: str) -> int:
-    """
-    Return the last separator index, or `-1` if the text has no separator.
-    """
+    """Return the last separator index, or `-1` if the text has no separator."""
     mut out = -1
     for index, ch in enumerate(value):
         if ch == "1":
@@ -312,9 +309,7 @@ def _last_separator(value: str) -> int:
 
 
 def _validate_hrp(hrp: str) -> Result[None, EncodingError]:
-    """
-    Validate that a human-readable prefix only uses printable ASCII 33..126.
-    """
+    """Validate that a human-readable prefix only uses printable ASCII 33..126."""
     for index, ch in enumerate(hrp):
         code = _ord_printable(ch)
         if code < 33 or code > 126:
@@ -323,9 +318,7 @@ def _validate_hrp(hrp: str) -> Result[None, EncodingError]:
 
 
 def _ord_printable(ch: str) -> int:
-    """
-    Return the ASCII code for one printable character, or zero when it is not printable ASCII.
-    """
+    """Return the ASCII code for one printable character, or zero when it is not printable ASCII."""
     for index, character in enumerate(_ASCII_PRINTABLE):
         if character == ch:
             return index + 32
@@ -333,9 +326,7 @@ def _ord_printable(ch: str) -> int:
 
 
 def _has_consistent_case(value: str) -> bool:
-    """
-    Return whether text is all-lowercase, all-uppercase, or has no letters.
-    """
+    """Return whether text is all-lowercase, all-uppercase, or has no letters."""
     mut saw_lower = false
     mut saw_upper = false
     for ch in value:
@@ -349,93 +340,31 @@ def _has_consistent_case(value: str) -> bool:
     return true
 
 
-def _lower_ascii(value: str) -> str:
-    """
-    Lowercase ASCII letters while leaving all other characters unchanged.
-    """
-    mut out = ""
-    for ch in value:
-        out += _lower_char(ch)
-    return out
+def _lower_ascii(value: &str) -> str:
+    """Lowercase ASCII letters while leaving all other characters unchanged."""
+    mut out: list[u8] = []
+    for code in _encode_utf8(value):
+        mut lowered = code
+        if code >= 65 and code <= 90:
+            lowered = code + 32
+        byte: u8 = lowered.wrapping_resize()
+        out.append(byte)
+    _, lowered_text = _decode_utf8(out, false)
+    return lowered_text
 
 
 def _is_lower_ascii(ch: str) -> bool:
-    """
-    Return whether `ch` is an ASCII lowercase letter.
-    """
+    """Return whether `ch` is an ASCII lowercase letter."""
     return _index_of(_ASCII_LOWER, ch) >= 0
 
 
 def _is_upper_ascii(ch: str) -> bool:
-    """
-    Return whether `ch` is an ASCII uppercase letter.
-    """
+    """Return whether `ch` is an ASCII uppercase letter."""
     return _index_of(_ASCII_UPPER, ch) >= 0
 
 
-def _lower_char(ch: str) -> str:
-    """
-    Lowercase one ASCII letter.
-    """
-    if ch == "A":
-        return "a"
-    elif ch == "B":
-        return "b"
-    elif ch == "C":
-        return "c"
-    elif ch == "D":
-        return "d"
-    elif ch == "E":
-        return "e"
-    elif ch == "F":
-        return "f"
-    elif ch == "G":
-        return "g"
-    elif ch == "H":
-        return "h"
-    elif ch == "I":
-        return "i"
-    elif ch == "J":
-        return "j"
-    elif ch == "K":
-        return "k"
-    elif ch == "L":
-        return "l"
-    elif ch == "M":
-        return "m"
-    elif ch == "N":
-        return "n"
-    elif ch == "O":
-        return "o"
-    elif ch == "P":
-        return "p"
-    elif ch == "Q":
-        return "q"
-    elif ch == "R":
-        return "r"
-    elif ch == "S":
-        return "s"
-    elif ch == "T":
-        return "t"
-    elif ch == "U":
-        return "u"
-    elif ch == "V":
-        return "v"
-    elif ch == "W":
-        return "w"
-    elif ch == "X":
-        return "x"
-    elif ch == "Y":
-        return "y"
-    elif ch == "Z":
-        return "z"
-    return ch
-
-
 def _index_of(haystack: str, needle: str) -> int:
-    """
-    Return the first index of a one-character needle, or `-1` if absent.
-    """
+    """Return the first index of a one-character needle, or `-1` if absent."""
     for index, ch in enumerate(haystack):
         if ch == needle:
             return index
@@ -443,14 +372,10 @@ def _index_of(haystack: str, needle: str) -> int:
 
 
 def _pow2(exp: int) -> int:
-    """
-    Return two raised to a non-negative integer exponent.
-    """
+    """Return two raised to a non-negative integer exponent."""
     return 1 << exp
 
 
 def _error(kind: str, detail: str, position: int) -> EncodingError:
-    """
-    Build a Bech32 error with the module's codec name.
-    """
+    """Build a Bech32 error with the module's codec name."""
     return _encoding_error("bech32", kind, detail, position)

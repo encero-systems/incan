@@ -1,0 +1,3 @@
+"""Publish the API while leaving its validated argument type in its declaring module."""
+
+pub from api import fraction_of

@@ -1,0 +1,55 @@
+"""Host resource readings used by the build engine and its evidence programs."""
+
+from rust::incan_platform_clock import (
+    current_process_footprint as native_current_footprint,
+    current_process_live_allocated as native_current_live_allocated,
+    process_table_text,
+)
+
+
+pub model ProcessResource:
+    """One live process's identity and kernel memory readings at one observation."""
+
+    pub pid: int
+    pub parent: int
+    pub footprint: int
+    pub lifetime_peak: int
+    pub resident: int
+    pub name: str
+
+
+pub def current_footprint() -> Result[int, str]:
+    """This process's current physical footprint in bytes, or the platform probe's refusal."""
+    return native_current_footprint().map((value) => int(value)).map_err((error) => str(error))
+
+
+pub def current_live_allocated() -> Result[int, str]:
+    """Bytes currently attributed to live allocations, excluding pages retained by the allocator after free."""
+    return native_current_live_allocated().map((value) => int(value)).map_err((error) => str(error))
+
+
+pub def process_table() -> Result[list[ProcessResource], str]:
+    """Every live process owned by this user, with parent identity and current and lifetime memory readings."""
+    return process_table_text().map_err((error) => str(error)).map(parse_process_table)
+
+
+pub def parse_process_table(text: str) -> list[ProcessResource]:
+    """Parse the platform adapter's bounded tab-separated process rows, skipping incomplete records."""
+    mut processes: list[ProcessResource] = []
+    for line in text.split("\n"):
+        if line == "":
+            continue
+        fields = line.split("\t")
+        if len(fields) < 6:
+            continue
+        processes.append(
+            ProcessResource(
+                pid=int(fields[0]),
+                parent=int(fields[1]),
+                footprint=int(fields[2]),
+                lifetime_peak=int(fields[3]),
+                resident=int(fields[4]),
+                name=fields[5],
+            ),
+        )
+    return processes

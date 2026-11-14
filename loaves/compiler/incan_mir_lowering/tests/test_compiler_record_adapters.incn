@@ -1,0 +1,252 @@
+"""The one native-to-Incan compiler-record adapter copies every available field and attaches missing boundary facts."""
+
+from compiler_record_adapters import (
+    authored_plan_source_span,
+    authored_plan_checked_type,
+    authored_plan_symbol_id,
+    canonical_symbol_id,
+    checked_type,
+    native_canonical_symbol_id,
+    native_checked_type,
+    native_plan_source_span,
+)
+from pub::incan_mir_plan import source_span
+from pub::incan_mir_plan import EnumDeclaration, PlanType, semantic_type_matches
+from pub::internal_models.checked_types import (
+    CheckedCallableParam,
+    CheckedCallableParamKind,
+    CheckedInputAccess,
+    CheckedPrimitiveType,
+    CheckedType,
+)
+from pub::internal_models.compiler_records import DeclarationKind, SymbolOrigin
+from rust::std::array import from_fn as rust_array_from_fn
+from rust::std::collections import BTreeMap
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    IncanCallableParam as RustCallableParam,
+    IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess as RustInputAccess,
+    IncanPrimitiveType as RustPrimitiveType,
+    IncanType as RustType,
+    NumericTypeId as RustNumericType,
+    RuntimeBuiltinType as RustRuntimeBuiltin,
+    SemanticSourceTargetKind as RustDeclarationKind,
+    SymbolNamespace as RustSymbolNamespace,
+    SymbolOrigin as RustSymbolOrigin,
+    function_type,
+    generic,
+    native_array_type,
+)
+
+
+pub def test_compiler_record_adapters() -> None:
+    """Copy one native canonical identity while attaching owned file text and selected package version explicitly."""
+    native = RustCanonicalSymbolId.module_declaration(
+        ["billing"],
+        "Invoice",
+        RustDeclarationKind.Model,
+        RustHirSourceSpan.new(12, 19),
+    )
+    identity = canonical_symbol_id(native, "src/invoice.incn", "1.4.0")
+    assert identity.declaration_name == "Invoice"
+    assert identity.kind == DeclarationKind.Model
+    assert identity.declaration_span.file == "src/invoice.incn"
+    assert identity.declaration_span.start == 12
+    assert identity.declaration_span.end == 19
+    match identity.origin:
+        SymbolOrigin.Module(path) =>
+            assert path == ["billing"]
+        _ =>
+            assert false
+    native_span = source_span("src/main.incn", 12, 9)
+    authored_span = authored_plan_source_span(native_span)
+    restored_span = native_plan_source_span(authored_span)
+    assert authored_span.file == "src/main.incn"
+    assert authored_span.line == 12
+    assert authored_span.column == 9
+    assert str(restored_span.file) == "src/main.incn"
+    assert restored_span.line == 12
+    assert restored_span.column == 9
+    native_type = RustType.Ref(RustType.TypeVar("T"))
+    authored_type = checked_type(native_type, "src/main.incn", "1.4.0")
+    assert authored_type == CheckedType.Ref([CheckedType.TypeVar("T")])
+    decimal = RustType.Decimal(precision=38u8, scale=4u8)
+    assert checked_type(decimal, "src/main.incn", "1.4.0") == CheckedType.Decimal(38u8, 4u8)
+    trait_object = RustType.NativeTraitObject(path="std::fmt::Debug", send=true, sync=false)
+    assert checked_type(trait_object, "src/main.incn", "1.4.0") == CheckedType.NativeTraitObject(
+        "std::fmt::Debug",
+        true,
+        false,
+    )
+    pointer = RustType.NativePointer(mutable=true, pointee=RustType.NativeCChar)
+    assert checked_type(pointer, "src/main.incn", "1.4.0") == CheckedType.NativePointer(
+        true,
+        [CheckedType.NativeCChar],
+    )
+
+
+pub def test_plan_package_versions_are_authenticated() -> Result[None, str]:
+    """Complete direct and nested package trait identities from the selected artifact map and refuse an absent owner."""
+    native = RustCanonicalSymbolId(
+        namespace=RustSymbolNamespace.OrdinaryLexical,
+        origin=RustSymbolOrigin.Package(library="contracts", module_path=["traits"]),
+        declaration_name="Readable",
+        kind=RustDeclarationKind.Trait,
+        scope_discriminant=None,
+        declaration_span=RustHirSourceSpan.new(4, 12),
+    )
+    mut source_files: BTreeMap[str, str] = BTreeMap.new()
+    source_files.insert("pub::contracts::traits", "registry/contracts/traits.incn")
+    mut versions: BTreeMap[str, str] = BTreeMap.new()
+    versions.insert("contracts", "1.4.0")
+    authored = authored_plan_symbol_id(native, "src/main.incn", source_files, versions)?
+    assert authored.declaration_span.file == "registry/contracts/traits.incn"
+    match authored.origin:
+        SymbolOrigin.Package(package, path) =>
+            assert package.name == "contracts"
+            assert package.version == "1.4.0"
+            assert path == ["traits"]
+        _ => assert false
+    nested = authored_plan_checked_type(
+        generic("Wrapper", [RustType.Trait(native.clone())]),
+        "src/main.incn",
+        source_files,
+        versions,
+    )?
+    match nested:
+        CheckedType.Generic(_base, arguments) =>
+            match arguments[0]:
+                CheckedType.Trait(identity) =>
+                    match identity.origin:
+                        SymbolOrigin.Package(package, _path) => assert package.version == "1.4.0"
+                        _ => assert false
+                _ => assert false
+        _ => assert false
+    missing: BTreeMap[str, str] = BTreeMap.new()
+    assert authored_plan_symbol_id(native, "src/main.incn", source_files, missing).is_err()
+    return Ok(None)
+
+
+pub def test_all_native_checked_types_convert() -> Result[None, str]:
+    """Convert every native type alternative with nested callable, binder, ownership, array and trait controls."""
+    parameter = RustCallableParam(
+        name=Some("value"),
+        ty=RustType.TypeVar("T"),
+        kind=RustCallableParamKind.RestKeyword,
+        has_default=true,
+        is_partial_preset=true,
+        is_mut=true,
+        native_owned=true,
+        input_access=RustInputAccess.Exclusive,
+    )
+    trait_identity = RustCanonicalSymbolId.module_declaration(
+        ["contracts"],
+        "Readable",
+        RustDeclarationKind.Trait,
+        RustHirSourceSpan.new(4, 12),
+    )
+    native_types: list[RustType] = [
+        RustType.Never,
+        RustType.Primitive(RustPrimitiveType.Numeric(RustNumericType.I64)),
+        RustType.Named("Invoice"),
+        generic("Result", [RustType.TypeVar("T"), RustType.Ref(RustType.TypeVar("T"))]),
+        RustType.Decimal(precision=38u8, scale=4u8),
+        function_type([parameter], RustType.Ref(RustType.TypeVar("T"))),
+        RustType.TypeToken(RustType.Named("Invoice")),
+        RustType.Tuple([RustType.Primitive(RustPrimitiveType.Bool)]),
+        RustType.TypeVar("T"),
+        RustType.SelfType,
+        RustType.Ref(RustType.TypeVar("T")),
+        RustType.RefMut(RustType.TypeVar("T")),
+        RustType.RustInteropPath("std::path::PathBuf"),
+        RustType.NativeBuiltin(RustRuntimeBuiltin.ValidationError),
+        RustType.Unsupported("opaque"),
+        RustType.Infer,
+        RustType.Unknown,
+        native_array_type(RustType.Primitive(RustPrimitiveType.Bytes), 18446744073709551615u64),
+        RustType.NativeTraitObject(path="std::fmt::Debug", send=true, sync=false),
+        RustType.NativePointer(mutable=true, pointee=RustType.NativeCChar),
+        RustType.NativeCChar,
+        RustType.Trait(trait_identity),
+    ]
+    authored = [checked_type(ty, "src/main.incn", "1.4.0") for ty in native_types]
+    assert len(authored) == 22
+    restored = [native_checked_type(ty)? for ty in authored]
+    round_tripped = [checked_type(ty, "src/main.incn", "1.4.0") for ty in restored]
+    for index in range(len(authored)):
+        assert authored[index] == round_tripped[index]
+    assert authored[3] == CheckedType.Generic(
+        "Result",
+        [CheckedType.TypeVar("T"), CheckedType.Ref([CheckedType.TypeVar("T")])],
+    )
+    assert authored[5] == CheckedType.Function(
+        [
+            CheckedCallableParam(
+                name=Some("value"),
+                ty=CheckedType.TypeVar("T"),
+                kind=CheckedCallableParamKind.RestKeyword,
+                has_default=true,
+                is_partial_preset=true,
+                is_mut=true,
+                native_owned=true,
+                input_access=CheckedInputAccess.Exclusive,
+            ),
+        ],
+        [CheckedType.Ref([CheckedType.TypeVar("T")])],
+    )
+    assert authored[17] == CheckedType.NativeArray(
+        [CheckedType.Primitive(CheckedPrimitiveType.Bytes)],
+        18446744073709551615u64,
+    )
+    match authored[21]:
+        CheckedType.Trait(identity) =>
+            assert identity.declaration_name == "Readable"
+            assert identity.declaration_span.file == "src/main.incn"
+        _ =>
+            assert false
+    return Ok(None)
+
+
+pub def test_expanded_canonical_identity_round_trips() -> Result[None, str]:
+    """Reconstruct an exact 32-byte expansion identity instead of dropping or stringifying its native fixed array."""
+    native = RustCanonicalSymbolId.module_declaration(
+        ["generated"],
+        "expanded",
+        RustDeclarationKind.Function,
+        RustHirSourceSpan.new(20, 40).with_expansion(Some(rust_array_from_fn((_index) => 7u8))),
+    )
+    authored = canonical_symbol_id(native, "src/generated.incn", "1.4.0")
+    restored = native_canonical_symbol_id(authored)?
+    round_tripped = canonical_symbol_id(restored, "src/generated.incn", "1.4.0")
+    assert authored == round_tripped
+    return Ok(None)
+
+
+pub def test_plan_facts_use_authored_records() -> None:
+    """Keep trait identity and enum carrier meaning typed even when diagnostic source text deliberately disagrees."""
+    native_identity = RustCanonicalSymbolId.module_declaration(
+        ["contracts"],
+        "Readable",
+        RustDeclarationKind.Trait,
+        RustHirSourceSpan.new(4, 12),
+    )
+    authored_identity = canonical_symbol_id(native_identity, "src/main.incn", "1.4.0")
+    match PlanType.Trait(authored_identity.clone()):
+        PlanType.Trait(retained) => assert authored_identity == retained
+        _ => assert false
+    semantic = CheckedType.Generic(
+        "Result",
+        [CheckedType.RefMut([CheckedType.TypeVar("T")]), CheckedType.TypeVar("T")],
+    )
+    declaration = EnumDeclaration(
+        name="__IncanCarrier0",
+        public=false,
+        variants=[],
+        derives=[],
+        span=source_span("src/main.incn", 1, 1),
+        semantic_key=Some(semantic.clone()),
+        source_type="diagnostic text is not identity",
+    )
+    assert semantic_type_matches(declaration, semantic)

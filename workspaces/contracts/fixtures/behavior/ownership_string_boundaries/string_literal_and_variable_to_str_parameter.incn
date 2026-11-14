@@ -1,0 +1,18 @@
+# behavior: a str parameter accepts a literal, a variable the caller keeps using afterwards, and a variable at its last use, and each call sees the text it was given
+# expect-stdout:
+#   hi Alice
+#   hi Bob
+#   Bob again
+#   hi Cy
+
+def greet(name: str) -> str:
+    return "hi " + name
+
+
+def main() -> None:
+    println(greet("Alice"))
+    kept = "Bob"
+    println(greet(kept))
+    println(kept + " again")
+    last = "Cy"
+    println(greet(last))

@@ -1,0 +1,14 @@
+# behavior: a Rust trait object behind a shared pointer is viewed through as_ref and handed to a Rust function taking the trait object by reference, twice
+# expect-stdout:
+#   3
+#   3
+
+from rust::tiny_arrow import count, make
+
+
+# `make()` holds three elements, and `as_ref()` already yields the `&dyn Array` that `count` takes, so a second `&`
+# would fail to compile.
+def main() -> None:
+    array = make()
+    println(f"{count(array.as_ref())}")
+    println(f"{count(array.as_ref())}")
