@@ -5,7 +5,7 @@ A product names each model or enum it uses by the `StableDeclarationId` of its c
 the declaration's checked meaning. Native carrier names and checked type names encode their declaration's source
 span, so both the identity and the digest replace every carrier key the declaration binds by its identity without
 the span, and drop positional fields. A closed specialization keeps its normalized carrier name beside its template's
-identity. A standard carrier lowering admits as an intrinsic enum is named by its carrier name.
+identity. A standard carrier lowering admits as an intrinsic enum is named by the checked type it lays out.
 """
 
 from rust::incan_semantics_core::stable_identity import StableDeclarationId
@@ -25,6 +25,7 @@ from pub::incan_mir_plan import (
     product_nominals,
     unit_nominals,
 )
+from pub::incan_mir_plan.layout_type_records import retain_checked_type
 from scalar_store import retain_scalar
 from program_context import ProgramContext
 from symbols import model_symbol
@@ -118,16 +119,33 @@ def source_nominal(kind: NominalKind, canonical: &CanonicalSymbolId, carrier: st
                                 Err(_) => return unnamed
 
 
-def carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal:
-    """Name a standard carrier by its carrier name; its variants and derives are its checked meaning."""
-    mut meaning: list[str] = [declaration.name]
-    for variant in declaration.variants:
-        meaning.append(f"{variant.name}/{len(variant.fields)}")
-    for derive in declaration.derives:
-        meaning.append(derive)
-    match semantic_digest(meaning):
-        Ok(digest) => return ProductNominal(kind=NominalKind.Enum, identity=f"carrier#{declaration.name}", digest=digest)
+pub def carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal:
+    """
+    Name a standard carrier by the checked type it lays out; its variants and derives are its checked meaning.
+
+    The native name numbers carriers in admission order, which another module's types change, so it never names one.
+    A carrier without an encodable checked type stays unnamed, and a product refuses to name it.
+    """
+    match carrier_type_text(declaration):
         Err(_) => return ProductNominal(kind=NominalKind.Enum, identity="", digest="")
+        Ok(text) =>
+            mut meaning: list[str] = [text]
+            for variant in declaration.variants:
+                meaning.append(f"{variant.name}/{len(variant.fields)}")
+            for derive in declaration.derives:
+                meaning.append(derive)
+            match semantic_digest(meaning):
+                Ok(digest) => return ProductNominal(kind=NominalKind.Enum, identity=f"carrier#{text}", digest=digest)
+                Err(_) => return ProductNominal(kind=NominalKind.Enum, identity="", digest="")
+
+
+def carrier_type_text(declaration: &EnumDeclaration) -> Result[str, str]:
+    """Encode the exact checked type a carrier lays out; its nominal names carry no source span."""
+    match declaration.semantic_key:
+        None => return Err("carrier has no checked type")
+        Some(key) =>
+            stored = retain_checked_type(key.clone())?
+            return native_json(stored).map_err((error) => str(error))
 
 
 def declaration_meaning(text: str) -> Result[tuple[str, list[tuple[str, str]]], str]:
