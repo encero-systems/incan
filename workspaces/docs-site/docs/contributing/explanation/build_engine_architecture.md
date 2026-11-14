@@ -481,6 +481,10 @@ After a comment above `main`:
 - `position-map(main)` changes, `native-interface(app)` reads it and evaluates, and the native unit is baked again for its line tables.
 - Rendered diagnostics, if any, show `main`'s new lines.
 
+The figure shows the same three runs on one grid: the stages in rank order from left to right, frozen records in their own band, and one row per owner.
+
+![Producer map: the records of the hello program, and what a body edit and a comment edit evaluate](build_engine_producer_map.svg)
+
 #### Settled design points
 
 Each quotes the sentence that raised it, then gives the decision DD-0015 records.
