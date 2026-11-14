@@ -322,8 +322,9 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
 def clove_facts(unit: UnitDescription) -> list[str]:
     """
     Each Clove the unit reaches, by its library, compiler and every configuration's definitions and archive bytes, so
-    a rebuilt archive rekeys the units that link it, and each declared static archive it links. Locations are
-    provenance. A unit that reaches none has none.
+    a rebuilt archive rekeys the units that link it, each declared static archive it links, and the declared target its
+    bindings verify against when `--interop-target` selects one. Locations are provenance. A unit that reaches none
+    has none.
     """
     mut facts: list[str] = []
     for clove in unit.cloves:
@@ -335,6 +336,8 @@ def clove_facts(unit: UnitDescription) -> list[str]:
     # Declared static archives link in order, so their order is identity too.
     for archive in unit.c_archives:
         facts.append(f"static-archive={archive.name}:{archive.link_name}:{archive.identity}")
+    if let Some(target) = unit.c_abi_target:
+        facts.append(target.fact())
     return facts
 
 

@@ -16,7 +16,7 @@ from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
-from unit import describe, project_root_of, retired_refusal
+from unit import describe, project_root_of, retired_refusal, with_c_abi_target
 from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
@@ -88,6 +88,9 @@ pub model Options:
     pub codegraph: bool = false
     # A build's OUTPUT_DIR, which also receives the program it builds; empty for none.
     pub output: str = ""
+    # The declared `[[interop.c.targets]]` entry checked C bindings verify against instead of the host; empty for the
+    # host.
+    pub interop_target: str = ""
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -464,9 +467,14 @@ def records_command(command: str, arguments: list[str]) -> None:
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
             options = located(command, parsed)
-            if options.feature_options or len(options.substitutes) > 0 or len(options.program_entries) > 0:
+            if (
+                options.feature_options
+                or len(options.substitutes) > 0
+                or len(options.program_entries) > 0
+                or options.interop_target != ""
+            ):
                 fail(
-                    f"{invoked()} {command}: unit records do not implement feature, substitution or program-entry options",
+                    f"{invoked()} {command}: unit records do not implement feature, substitution, program-entry or interop-target options",
                     1,
                 )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
@@ -484,7 +492,10 @@ def records_command(command: str, arguments: list[str]) -> None:
 
 
 def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:
-    """Apply one option that takes a value: the profile, features, a substitute, a program entry or `--argv0`."""
+    """
+    Apply one option that takes a value: the profile, features, a substitute, a program entry, `--argv0` or the
+    interop target.
+    """
     if name == "--argv0":
         options.argv0 = Some(value)
     elif name == "--program-entry":
@@ -494,6 +505,8 @@ def apply_option(mut options: Options, name: str, value: str) -> Result[None, st
         if len(parts) != 2 or parts[0] == "" or parts[1] == "":
             return Err(f"`--substitute` takes NAME=DIR, got `{value}`")
         options.substitutes[parts[0]] = parts[1]
+    elif name == "--interop-target":
+        options.interop_target = value
     elif name == "--profile":
         options.profile = value
     else:
@@ -616,6 +629,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
         [],
         options.direct,
     )?
+    unit = with_c_abi_target(unit, options.interop_target)?
     unit.program_entries = options.program_entries
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
@@ -632,7 +646,8 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
     """The reply of the project's resident owner, which has made the executable; `None` when this process should."""
-    if len(options.substitutes) > 0 or len(options.program_entries) > 0:
+    # A unit verified against a declared interop target is described and compiled in this process.
+    if len(options.substitutes) > 0 or len(options.program_entries) > 0 or options.interop_target != "":
         return None
     request = options.request
     return owned(command, entry, options.profile, request.features, request.default_features, request.all_features)
@@ -752,6 +767,7 @@ def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32,
         options.manifests,
         purpose=ActivationPurpose.Test,
     )?
+    unit = with_c_abi_target(unit, options.interop_target)?
     unit.kind = "test"
     for feature in runner.features:
         if feature not in unit.active_features:
@@ -788,7 +804,8 @@ def checked(options: Options, format: str) -> Result[i32, str]:
         match build_source(source, options.manifests)?:
             Some(entry) => source = entry
             None => return Err(f"{source.0}: the Loaf has no Incan entry to check; name a source file")
-    unit = describe(source, options.profile, options.request, options.manifests)?
+    described = describe(source, options.profile, options.request, options.manifests)?
+    unit = with_c_abi_target(described, options.interop_target)?
     return check_unit(unit, toolchain_for(unit)?, format)
 
 
@@ -864,11 +881,15 @@ def require_command_options(command: str, options: Options) -> Result[None, str]
             return Err("--direct does not use an Oven lock")
         if options.feature_options or len(options.program_entries) > 0 or len(options.substitutes) > 0:
             return Err("--direct does not accept project features, substitutions or additional program entries")
+        if options.interop_target != "":
+            return Err("--direct does not verify against a declared interop target; it describes no project")
         return Ok(None)
     if options.engine_report:
         return Err("--engine-report requires INCAN_ENGINE=records run or build")
     if options.locked and command not in ["run", "build", "test"]:
         return Err("--locked requires run, build or test")
+    if options.interop_target != "" and command not in ["run", "build", "test", "check"]:
+        return Err("--interop-target requires check, build, test or run")
     if options.unattended and command != "describe-unit":
         return Err("--unattended requires oven describe-unit")
     if options.argv0 != None and command != "run":
@@ -1017,6 +1038,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
             None => pass
     # 3. Anything else is described and built here: a library into its artifact directory, a program into `bin`.
     mut unit = describe(source, options.profile, options.request, options.manifests)?
+    unit = with_c_abi_target(unit, options.interop_target)?
     unit.program_entries = options.program_entries
     mut output = program_binary(unit)
     if library:

@@ -367,7 +367,28 @@ fn verify_checked_c_bindings(
     if bindings.is_empty() {
         return;
     }
-    let Some(plan) = selected_plan.cloned().or_else(CAbiVerificationPlan::host) else {
+    // A unit verifying against a declared interop target (`--interop-target`) uses that target's plan; otherwise the
+    // host's.
+    let declared = match (selected_plan, &unit.c_abi_target) {
+        (None, Some(target)) => Some(CAbiVerificationPlan::declared(target)),
+        _ => None,
+    };
+    let plan = match declared {
+        Some(Ok(plan)) => Some(plan),
+        Some(Err(message)) => {
+            for (_, module, binding) in bindings {
+                diagnostics_out.push(CliDiagnostic {
+                    file_path: module.file_path.to_string_lossy().to_string(),
+                    source: module.source.clone(),
+                    phase: diagnostics::DiagnosticPhase::Typecheck,
+                    error: diagnostics::CompileError::type_error(message.clone(), binding.span),
+                });
+            }
+            return;
+        }
+        None => selected_plan.cloned().or_else(CAbiVerificationPlan::host),
+    };
+    let Some(plan) = plan else {
         for (_, module, binding) in bindings {
             diagnostics_out.push(CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
