@@ -1,7 +1,7 @@
 """
 `incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
-[--engine-report]`, and `incan check --overlay-serve [--profile debug|release]`, which answers one such request per
-JSON line on standard input.
+[--engine-report] [--build]`, and `incan check --overlay-serve [--profile debug|release]`, which answers one such
+request per JSON line on standard input.
 """
 
 from std.json import parse
@@ -16,10 +16,12 @@ pub model OverlayRequest:
     pub profile: str
     # Whether the answer carries the engine's work counters.
     pub report: bool = false
+    # Whether the overlay is built, as on a save, so the project's next build finds its unit, instead of only checked.
+    pub build: bool = false
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
-    """Read one served request line: `{"source": …, "buffer": …, "version": N}`."""
+    """Read one served request line: `{"source": …, "buffer": …, "version": N}`, with `"build": true` on a save."""
     request = parse(line).map_err((error) => error.message())?
     source = request.require("source").map_err((error) => error.message())?.expect_str().map_err(
         (error) => error.message(),
@@ -32,7 +34,10 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
     )?
     if version < 0:
         return Err(f"a document version is a non-negative integer, got {version}")
-    return Ok(OverlayRequest(source=source, buffer=buffer, version=version, profile=profile))
+    mut build = false
+    if let Some(selected) = request.get("build"):
+        build = selected.expect_bool().map_err((error) => error.message())?
+    return Ok(OverlayRequest(source=source, buffer=buffer, version=version, profile=profile, build=build))
 
 
 pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
@@ -41,8 +46,11 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == "--engine-report":
-            request.report = true
+        if argument in ["--engine-report", "--build"]:
+            if argument == "--build":
+                request.build = true
+            else:
+                request.report = true
             index += 1
             continue
         if argument in ["--overlay", "--document-version", "--profile", "--format"]:

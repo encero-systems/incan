@@ -133,8 +133,11 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         fork_project_view(store, HOME_VIEW, editor)?
-    # 3. A check runs no lowering, planning or native compile.
+    # 3. A keystroke's check runs no lowering, planning or native compile. A save builds the overlay instead, so the
+    # project's next build of the same bytes finds its unit.
     target = overlay.joinpath(entry.0[len(program.0) + 1:])
+    if request.build:
+        return built_overlay(editor, target, request)
     checked = submit_check(channel, store, editor, target, request.profile, request.report)?
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
@@ -148,6 +151,21 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     if request.report:
         fields["work"] = checked.work
     return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[str, str]:
+    """Build a saved overlay in its editor view, collecting the compiler's console instead of relaying it."""
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    console_capture["errors"] = ""
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    console_capture["capturing"] = ""
+    code = built?
+    none: list[JsonValue] = []
+    answer = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
+        code == 0,
+    ), "editor_view": JsonValue.string(editor), "built": JsonValue.bool(true), "diagnostics": JsonValue.array(none)}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
 
 
 def submit_check(
