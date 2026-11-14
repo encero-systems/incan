@@ -324,6 +324,42 @@ impl IndexedLoaf {
             .collect())
     }
 
+    /// One public namespace by its path, from its own record. `None` when the installed set holds no namespace record
+    /// at that path, including a set converted before namespaces had records of their own and every Loaf outside
+    /// records mode; such a caller reads the namespace from the manifest.
+    pub fn public_namespace(&self, path: &[String]) -> Result<Option<serde_json::Value>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        let Some((mut values, digest)) = super::compiler_record_set::read_declaration(
+            &self.dir,
+            &self.summary.identity.name,
+            RecordFamily::PublicNamespace.as_str(),
+            &path.join("::"),
+        )?
+        else {
+            return Ok(None);
+        };
+        if digest != self.summary.identity.digest || values.len() != 1 {
+            return Err(LoafIndexError::Unreadable {
+                path: self
+                    .dir
+                    .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                reason: "a public namespace record differs from its admitted inventory".to_owned(),
+            });
+        }
+        Ok(values.pop())
+    }
+
+    /// Whether the installed set holds a record of one of `families` for this Loaf, named `record` when one is given,
+    /// without opening any value; `None` outside records mode.
+    pub fn names_record(&self, families: &[&str], record: Option<&str>) -> Result<Option<bool>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        super::compiler_record_set::names_record(&self.dir, &self.summary.identity.name, families, record)
+    }
+
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.
     pub fn bodies_path(&self) -> PathBuf {
         self.dir

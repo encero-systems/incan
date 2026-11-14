@@ -86,6 +86,52 @@ pub fn qualified_name(module_path: &[String], name: &str) -> String {
         .join("::")
 }
 
+/// A non-nominal declaration as the documentation-free checked API carries it, from its `signature` record and its
+/// `default` record's value, if it has one: each stated default is put back on the member its path names.
+pub fn restored_declaration(mut signature: Value, defaults: Option<&Value>) -> Value {
+    let mut by_member = std::collections::BTreeMap::new();
+    for entry in defaults.and_then(Value::as_array).into_iter().flatten() {
+        if let Value::Object(fields) = entry
+            && let Some(member) = fields.get("member").and_then(Value::as_str)
+        {
+            by_member.insert(member.to_owned(), fields.clone());
+        }
+    }
+    let simple = signature
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    put_defaults(&mut signature, &simple, &by_member);
+    signature
+}
+
+/// Put the default fields recorded for `member` back on `value`, and those of its member entries on them.
+fn put_defaults(value: &mut Value, member: &str, defaults: &std::collections::BTreeMap<String, Map<String, Value>>) {
+    let Value::Object(fields) = value else {
+        return;
+    };
+    for (key, child) in fields.iter_mut() {
+        match child {
+            Value::Array(items) => {
+                for item in items {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+                    put_defaults(item, &format!("{member}.{key}.{name}"), defaults);
+                }
+            }
+            Value::Object(_) => put_defaults(child, &format!("{member}.{key}"), defaults),
+            _ => {}
+        }
+    }
+    if let Some(found) = defaults.get(member) {
+        for field in DEFAULT_FIELDS {
+            if let Some(value) = found.get(field) {
+                fields.insert(field.to_owned(), value.clone());
+            }
+        }
+    }
+}
+
 /// Move the default fields of every member entry under `value` into `defaults`, each named by its member path.
 fn take_defaults(value: &mut Value, member: &str, defaults: &mut Vec<Value>) {
     let Value::Object(fields) = value else {
