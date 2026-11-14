@@ -7,6 +7,7 @@ main = "src/main.incn"
 
 [workspace]
 members = ["app"]
+exclude = ["scratch"]
 
 [workspace.dependencies]
 shared = { path = "." }
