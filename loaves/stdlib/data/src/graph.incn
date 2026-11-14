@@ -4,7 +4,6 @@ Indexed directed graph primitives implemented in Incan.
 RFC 047's value-owned containers remain available while RFC 166 seals their physical layout behind an indexed store.
 """
 
-pub from std.traits.error import Error
 pub from crate.graph._ids import EdgeId, GraphError, NodeId
 pub from crate.graph._legacy import Dag, DiGraph, MultiDiGraph
 pub from crate.graph._read import (

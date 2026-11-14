@@ -12,7 +12,7 @@ known, or mixed-shape JSON.
 
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
 from rust::incan_std_data::json import JsonError as RustJsonError, JsonValue as RustJsonValue
-pub from std.traits.indexing import Index
+from std.traits.indexing import Index
 
 const _MAX_INCAN_INT_DECIMAL_PREFIX: int = 922_337_203_685_477_580
 const _MAX_INCAN_INT_LAST_DIGIT: int = 7
