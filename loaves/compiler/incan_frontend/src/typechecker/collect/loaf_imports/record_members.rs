@@ -1,6 +1,6 @@
 //! Imports from an installed Loaf settled from its own records (RFC 179): a public namespace by its path and a
-//! function or constant by its module-qualified name, so checking a program reads what it uses rather than the Loaf's
-//! whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
+//! function, constant or static by its module-qualified name, so checking a program reads what it uses rather than the
+//! Loaf's whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
 
 use incan_lang::lang::types::builtin_type_name;
 use serde_json::Value;
@@ -98,9 +98,9 @@ impl TypeChecker {
         Some(namespace_members(&namespace, member).into_iter().cloned().collect())
     }
 
-    /// Resolve a function or a constant published by a public namespace from the namespace's record and the member's
-    /// own declaration records. `None` when they cannot settle it exactly: no records, another kind of member, an
-    /// alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
+    /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
+    /// member's own declaration records. `None` when they cannot settle it exactly: no records, another kind of member,
+    /// an alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
     /// manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
@@ -139,6 +139,7 @@ impl TypeChecker {
                     && built_in_type(&function.return_type)
             }
             ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
+            ApiDeclaration::Static(item) => built_in_type(&item.ty),
             _ => false,
         };
         if !built_in {
