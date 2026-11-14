@@ -690,9 +690,11 @@ impl TypeChecker {
             }
         }
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "rust result: {path}.{} {} => {native:?}, source {result:?}",
-                method.name, method.signature.return_type
+                method.name,
+                method.signature.return_type
             );
         }
         native

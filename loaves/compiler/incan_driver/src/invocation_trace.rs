@@ -1,8 +1,10 @@
 //! Opt-in parent-linked invocation records, shared by the compiler's executables.
 //!
-//! `INCAN_TRACE_DIR` enables the existing tracing registry's diagnostic target. Other logs retain their normal
-//! `RUST_LOG` filter. A disabled diagnostic target does not evaluate span fields or create an output sink. Records
-//! describe instrumented boundaries, not every machine instruction or uninstrumented provider function.
+//! The tracing channel (`INCAN_ENGINE_TRACE`), or for one more release `INCAN_TRACE_DIR`, enables the existing
+//! tracing registry's diagnostic target; in the channel its records are the `invocation` category. Other logs
+//! retain their normal `RUST_LOG` filter. A disabled diagnostic target does not evaluate span fields or create an
+//! output sink. Records describe instrumented boundaries, not every machine instruction or uninstrumented provider
+//! function.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -30,10 +32,15 @@ const TARGET: &str = "incan::invocation";
 /// A requested sink must open successfully before execution. Existing trace files are never overwritten. Each
 /// process writes its own JSONL file; supported launch boundaries pass `INCAN_TRACE_PARENT` to link child roots.
 pub fn initialize() -> Result<(), Box<dyn std::error::Error>> {
-    let diagnostic = std::env::var_os("INCAN_TRACE_DIR")
-        .filter(|path| !path.is_empty())
-        .map(|path| TraceLayer::open(Path::new(&path), std::env::var("INCAN_TRACE_PARENT").ok()))
-        .transpose()?;
+    let parent = std::env::var("INCAN_TRACE_PARENT").ok();
+    let diagnostic = match incan_frontend::trace_flags::channel_file() {
+        // A channel that cannot be written loses the records, never the compilation.
+        Some(path) => TraceLayer::open_channel(&path, parent).ok(),
+        None => std::env::var_os("INCAN_TRACE_DIR")
+            .filter(|path| !path.is_empty())
+            .map(|path| TraceLayer::open(Path::new(&path), parent))
+            .transpose()?,
+    };
     subscriber(
         diagnostic,
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
@@ -73,10 +80,26 @@ impl TraceLayer {
     /// Create a unique process sink and record its cross-process clock and linkage facts.
     fn open(directory: &Path, inherited_parent: Option<String>) -> io::Result<Self> {
         fs::create_dir_all(directory)?;
-        let started = Instant::now();
         let epoch = SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?;
         let path = directory.join(format!("{}-{}.jsonl", std::process::id(), epoch.as_nanos()));
-        let output = OpenOptions::new().write(true).create_new(true).open(path)?;
+        Self::open_at(
+            OpenOptions::new().write(true).create_new(true).open(path)?,
+            inherited_parent,
+        )
+    }
+
+    /// Join this process's one file in the tracing channel, shared with the process's other compiler records.
+    fn open_channel(path: &Path, inherited_parent: Option<String>) -> io::Result<Self> {
+        Self::open_at(
+            OpenOptions::new().create(true).append(true).open(path)?,
+            inherited_parent,
+        )
+    }
+
+    /// Record the process's cross-process clock and linkage facts in an opened sink.
+    fn open_at(output: File, inherited_parent: Option<String>) -> io::Result<Self> {
+        let started = Instant::now();
+        let epoch = SystemTime::now().duration_since(UNIX_EPOCH).map_err(io::Error::other)?;
         let layer = Self {
             output: Mutex::new(output),
             started,
@@ -95,6 +118,7 @@ impl TraceLayer {
     /// Persist one complete line immediately, including before an existing command calls `process::exit`.
     /// A failed diagnostic write is reported once; it cannot change compilation or hide behind a successful trace.
     fn write(&self, mut record: Value) {
+        record["operation"] = json!("invocation");
         record["pid"] = json!(std::process::id());
         record["thread"] = json!(format!("{:?}", std::thread::current().id()));
         record["time_ns"] = json!(self.started.elapsed().as_nanos());

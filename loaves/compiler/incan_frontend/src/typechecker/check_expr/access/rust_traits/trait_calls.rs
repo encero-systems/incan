@@ -521,7 +521,8 @@ impl TypeChecker {
         };
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path), true);
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "native iteration: {owner:?}, {trait_path}::{method}, candidates {:?}",
                 candidates
                     .iter()

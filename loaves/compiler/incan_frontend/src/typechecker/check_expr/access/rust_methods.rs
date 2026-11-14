@@ -66,7 +66,8 @@ impl TypeChecker {
             }
         };
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "rust method: {path}.{} native arguments {type_arguments:?}, bindings {bindings:?}",
                 method.name
             );
@@ -147,9 +148,11 @@ impl TypeChecker {
         span: Span,
     ) -> Result<(), CompileError> {
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
-                method.name, method.impl_self_type
+                method.name,
+                method.impl_self_type
             );
         }
         if self.open_rust_generic_calls.contains_key(&span) {

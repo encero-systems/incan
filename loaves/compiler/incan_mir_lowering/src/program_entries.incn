@@ -25,6 +25,7 @@ from rust::incan_semantics_core import (
 from rust::incan_semantics_core::body_ir import Body as RustBody, BodyIrModule as RustBodyIrModule
 from classes import function_name, is_program_entry, body_module_identity
 from program_context import ProgramContext, body_at
+from trace_channel import emit
 from rust::std::collections import BTreeMap
 from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
@@ -202,7 +203,7 @@ pub def lower_ordinary_bodies(
     mut signatures = external_index()
     for result in completed:
         for message in result.traces:
-            println(message)
+            emit("lowering", "INCAN_TRACE_LOWERING", message)
         append_synthesized(functions, names, result.functions)?
         merge_indexed(externals, signatures, result.externals)?
         merge_instance_requests(instances, result.instances)
@@ -394,7 +395,8 @@ pub def lower_ordinary_bodies_serial(
             if not ordinary_body(context, body, emitted_frames, kind):
                 continue
             if trace:
-                println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+                identity = body_module_identity(body)?
+                emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: body {identity} {body.name} {body.span.start}")
             diagnostic_owner = f" in {body.name} at {files[index]}"
             function, runtime, pending, synthesized = lower_ordinary_frame(
                 context,

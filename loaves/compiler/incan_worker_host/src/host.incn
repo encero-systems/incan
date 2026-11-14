@@ -455,12 +455,15 @@ pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
 
 
 def worker_observer() -> Option[Emitter]:
-    """Open the requested canonical worker channel once; absent tracing never starts a clock or writer."""
+    """
+    Open the requested canonical worker channel once, in the process's one channel file, which its compiler records
+    share; absent tracing never starts a clock or writer.
+    """
     directory = environment_or("INCAN_ENGINE_TRACE", "")
     if directory == "":
         return None
     match Emitter.open(
-        f"{directory}/engine-worker-{id()}.jsonl",
+        f"{directory}/engine-compiler-{id()}.jsonl",
         "compiler-worker",
         environment_or("INCAN_ENGINE_RUN", ""),
         environment_or("INCAN_ENGINE_REQUEST", ""),

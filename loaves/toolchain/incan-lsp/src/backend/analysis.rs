@@ -345,8 +345,11 @@ fn parse_navigation_source(
 
 /// Trace editor analysis boundaries only when explicitly requested, keeping normal protocol diagnostics quiet.
 fn trace_graph(phase: &str) {
-    if std::env::var_os("INCAN_TRACE_GRAPH").is_some() {
-        eprintln!("LSP graph: {phase}");
+    if incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::LspGraph) {
+        incan_frontend::trace_flags::emit(
+            incan_frontend::trace_flags::Category::LspGraph,
+            &format!("LSP graph: {phase}"),
+        );
     }
 }
 

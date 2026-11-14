@@ -1,0 +1,63 @@
+"""
+The lowering's side of the one tracing channel.
+
+With `INCAN_ENGINE_TRACE` naming a directory, a record goes to the compiler process's one file there,
+`engine-compiler-<pid>.jsonl`, beside the compiler's other records, with an `operation` naming its category. Tracing
+never writes the console. Otherwise, for one more release, a category's former variable selects its former
+destination: standard output for `lowering` and `lowering_footprint`, the file `OVEN_TRACE` names for `redo`.
+"""
+
+from rust::std::env import var, var_os
+from rust::std::fs import OpenOptions
+from rust::std::io import Write
+from rust::std::process import id
+from rust::std::string import String as RustString
+from rust::serde_json import to_string as native_json
+
+# The variable that selects the channel's directory.
+const CHANNEL: str = "INCAN_ENGINE_TRACE"
+
+
+pub def traced(former: str) -> bool:
+    """Whether a category is traced: the channel is on, or the category's former variable is set."""
+    return channel() != "" or var_os(former).is_some()
+
+
+pub def emit(category: str, former: str, text: str) -> None:
+    """Trace one line of `category`: into the channel when it is on, otherwise where `former` sent it."""
+    directory = channel()
+    if directory != "":
+        match native_json(text):
+            Ok(key) =>
+                head = "{\"schema\":\"incan.engine.trace/1\",\"kind\":\"line\",\"producer\":\"compiler\""
+                record = head + f",\"operation\":\"{category}\",\"key\":{key},\"process\":{id()}" + "}\n"
+                append(f"{directory}/engine-compiler-{id()}.jsonl", record)
+            Err(_) => pass
+        return
+    if former == "OVEN_TRACE":
+        match var(former):
+            Ok(destination) =>
+                if destination != "" and destination != "-":
+                    append(destination, f"{text}\n")
+            Err(_) => pass
+        return
+    if var_os(former).is_some():
+        println(text)
+
+
+def channel() -> str:
+    """The channel's directory, or empty when tracing is off."""
+    match var(CHANNEL):
+        Ok(directory) => return str(directory)
+        Err(_) => return ""
+
+
+def append(destination: str, text: str) -> None:
+    """Append one whole line; a sink that cannot be written loses the line, never the compilation."""
+    mut options = OpenOptions.new()
+    options.create(true).append(true)
+    match options.open(destination):
+        Ok(file) =>
+            mut trace = file
+            _ = trace.write_all(RustString.from(text).into_bytes())
+        Err(_) => pass
