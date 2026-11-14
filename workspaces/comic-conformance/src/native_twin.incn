@@ -12,12 +12,16 @@ from std.primitives.crumb.column_presence import cell_type
 from std.primitives.crumb.column_types import ColumnChoice
 from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, dictionary_type, encode_keys
 from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import Reader, frame
 from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
 from std.primitives.crumb.identity import closed_selector, check_arity
+from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.selectors import parse_type
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.text_printer import print_comic
@@ -65,6 +69,7 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.TextPrint => return Ok(Some(print_twin(item.document)?))
         CaseOperation.TextRead => return Ok(Some(read_twin(item.document)?))
         CaseOperation.ColumnCodec => return column_twin_encode(item.document)
+        CaseOperation.BinaryDecode => return row_twin_encode(item.document)
         _ => return Ok(None)
 
 
@@ -73,6 +78,7 @@ pub def twin_decode(item: CorpusCase, encoded: bytes) -> Result[bytes, str]:
     match item.operation:
         CaseOperation.HashPreimage => return hash_decode(encoded)
         CaseOperation.ColumnCodec => return column_twin_decode(item.document)
+        CaseOperation.BinaryDecode => return row_twin_decode(item.document)
         _ => return Ok(encoded)
 
 
@@ -501,3 +507,90 @@ def read_twin(document: JsonValue) -> Result[bytes, str]:
             output.count(error.position.line, budget).map_err((failure) => failure.message())?
             output.count(error.position.column, budget).map_err((failure) => failure.message())?
     return output.finish(budget).map_err((error) => error.message())
+
+
+def row_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
+    """Decode the complete row envelope, then write its descriptions and records back; a refusal writes nothing."""
+    data = hex_bytes(text(document, "input_hex")?)?
+    supplied = row_supplied(document)?
+    mut budget = row_budget(document)?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    match read_rows(backing(data)?, supplied, registry, row_require_sealed(document)?, budget):
+        Err(_) => return Ok(Some(b""))
+        Ok(rows) =>
+            mut setup = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((e) => e.message())?
+            descriptions = rows.descriptions(setup).map_err((e) => e.message())?
+            mut records: list[RowRecord] = []
+            for index in range(rows.len()):
+                records.append(rows.read_record(index, setup).map_err((e) => e.message())?)
+            writer = KindRegistry.create([], setup).map_err((e) => e.message())?
+            encoded = write_rows(descriptions, records, writer, rows.is_sealed(), setup).map_err((e) => e.message())?
+            return Ok(Some(encoded))
+
+
+def row_twin_decode(document: JsonValue) -> Result[bytes, str]:
+    """Read the literal envelope, or each proper prefix when asked, into records or one typed refusal category."""
+    data = hex_bytes(text(document, "input_hex")?)?
+    supplied = row_supplied(document)?
+    mut lengths: list[int] = [len(data)]
+    if document.get("transform").is_some():
+        lengths = [length for length in range(len(data))]
+    mut setup = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((e) => e.message())?
+    mut output = EncodingBuffer.create()
+    for length in lengths:
+        mut budget = row_budget(document)?
+        registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+        match read_rows(backing(data[:length])?, supplied, registry, row_require_sealed(document)?, budget):
+            Err(error) =>
+                output.octet(1, setup).map_err((e) => e.message())?
+                output
+                    .append(frame(encode_utf8(error.kind.value()), setup).map_err((e) => e.message())?, setup)
+                    .map_err((e) => e.message())?
+            Ok(rows) =>
+                output.octet(0, setup).map_err((e) => e.message())?
+                mut sealed = 0
+                if rows.is_sealed():
+                    sealed = 1
+                output.octet(sealed, setup).map_err((e) => e.message())?
+                output.count(rows.len(), setup).map_err((e) => e.message())?
+                for index in range(rows.len()):
+                    record = rows.read_record(index, setup).map_err((e) => e.message())?
+                    result = value_hash(record.value, Projection.Object, setup, true).map_err((e) => e.message())?
+                    preimage = match result.preimage:
+                        Some(captured) => captured
+                        None => return Err("row twin did not capture its record preimage")
+
+                    output
+                        .append(frame(record.key, setup).map_err((e) => e.message())?, setup)
+                        .map_err((e) => e.message())?
+                    output
+                        .append(frame(preimage, setup).map_err((e) => e.message())?, setup)
+                        .map_err((e) => e.message())?
+    return output.finish(setup).map_err((e) => e.message())
+
+
+def row_supplied(document: JsonValue) -> Result[list[Description], str]:
+    """The case's supplied complete descriptions, admitted by reference only."""
+    mut supplied: list[Description] = []
+    for item in array(document, "supplied_descriptions")?:
+        supplied.append(Description(metadata=metadata(item)?, mode=DescriptionMode.Reference))
+    return Ok(supplied)
+
+
+def row_require_sealed(document: JsonValue) -> Result[bool, str]:
+    """Whether the case requires a sealed envelope."""
+    if let Some(value) = document.get("require_sealed"):
+        return value.expect_bool().map_err((e) => e.message())
+    return Ok(false)
+
+
+def row_budget(document: JsonValue) -> Result[Budget, str]:
+    """The row decoder's one allowance, tightened by the case's element and depth limits."""
+    mut elements = 1048576
+    mut depth = 128
+    if let Some(limits) = document.get("limits"):
+        if let Some(value) = limits.get("elements"):
+            elements = value.expect_int().map_err((e) => e.message())?
+        if let Some(value) = limits.get("depth"):
+            depth = value.expect_int().map_err((e) => e.message())?
+    return Budget.create(bytes=16777216, elements=elements, depth=depth).map_err((e) => e.message())
