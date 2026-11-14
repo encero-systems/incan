@@ -215,6 +215,7 @@ fn retain_shared_parameter(
     let Some(parameter) = body.params.get_mut(parameter_index) else {
         return;
     };
+    own_trace(|| format!("shared {} parameter {}", parameter.name, parameter_index));
     parameter.input_access = incan_semantics_core::IncanInputAccess::InferredShared;
     if let Some(retained) = body
         .checked_input_profile
@@ -725,13 +726,28 @@ fn operand_type(value: &bir::Operand, locals: &[bir::LocalDecl], field_types: &F
 /// Prove all uses in this frame while conservatively declining unsupported control flow and escaping values.
 fn readonly(statements: &[bir::Statement], context: &ReadContext<'_>) -> bool {
     if !derived_temporaries_are_read_only(statements, context) {
+        own_trace(|| format!("derived refused local {:?}", context.local));
         return false;
     }
     let mut accepted = true;
     walk_neighbors(statements, &mut |statement, next| {
-        accepted &= closure_reads::shared_statement(statement, next, context);
+        let ok = closure_reads::shared_statement(statement, next, context);
+        if !ok {
+            own_trace(|| format!("refused local {:?}: {:.900}", context.local, format!("{:?}", statement.kind)));
+        }
+        accepted &= ok;
     });
     accepted
+}
+
+/// TEMPORARY lane tracing; never commit.
+pub(super) fn own_trace(message: impl FnOnce() -> String) {
+    if let Some(path) = std::env::var_os("OWN_TRACE") {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{}", message());
+        }
+    }
 }
 
 /// Admit observations, shared calls and local reference bindings; consuming, exclusive and escaping operations keep

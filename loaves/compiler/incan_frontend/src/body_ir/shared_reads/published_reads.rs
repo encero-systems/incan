@@ -34,6 +34,7 @@ pub(super) fn read_only_parameters(
             derived: false,
         };
         if !readonly(&body.block.stmts, &read) {
+            super::own_trace(|| format!("published refused {} parameter {:?}", body.name, candidate.2));
             refused.push_back(candidate);
             continue;
         }

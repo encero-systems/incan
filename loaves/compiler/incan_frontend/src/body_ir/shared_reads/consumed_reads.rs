@@ -25,6 +25,7 @@ pub(super) fn refuse_consumed_parameters(
     let mut refused = VecDeque::new();
     for &candidate in candidates.iter() {
         if consumed(modules, candidate, &signatures, field_types, candidates) {
+            super::own_trace(|| format!("consumed {} parameter {}", modules[candidate.0].bodies[candidate.1].name, candidate.2));
             refused.push_back(candidate);
         }
         for dependency in forwarded_inputs(modules, candidate, &signatures, field_types, candidates) {
