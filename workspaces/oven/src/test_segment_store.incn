@@ -10,7 +10,7 @@ from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
 from pub::incan_platform.store.index import Entry, Location
-from pub::incan_platform.store.index import build as build_index, entries as index_entries
+from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written
 from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
@@ -442,6 +442,37 @@ pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it
     return Ok(None)
 
 
+pub def test_a_commit_installs_one_index_file_however_large_the_store() -> Result[None, str]:
+    """
+    What a commit writes to the index is bounded by the keys it writes, not by the store: each of 1,400 commits of
+    scattered keys installs exactly one index file, holding at most one new page per key it writes on each level of the
+    index (the path that key changes), at the first generation as after the store has grown.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    keys_per_commit = 16
+    for generation in range(1, 1401):
+        mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+        for item in range(keys_per_commit):
+            transaction = put(transaction, scattered_key(generation, item), b"value")
+        files = count_files(root.joinpath("indexes"))
+        placed = pages_written()
+        published = commit(transaction).map_err((error) => error.message())?
+        installed = count_files(root.joinpath("indexes")) - files
+        assert installed == 1, f"the commit of generation {published.generation} installed {installed} index files"
+        pages = pages_written() - placed
+        levels = index_levels(published).map_err((error) => error.message())?
+        assert pages <= keys_per_commit * levels, f"generation {published.generation} wrote {pages} index pages"
+        if generation == 1 or generation == 1400:
+            println(f"S2 generation {published.generation}: {installed} index file, {pages} pages, {levels} levels")
+    return Ok(None)
+
+
+def scattered_key(generation: int, item: int) -> str:
+    """A key whose position in the index no earlier key predicts, as a content digest's would be."""
+    return "k-" + hexlify(sha256.digest(f"{generation}:{item}".encode("utf-8")))[:24]
+
+
 pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
     """
     A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or
@@ -611,7 +642,7 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
                 )
     mut collided = original
     staging = store_path(root.joinpath("staging/collision"))
-    collided.index = build_index(store_path(root), staging, entries).map_err((error) => error.detail)?
+    collided.index = write_index(store_path(root), staging, entries).map_err((error) => error.detail)?
     assert text(lookup(collided, "left")) == "one"
     assert text(lookup(collided, "right")) == "two"
     assert text(lookup(collided, "neither")) == "<absent>"

@@ -14,7 +14,8 @@ format bytes without naming host paths:
 - `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
   root of each view.
 - `segments/<sha256>.seg`: immutable segments of frames: full key and value, or full key alone for a tombstone.
-- `indexes/<sha256>.page`: immutable copy-on-write B+tree pages from full keys to frame locations (`crate.store.index`).
+- `indexes/<sha256>.pack`: each commit's new copy-on-write B+tree pages from full keys to frame locations, one pack
+  per commit (`crate.store.index`); a store written before packs also holds `indexes/<sha256>.page` files.
 - `payloads/<aa>/<sha256>`: content-named objects, exposed as files by the disk placement.
 - `staging/<transaction>/`, `leases/<lease>`, `locks/publication`, `claims/<key>`.
 
@@ -51,6 +52,7 @@ from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
 from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, view_digest
+from crate.store.index import PageWriter, install_pack, installed_reference
 from crate.store.files import (
     StoreError,
     begin_work,
@@ -69,7 +71,9 @@ from crate.store.files import (
 from crate.store.codec import KIND_TOMBSTONE, KIND_VALUE, Encoded, Write, encoded_frames, leaf_entries
 from crate.store.path import StorePath as Path
 
-const FORMAT: str = "incan.segment-store/3"
+const FORMAT: str = "incan.segment-store/4"
+# A store written before index packs; this version reads its page files, and its first commit marks it with `FORMAT`.
+const PAGE_FILE_FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
 const STORE_ID_LENGTH: int = 32
 pub const HOME_VIEW: str = "home"
@@ -324,9 +328,19 @@ pub def check_format(root: Path) -> Result[None, StoreError]:
             return Err(failure("format", marker.value, "a committed store has no format descriptor"))
         return Ok(None)
     text = marker.store_read_text("utf-8", "strict").map_err((error) => io_failure(marker, error))?
-    if text.strip() != FORMAT:
-        return Err(failure("format", marker.value, f"unsupported store format {text.strip()}"))
+    if text.strip() != FORMAT and text.strip() != PAGE_FILE_FORMAT:
+        detail = f"unsupported store format {text.strip()}; this version reads {FORMAT} and {PAGE_FILE_FORMAT}"
+        return Err(failure("format", marker.value, f"{detail}: remove the store to have it rebuilt"))
     return Ok(None)
+
+
+def marked_current(root: Path) -> Result[bool, StoreError]:
+    """Whether the store's `FORMAT` marker already names this version's format."""
+    marker = root.joinpath("FORMAT")
+    if not marker.is_file():
+        return Ok(false)
+    text = marker.store_read_text("utf-8", "strict").map_err((error) => io_failure(marker, error))?
+    return Ok(text.strip() == FORMAT)
 
 
 def check_view_key(name: str) -> Result[None, StoreError]:
@@ -721,15 +735,24 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
 
     ensure_directory(staged)?
     publication_boundary("staging-created")
-    # 2. The old manifest remains selected until all views have been staged.
+    # 2. The old manifest remains selected until all views have been staged. Every view's new index pages go into one
+    # pack, so the request installs one index file however many leaves its keys reach.
     mut segments = latest.segments
-    mut views = latest.views
+    writer = PageWriter()
+    mut staged_roots: Dict[str, str] = {}
     for name in sorted([view for view in changed.keys()]):
         directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
-        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], directory)?
+        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], directory, writer)?
         if segment not in segments:
             segments.append(segment)
-        views = with_view(views, name, index)
+        staged_roots[name] = index
+    ensure_directory(page_directory(root))?
+    pack = install_pack(root, writer, staged.joinpath("pages")).map_err(index_failure)?
+    sync_pages(root)?
+    publication_boundary("pages-installed")
+    mut views = latest.views
+    for name in sorted([view for view in staged_roots.keys()]):
+        views = with_view(views, name, installed_reference(staged_roots[name], pack))
     # 3. One switch is the only visibility and durability boundary for the entire request.
     published = publish_switch(root, latest, segments, views, first.id, execution_view)?
     remove_tree(staged)
@@ -741,19 +764,24 @@ pub def durable_commits() -> int:
     return counted.get("durable_commits", 0)
 
 
-def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[tuple[str, str], StoreError]:
-    """Install a view's immutable objects without selecting them; the caller holds publication's lock."""
+def stage_view(
+    root: Path,
+    latest: Snapshot,
+    writes: list[Write],
+    staged: Path,
+    writer: PageWriter,
+) -> Result[tuple[str, str], StoreError]:
+    """
+    Install a view's segment and place its new index pages in the request's pack, without selecting them; the caller
+    holds publication's lock. The returned root names a page inside that pack until the pack is installed.
+    """
     encoded = encoded_frames(writes)?
     delta = staged.joinpath("delta.seg")
     place_synced(delta, encoded.data)?
     segment = install_segment(root, encoded.data, delta)?
     publication_boundary("segment-installed")
-    # Each new page is synchronized and renamed into the index as it is written; one directory sync orders the names.
-    ensure_directory(page_directory(root))?
-    index = insert(root, latest.index, staged.joinpath("pages"), leaf_entries(encoded, segment)).map_err(index_failure)?
+    index = insert(root, latest.index, writer, leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
-    sync_pages(root)?
-    publication_boundary("pages-installed")
     return Ok((index, segment))
 
 
@@ -906,9 +934,10 @@ def publish_switch(
     place_synced(manifest, document)?
     sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
-    marker = root.joinpath("FORMAT")
-    if not marker.is_file():
-        place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
+    # The marker names packs before CURRENT can name a graph that holds one: a version that reads only page files then
+    # refuses the store instead of missing its pages.
+    if not marked_current(root)?:
+        place_synced(root.joinpath("FORMAT"), f"{FORMAT}\n".encode("utf-8"))?
     # Order every referenced object and name ahead of CURRENT on stable storage before CURRENT can name the graph.
     # CURRENT's own flush below is the request's one drive flush: it makes the graph and the selection durable
     # together, and a crash before it leaves the previous selection, whose graph was flushed with it.
@@ -1035,12 +1064,14 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
     place_synced(base, encoded.data)?
     name = install_segment(root, encoded.data, base)?
     ensure_directory(page_directory(root))?
-    mut views: list[ViewRoot] = []
+    writer = PageWriter()
+    mut built: list[ViewRoot] = []
     for entry in latest.views:
         held_encoded = encoded_frames(per_view[entry.view])?
         relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
-        index = build(root, staged.joinpath("pages"), relocated).map_err(index_failure)?
-        views.append(ViewRoot(view=entry.view, root=index))
+        built.append(ViewRoot(view=entry.view, root=build(writer, relocated).map_err(index_failure)?))
+    pack = install_pack(root, writer, staged.joinpath("pages")).map_err(index_failure)?
+    views = [ViewRoot(view=entry.view, root=installed_reference(entry.root, pack)) for entry in built]
     sync_pages(root)?
     published = switch(root, latest, [name], views, "compaction")?
     remove_tree(staged)
