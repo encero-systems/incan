@@ -102,7 +102,8 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
         ));
     }
     let metadata: Metadata = LibraryManifest::decode_compiler_record_value(
-        &read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?,
+        &read_value(&set.root, &entry.value)
+            .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?,
     )
     .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
     if metadata.name != name {
@@ -203,7 +204,7 @@ fn read_selected(
             .map(|(family, index, entry)| {
                 open_value(&set.root, &entry.value)
                     .map(|bytes| (family, index, entry, bytes))
-                    .map_err(|reason| unreadable(dir, name, reason))
+                    .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
@@ -461,7 +462,7 @@ fn digest_matches(bytes: &[u8], expected: &str) -> bool {
     })
 }
 
-/// Read one immutable value after the installed set receipt authenticated its content identity and location.
+/// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.
 fn read_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     validate_payload_directory(root)?;
     open_value(root, digest)
@@ -488,7 +489,8 @@ fn validate_payload_directory(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Open one canonical value selected by the authenticated set receipt, refusing symbolic-link substitution.
+/// Open one canonical value selected by the authenticated set receipt, refusing symbolic-link substitution and any
+/// bytes that are not the content their name promises; a payload that still decodes is no exception.
 fn open_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     valid_digest(digest)?;
     let directory = root.join("payloads");
@@ -500,7 +502,14 @@ fn open_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     {
         return Err(format!("compiler-record object is a symbolic link: {}", path.display()));
     }
-    fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
+    let bytes = fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if !digest_matches(&bytes, digest) {
+        return Err(format!(
+            "compiler-record payload {digest} does not match its content name: {}",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Remove all ordered values for one repeatable record family.
@@ -618,6 +627,11 @@ fn valid_digest(value: &str) -> Result<(), String> {
         return Err(format!("invalid compiler-record digest `{value}`"));
     }
     Ok(())
+}
+
+/// Name the compiler record whose payload could not be read or authenticated.
+fn record_failure(key: &str, reason: String) -> String {
+    format!("compiler record `{key}`: {reason}")
 }
 
 /// Attach record failures to the corresponding ordinary Loaf artifact path.
