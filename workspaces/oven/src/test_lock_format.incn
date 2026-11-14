@@ -1,6 +1,6 @@
 """Format-1 oven.lock contracts for serialization, identity and tamper refusal."""
 
-from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
+from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
 from files import read, write
 from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
@@ -216,4 +216,40 @@ pub def test_a_path_dependency_s_c_interop_contract_is_locked_under_its_package(
     write(dependency.joinpath("libruntime.so"), "second\n")?
     second = local_interop(resolved, projects, ManifestReader())?
     assert interop_difference(first, second) == "bundled artifact `runtime` of `aarch64-linux-android` in `bridge`"
+    return Ok(None)
+
+
+pub def test_an_artifact_s_origin_and_license_are_locked() -> Result[None, str]:
+    """
+    A package-owned artifact's upstream source, revision and license are locked with its digest, as 0.5.1 locked them.
+
+    1. The lock records the origin and it round-trips.
+    2. Another license is another lock.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    write(root.joinpath("libbridge.a"), "!<arch>\n")?
+    origin = CArtifactOrigin(source="https://example.invalid/bridge", revision="v1.2.3", license="MIT")
+    archive = CInteropArtifact(
+        name="bridge",
+        kind=CArtifactKind.Static,
+        path="libbridge.a",
+        link_name="bridge",
+        origin=Some(origin),
+    )
+    locked = locked_interop(root.0, [CInteropTarget(target="aarch64-apple-darwin", artifacts=[archive])])?
+    # 1. The origin is a locked fact of the artifact.
+    recorded = locked[0].artifacts[0]
+    assert [recorded.source, recorded.revision, recorded.license] == ["https://example.invalid/bridge", "v1.2.3", "MIT"]
+    mut lock = example_lock()?
+    lock.interop = locked
+    lock.graph = graph_identity(lock)?
+    path = root.joinpath("oven.lock")
+    write_lock(path, lock)?
+    assert read_lock(path)?.interop == locked
+    # 2. A relicensed copy is another contract.
+    mut relicensed = archive
+    relicensed.origin = Some(CArtifactOrigin(source=origin.source, revision=origin.revision, license="Apache-2.0"))
+    changed = locked_interop(root.0, [CInteropTarget(target="aarch64-apple-darwin", artifacts=[relicensed])])?
+    assert interop_difference(locked, changed) == "static artifact `bridge` of `aarch64-apple-darwin`"
     return Ok(None)
