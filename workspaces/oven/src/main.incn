@@ -43,7 +43,7 @@ from testing import (
     rust_cases,
     test_sources,
 )
-from runner_options import RunnerOptions, split_runner_options
+from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_options
 from test_batches import batch_groups, batch_of, module_of
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
@@ -61,13 +61,13 @@ from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
-from command_help import command_help, usage, version_text
+from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from unit_options import Options, parse_options, program_arguments
 from surfaces import INSPECT_OVEN_MOVED, INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
 from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
 from project_version import change_version, parse_version_request
-from workspace import inspect_workspace, parse_selection, run_members, selected
+from workspace import inspect_workspace, parse_selection, root_scope, run_members, selected
 from environments import command_admission, env_command, parse_env
 from explanations import explained_json, parse_explain
 from doctor import doctor, parse_tools
@@ -161,7 +161,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         match parse_selection(rest):
             Err(reason) => syntax_error(command, reason)
             Ok(selection) =>
-                if selected(selection):
+                if selected(selection) or root_scope(command, selection.remaining, operand_values()):
                     finish(command, run_members(invoked(), command, selection))
     if command == "build":
         match parse_report(rest):
@@ -958,6 +958,12 @@ def inspected_dependencies(options: Options) -> Result[i32, str]:
     if source.name() == "lib.incn":
         unit.kind = "library"
     return report_dependencies(unit, toolchain_for(unit)?)
+
+
+def operand_values() -> list[str]:
+    """Every option of `run`, `check`, `test`, `build` and `fmt` that takes a value, so its value is not read as a PATH."""
+    unit = [option for option in UNIT_VALUE_OPTIONS]
+    return unit + [option for option in RUNNER_VALUE_OPTIONS] + ["--format", "--report", "--report-output"]
 
 
 def finish(command: str, result: Result[i32, str], format: str = "text") -> None:
