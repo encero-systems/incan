@@ -32,7 +32,7 @@ from files import json_text
 from home import StandardPackage
 from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from pub::incan_platform.store import EXPECT_ABSENT, HOME_VIEW, Snapshot, Transaction, begin, commit, put
+from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
@@ -543,22 +543,28 @@ def decoded_program(text: str) -> Result[NativeUnit, str]:
 
 pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
     """
-    Validate the selected immutable unit and restore only missing or changed derived executable views. A unit whose
-    executable loads a shared carrier that is gone is not restored: false tells the caller to link it again.
+    Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
+    caller to resolve the unit again: its executable loads a shared carrier that is gone, or its record was sealed again
+    since this selection, when the unit was linked again to different bytes.
     """
-    fact = unit_record(store, unit)?
-    if not carriers_present(store, fact, Path(unit.binary))?:
-        return Ok(false)
-    view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
-    return Ok(true)
+    match unit_record(store, unit)?:
+        None => return Ok(false)
+        Some(fact) =>
+            if not carriers_present(store, fact, Path(unit.binary))?:
+                return Ok(false)
+            view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
+            return Ok(true)
 
 
-def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
-    """Verify the exact executable payload; its immutable record already admitted native loader generations."""
+def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
+    """
+    The unit's record while it holds the selected executable payload; its immutable record already admitted native
+    loader generations. A record holding other bytes was sealed again after the unit was linked again.
+    """
     fact = required_unit(store, unit.identity)?
     if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Err("selected native payload disagrees with its unit record")
-    return Ok(fact)
+        return Ok(None)
+    return Ok(Some(fact))
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
@@ -663,13 +669,17 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
                     return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
 
 
-def index_program(
+pub def index_program(
     store: Path,
     selector: Option[str],
     unit: NativeUnit,
     native: Option[Transaction],
 ) -> Result[Option[Transaction], str]:
-    """Add a path-independent finalized-unit index to the same atomic request, never a second publication."""
+    """
+    Add a path-independent finalized-unit index to the same atomic request, never a second publication. The index names
+    the unit's sealed record, so it is written under the record's own expectation: a unit linked again to different
+    bytes replaces its record, and its index with it.
+    """
     match selector:
         None => return Ok(native)
         Some(key) =>
@@ -677,4 +687,4 @@ def index_program(
             if let Some(prepared) = native:
                 transaction = prepared
             descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
-            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_ABSENT)))
+            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_REPAIR)))

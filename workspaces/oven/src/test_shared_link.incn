@@ -2,13 +2,19 @@
 
 from rust::std::process import Command
 from std.fs import Path
+from std.json import parse
 from bakery import find
+from bakery_records import Fact
+from engine_epochs import record_text
 from files import make_directory, read, write
 from home_paths import bakery
-from engine_programs import NativeUnit, restore_program
+from engine_programs import NativeUnit, index_program, restore_program
 from incan_units import obtain_executable
+from json_fields import required_text
+from pub::incan_platform.store import commit
 from scratch import scratch_directory
 from shared_link import linkage_key, shared_arguments
+from store_path_conversion import snapshot
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
@@ -39,8 +45,9 @@ pub def test_development_executables_link_carriers_from_the_bakery() -> Result[N
 
 def carrier_toolchain(scratch: Path, carrier: Path) -> Result[Toolchain, str]:
     """
-    A compiler that cannot start a worker and counts each compilation. It writes a fixed executable, puts `carrier` in
-    place and names it in the executable's loader witness, as a development link does.
+    A compiler that cannot start a worker and counts each compilation. Each compilation writes different executable
+    bytes, the count so far, puts `carrier` in place and names it in the executable's loader witness, as a development
+    link does.
     """
     driver = scratch.joinpath("toolchain").joinpath("driver")
     attempts = scratch.joinpath("attempts")
@@ -48,7 +55,8 @@ def carrier_toolchain(scratch: Path, carrier: Path) -> Result[Toolchain, str]:
     listed = "{\"schema\":\"incan.native-shared/1\",\"libraries\":[{\"path\":\""
     witness = listed + carrier.0 + "\",\"identity\":\"stub\"}]}"
     mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
-    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\nchmod +x \"$4\"\n"
+    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program ' > \"$4\"\ncat '{attempts.0}' >> \"$4\"\n"
+    script += "chmod +x \"$4\"\n"
     script += f"mkdir -p '{directory.0}'\nprintf carrier > '{carrier.0}'\n"
     script += "printf '%s' '" + witness + "' > \"$4.native-shared.json\"\nexit 0\n"
     make_directory(driver.parent())?
@@ -125,3 +133,74 @@ pub def test_a_reused_development_executable_is_linked_again_when_a_carrier_it_l
     assert carrier.is_file()
     assert restore_program(store, selected_unit(store, key, output)?)?
     return Ok(None)
+
+
+pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_index() -> Result[None, str]:
+    """
+    A unit linked again may hold different executable bytes under the same identity. Its sealed record is replaced, so
+    the standalone index that names it is replaced with it in the same request, and an older selection of it is
+    resolved again instead of failing.
+
+    1. The first request links the executable, seals it and indexes it under its standalone selector in one commit.
+    2. With a carrier removed, the next request links it again. The stub writes different bytes, so the payload differs.
+       Its commit replaces the index, which then names the new payload.
+    3. The earlier selection names a payload the record no longer holds: it is not restored, and the new one is.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    store = root.joinpath("home").joinpath("bakery")
+    carrier = root.joinpath("native-shared").joinpath("libincan_debug_shared_0123456789abcdef.dylib")
+    toolchain = carrier_toolchain(root, carrier)?
+    unit = program_unit(root.joinpath("app"))?
+    output = root.joinpath("app").joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath("app")
+    key = Key(digest="sha256:" + fingerprint(["a standalone executable linked again"])?, parts=["compiler c"])
+    selector = "incan.engine.standalone-program\t" + fingerprint(["a standalone selector"])?
+    # 1. One link, sealed and indexed together.
+    first = indexed_link(store, unit, toolchain, output, key, selector)?
+    assert indexed_payload(store, selector)? == Some(first.payload)
+    # 2. A removed carrier: linked again, to different bytes.
+    carrier.unlink().map_err((error) => error.message())?
+    assert not restore_program(store, first)?
+    second = indexed_link(store, unit, toolchain, output, key, selector)?
+    assert second.identity == first.identity and second.payload != first.payload
+    assert indexed_payload(store, selector)? == Some(second.payload), "the index still names the earlier payload"
+    # 3. Only the new selection is restored.
+    assert not restore_program(store, first)?, "an earlier selection of a unit linked again was restored"
+    assert restore_program(store, second)?
+    return Ok(None)
+
+
+def indexed_link(
+    store: Path,
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    key: Key,
+    selector: str,
+) -> Result[NativeUnit, str]:
+    """Link the executable as the engine does: seal it and index it under `selector` in one commit."""
+    made = obtain_executable(unit, toolchain, output, key, true, Some(store), true)?
+    assert made.native_bakes == 1, "the executable was not linked"
+    linked = selected_fact_unit(made.fact, made.identity, output)?
+    match index_program(store, Some(selector), linked, made.transaction)?:
+        None => return Err("the link was not indexed")
+        Some(transaction) => _ = commit(transaction).map_err((error) => error.message())?
+    return Ok(linked)
+
+
+def selected_fact_unit(fact: Option[Fact], identity: str, output: Path) -> Result[NativeUnit, str]:
+    """The engine's descriptor of the executable in a freshly sealed fact."""
+    match fact:
+        None => return Err("the link sealed no fact")
+        Some(sealed) =>
+            for file in sealed.files:
+                if file.path == output.name() and file.program:
+                    return Ok(NativeUnit(identity=identity, payload=file.digest, binary=output.0))
+            return Err("the sealed fact holds no executable")
+
+
+def indexed_payload(store: Path, selector: str) -> Result[Option[str], str]:
+    """The executable payload the standalone index names under `selector`."""
+    match record_text(snapshot(store).map_err((error) => error.message())?, selector)?:
+        None => return Ok(None)
+        Some(text) => return Ok(Some(required_text(parse(text).map_err((error) => error.message())?, "payload")?))
