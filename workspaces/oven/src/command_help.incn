@@ -6,7 +6,7 @@ from graph_inspection import USAGE as GRAPH_USAGE, VALUE_OPTIONS as GRAPH_VALUE_
 from graph_mcp import USAGE as MCP_USAGE, help_text as mcp_help
 from home_paths import TOOLCHAIN
 from surfaces import OVEN, owner_of
-from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
+from toolchain_archive import PACK_USAGE, INSTALL_USAGE, VERIFY_USAGE, help_text as archive_help
 from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
 from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
 from project_version import VERSION_USAGE, version_help
@@ -87,6 +87,7 @@ pub def usage(surface: str) -> str:
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
+            VERIFY_USAGE,
             DOCTOR_USAGE,
             API_USAGE,
             MODEL_USAGE,
@@ -207,6 +208,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
             return Some(archive_help("pack"))
         if nested_help(arguments, "install"):
             return Some(archive_help("install"))
+        if nested_help(arguments, "verify"):
+            return Some(archive_help("verify"))
     return None
 
 
