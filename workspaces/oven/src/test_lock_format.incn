@@ -368,11 +368,16 @@ def versioned_unit(name: str, version: str) -> RegistryUnit:
     )
 
 
+def registry_request(loaf: str, requirement: str) -> JsonValue:
+    """One registry requirement of a local facet, without features."""
+    return JsonValue.object(
+        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
+    )
+
+
 def requesting_facet(project: str, loaves: list[str], requirement: str = "1") -> LocalFacet:
     """A local target facet that requests each of `loaves` at `requirement`."""
-    requests = [JsonValue.object(
-        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
-    ) for loaf in loaves]
+    requests = [registry_request(loaf, requirement) for loaf in loaves]
     return LocalFacet(
         project=project,
         domain=DependencyDomain.Target,
@@ -394,7 +399,11 @@ def published_pairs() -> list[RegistryUnit]:
 
 def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
     """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
-    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
+    return resolved_versions(RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode), facets)
+
+
+def resolved_versions(registry: RegistryUnits, facets: list[LocalFacet]) -> Result[list[str], str]:
+    """Each Loaf `registry` selects for `facets` under the root `/app`, as `NAME@VERSION`."""
     selected = resolve_registry(registry, facets, "release", "/app")?
     return Ok(sorted([f"{unit.loaf}@{unit.version}" for unit in selected.units]))
 
@@ -543,4 +552,35 @@ pub def test_oven_update_raises_a_requirement_within_its_bounds_and_changes_noth
         Ok(_) => return Err("a short name was resolved")
         Err(reason) =>
             assert "name one of: crates-io/serde" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_second_version_of_a_locked_loaf_locks_beside_it() -> Result[None, str]:
+    """
+    RFC 125: versions of one Loaf coexist. A requirement that the version the lock records cannot satisfy takes a
+    version of its own beside it, as it would in a fresh lock, and the recorded version stays.
+
+    1. The lock records getrandom 0.3.4 for the requirement `0.3.4`; a second key asks for `0.2`.
+    2. A fresh lock selects the same two versions.
+    """
+    app = LocalFacet(
+        project="/app",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[registry_request("crates-io/getrandom", "0.3.4"), registry_request("crates-io/getrandom", "0.2")],
+        registry_aliases=["getrandom", "random_2"],
+    )
+    # 1. `oven lock` retains the existing lock's producer of 0.3.4, which `0.2` does not admit.
+    recorded = RegistryUnits(
+        units=published_units(),
+        search=[],
+        recorded_bindings=[("target", "getrandom-0.3.4")],
+        resolution_mode="lowest",
+    )
+    locked = resolved_versions(recorded, [app])?
+    assert locked == ["crates-io/getrandom@0.2.3", "crates-io/getrandom@0.3.4"], f"locked {locked}"
+    # 2. The existing lock changes nothing a fresh lock would select.
+    fresh = resolved_versions(RegistryUnits(units=published_units(), search=[], resolution_mode="lowest"), [app])?
+    assert fresh == locked, f"a fresh lock selected {fresh}"
     return Ok(None)
