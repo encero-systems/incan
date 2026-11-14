@@ -46,7 +46,7 @@ from rust_freshness import (
 )
 from rust_portable import portable_reusable, record_portable
 from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
-from installed_sources import require_installed_sources
+from installed_sources import differing_crates, mismatch
 from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, forget_view, library_directory
@@ -126,8 +126,8 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     mut request = request
     request.registry = selected_registry(request.registry, facets, request.profile)?
     validate_incan_packages(facets, root.0, request.manifests)?
-    # A source build that would mix native generations is refused before any unit compiles.
-    require_installed_sources(facets, request)?
+    # A source build that would mix native generations is refused before any unit compiles; a check keeps them apart.
+    request = admitted_generation(facets, request)?
     require_coherent_installed_generation(facets, request)?
     local_trust = decide(facets, root.0, request.unattended, request.manifests)?
     trust = combine_trust(local_trust, decide_registry(request.registry, root.0, request.unattended)?)
@@ -361,6 +361,24 @@ def log_tail(path: Path, limit: int) -> str:
             return "\n".join(lines[start:])
 
 
+def admitted_generation(facets: list[LocalFacet], request: RustBuild) -> Result[RustBuild, str]:
+    """
+    Refuse a build whose sources differ from an installed native crate's, which would mix generations (#2451).
+
+    A check compiles nothing it links from those sources: every consumer keeps the prebuilt crate, and the lint checks
+    the edited sources on their own with `--emit metadata`. It runs in this process, so no scheduled child rebuilds it.
+    """
+    differing = differing_crates(facets, request)?
+    if len(differing) == 0:
+        return Ok(request)
+    if not request.check_only:
+        return Err(mismatch(differing))
+    trace(f"check keeps the prebuilt {", ".join(differing)} for its consumers and lints the edited sources")
+    mut checking = request
+    checking.schedule_rust_units = false
+    return Ok(checking)
+
+
 def require_coherent_installed_generation(facets: list[LocalFacet], request: RustBuild) -> Result[None, str]:
     """
     Validate a standard-package rebuild's installed Rust producers before any local unit compiles.
@@ -513,8 +531,9 @@ def build_prepared_dependencies(
     mut request = request
     validate_native_sources(facets)?
     validate_incan_packages(facets, root.0, request.manifests)?
-    # A source build that would mix native generations is refused before any unit compiles.
-    require_installed_sources(facets, request)?
+    # A source build that would mix native generations is refused before any unit compiles; an Incan provider inside a
+    # check keeps the prebuilt crates as the check's other units do.
+    request = admitted_generation(facets, request)?
     require_coherent_installed_generation(ordered(facets)?, request)?
     local_trust = decide(facets, root.0, request.unattended, request.manifests)?
     trust = combine_trust(local_trust, decide_registry(request.registry, root.0, request.unattended)?)
@@ -729,6 +748,10 @@ def installed_rust_library(
                 return Err(
                     f"installed native {declared.crate_name} cannot rebuild because shipped source is missing: {source.0}",
                 )
+            if why.endswith(" changed") and request.check_only:
+                # A check links the prebuilt producer and lints the edited sources apart, so it records no new proof.
+                trace(f"unit {declared.crate_name} rust: checking against the prebuilt producer because {why}")
+                return Ok(Some(prebuilt_unit(facet, declared, artifact, built)?))
             if why.endswith(" changed"):
                 trace(f"unit {declared.crate_name} rust: rebuilding installed producer because {why}")
                 return Ok(None)
@@ -749,15 +772,23 @@ def installed_rust_library(
     record_portable(directory, portable, outputs)?
     # 3. Consumers search the same graph-selected native closure as the installed producer.
     trace(f"unit {declared.crate_name} rust: reused installed producer identity={key.digest}")
+    return Ok(Some(prebuilt_unit(facet, declared, artifact, built)?))
+
+
+def prebuilt_unit(
+    facet: LocalFacet,
+    declared: RustFacet,
+    artifact: Path,
+    built: Dict[str, BuiltUnit],
+) -> Result[BuiltUnit, str]:
+    """The installed producer's artifact as its consumers link it, searching the same native closure it was built in."""
     return Ok(
-        Some(
-            BuiltUnit(
-                crate_name=declared.crate_name,
-                artifact=artifact.0,
-                directory=directory.0,
-                reused=true,
-                search=facet_search(facet, built)?,
-            ),
+        BuiltUnit(
+            crate_name=declared.crate_name,
+            artifact=artifact.0,
+            directory=artifact.parent().0,
+            reused=true,
+            search=facet_search(facet, built)?,
         ),
     )
 

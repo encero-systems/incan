@@ -5,6 +5,10 @@ Clippy over a Loaf's Rust facets: the check-only pass beside `check`, over the p
 local Rust library again with `clippy-driver` from the pinned Rust toolchain: the same arguments, `--emit metadata` into
 the unit's own lint directory instead of a link, and the Loaf's `[rust.lints]` flags last, so they act as Cargo's
 `[lints]` table does. Nothing launches Cargo, and nothing a lint writes is a build product.
+
+A lint is check-only. A crate the toolchain ships prebuilt whose sources here differ from the prebuilt one's is linted
+from these sources, against the toolchain's prebuilt dependencies, while every consumer links the prebuilt crate: no
+generation is mixed, so the edit never refuses the lint. `build` refuses the same graph (#2451).
 """
 
 from rust::std::process import Command
@@ -39,13 +43,17 @@ pub def lint_rust(request: RustBuild) -> Result[i32, str]:
     """
     Lint every local Rust library the Loaf reaches, after building them.
 
-    1. Build the graph as `build` does; a unit that does not compile is a build failure, never a finding.
+    1. Build the graph as `build` does, check-only: a crate the toolchain ships prebuilt stays prebuilt for its
+       consumers even when its sources here are edited. A unit that does not compile is a build failure, not a finding.
     2. Recover the build's facet order and the libraries it recorded, by facet.
-    3. Check each Rust library with clippy and print its findings; any error-level finding fails the command.
+    3. Check each Rust library with clippy from its sources here, edited or not, and print its findings; any
+       error-level finding fails the command.
     """
-    # 1. Every library a lint links must exist first.
-    _ = build_rust(request)?
-    prepared = prepared_build(request)?
+    # 1. Every library a lint links must exist first, and none is compiled from edited prebuilt sources.
+    mut checking = request
+    checking.check_only = true
+    _ = build_rust(checking)?
+    prepared = prepared_build(checking)?
     root = Path(prepared.project).resolve().map_err((error) => f"cannot {error.message()}")?
     output = rust_output(root, prepared.profile)
     clippy = Path(prepared.rustc).parent().joinpath("clippy-driver")
