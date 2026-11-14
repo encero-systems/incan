@@ -11,6 +11,7 @@ from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
 from unit_freshness import ArtifactIdentities, compiler_fingerprint, fingerprint, toolchain_cache_identities
 from frozen_inputs import observation as frozen_observation
+from native_references import NativeAnchors, anchored_reference, closure_reference, native_anchors
 
 const CHECKED_DOMAIN: str = "incan.oven.checked-source/2"
 
@@ -71,7 +72,8 @@ def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
 
 
 def semantic_description(unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
-    """Normalize only native profile policy and authenticated Loaf locations, preserving all other unit fields."""
+    """Normalize native profile policy, authenticated Loaf locations and anchored native paths, keeping other fields."""
+    anchors = native_anchors()?
     mut fields = unit.to_json().expect_object().map_err((error) => error.message())?
     fields["profile"] = JsonValue.string("")
     fields["checked_context"] = JsonValue.null()
@@ -83,18 +85,18 @@ def semantic_description(unit: UnitDescription, identities: ArtifactIdentities) 
         loaves.append(JsonValue.object(item))
     fields["loaves"] = JsonValue.array(loaves)
     fields["externs"] = JsonValue.array(
-        [JsonValue.string(binding_identity(item, unit, identities)?) for item in unit.externs],
+        [JsonValue.string(binding_identity(item, unit, identities, anchors)?) for item in unit.externs],
     )
-    fields["search"] = JsonValue.array([JsonValue.string(path) for path in semantic_search(unit)?])
+    fields["search"] = JsonValue.array([JsonValue.string(path) for path in semantic_search(unit, anchors)?])
     return json_text(JsonValue.object(fields))
 
 
-def semantic_search(unit: UnitDescription) -> Result[list[str], str]:
+def semantic_search(unit: UnitDescription, anchors: NativeAnchors) -> Result[list[str], str]:
     """Retain native search order while collapsing aliases of the same authenticated semantic directory."""
     mut seen: set[str] = set()
     mut paths: list[str] = []
     for path in unit.search:
-        selected = search_identity(Path(path), unit)?
+        selected = search_identity(Path(path), unit, anchors)?
         if selected not in seen:
             seen.add(selected)
             paths.append(selected)
@@ -127,6 +129,7 @@ def interface_inputs(
 
 def closure_inputs(loaf: UnitLoaf, unit: UnitDescription, identities: ArtifactIdentities) -> Result[list[str], str]:
     """Preserve native graph edges, macro bindings and search order while quotienting only witnessed Loaf profiles."""
+    anchors = native_anchors()?
     directory = Path(loaf.dir)
     closure = read_json(directory.joinpath(f"{loaf.name}.native.json"))?
     mut inputs: list[str] = []
@@ -137,16 +140,21 @@ def closure_inputs(loaf: UnitLoaf, unit: UnitDescription, identities: ArtifactId
             if len(pair) != 2:
                 return Err("native closure binding must name exactly one alias and artifact")
             name = string_value(pair[0])?
-            path = located(directory, string_value(pair[1])?)?
-            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities)?)
+            path = located(directory, string_value(pair[1])?, anchors)?
+            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities, anchors)?)
     inputs.append("search")
     for item in required_items(closure, "search")?:
-        inputs.append(search_identity(located(directory, string_value(item)?)?, unit)?)
+        inputs.append(search_identity(located(directory, string_value(item)?, anchors)?, unit, anchors)?)
     return Ok(inputs)
 
 
-def binding_identity(native: NativeCrate, unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
-    """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain exact native identity."""
+def binding_identity(
+    native: NativeCrate,
+    unit: UnitDescription,
+    identities: ArtifactIdentities,
+    anchors: NativeAnchors,
+) -> Result[str, str]:
+    """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain anchored native identity."""
     path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     if native.name not in unit.rust_crates:
         for loaf in unit.loaves:
@@ -156,23 +164,21 @@ def binding_identity(native: NativeCrate, unit: UnitDescription, identities: Art
                 and expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == path.0
             ):
                 return Ok(f"loaf:{native.name}:{loaf.name}")
-    return fingerprint([native.name, path.0, identities.identity(path)?])
+    return fingerprint([native.name, anchored_reference(path.0, anchors), identities.identity(path)?])
 
 
-def search_identity(path: Path, unit: UnitDescription) -> Result[str, str]:
+def search_identity(path: Path, unit: UnitDescription, anchors: NativeAnchors) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
     selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     for loaf in unit.loaves:
         if Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == selected.0:
             return Ok(f"loaf:{loaf.name}")
-    return Ok(selected.0)
+    return Ok(anchored_reference(selected.0, anchors))
 
 
-def located(directory: Path, path: str) -> Result[Path, str]:
-    """Resolve a published native-closure path against the artifact directory that owns its spelling."""
-    mut selected = Path(path)
-    if not path.startswith("/"):
-        selected = directory.joinpath(path)
+def located(directory: Path, path: str, anchors: NativeAnchors) -> Result[Path, str]:
+    """Resolve a published native-closure reference against the current home, then to its physical path."""
+    selected = Path(closure_reference(directory, path, anchors)?)
     return selected.resolve().map_err((error) => f"cannot resolve {error.message()}")
 
 
