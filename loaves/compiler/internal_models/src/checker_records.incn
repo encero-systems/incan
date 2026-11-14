@@ -763,13 +763,18 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         end = 1
     # Generated protocol artifact rows retain one checked receiver identity at its source node.
     elif field.family == "artifact-protocol":
-        if (
-            field.selector != "body_ir_truthiness_receivers"
-            or field.node == ""
-            or len(values) != 1
-            or values[0] == ""
-        ):
+        if field.node == "" or len(values) != 1:
             return Err(CodecFault.Malformed)
+        if field.selector == "body_ir_truthiness_receivers" and values[0] == "":
+            return Err(CodecFault.Malformed)
+        if field.selector in ["item_taking_iterations", "in_place_match_scrutinees"] and values != ["true"]:
+            return Err(CodecFault.Malformed)
+        if field.selector not in [
+            "body_ir_truthiness_receivers",
+            "item_taking_iterations",
+            "in_place_match_scrutinees",
+        ]:
+            return Err(CodecFault.Unsupported(field.selector))
         end = 1
     # A target's source: at least two values, all kept.
     elif field.family == "target":

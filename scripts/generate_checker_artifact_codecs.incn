@@ -108,9 +108,9 @@ def protocol_fields() -> list[ArtifactField]:
         ArtifactField(name="body_ir_truthiness_receivers", codec="span-identity"),
         ArtifactField(name="body_ir_iterations", codec="refused"),
         ArtifactField(name="iterations", codec="refused"),
-        ArtifactField(name="item_taking_iterations", codec="refused"),
+        ArtifactField(name="item_taking_iterations", codec="span-set"),
         ArtifactField(name="comprehension_source_consumption", codec="refused"),
-        ArtifactField(name="in_place_match_scrutinees", codec="refused"),
+        ArtifactField(name="in_place_match_scrutinees", codec="span-set"),
         ArtifactField(name="loan_free_scrutinees", codec="legacy"),
     ]
 
@@ -511,6 +511,19 @@ pub(super) fn project(
             positions.identity(identity)?,
         ]);
     }
+    for (selector, spans) in [
+        ("item_taking_iterations", &protocols.item_taking_iterations),
+        ("in_place_match_scrutinees", &protocols.in_place_match_scrutinees),
+    ] {
+        for span in spans {
+            fields.push(vec![
+                "artifact-protocol".into(),
+                positions.nodes.anchor(*span)?.path,
+                selector.into(),
+                "true".into(),
+            ]);
+        }
+    }
     Ok(())
 }
 
@@ -528,6 +541,16 @@ pub(super) fn restore(
         "body_ir_truthiness_receivers" => {
             let identity = positions.canonical(next(&mut values)?)?;
             if protocols.body_ir_truthiness_receivers.insert(span, identity).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "item_taking_iterations" => {
+            if next(&mut values)? != "true" || !protocols.item_taking_iterations.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "in_place_match_scrutinees" => {
+            if next(&mut values)? != "true" || !protocols.in_place_match_scrutinees.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
@@ -561,12 +584,17 @@ mod generated_tests {
             .ok_or("missing checked reference identity")?;
         let mut protocols = crate::typechecker::type_info::ProtocolArtifacts::default();
         protocols.body_ir_truthiness_receivers.insert(*span, identity.clone());
+        protocols.item_taking_iterations.insert(*span);
+        protocols.in_place_match_scrutinees.insert(*span);
         let mut fields = Vec::new();
         super::project(&positions, &protocols, &mut fields)?;
-        let row = fields.first().ok_or("missing truthiness receiver row")?;
         let mut restored = crate::typechecker::type_info::ProtocolArtifacts::default();
-        assert!(super::restore(&positions, &mut restored, row)?);
+        for row in &fields {
+            assert!(super::restore(&positions, &mut restored, row)?);
+        }
         assert_eq!(restored.body_ir_truthiness_receivers, protocols.body_ir_truthiness_receivers);
+        assert_eq!(restored.item_taking_iterations, protocols.item_taking_iterations);
+        assert_eq!(restored.in_place_match_scrutinees, protocols.in_place_match_scrutinees);
         Ok(())
     }
 }
