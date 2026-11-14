@@ -13,7 +13,7 @@ oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS
 oven check [PATH] [--format text|json] [UNIT OPTIONS]
 oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-oven build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
@@ -25,7 +25,7 @@ incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-e
 incan check [PATH] [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
-incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+incan build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] [--diff] [PATH...]
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH [--profile NAME]
@@ -53,7 +53,7 @@ There is no implicit command. Without `PATH`, `run`, `check` and `build` select 
 | `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
 | `--release` | Not accepted | Refused with exit `2`, naming its spelling `--profile release`. |
 
-Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path; `build` also accepts an `OUTPUT_DIR` after it. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
 `incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--locked` and `--engine-report`.
 
@@ -124,7 +124,7 @@ Collected test functions take no arguments and return `None` or `Result[None, E]
 
 An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
-A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
+A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `OUTPUT_DIR`, after `PATH`, receives a copy of a program build's executable under the same name, replacing a file of that name; a library or Rust-project build refuses it. `--lib` and `--report` are not accepted.
 
 With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
 

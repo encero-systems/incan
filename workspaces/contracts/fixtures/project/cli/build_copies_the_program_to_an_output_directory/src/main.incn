@@ -1,0 +1,10 @@
+# behavior: `incan build PATH OUTPUT_DIR` builds the program and copies its executable into OUTPUT_DIR, as 0.5.1 accepts a second positional output directory (#3143).
+# cli-commands:
+#   build src/main.incn out
+#   build . out
+#   oven build src out
+# expect-stdout:
+# expect-exit: 0
+
+def main() -> None:
+    println("main must not run during a build")
