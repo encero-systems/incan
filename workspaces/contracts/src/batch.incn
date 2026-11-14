@@ -346,13 +346,13 @@ def compile_groups(
     mut pool = open_pool(jobs)
     mut discovery = Discovery(incan=incan, scratch=scratch, costs=costs, queued=set())
     # 1. The partition's groups and the isolated cases share one pool.
-    submit(pool, discovery, groups, separate, partition, projects)
-    # 2. A settled build's retries join the pool at once.
+    submit(pool, discovery, groups, separate, partition, projects, false)
+    # 2. A settled build's retries join the pool at once, ahead of the requests still queued.
     while pool.busy():
         for index in pool.step():
             if index in discovery.attempts:
                 retry = settled_group(discovery, index, pool_outcome(index), built, notes)
-                submit(pool, discovery, retry, [], partition, projects)
+                submit(pool, discovery, retry, [], partition, projects, true)
     # 3. Outcomes are recorded once every request settled.
     results = close_pool(pool)
     for index in discovery.own.keys():
@@ -370,9 +370,11 @@ def submit(
     separate: list[Fixture],
     mut partition: list[str],
     mut projects: list[Path],
+    urgent: bool,
 ) -> None:
     """
-    Add each shared group's build and gated entries, and each newly isolated case's own command, to the pool.
+    Add each shared group's build and gated entries, and each newly isolated case's own command, to the pool; a
+    retry is `urgent` and goes ahead of the requests still queued, since a build it unlocks may unlock further work.
 
     1. A singleton keeps its own command; a group that cannot be prepared is split and prepared again.
     2. Each prepared group contributes one build, and each isolated case one own command.
@@ -425,7 +427,7 @@ def submit(
         first = base + len(requests)
         selected = queue_entries(discovery.scratch, discovery.attempts[build], build, requests)
         discovery.executions[build] = (first, selected)
-    pool.add(requests)
+    pool.add(requests, urgent)
 
 
 def isolate(mut discovery: Discovery, fixture: Fixture, mut isolated: list[Fixture]) -> None:
