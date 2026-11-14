@@ -1,0 +1,18 @@
+# behavior: A command on a workspace member resolves and locks at the workspace root, which holds the one `oven.lock` for every member; no member gets a lock of its own, as in 0.5.1 (RFC 117).
+# cli-commands:
+#   oven build alpha
+#   oven test beta
+#   oven run --member alpha
+#   oven lock
+#   oven lock alpha
+#   oven build --locked beta
+# expect-exit: 0
+# expect-files:
+#   oven.lock
+# expect-no-files:
+#   alpha/oven.lock
+#   beta/oven.lock
+
+def main() -> None:
+    """The case's header carrier; the virtual workspace root has no program of its own."""
+    pass
