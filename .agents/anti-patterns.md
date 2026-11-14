@@ -198,7 +198,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `.agents/skills/review-incan-source-quality/SKILL.md` ("docstrings on every authored declaration, including private/internal helpers"); `.agents/skills/review/SKILL.md`, Checklist 5.
 - Search: the `nodoc` findings of [`incan_structure.awk`](#incan_structureawk).
-- Split: 522 in sources, 7 in tests. By top directory at `dd3ee72d8`: 246 in `loaves/stdlib`, 209 in `examples`, 30 in `workspaces/docs-site`, 23 in `workspaces/benchmarks` (now 0), 15 in `loaves/compiler` and 1 in `workspaces/oven`.
+- Split: 522 in sources, 7 in tests. By top directory at `dd3ee72d8`: 246 in `loaves/stdlib`, 209 in `examples`, 30 in `workspaces/docs-site`, 23 in `workspaces/benchmarks` (now 0), 15 in `loaves/compiler` and 1 in `workspaces/oven`. The 30 in `workspaces/docs-site` are tutorial solution snippets that the tutorials include whole, so a docstring there is also a change to what a learner reads, and their compile check (`scripts/check_docs_examples.incn`) needs the scripts Loaf.
 
 ### IN13 Helpers nested in function bodies
 
