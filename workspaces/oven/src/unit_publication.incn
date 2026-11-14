@@ -293,11 +293,14 @@ def manifest_facts(path: Path, payload: str) -> Result[Option[str], str]:
 
 
 pub def published_facts(path: Path) -> Result[Option[str], str]:
-    """The semantic facts a library manifest's current publication record carries, when it carries them."""
-    local = record_path(path)
-    if not local.is_file():
+    """
+    The semantic facts a library manifest's current publication carries, when it carries them: its producer's record,
+    or the home's admitted import of a transported one, so an installed Loaf keys its consumers as where it was built.
+    """
+    record = available_record(path)?
+    if not record.is_file():
         return Ok(None)
-    document = read_json(local)?
+    document = read_json(record)?
     if required_text(document, "observation")? != observe(path)?.stamp:
         return Ok(None)
     match document.get("facts"):

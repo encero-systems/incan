@@ -649,6 +649,76 @@ def pack_bytes(state: &PackState) -> bytes:
     return data
 
 
+# ---- Repacking ----
+
+
+pub def pack_usage(root: Path, tops: list[str]) -> Result[Dict[str, int], IndexError]:
+    """The bytes of the pages reachable from `tops` that each pack holds, every page counted once."""
+    mut usage: Dict[str, int] = {}
+    for reference in tree_order(root, tops)?.order:
+        location = located_page(root, reference)?
+        if location.pack != "":
+            usage[location.pack] = usage.get(location.pack, 0) + location.length
+    return Ok(usage)
+
+
+pub def repacked(root: Path, top: str, writer: PageWriter, moving: set[str]) -> Result[str, IndexError]:
+    """
+    The root of `top`'s index once every page that lies in a `moving` pack is placed again in `writer`'s pack, together
+    with the pages above it, whose child references change. Every other page is shared and every entry is unchanged, so
+    every lookup answers as before. Returns `top` when no page below it moves.
+
+    A page placed again with its bytes unchanged, as every leaf is, keeps its content name in the new pack. A page above
+    a moved one holds new child references, so it is a new page under a new name: no page's bytes change under its name.
+    Pages are placed children first, from the end of the breadth-first order, so a parent meets its moved children's
+    new references.
+    """
+    if top == "":
+        return Ok(top)
+    tree = tree_order(root, [top])?
+    mut moved: Dict[str, str] = {}
+    for back in range(len(tree.order)):
+        reference = tree.order[len(tree.order) - 1 - back]
+        page = tree.pages[reference]
+        mut changes = located_page(root, reference)?.pack in moving
+        mut entries: list[Entry] = []
+        for entry in page.entries:
+            if page.level > 0 and entry.child in moved:
+                changes = true
+                entries.append(Entry(key=entry.key, location=None, child=moved[entry.child]))
+            else:
+                entries.append(entry)
+        if changes:
+            moved[reference] = write_page(writer, Page(level=page.level, entries=entries))?
+    return Ok(moved.get(top, top))
+
+
+model TreeOrder:
+    """The pages reachable from some roots, each once, in breadth-first order, and each page decoded."""
+
+    order: list[str] = []
+    pages: Dict[str, Page] = {}
+
+
+def tree_order(root: Path, tops: list[str]) -> Result[TreeOrder, IndexError]:
+    """Every page reachable from `tops`, each read once, parents before their children."""
+    mut tree = TreeOrder()
+    mut pending = tops
+    mut position = 0
+    while position < len(pending):
+        reference = pending[position]
+        position += 1
+        if reference == "" or reference in tree.pages:
+            continue
+        page = read_page(root, reference)?
+        tree.order.append(reference)
+        if page.level > 0:
+            for entry in page.entries:
+                pending.append(entry.child)
+        tree.pages[reference] = page
+    return Ok(tree)
+
+
 # ---- Encoding ----
 
 

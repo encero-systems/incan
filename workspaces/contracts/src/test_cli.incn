@@ -1,0 +1,27 @@
+"""A project case's stdout names its own directory `<project>`, so a case can expect a path Oven prints."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from cli import located
+from run import Outcome
+
+
+def test_a_case_reads_its_project_directory_as_a_placeholder() -> None:
+    """The project directory, as given and as resolved, reads `<project>` in stdout; stderr and the status stay."""
+    scratch = TemporaryDirectory.try_new().unwrap()
+    project = scratch.path().joinpath("case")
+    project.joinpath("alpha").mkdir(true, true).unwrap()
+    resolved = project.resolve().unwrap()
+    stdout = f"  - alpha ({project.0}/alpha)\n  - root ({resolved.0})\n"
+    outcome = Outcome(stdout=stdout, stderr=f"at {project.0}", code=Some(0))
+    seen = located(outcome, project)
+    assert seen.stdout == "  - alpha (<project>/alpha)\n  - root (<project>)\n"
+    assert seen.stderr == f"at {project.0}"
+    assert seen.code == Some(0)
+
+
+def test_a_project_directory_is_replaced_only_where_it_is_absolute() -> None:
+    """Only the directory's absolute spellings are replaced, so its bare name never rewrites other text."""
+    outcome = Outcome(stdout="case: case/alpha\n", stderr="", code=Some(1))
+    seen = located(outcome, Path("case"))
+    assert seen.stdout == "case: case/alpha\n"

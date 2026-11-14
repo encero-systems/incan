@@ -6,7 +6,7 @@ from c_interop import parse_c_targets
 from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader, read_digests, read_manifest_snapshot
+from intake import ManifestReader, read_digests, read_manifest_snapshot, read_project
 from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
@@ -266,6 +266,7 @@ def reconcile(
         all_features=request.all_features,
     )
     facets = local_facets(demand, configuration, substitutes, reader)?
+    refuse_unmanaged_providers([root.0] + [facet.project for facet in facets], reader)?
     mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false)?
     registry.resolution_mode = mode
     if let Some(known) = existing:
@@ -293,6 +294,22 @@ def reconcile(
             untested=untested_bounds(facets, registry.units, selected)?,
         ),
     )
+
+
+def refuse_unmanaged_providers(projects: list[str], reader: ManifestReader) -> Result[None, str]:
+    """
+    RFC 117: an Oven-managed provider satisfies a `provider` requirement, and this toolchain manages none, so a graph
+    that declares one is refused by name rather than resolved without it.
+    """
+    for project in unique(projects):
+        intent = read_project(Path(project), reader).map_err((error) => error.message())?.intent
+        for wanted in intent.providers:
+            manifest = Path(project).joinpath("loaf.toml").0
+            return Err(
+                f"{manifest}: `dependencies.{wanted.alias}` requires provider `{wanted.provider}` "
+                + f"{wanted.version}, and Oven {TOOLCHAIN} manages no providers",
+            )
+    return Ok(None)
 
 
 pub def untested_bounds(

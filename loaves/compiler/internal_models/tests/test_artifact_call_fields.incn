@@ -14,6 +14,18 @@ pub def test_call_artifact_rows_validate_by_their_codec() -> None:
     assert refused("body_ir_self_result_methods", [""]) == "malformed"
 
 
+pub def test_call_artifact_operator_rows_keep_their_kind_and_method() -> None:
+    """A resolved operator call keeps its operator kind and method; an unknown kind or a missing method is refused."""
+    assert accepted("resolved_operator_calls", ["truthiness", "__bool__"])
+    assert accepted("resolved_operator_calls", ["binary", "__add__"])
+    assert accepted("resolved_operator_calls", ["index", "__getitem__"])
+    assert accepted("resolved_operator_calls", ["index-assign", "__setitem__"])
+    assert refused("resolved_operator_calls", ["modulo", "__mod__"]) == "malformed"
+    assert refused("resolved_operator_calls", ["binary", ""]) == "malformed"
+    assert refused("resolved_operator_calls", ["binary"]) == "malformed"
+    assert refused("resolved_operator_calls", ["binary", "__add__", "extra"]) == "malformed"
+
+
 pub def test_call_artifact_rows_without_a_grammar_stay_unsupported() -> None:
     """A row this schema has no grammar for, or on no node, is refused rather than accepted unchecked."""
     assert refused("resolved_method_calls", ["function:main::value"]) == "resolved_method_calls"
