@@ -253,7 +253,10 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     diagnostic = report.to_json().map_err((error) => error.message())?
     assert proof_count(report, "reusable_declarations")? == 1, diagnostic
     assert proof_count(report, "all_declarations")? == 3, diagnostic
-    assert proof_refusal_count(report, "ProtocolArtifacts.body_ir_truthiness_receivers")? == 1, diagnostic
+    # `selected` tests a `Flag` for truth through `Flag.__bool__`: a resolved operator call, whose record row the
+    # schema has no grammar for. `main` constructs the imported `Flag`, a reference no record admits yet, which is not
+    # an artifact field.
+    assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 1, diagnostic
     return stop_example_engine(binary, store)
 
 

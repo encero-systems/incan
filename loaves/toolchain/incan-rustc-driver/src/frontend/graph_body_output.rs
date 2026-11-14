@@ -45,6 +45,12 @@ struct PendingBodyFallback {
     artifact_refusals: Vec<String>,
 }
 
+/// Why one compiler-produced owner could not be encoded, with the artifact fields whose rows the codec refused.
+struct BodyValueRefusal {
+    reason: String,
+    artifact_refusals: Vec<String>,
+}
+
 /// Canonicalize the rendered owner inventory at the Rust-to-Incan framing boundary.
 fn canonical_lowering_inputs(inputs: Vec<Vec<String>>) -> Result<Vec<Vec<String>>, String> {
     let mut canonical = std::collections::BTreeMap::new();
@@ -154,12 +160,12 @@ impl GraphBodyOutput {
                             restored: checker.restored_body_record(fields.span),
                             ..value
                         }),
-                        Err(reason) => self.fallbacks.push(PendingBodyFallback {
+                        Err(refusal) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
                             identity: fallback_identity(Some(fields.identity)),
-                            reason,
-                            artifact_refusals: Vec::new(),
+                            reason: refusal.reason,
+                            artifact_refusals: refusal.artifact_refusals,
                         }),
                     }
                 }
@@ -349,16 +355,16 @@ impl GraphBodyOutput {
 fn encoded_body_value(
     module: &str,
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
-) -> Result<PendingBodyValue, String> {
+) -> Result<PendingBodyValue, BodyValueRefusal> {
     let declaration = internal_models::from_native_fields(&fields.declaration)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("declaration record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("declaration", &fields.declaration, error))?;
     let local = internal_models::from_native_local_fields(&fields.local)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("local record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("local", &fields.local, error))?;
     let final_value = internal_models::from_native_final_fields(&fields.final_value)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("final record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("final", &fields.final_value, error))?;
     let mut dependency_reads = fields
         .dependency_reads
         .iter()
@@ -405,6 +411,25 @@ fn encoded_body_value(
         dependency_reads,
         restored: false,
     })
+}
+
+/// Explain one record codec refusal. An unsupported row names its artifact field, so the checker reuse report groups
+/// a field the record schema refuses beside the fields the frontend refuses.
+fn record_refusal(stage: &str, rows: &[Vec<String>], error: internal_models::CodecFault) -> BodyValueRefusal {
+    let mut artifact_refusals = Vec::new();
+    if let internal_models::CodecFault::Unsupported(name) = &error {
+        artifact_refusals = rows
+            .iter()
+            .filter(|row| row.first() == Some(name) || row.get(2) == Some(name))
+            .filter_map(|row| incan_frontend::checker_records::record_row_artifact_field(row))
+            .collect();
+        artifact_refusals.sort();
+        artifact_refusals.dedup();
+    }
+    BodyValueRefusal {
+        reason: format!("{stage} record output refused: {error:?}"),
+        artifact_refusals,
+    }
 }
 
 /// Render the compiler's canonical package module path in the logical source-key spelling shared with Oven.
