@@ -1,0 +1,102 @@
+"""Checker, graph and compiled-body values shared by the canonical checker-record codecs."""
+
+from checker_field_grammar import CanonicalField, CodecFault
+
+
+@derive(Eq)
+pub enum CheckedFamily:
+    """Declaration/default output, pending local output and settled output have distinct contracts."""
+
+    Declaration
+    Local
+    Final
+
+
+@derive(Eq)
+pub model CheckedRecord:
+    """One checked owner; owner is its checked stable source identity, root its position-free semantic syntax."""
+
+    pub profile: str
+    pub owner: str
+    pub root: str
+    pub family: CheckedFamily
+    pub fields: list[CanonicalField]
+
+
+pub model GraphBodyValue:
+    """One graph-selected owner's checker values and opaque kernel-owned executable frame."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+
+
+pub model GraphBodyFields:
+    """One validated graph-selected owner projected into native checker fields plus its opaque Body IR frame."""
+
+    pub identity: str
+    pub local: list[list[str]]
+    pub final_fields: list[list[str]]
+    pub body_ir: bytes
+
+
+pub model GraphNamespaceValue:
+    """One graph-selected editable namespace with its interface, Body IR and authenticated lowering witnesses."""
+
+    pub module: str
+    pub interface: bytes
+    pub body_ir: bytes
+    pub lowering_inputs: list[list[str]] = []
+
+
+pub model CompiledBodyValue:
+    """One compiler-produced checker triple and kernel-owned Body IR frame with its projected source owner."""
+
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub declaration: bytes
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+    pub dependency_reads: list[CompiledBodyDependencyRead] = []
+
+
+@derive(Eq)
+pub model CompiledBodyDependencyRead:
+    """One exact package or project declaration record witnessed by a compiled owner."""
+
+    pub package: Option[str]
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub reference_subject: str
+
+
+@derive(Eq)
+pub model CompiledBodyFallback:
+    """One checked owner that cannot enter the record fast path, retaining absence when identity production failed."""
+
+    pub module: str
+    pub name: str
+    pub identity: Option[str]
+    pub reason: str
+
+
+pub model CompiledNamespaceValue:
+    """One installable checked namespace plus the lowering witnesses produced by the same completed check."""
+
+    pub module: str
+    pub interface: bytes
+    pub body_ir: bytes
+    pub dependencies: list[str]
+    pub lowering_inputs: list[list[str]] = []
+
+
+pub model CompiledBodyOutputs:
+    """Every namespace, owner value and explicit full-source fallback awaiting independent binary framing."""
+
+    pub namespaces: list[CompiledNamespaceValue] = []
+    pub values: list[CompiledBodyValue]
+    pub fallbacks: list[CompiledBodyFallback]
