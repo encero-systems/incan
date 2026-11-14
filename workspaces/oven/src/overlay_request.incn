@@ -1,0 +1,55 @@
+"""`incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]`."""
+
+
+pub model OverlayRequest:
+    """One editor overlay request: the document's source path, the file holding its unsaved buffer and its version."""
+
+    pub source: str
+    pub buffer: str
+    pub version: int
+    pub profile: str
+
+
+pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
+    """Read an overlay request; the answer is always the JSON document, so `--format` may only say `json`."""
+    mut request = OverlayRequest(source="", buffer="", version=0, profile="debug")
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--overlay", "--document-version", "--profile", "--format"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            value = arguments[index + 1]
+            if argument == "--overlay":
+                request.buffer = value
+            elif argument == "--document-version":
+                if not decimal(value):
+                    return Err(f"`--document-version` is a non-negative integer, got `{value}`")
+                request.version = int(value)
+            elif argument == "--profile":
+                if value not in ["debug", "release"]:
+                    return Err(f"`--profile` is debug or release, got `{value}`")
+                request.profile = value
+            elif value != "json":
+                return Err(f"an overlay request answers in json, got `--format {value}`")
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(f"unexpected option `{argument}`")
+        if request.source != "":
+            return Err(f"unexpected argument `{argument}`")
+        request.source = argument
+        index += 1
+    if request.source == "" or request.buffer == "":
+        return Err("an overlay request names a source and `--overlay BUFFER`")
+    return Ok(request)
+
+
+def decimal(text: str) -> bool:
+    """Whether `text` is a nonempty decimal number of at most nine digits."""
+    if len(text) == 0 or len(text) > 9:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true

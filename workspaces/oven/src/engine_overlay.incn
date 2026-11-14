@@ -1,0 +1,164 @@
+"""
+Overlay requests (14.1): an editor's unsaved buffer reaches the records engine through an editor view.
+
+Each project view has one editor view, forked from it on the first overlay request and never merged back. The
+editor's buffer and the program's other editable files are mirrored into an overlay root under the bakery, so the
+engine captures and compiles the overlay exactly as it would a build, with the same logical names and therefore the
+same record keys and unit identities. A refused unit answers with its diagnostics in document coordinates.
+"""
+
+from std.fs import Path
+from unit_freshness import fingerprint
+
+# The prefix of every editor view, which the producer recognizes to keep the overlay's records in that view.
+pub const EDITOR_VIEW_PREFIX: str = "editor-"
+
+
+pub model OverlayDiagnostic:
+    """One compiler diagnostic in document coordinates: the message, the document and one-based line and column."""
+
+    pub message: str
+    pub path: str
+    pub line: int
+    pub column: int
+    pub severity: str
+
+
+pub def editor_view_name(project_view: str) -> Result[str, str]:
+    """The one editor view of a project view."""
+    return Ok(EDITOR_VIEW_PREFIX + fingerprint(["incan.editor-view/1", project_view])?)
+
+
+pub def is_editor_view(view: str) -> bool:
+    """Whether a view holds an editor's overlay requests."""
+    return view.startswith(EDITOR_VIEW_PREFIX)
+
+
+pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
+    """
+    Mirror `program`'s editable files into `overlay` with `buffer` in place of `document` (a path relative to
+    `program`), and remove mirrored files the program no longer has. Returns how many files were written; a file whose
+    bytes already match is left as it is, so an unchanged buffer leaves the overlay's metadata unchanged too.
+    """
+    mut written = mirror_directory(program, overlay, "", document)?
+    if write_if_changed(overlay.joinpath(document), buffer.encode("utf-8"))?:
+        written += 1
+    remove_absent(program, overlay, "", document)?
+    return Ok(written)
+
+
+def mirror_directory(source: Path, destination: Path, relative: str, document: str) -> Result[int, str]:
+    """Mirror one directory's files, leaving out the document, build output and hidden entries."""
+    mut written = 0
+    for entry in source.iterdir().map_err((error) => f"cannot list {source.0}: {error.message()}")?:
+        name = entry.name()
+        if name.startswith(".") or name == "target":
+            continue
+        mut path = name
+        if relative != "":
+            path = f"{relative}/{name}"
+        if entry.is_dir():
+            written += mirror_directory(entry, destination.joinpath(name), path, document)?
+        elif entry.is_file() and path != document:
+            content = entry.read_bytes().map_err((error) => f"cannot read {entry.0}: {error.message()}")?
+            if write_if_changed(destination.joinpath(name), content)?:
+                written += 1
+    return Ok(written)
+
+
+def remove_absent(source: Path, destination: Path, relative: str, document: str) -> Result[None, str]:
+    """Remove mirrored files and directories the program no longer has; the document always stays."""
+    if not destination.is_dir():
+        return Ok(None)
+    for entry in destination.iterdir().map_err((error) => f"cannot list {destination.0}: {error.message()}")?:
+        name = entry.name()
+        mut path = name
+        if relative != "":
+            path = f"{relative}/{name}"
+        if path == document:
+            continue
+        original = source.joinpath(name)
+        if entry.is_dir():
+            if original.is_dir():
+                remove_absent(original, entry, path, document)?
+            elif not document.startswith(path + "/"):
+                entry.remove_tree().map_err((error) => f"cannot remove {entry.0}: {error.message()}")?
+        elif not original.is_file():
+            entry.unlink().map_err((error) => f"cannot remove {entry.0}: {error.message()}")?
+    return Ok(None)
+
+
+def write_if_changed(path: Path, content: bytes) -> Result[bool, str]:
+    """Write `content` at `path` unless the file already holds exactly those bytes."""
+    if path.is_file():
+        current = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+        if current == content:
+            return Ok(false)
+    path.parent().mkdir(true, true).map_err((error) => f"cannot create {path.parent().0}: {error.message()}")?
+    path.write_bytes(content).map_err((error) => f"cannot write {path.0}: {error.message()}")?
+    return Ok(true)
+
+
+pub def projected_diagnostics(console: str) -> list[OverlayDiagnostic]:
+    """
+    The diagnostics of a refused unit's compiler stream, each paired with its first `-->` location.
+
+    A diagnostic starts at an unindented `kind: message` line; its location is the first `--> path:line:column`
+    after it. Terminal colors are removed first.
+    """
+    mut found: list[OverlayDiagnostic] = []
+    mut pending = ""
+    for raw in without_colors(console).split("\n"):
+        line = raw.strip()
+        if line.startswith("-->"):
+            if pending != "":
+                if let Some(diagnostic) = located(pending, line[3:].strip()):
+                    found.append(diagnostic)
+                pending = ""
+        elif raw != "" and not raw.startswith(" ") and ": " in line:
+            pending = line
+    return found
+
+
+def located(message: str, location: str) -> Option[OverlayDiagnostic]:
+    """A diagnostic at `path:line:column`, or none when the location is not one."""
+    parts = location.split(":")
+    if len(parts) < 3:
+        return None
+    line_text = parts[len(parts) - 2]
+    column_text = parts[len(parts) - 1]
+    if not digits(line_text) or not digits(column_text):
+        return None
+    path = ":".join(parts[:len(parts) - 2])
+    mut severity = "error"
+    if message.startswith("warning"):
+        severity = "warning"
+    return Some(
+        OverlayDiagnostic(message=message, path=path, line=int(line_text), column=int(column_text), severity=severity),
+    )
+
+
+def digits(text: str) -> bool:
+    """Whether `text` is a nonempty decimal number."""
+    if len(text) == 0 or len(text) > 9:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+def without_colors(text: str) -> str:
+    """`text` without terminal color sequences (`ESC [ ... m`)."""
+    mut result: list[str] = []
+    mut escaped = false
+    for character in text:
+        if escaped:
+            if character == "m":
+                escaped = false
+            continue
+        if character == "\u{1b}":
+            escaped = true
+            continue
+        result.append(character)
+    return "".join(result)

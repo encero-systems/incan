@@ -159,6 +159,15 @@ pub def relay_console(prefix: str) -> Result[None, str]:
     return Ok(None)
 
 
+pub def collect_console(prefix: str) -> Result[str, str]:
+    """A completed request's console text, both streams, withdrawn instead of relayed; invalid UTF-8 is replaced."""
+    mut text = ""
+    for stream in ["out", "err"]:
+        contents = collected(Path(f"{prefix}.{stream}"))?
+        text += str(RustString.from_utf8_lossy(contents).into_owned())
+    return Ok(text)
+
+
 def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
     """Copy a completed compiler stream without changing its encoding or adding a newline."""
     contents = collected(path)?

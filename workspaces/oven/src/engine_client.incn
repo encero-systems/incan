@@ -6,7 +6,7 @@ from std.json import JsonValue, parse
 from pub::incan_platform.ipc import session_id
 from bakery import bakery
 from core_process import executable
-from compiler_worker import relay_console
+from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
 from engine_epochs import record_text, prepare_submit
@@ -29,8 +29,87 @@ from rust_target import inherited_deployment_configuration
 from home import home
 from home_paths import installation_catalog
 from home_views import selected_home_view
+from engine_overlay import OverlayDiagnostic, editor_view_name, mirror_overlay, projected_diagnostics
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+
+# The schema of the document an overlay request answers with.
+const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
+# While an overlay request runs, its console is collected here instead of being relayed to the terminal.
+static console_capture: dict[str, str] = {}
+
+
+pub def execute_overlay(
+    source: Path,
+    buffer: Path,
+    version: int,
+    profile: str,
+    arguments: list[str],
+) -> Result[str, str]:
+    """
+    Answer one editor overlay request: the diagnostics of `source` with `buffer` in place of its file, as an
+    `incan.overlay-diagnostics/1` document carrying the editor's document `version`.
+
+    1. Name the program's project view and its editor view, and mirror the program into the overlay root.
+    2. Fork the editor view from the store's shared records on its first request.
+    3. Run the build the engine runs for the program, in the editor view, collecting the compiler's console.
+    4. Project the diagnostics onto the editor's document paths.
+    """
+    # 1. The overlay has the program's logical names, so its records and units are the ones a build of these bytes has.
+    absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    bound = selected_home_view()?
+    project = project_view_name(view_scope(bound)?, absolute.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
+    editor = editor_view_name(project)?
+    store = bakery()?
+    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    program = program_root(absolute)
+    document = absolute.0[len(program.0) + 1:]
+    # The overlay root lies in the home, not the bakery: capture treats everything under the bakery as frozen.
+    overlay = home()?.joinpath("editor").joinpath(editor)
+    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
+    _ = mirror_overlay(program, overlay, document, text)?
+    # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
+    if snapshot(store, editor).map_err((error) => error.message())?.index == "":
+        fork_project_view(store, HOME_VIEW, editor)?
+    # 3. The overlay is captured and produced exactly as a build of the same bytes would be.
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    outcome = execute_in("build", overlay.joinpath(document), profile, arguments, None, "", false, editor, None)
+    console = console_capture.get("captured", "")
+    console_capture["capturing"] = ""
+    code = outcome?
+    # 4. Diagnostics name the editor's documents, never the overlay root.
+    mut entries: list[JsonValue] = []
+    for found in projected_diagnostics(console):
+        entries.append(diagnostic_json(found, overlay.0, program.0))
+    document_json = JsonValue.object(
+        {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(version), "ok": JsonValue.bool(
+            code == 0,
+        ), "editor_view": JsonValue.string(editor), "diagnostics": JsonValue.array(entries)},
+    )
+    return document_json.to_json().map_err((error) => error.message())
+
+
+def diagnostic_json(found: OverlayDiagnostic, overlay: str, program: str) -> JsonValue:
+    """One diagnostic on the editor's path for its document."""
+    mut path = found.path
+    if path.startswith(overlay + "/"):
+        path = program + path[len(overlay):]
+    return JsonValue.object(
+        {"message": JsonValue.string(found.message), "path": JsonValue.string(path), "line": JsonValue.int(found.line), "column": JsonValue.int(
+            found.column,
+        ), "severity": JsonValue.string(found.severity)},
+    )
+
+
+def program_root(source: Path) -> Path:
+    """The program an editor's document belongs to: the nearest directory with `loaf.toml`, else its own directory."""
+    mut directory = source.parent()
+    while directory.0.startswith("/") and directory.0 != "/":
+        if directory.joinpath("loaf.toml").is_file():
+            return directory
+        directory = directory.parent()
+    return source.parent()
 
 
 pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:
@@ -61,18 +140,41 @@ pub def execute(
     2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
     3. Hold the selected execution pin until the program exits, then release it.
     """
-    # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     # A home that has bound its view names its project views from it; one without (an `INCAN_BAKERY` invocation)
     # keeps naming them from its path. A check is a view of its own, apart from the program's builds.
     bound = selected_home_view()?
-    mut scope = home()?.0
-    if let Some(found) = bound:
-        scope = found
     mut view_profile = profile
     if command == "check":
         view_profile = profile + "+check"
-    view = project_view_name(scope, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
+    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
+    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound)
+
+
+def view_scope(bound: Option[str]) -> Result[str, str]:
+    """
+    What a home's project views are named from: its bound view key, or, for an `INCAN_BAKERY` invocation that binds
+    none, the home's path.
+    """
+    if let Some(found) = bound:
+        return Ok(found)
+    return Ok(home()?.0)
+
+
+def execute_in(
+    command: str,
+    absolute: Path,
+    profile: str,
+    arguments: list[str],
+    argv0: Option[str],
+    format: str,
+    proofs: bool,
+    view: str,
+    bound: Option[str],
+) -> Result[i32, str]:
+    """Run one records request in `view`, forking it from the home view `bound` names when it does not exist yet."""
+    source = absolute
+    # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     mut policy = ""
     if proofs:
         policy = "proofs"
@@ -322,7 +424,12 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
                 captured = true
             Message.Event(event) =>
                 if event.status == "Console":
-                    relay_console(event.trace_handle)?
+                    if console_capture.get("capturing", "") == "yes":
+                        console_capture["captured"] = console_capture.get("captured", "") + collect_console(
+                            event.trace_handle,
+                        )?
+                    else:
+                        relay_console(event.trace_handle)?
             Message.Complete(value) =>
                 if not captured:
                     return Err("engine completed before capture")
