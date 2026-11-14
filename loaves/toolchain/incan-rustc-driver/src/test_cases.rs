@@ -218,12 +218,7 @@ fn write_cases(
         let returns = return_type(writer, function);
         let mut roots: Vec<&str> = test.parameter_names.iter().map(String::as_str).collect();
         roots.extend(autouse.iter().copied());
-        if grouped && writer.awaits(test, &roots) {
-            return Err(format!(
-                "unsupported test contract for `{}`: an async test or fixture in a file with module- or session-scoped fixtures",
-                test.function_name
-            ));
-        }
+        let asynchronous = writer.awaits(test, &roots);
         let yields = if grouped {
             shared_yields(writer, &roots)?
         } else {
@@ -235,6 +230,7 @@ fn write_cases(
                 members.push(Member {
                     entry: case.entry.clone(),
                     returns: returns.clone(),
+                    asynchronous: test.is_async,
                     yields: yields.clone(),
                 });
                 case.case = Some(std::mem::replace(&mut case.entry, GROUP.to_string()));
@@ -256,6 +252,7 @@ fn write_cases(
                 members.push(Member {
                     entry: entry.clone(),
                     returns: returns.clone(),
+                    asynchronous,
                     yields: yields.clone(),
                 });
                 (GROUP.to_string(), Some(entry))
@@ -310,6 +307,7 @@ fn write_entry(
         returns,
         returns_value,
         asynchronous,
+        awaits_next: asynchronous,
     };
     let mut written = String::new();
     let mut staged: Vec<&str> = Vec::new();

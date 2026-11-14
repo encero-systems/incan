@@ -1,0 +1,45 @@
+# behavior: in a file with a module-scoped async `yield` fixture, async and synchronous tests run, the fixture set up once and torn down after the file's last test, as 0.5.1 runs them (#3149)
+# expect-stdout-contains:
+#   test_async_shared_fixtures.incn::test_async_uses_shared PASSED
+#   test_async_shared_fixtures.incn::test_sync_uses_shared PASSED
+#   test_async_shared_fixtures.incn::test_async_fails_alone FAILED
+#   test_async_shared_fixtures.incn::test_runs_after_a_failure PASSED
+# expect-stderr-contains:
+#   async failure seen 3
+# expect-exit: 1
+
+"""Async tests and an async module fixture in one file group."""
+
+import std.async
+from std.testing import assert_eq, fixture
+
+
+@fixture(scope="module")
+async def connection() -> int:
+    """An async module fixture, awaited once for the file."""
+    println("connect")
+    yield 3
+    println("disconnect")
+
+
+@fixture
+def base() -> int:
+    return 40
+
+
+async def test_async_uses_shared(connection: int) -> None:
+    assert_eq(connection, 3)
+
+
+def test_sync_uses_shared(connection: int, base: int) -> None:
+    assert_eq(connection + base, 43)
+
+
+async def test_async_fails_alone(connection: int) -> None:
+    """A failing async test fails alone; the file's other tests still run."""
+    println(f"async failure seen {connection}")
+    assert_eq(connection, 4)
+
+
+def test_runs_after_a_failure(connection: int) -> None:
+    assert_eq(connection, 3)

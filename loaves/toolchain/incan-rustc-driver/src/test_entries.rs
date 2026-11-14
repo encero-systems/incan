@@ -46,6 +46,8 @@ struct Uses {
     working_directory: bool,
     /// A file group selects its cases from the environment (`crate::test_groups`).
     group: bool,
+    /// A file group with async cases or fixtures runs each on a thread of its own under the async runtime.
+    threads: bool,
     /// One directory helper per built-in fixture and parameter type: its kind, the type's text and its name.
     directories: Vec<(Builtin, String, String)>,
 }
@@ -58,6 +60,8 @@ pub(crate) struct Stage {
     pub(crate) returns: String,
     pub(crate) returns_value: bool,
     pub(crate) asynchronous: bool,
+    /// Whether the stage awaits the stage it hands on to; a file group's async stage calls a synchronous one.
+    pub(crate) awaits_next: bool,
 }
 
 impl Stage {
@@ -405,7 +409,7 @@ impl<'a> EntryWriter<'a> {
             .to_string();
         let mut next_arguments: Vec<String> = staged.iter().map(|name| name.to_string()).collect();
         next_arguments.push(self.text(value.span.start, value.span.end).to_string());
-        let awaited = if stage.asynchronous { "await " } else { "" };
+        let awaited = if stage.awaits_next { "await " } else { "" };
         let next = format!("{awaited}{}({})", stage.next, next_arguments.join(", "));
         let guarded = !stage.asynchronous;
         let raise = format!("{body_name}_raise");
@@ -497,6 +501,15 @@ impl<'a> EntryWriter<'a> {
         if uses.group {
             imports.push(format!("from rust::std::time import Instant as {PREFIX}_clock"));
             imports.push(format!("from std.environ import get_or as {PREFIX}_get_or"));
+        }
+        if uses.threads {
+            imports.push(format!("from rust::std::thread import spawn as {PREFIX}_spawn"));
+            imports.push(format!(
+                "from rust::incan_std_async::runtime import block_on as {PREFIX}_block_on"
+            ));
+            imports.push(format!(
+                "from rust::incan_std_async::task import RuntimeFuture as {PREFIX}_RuntimeFuture"
+            ));
         }
         if !imports.is_empty() {
             finished.push_str("\n\n");
@@ -597,6 +610,11 @@ impl EntryWriter<'_> {
         let mut uses = self.uses.borrow_mut();
         uses.panic_boundary = true;
         uses.group = true;
+    }
+
+    /// Record that a file group runs async cases or fixtures on threads of their own.
+    pub(crate) fn uses_threads(&self) {
+        self.uses.borrow_mut().threads = true;
     }
 }
 
