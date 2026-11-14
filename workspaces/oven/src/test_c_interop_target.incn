@@ -1,6 +1,6 @@
 """A unit verified against a declared interop target is keyed by that target and by the Clang its check selects."""
 
-from c_interop_target import CAbiTargetSelection
+from c_interop_target import CAbiTargetSelection, selected_abi_clang
 from unit import UnitDescription
 from unit_freshness import description_digest
 
@@ -44,4 +44,19 @@ pub def test_a_declared_target_and_its_selected_clang_rekey_the_unit() -> Result
     # 3. The explicitly selected Clang is evidence the check depends on.
     ndk = CAbiTargetSelection(target="aarch64-linux-android", verifier="/ndk/toolchains/llvm/prebuilt/host/bin/clang")
     assert description_digest(verifying(Some(ndk)))? != android
+    return Ok(None)
+
+
+pub def test_an_explicit_abi_clang_wins_over_the_toolchains() -> Result[None, str]:
+    """
+    The checks' Clang is one choice for the compiler and the unit's identity alike.
+
+    1. An explicit `INCAN_C_ABI_CLANG` is used even when the toolchain carries a Clang, as 0.5 used it.
+    2. Otherwise the toolchain's own Clang, and otherwise none, which leaves the platform's.
+    """
+    # 1. The caller's explicit choice, such as an Android NDK Clang, is not replaced by the toolchain's.
+    assert selected_abi_clang("/toolchain/bin/clang", "/ndk/bin/clang") == "/ndk/bin/clang"
+    # 2. Without one, the toolchain's own Clang, then none.
+    assert selected_abi_clang("/toolchain/bin/clang", "") == "/toolchain/bin/clang"
+    assert selected_abi_clang("", "") == ""
     return Ok(None)
