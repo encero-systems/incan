@@ -15,6 +15,7 @@ pub mod public_identities;
 mod retained;
 mod type_projection;
 mod type_refs;
+pub mod type_scope;
 mod validation;
 pub mod wire;
 

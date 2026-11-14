@@ -529,6 +529,19 @@ impl LoafIndex {
         indexed.public_namespace(path)
     }
 
+    /// The type scope of the module `module` of the Loaf indexed as `key`, from its own record; `None` when only its
+    /// manifest can tell (see [`IndexedLoaf::type_scope`]).
+    pub fn type_scope(
+        &self,
+        key: &str,
+        module: &[String],
+    ) -> Result<Option<crate::library_manifest::type_scope::ModuleTypeScope>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.type_scope(module)
+    }
+
     /// Whether the Loaf indexed as `key` may export `name` at its package root: `Some(false)` only when its installed
     /// set proves it does not, from record names alone. An exported enum also publishes its variants and variant
     /// aliases there; a set that holds an enum without naming them, as one converted before they were record names

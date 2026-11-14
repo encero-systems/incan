@@ -12,14 +12,15 @@ use super::{
 };
 use crate::library_manifest::LibraryManifest;
 
-/// The record families a consumer reads by name: a declaration's own facts, a public namespace and the names an enum
-/// publishes at the package root. A manifest projection never selects them.
-pub(super) const NAMED_FAMILIES: [&str; 5] = [
+/// The record families a consumer reads by name: a declaration's own facts, a public namespace, the names an enum
+/// publishes at the package root and a module's type scope. A manifest projection never selects them.
+pub(super) const NAMED_FAMILIES: [&str; 6] = [
     "declaration-signature",
     "layout",
     "default",
     "public-namespace",
     "enum-variant",
+    "type-scope",
 ];
 
 /// Read the `family` records named `declaration` (a declaration, or a public namespace by its path) in one installed

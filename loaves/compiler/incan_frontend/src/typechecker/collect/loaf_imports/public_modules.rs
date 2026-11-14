@@ -5,19 +5,7 @@ use super::*;
 impl TypeChecker {
     /// Return the public source spelling for one checked API declaration.
     pub(in crate::typechecker::collect) fn api_declaration_name(declaration: &ApiDeclaration) -> &str {
-        match declaration {
-            ApiDeclaration::Function(item) => &item.name,
-            ApiDeclaration::Model(item) => &item.name,
-            ApiDeclaration::Class(item) => &item.name,
-            ApiDeclaration::Trait(item) => &item.name,
-            ApiDeclaration::Enum(item) => &item.name,
-            ApiDeclaration::Newtype(item) => &item.name,
-            ApiDeclaration::TypeAlias(item) => &item.name,
-            ApiDeclaration::Const(item) => &item.name,
-            ApiDeclaration::Static(item) => &item.name,
-            ApiDeclaration::Alias(item) => &item.name,
-            ApiDeclaration::Partial(item) => &item.name,
-        }
+        declaration.name()
     }
 
     /// Return all derived public module namespace paths carried by the checked API artifact.
