@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::dependency_report::RootOrigin;
+use crate::rustc_process::RustcOutcome;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, prepare_loaf_publication, publish_native_unions, write_loaf};
@@ -634,7 +635,8 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
 /// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
-/// separate refusal boundaries; only successful compilation publishes library artifacts.
+/// separate refusal boundaries; only successful compilation publishes library artifacts. Native compilation runs in a
+/// fresh driver process from the unit's handoff (`crate::rustc_process`), so rustc never inherits this heap.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
@@ -650,7 +652,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     crate::native_timing::observe_frontend(true);
-    let identity = crate::identity::verify(Path::new(&arguments[3]))?;
+    // The rustc process verifies the identity again from the sysroot; checking it here keeps the refusal order.
+    crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
@@ -743,37 +746,41 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         None
     };
     drop(program);
-    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc's
-    // analysis and LLVM allocate, so the back end's peak does not stack on the frontend's freed heap.
+    drop(dependencies.graph_body_records);
+    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before the
+    // handoff is encoded, so encoding does not stack on the frontend's freed heap.
     crate::heap::release_free_memory();
     timing.mark("frontend_heap_released");
     // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
-    let mut rustc_args = dependencies.rustc_args.clone();
+    let mut rustc_args = dependencies.rustc_args;
     rustc_args.extend(crate::foreign::clove_link_arguments(&plan, &cloves).map_err(|error| {
         receipt.deterministic();
         error.to_string()
     })?);
-    crate::adapter::compile(
+    let handoff = crate::rustc_process::RustcHandoff {
         plan,
-        &arguments[1],
-        Path::new(&arguments[2]),
-        &identity,
-        &native_externs,
-        &dependencies.directories,
-        &rustc_args,
-        &access,
-        dependencies.shared_native.as_deref(),
+        crate_name: arguments[1].clone(),
+        output: output.to_path_buf(),
+        sysroot: PathBuf::from(&arguments[3]),
+        externs: native_externs,
+        dependency_search_paths: dependencies.directories,
+        rustc_args,
+        access,
+        shared_store: dependencies.shared_native,
         kind,
         overflow_checks,
         library_facades,
-        dependencies.plan_record_report.as_deref(),
-    )
-    .map_err(|error| {
-        if matches!(error, crate::adapter::DriverError::Plan(_)) {
+        plan_record_report: dependencies.plan_record_report,
+    };
+    // The rustc process printed any failure itself, so this process adds no message of its own.
+    match crate::rustc_process::run(handoff, &mut timing)? {
+        RustcOutcome::Compiled => {}
+        RustcOutcome::PlanRefused => {
             receipt.deterministic();
+            return Err(String::new().into());
         }
-        error.to_string()
-    })?;
+        RustcOutcome::Failed => return Err(String::new().into()),
+    }
     if kind == UnitKind::Test {
         std::fs::write(output.with_extension("tests.json"), serde_json::to_vec(&tests)?)?;
     }

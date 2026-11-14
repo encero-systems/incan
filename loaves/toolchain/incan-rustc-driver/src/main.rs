@@ -68,6 +68,7 @@ mod rust_facts;
 mod rust_graph_bodies;
 mod rust_graph_records;
 mod rust_imports;
+mod rustc_process;
 mod shared_callables;
 mod signature_lifetimes;
 mod spans;
@@ -91,12 +92,13 @@ use incan_driver::unit::UnitDescription;
 /// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
-const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --shared-native DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
-/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
+/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
+/// reads the unit's handoff, `--rustc-handoff`) or check one (`--check`), each from the
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
 /// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
 /// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
@@ -126,6 +128,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
+        Some("--rustc-handoff") => exit_with(rustc_process::serve(&args[1..])?),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),
