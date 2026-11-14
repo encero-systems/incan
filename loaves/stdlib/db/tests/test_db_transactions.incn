@@ -1,0 +1,156 @@
+"""Transactions read their own writes, publish all or nothing against the revision they began from, and then end."""
+
+from db.errors import DbError, DbErrorKind, DbOperation
+from db.records import RecordKey, RecordState
+from db.store import memory
+from db.transactions import TransactionState
+
+
+pub def test_a_transaction_reads_its_own_writes_and_publishes_them_together() -> Result[None, str]:
+    """Staged values and tombstones are read first and seen by no snapshot until commit publishes all of them."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    mut seed = checked(published.begin())?
+    checked(seed.write(page("draft"), b"Draft"))?
+    checked(seed.commit())?
+    mut transaction = checked(published.begin())?
+    checked(transaction.write(page("guide"), b"First"))?
+    checked(transaction.write(page("guide"), b"Guide"))?
+    checked(transaction.delete(page("draft")))?
+    expect_present(checked(transaction.read(page("guide")))?, b"Guide", false)?
+    expect_deleted(checked(transaction.read(page("draft")))?, false)?
+    expect_absent(checked(transaction.read(page("index")))?)?
+    outside = checked(published.snapshot())?
+    expect_absent(checked(outside.read(page("guide")))?)?
+    expect_present(checked(outside.read(page("draft")))?, b"Draft", true)?
+    checked(transaction.commit())?
+    assert transaction.state() == TransactionState.Committed
+    after = checked(published.snapshot())?
+    expect_present(checked(after.read(page("guide")))?, b"Guide", true)?
+    expect_deleted(checked(after.read(page("draft")))?, true)?
+    expect_absent(checked(outside.read(page("guide")))?)?
+    return Ok(None)
+
+
+pub def test_an_aborted_transaction_publishes_nothing_and_ends() -> Result[None, str]:
+    """Abort leaves the view's revision unchanged, and every later operation on the transaction is refused as closed."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    before = checked(published.snapshot())?.revision()
+    mut transaction = checked(published.begin())?
+    checked(transaction.write(page("guide"), b"Guide"))?
+    checked(transaction.abort())?
+    assert transaction.state() == TransactionState.Aborted
+    assert checked(published.snapshot())?.revision() == before, "an aborted transaction changed the view"
+    expect_closed(transaction.write(page("guide"), b"Again"), DbOperation.Write)?
+    expect_closed(transaction.delete(page("guide")), DbOperation.Delete)?
+    expect_closed(transaction.read(page("guide")), DbOperation.Read)?
+    expect_closed(transaction.commit(), DbOperation.Commit)?
+    expect_closed(transaction.abort(), DbOperation.Abort)?
+    return Ok(None)
+
+
+pub def test_a_committed_transaction_ends_and_a_refused_key_leaves_it_open() -> Result[None, str]:
+    """An unrecordable key is refused without ending the transaction; after commit, every operation is closed."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    mut transaction = checked(published.begin())?
+    match transaction.write(RecordKey(family="two words", id="guide"), b"Guide"):
+        Ok(_) =>
+            assert false, "an unrecordable key was staged"
+        Err(error) =>
+            assert error.kind == DbErrorKind.InvalidName, error.message()
+    assert transaction.state() == TransactionState.Open, "a refused write ended the transaction"
+    checked(transaction.write(page("guide"), b"Guide"))?
+    checked(transaction.commit())?
+    expect_closed(transaction.write(page("index"), b"Index"), DbOperation.Write)?
+    expect_closed(transaction.commit(), DbOperation.Commit)?
+    expect_closed(transaction.abort(), DbOperation.Abort)?
+    return Ok(None)
+
+
+pub def test_a_moved_view_conflicts_and_publishes_nothing() -> Result[None, str]:
+    """A commit after another publication to its view is a conflict; it publishes nothing and can only be aborted."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    mut first = checked(published.begin())?
+    mut second = checked(published.begin())?
+    checked(second.write(page("index"), b"Index"))?
+    checked(second.commit())?
+    checked(first.write(page("guide"), b"Guide"))?
+    match first.commit():
+        Ok(_) =>
+            assert false, "a commit on a moved view was published"
+        Err(error) =>
+            assert error.kind == DbErrorKind.Conflict and error.operation == DbOperation.Commit, error.message()
+    assert first.state() == TransactionState.Failed
+    current = checked(published.snapshot())?
+    expect_absent(checked(current.read(page("guide")))?)?
+    expect_present(checked(current.read(page("index")))?, b"Index", true)?
+    checked(first.abort())?
+    expect_closed(first.abort(), DbOperation.Abort)?
+    return Ok(None)
+
+
+pub def test_a_closed_store_refuses_to_begin_or_publish() -> Result[None, str]:
+    """After `close()`, beginning is refused, and an open transaction's commit is refused and publishes nothing."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    before = checked(published.snapshot())?
+    mut transaction = checked(published.begin())?
+    checked(transaction.write(page("guide"), b"Guide"))?
+    checked(store.close())?
+    expect_closed(transaction.commit(), DbOperation.Commit)?
+    assert transaction.state() == TransactionState.Failed
+    expect_closed(published.begin(), DbOperation.Begin)?
+    expect_absent(checked(before.read(page("guide")))?)?
+    return Ok(None)
+
+
+def expect_present(state: RecordState[bytes], value: bytes, committed: bool) -> Result[None, str]:
+    """Require a present value; a committed one has a revision and a staged one has none."""
+    match state:
+        RecordState.Present(version) =>
+            if version.value != value:
+                return Err("a present record holds another value")
+            if version.revision.is_some() != committed:
+                return Err(f"a present record's revision does not say committed={committed}")
+            return Ok(None)
+        _ => return Err("a record that must be present is not")
+
+
+def expect_deleted(state: RecordState[bytes], committed: bool) -> Result[None, str]:
+    """Require a tombstone; a committed one has a revision and a staged one has none."""
+    match state:
+        RecordState.Deleted(tombstone) =>
+            if tombstone.revision.is_some() != committed:
+                return Err(f"a tombstone's revision does not say committed={committed}")
+            return Ok(None)
+        _ => return Err("a record that must be deleted is not")
+
+
+def expect_absent(state: RecordState[bytes]) -> Result[None, str]:
+    """Require absence."""
+    match state:
+        RecordState.Absent => return Ok(None)
+        _ => return Err("a record that must be absent is not")
+
+
+def expect_closed[T](result: Result[T, DbError], operation: DbOperation) -> Result[None, str]:
+    """Require `operation` to be refused as closed."""
+    match result:
+        Ok(_) => return Err(f"{operation.value()} was accepted on an ended transaction or a closed store")
+        Err(error) =>
+            if error.kind != DbErrorKind.Closed or error.operation != operation:
+                return Err(f"expected a closed {operation.value()}, got {error.message()}")
+            return Ok(None)
+
+
+def page(id: str) -> RecordKey:
+    """The key of one page record."""
+    return RecordKey(family="pages", id=id)
+
+
+def checked[T](result: Result[T, DbError]) -> Result[T, str]:
+    """A `std.db` result with its failure as the test's message."""
+    return result.map_err((error) => error.message())

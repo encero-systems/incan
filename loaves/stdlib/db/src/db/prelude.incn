@@ -10,4 +10,5 @@ pub from crate.db.handle import Placement
 pub from crate.db.records import RecordKey, RecordState, RecordVersion, Tombstone
 pub from crate.db.snapshots import Snapshot
 pub from crate.db.store import Store, memory, open
+pub from crate.db.transactions import Transaction, TransactionState
 pub from crate.db.views import View

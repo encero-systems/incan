@@ -5,6 +5,7 @@ import db.handle
 import db.names
 import db.records
 import db.snapshots
+import db.transactions
 import db.views
 import db.store
 import db.prelude

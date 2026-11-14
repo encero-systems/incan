@@ -4,6 +4,7 @@ from pub::incan_platform.store import snapshot as substrate_snapshot
 from crate.db.errors import DbError, DbOperation, store_failure
 from crate.db.handle import StoreHandle
 from crate.db.snapshots import Snapshot
+from crate.db.transactions import Transaction
 
 
 pub model View:
@@ -24,8 +25,19 @@ pub model View:
         Publications after it is taken never reach it. Taking it reads only the store's current generation, never a
         record.
         """
-        self.handle.require_open(DbOperation.Snapshot)?
-        selected = substrate_snapshot(self.handle.root, self.name).map_err(
-            (error) => store_failure(DbOperation.Snapshot, error),
-        )?
-        return Ok(Snapshot.of(self.handle.clone(), selected))
+        return self.selected(DbOperation.Snapshot)
+
+    pub def begin(self) -> Result[Transaction, DbError]:
+        """
+        A transaction on this view, staged against the view's current selection.
+
+        It reads that selection with its own staged changes on top, and publishes only while the view still has the
+        revision it began from.
+        """
+        return Ok(Transaction.of(self.handle.clone(), self.selected(DbOperation.Begin)?))
+
+    def selected(self, operation: DbOperation) -> Result[Snapshot, DbError]:
+        """The view's current selection, leased, for `operation` on an open store."""
+        self.handle.require_open(operation)?
+        selection = substrate_snapshot(self.handle.root, self.name).map_err((error) => store_failure(operation, error))?
+        return Ok(Snapshot.of(self.handle.clone(), selection))

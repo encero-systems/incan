@@ -1,0 +1,165 @@
+"""Transactions: staged changes to one view that read their own writes and publish together, or not at all."""
+
+from pub::incan_platform.store import begin_compared, commit as substrate_commit, snapshot as substrate_snapshot
+from pub::incan_platform.store import stage_delete, stage_put
+from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
+from crate.db.handle import StoreHandle
+from crate.db.records import RecordKey, RecordState, RecordVersion, Tombstone, check_record_key
+from crate.db.snapshots import Snapshot, selection_of
+
+
+pub enum TransactionState(str):
+    """Where a transaction is in its life; only an open transaction reads, writes and commits."""
+
+    Open = "open"
+    Committed = "committed"
+    Aborted = "aborted"
+    # A commit was refused or failed. Nothing more is staged or published, and `abort()` ends it.
+    Failed = "failed"
+
+
+model Staged:
+    """One staged change under a record's substrate key: a value, or a tombstone when `value` is None."""
+
+    value: Option[bytes]
+
+
+pub class Transaction:
+    """
+    Changes to one view, staged against the snapshot the transaction began from.
+
+    Reads see the transaction's own staged changes first, then its base snapshot. `commit()` publishes every staged
+    change together, and only while the view still has the revision the transaction began from; `abort()` discards
+    them. Either one ends the transaction, and later operations are refused as closed.
+    """
+
+    handle: StoreHandle
+    base: Snapshot
+    staged: Dict[str, Staged] = {}
+    current: TransactionState = TransactionState.Open
+
+    @staticmethod
+    pub def of(handle: StoreHandle, base: Snapshot) -> Transaction:
+        """An open transaction staged against `base`, a snapshot taken through `handle`."""
+        return Transaction(handle=handle, base=base)
+
+    pub def view(self) -> str:
+        """The name of the view it publishes to."""
+        return self.base.view()
+
+    pub def base_revision(self) -> str:
+        """The view revision it began from; it publishes only while the view still has this revision."""
+        return self.base.revision()
+
+    pub def state(self) -> TransactionState:
+        """Where the transaction is in its life."""
+        return self.current
+
+    pub def read(self, key: RecordKey) -> Result[RecordState[bytes], DbError]:
+        """
+        What the transaction sees under `key`: its own staged value or tombstone, otherwise its base snapshot's state.
+
+        A staged value or tombstone has no revision until it commits.
+        """
+        self.require_open(DbOperation.Read)?
+        check_record_key(DbOperation.Read, key)?
+        stored = key.store_key()
+        if stored in self.staged:
+            match self.staged[stored].value:
+                Some(value) => return Ok(RecordState.Present(RecordVersion(value=value, revision=None)))
+                None => return Ok(RecordState.Deleted(Tombstone(revision=None)))
+        return self.base.read(key)
+
+    pub def write(mut self, key: RecordKey, value: bytes) -> Result[None, DbError]:
+        """Stage `value` under `key`, replacing anything staged there before; nothing is published until `commit()`."""
+        self.require_open(DbOperation.Write)?
+        check_record_key(DbOperation.Write, key)?
+        self.staged[key.store_key()] = Staged(value=Some(value))
+        return Ok(None)
+
+    pub def delete(mut self, key: RecordKey) -> Result[None, DbError]:
+        """Stage a tombstone under `key`, replacing anything staged there before; `commit()` publishes it."""
+        self.require_open(DbOperation.Delete)?
+        check_record_key(DbOperation.Delete, key)?
+        self.staged[key.store_key()] = Staged(value=None)
+        return Ok(None)
+
+    pub def abort(mut self) -> Result[None, DbError]:
+        """
+        Discard every staged change and release the base snapshot; the view is left as it was.
+
+        An open transaction, or one whose commit failed, can be aborted. A committed or aborted one is refused as
+        closed.
+        """
+        if self.current != TransactionState.Open and self.current != TransactionState.Failed:
+            return Err(self.closed(DbOperation.Abort))
+        self.end(TransactionState.Aborted)
+        return Ok(None)
+
+    pub def commit(mut self) -> Result[None, DbError]:
+        """
+        Publish every staged change to the view in one generation, or none of them.
+
+        1. Refuse a transaction that is not open, and one whose store was closed.
+        2. Stage every change in key order, comparing against the revision the transaction began from.
+        3. Publish. A view that moved on since is a conflict, and nothing is published.
+        4. Classify a failure: when the view still has its base revision nothing was published; otherwise the
+           publication may have become visible, and the outcome is indeterminate.
+        """
+        # 1. A closed store publishes nothing; the transaction can then only be aborted.
+        self.require_open(DbOperation.Commit)?
+        if not self.handle.is_open():
+            self.current = TransactionState.Failed
+            return Err(DbError.refused(DbErrorKind.Closed, DbOperation.Commit, self.view(), "the store was closed"))
+
+        # 2. One substrate write per staged key, so a key written twice publishes once.
+        mut staging = begin_compared(selection_of(self.base))
+        for stored in sorted([stored for stored in self.staged.keys()]):
+            match self.staged[stored].value:
+                Some(value) => stage_put(staging, stored, value)
+                None => stage_delete(staging, stored)
+
+        # 3. The substrate validates and publishes under its publication lock.
+        match substrate_commit(staging):
+            Ok(_) =>
+                self.end(TransactionState.Committed)
+                return Ok(None)
+            Err(error) =>
+                # 4. The transaction ends as failed either way; only abort remains.
+                self.current = TransactionState.Failed
+                return Err(self.failed_commit(store_failure(DbOperation.Commit, error)))
+
+    def failed_commit(self, failed: DbError) -> DbError:
+        """
+        The failure a refused or failed commit reports.
+
+        A conflict is refused before anything is staged. Any other failure may come after the generation switch, so
+        the view's current revision decides: unchanged means nothing was published, and anything else, including a
+        failure to read it, is indeterminate.
+        """
+        if failed.kind == DbErrorKind.Conflict:
+            return failed
+        match substrate_snapshot(self.handle.root, self.view()):
+            Ok(current) =>
+                if current.index == self.base_revision():
+                    return failed
+            Err(_) => pass
+        detail = f"the commit failed after its publication may have become visible: {failed.detail}"
+        return DbError.refused(DbErrorKind.Indeterminate, DbOperation.Commit, self.view(), detail)
+
+    def require_open(self, operation: DbOperation) -> Result[None, DbError]:
+        """Refuse `operation` unless the transaction is still open."""
+        if self.current == TransactionState.Open:
+            return Ok(None)
+        return Err(self.closed(operation))
+
+    def closed(self, operation: DbOperation) -> DbError:
+        """The refusal of `operation` on a transaction that has ended."""
+        detail = f"the transaction is {self.current.value()}"
+        return DbError.refused(DbErrorKind.Closed, operation, self.view(), detail)
+
+    def end(mut self, state: TransactionState) -> None:
+        """End the transaction: drop what it staged and give up its base snapshot's lease."""
+        self.current = state
+        self.staged = {}
+        self.base.release()
