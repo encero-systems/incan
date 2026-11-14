@@ -3,6 +3,8 @@
 from std.fs import Path
 from std.json import JsonValue, parse
 from rust::std::os::unix::fs import symlink
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from files import make_directory, read, remove, write
 from run import invoke
 
@@ -156,7 +158,36 @@ def check_rust_inputs(incan: str, project: Path) -> Result[None, str]:
     inspect(incan, root, ".", "environment_first", initial)?
     inspect(incan, root, ".", "environment_second", ["INCAN_GRAPH_CONTRACT_INPUT=second.rs"])?
     inspect(incan, root, ".", "environment_first", initial)?
+    return check_paged_rust_inputs(incan, root, external, source)
+
+
+def check_paged_rust_inputs(incan: str, root: Path, external: Path, source: str) -> Result[None, str]:
+    """
+    Once a Rust answer is paged, a changed environment variable rustc read, and a settled edit of a file outside the
+    source tree, still change the answer: the same request never answers from the page that went stale.
+    """
+    write(root.joinpath("src/lib.rs"), source)?
+    sleep(Duration.from_secs(3))
+    first = ["INCAN_GRAPH_CONTRACT_INPUT=first.rs"]
+    second = ["INCAN_GRAPH_CONTRACT_INPUT=second.rs"]
+    for attempt in range(2):
+        inspect(incan, root, ".", "environment_first", first)?
+        inspect(incan, root, ".", "external_second", first)?
+    if "environment_first" in definitions(incan, root, "environment_first", second)?:
+        return Err("a paged Rust answer survived a change of an environment variable rustc read")
+    write(external, "pub fn external_third() {}\n")?
+    sleep(Duration.from_secs(3))
+    if "external_second" in definitions(incan, root, "external_second", first)?:
+        return Err("a paged Rust answer survived an edit of a file outside the source tree")
     return Ok(None)
+
+
+def definitions(incan: str, root: Path, term: str, environment: list[str]) -> Result[str, str]:
+    """The definitions of `term` in the project at `root`, under `environment`."""
+    outcome = invoke(incan, ["inspect", "codegraph", ".", "--query", "defs", term], root, environment)?
+    if outcome.code != Some(0):
+        return Err(f"definitions of {term} failed: {outcome.stderr}")
+    return Ok(outcome.stdout)
 
 
 def check_c_binding_relocation(incan: str, directory: Path) -> Result[None, str]:
