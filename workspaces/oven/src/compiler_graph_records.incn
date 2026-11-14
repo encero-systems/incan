@@ -3,7 +3,15 @@
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, keys, stage_put
+from pub::incan_platform.store import (
+    Snapshot,
+    Transaction,
+    begin,
+    commit,
+    get,
+    keys_with_prefix,
+    stage_put,
+)
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -191,12 +199,15 @@ pub def reusable_evaluation(
 
 
 pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
-    """Select every witnessed value in one family/profile from the graph's engine-owned output index."""
+    """
+    Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
+    family's range of it: the index holds every edit's records, so a whole listing grew with each edit.
+    """
     if family == "" or profile == "" or "\t" in family or "\t" in profile:
         return Err("reusable compiler family selection requires delimiter-free family and profile names")
     prefix = "incan.engine.output\t" + profile + "\t"
     mut records: list[ReusableRecord] = []
-    for indexed in keys(selected).map_err((error) => error.message())?:
+    for indexed in keys_with_prefix(selected, prefix + family + "\t").map_err((error) => error.message())?:
         if not indexed.startswith(prefix):
             continue
         key = decode_record_key(indexed[len(prefix):])?
@@ -209,14 +220,14 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
-    """Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check."""
+    """
+    Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check,
+    reading only each changed record's range of edges.
+    """
     mut readers: Dict[str, RecordKey] = {}
-    selected_keys = keys(selected).map_err((error) => error.message())?
     for target in changed:
         prefix = "incan.engine.edge-in\t" + encode_record_key(target)? + "\t"
-        for indexed in selected_keys:
-            if not indexed.startswith(prefix):
-                continue
+        for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
             edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
                 (error) => error.message(),
             )?
