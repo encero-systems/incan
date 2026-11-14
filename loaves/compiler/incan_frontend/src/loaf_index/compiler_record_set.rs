@@ -26,6 +26,7 @@ use crate::library_manifest::{
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
 use crate::api_metadata::ApiDocumentation;
+use crate::library_manifest::executable_surface::ExecutableSurface;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
@@ -275,6 +276,24 @@ pub(super) fn read_documented(
     name: &str,
 ) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
     read_selected(dir, name, Projection::Documented)
+}
+
+/// Read what executable resolution needs of one installed Loaf: its name, version, descriptor and public identities.
+pub(super) fn read_surface(dir: &Path, name: &str) -> Result<Option<(Arc<ExecutableSurface>, String)>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    read_surface_in(set, dir, name)
+}
+
+/// Read one Loaf group's executable surface from `set`.
+fn read_surface_in(
+    set: &RecordSet,
+    dir: &Path,
+    name: &str,
+) -> Result<Option<(Arc<ExecutableSurface>, String)>, LoafIndexError> {
+    Ok(read_group(set, dir, name, Projection::Execution)?
+        .map(|(manifest, digest)| (Arc::new(ExecutableSurface::of(&manifest)), digest)))
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -814,11 +833,15 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary};
+    use super::{
+        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
+        read_surface_in,
+    };
     use crate::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     };
-    use crate::library_manifest::{LibraryContractMetadata, LibraryManifest};
+    use crate::library_manifest::executable_surface::ExecutableSurface;
+    use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
 
     /// The canonical lowercase SHA-256 spelling of `bytes`.
     fn content_name(bytes: &[u8]) -> String {
@@ -1032,6 +1055,73 @@ mod tests {
             set.reads(),
             expected,
             "a summary this process already authenticated is not read or hashed again"
+        );
+        Ok(())
+    }
+
+    /// What executable resolution may read of a reached Loaf: its metadata, descriptor and public identities.
+    const SURFACE_BOUND: usize = 4096;
+
+    /// A library whose executable surface is small beside its contract metadata: a function, a model with a method,
+    /// a descriptor, and a checked API repeated until the contract metadata is well over the bound.
+    fn surfaced_library() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        let source = "pub def price() -> int:\n    return 1999\n\npub model Money:\n    cents: int\n\n    pub def doubled(self) -> int:\n        return self.cents * 2\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("prices", "0.1.0", &exports);
+        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![module; 200],
+            public_namespaces: Vec::new(),
+        });
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: 1,
+            content_digest: content_name(b"prices bodies"),
+        });
+        Ok(manifest)
+    }
+
+    /// Install every compiler record of `manifest` as its Loaf group in a fresh payload directory under `root`.
+    fn installed_library(root: &Path, manifest: &LibraryManifest) -> Result<RecordSet, Box<dyn std::error::Error>> {
+        fs::create_dir(root.join("payloads"))?;
+        let mut entries = Vec::new();
+        for record in manifest.compiler_records(&content_name(b"prices manifest"))?.records {
+            let digest = content_name(&record.value);
+            fs::write(root.join("payloads").join(&digest), &record.value)?;
+            entries.push(RecordEntry {
+                key: format!("loaf/debug/{}/{}", manifest.name, record.key()),
+                revision: digest.clone(),
+                value: digest,
+            });
+        }
+        Ok(RecordSet::new(root.to_path_buf(), entries))
+    }
+
+    #[test]
+    fn executable_resolution_reads_only_a_reached_loafs_executable_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library()?;
+        let set = installed_library(root.path(), &manifest)?;
+        let (surface, _) =
+            read_surface_in(&set, &root.path().join("debug"), "prices")?.ok_or("the Loaf is installed")?;
+        assert_eq!(
+            *surface,
+            ExecutableSurface::of(&manifest),
+            "the surface the manifest describes"
+        );
+        let read = set.reads();
+        assert!(
+            read.bytes <= SURFACE_BOUND,
+            "executable resolution read {} records, {} bytes; the bound is {SURFACE_BOUND}",
+            read.records,
+            read.bytes
         );
         Ok(())
     }
