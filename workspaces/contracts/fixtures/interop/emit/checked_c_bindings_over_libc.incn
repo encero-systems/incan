@@ -1,7 +1,8 @@
-# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message (incan-4.10)
+# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message, and a C `int` crosses as an ordinary Incan integer, as 0.5.1's `c.c_int` did (incan-4.10, #3132)
 # expect-stdout:
 #   5
 #   7
+#   9 12
 #   0.5 4
 #   5
 #   interior nul refused
@@ -20,6 +21,9 @@ binding LibC:
 
     symbol absolute(value: c.i32) -> c.i32:
         native = "abs"
+    symbol absolute_int(value: c.c_int) -> c.c_int:
+        native = "abs"
+
     enum Status:
         OK: c.i32 = EXIT_SUCCESS
         ONE: c.i32 = EXIT_FAILURE
@@ -59,6 +63,13 @@ def absolute(value: i32) -> i32:
     """Return the checked C absolute value."""
     unsafe:
         return LibC.absolute(value)
+
+
+def absolute_int(value: int) -> int:
+    """Cross C `int` in both directions as an ordinary Incan integer."""
+    unsafe:
+        magnitude = LibC.absolute_int(value)
+        return magnitude + LibC.absolute_int(-3)
 
 
 def split(value: f64) -> str:
@@ -115,6 +126,7 @@ def main() -> None:
     # 1. Scalar carriers and the initialized output slot keep their declared types.
     println(absolute(-5))
     println(absolute(7))
+    println(f"{absolute_int(-6)} {absolute_int(9)}")
     println(split(8.0))
     # 2. Text escapes preserve \0 literally, so construct the NUL through a byte literal.
     match string_length("hello"):
