@@ -367,6 +367,10 @@ pub(super) fn checked_modules(
             })
             .map_err(|failure| receipt.diagnostic(failure))?
     };
+    // Analysis freed its checkers' working heap, the largest drop inside checking; return those pages before the
+    // Body IR inputs and bodies allocate on top of them.
+    incan_platform::release_free_heap();
+    crate::native_timing::Timing::requested().mark("analysis_heap_released");
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)
