@@ -1,0 +1,49 @@
+"""A pack seals the compiler records of the Loaves it ships, whatever else its home holds."""
+
+from rust::std::os::unix::fs import symlink
+from std.fs import Path
+from files import make_directory, read, write
+from scratch import scratch_directory
+from toolchain_archive import shipped_manifests
+
+
+pub def test_a_pack_exports_records_for_the_manifests_it_ships_only() -> Result[None, str]:
+    """
+    A builder home may hold a Loaf its pack leaves behind, such as a runtime an earlier compiler built.
+
+    1. A home holds a standard Loaf and two runtimes; the stage links in the standard Loaf and one runtime, as
+       packing does.
+    2. The manifests the records are exported from are the two the stage ships, each a plain file with the shipped
+       bytes at its shipped place, because the compiler's export follows no link.
+    """
+    scratch = scratch_directory()?
+    home = scratch.path().joinpath("home")
+    stage = scratch.path().joinpath("stage")
+    view = scratch.path().joinpath("view")
+    # 1. Only the standard Loaf and the runtime the toolchain names are staged.
+    shipped = ["loaves/std/debug/std.incnlib", "native/kept/libruntime.incnlib"]
+    for relative in shipped + ["native/left/libruntime.incnlib"]:
+        make_directory(home.joinpath(relative).parent())?
+        write(home.joinpath(relative), f"manifest {relative}")?
+    for relative in shipped:
+        make_directory(stage.joinpath(relative).parent())?
+        symlink(home.joinpath(relative).0, stage.joinpath(relative).0).map_err((error) => str(error))?
+    write(stage.joinpath("toolchain.json"), "{}")?
+    # 2. The export reads exactly what ships.
+    shipped_manifests(stage, view)?
+    assert manifests(view, view)? == shipped, "the export's manifests are not the shipped ones"
+    for relative in shipped:
+        assert not view.joinpath(relative).is_symlink(), "the compiler's export skips a linked manifest"
+        assert read(view.joinpath(relative))? == f"manifest {relative}"
+    return Ok(None)
+
+
+def manifests(directory: Path, root: Path) -> Result[list[str], str]:
+    """Every file below `directory`, named from `root`, sorted."""
+    mut found: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_dir():
+            found.extend(manifests(entry, root)?)
+        else:
+            found.append(entry.0[len(root.0) + 1:])
+    return Ok(sorted(found))
