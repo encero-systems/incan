@@ -110,7 +110,7 @@ fn a_program_checks_an_imported_function_from_its_declaration_records() -> Resul
 }
 
 /// The package a program reaches as `std.encoding`.
-const CODECS: &str = "incan_stdlib_codecs";
+pub(super) const CODECS: &str = "incan_stdlib_codecs";
 
 /// A standard Loaf whose namespace `encoding` holds the modules `base64`, declaring `b64encode`, and `hex`, each beside
 /// many other functions, so the parent namespace `encoding` publishes both modules' members.
