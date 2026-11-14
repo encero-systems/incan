@@ -7,6 +7,9 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 ```text
 oven --help | -h | help
 oven --version
+oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]
+oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]
+oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
 oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]
@@ -17,13 +20,15 @@ oven check [PATH] [--format text|json] [UNIT OPTIONS]
 oven lint [PATH] [UNIT OPTIONS]
 oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
-oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
+oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]
+oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]
 oven inspect run ID --proofs
-oven workspace inspect [--format text|json] [MEMBER SELECTION]
+oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
+oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]...
 oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]
 
 incan --help | -h | help
@@ -31,17 +36,22 @@ incan --version
 incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check [PATH] [--format text|json] [UNIT OPTIONS]
 incan lint [PATH] [UNIT OPTIONS]
-incan explain CODE
+incan explain CODE [--format text|json]
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
-incan build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+incan build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] [--diff] [PATH...]
 incan inspect codegraph PATH [GRAPH OPTIONS]
+incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [--features A,B] [--no-default-features] [--all-features] [PATH]
+incan inspect registry IDENTITY [--project PATH] [--format json]
+incan tools metadata api [PATH] [--format json|markdown]
+incan tools metadata model PATH MODEL [--format incan|json]
+incan tools doctor [--format text|json]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` either states its default in its section or requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``, and `incan new`, `incan init`, `incan version BUMP`, `incan workspace` and `incan env` report ``incan: `incan COMMAND` is an Oven command: run `oven COMMAND` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 0.5.1's `--sdk-profile NAME` or `--sdk-profile=NAME` exits `2` on every command that took it (`check`, `build`, `run`, `test`, `oven lock`, `inspect bindings`, `inspect codegraph` and `oven inspect features`) and names its removal: ``unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses``.
 
@@ -49,7 +59,7 @@ There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build`
 
 `oven --help`, `oven -h` and `oven help` print the `oven` synopses above and the CLI reference location, then exit `0`; `incan --help`, `incan -h` and `incan help` do the same for `incan`. `COMMAND --help` or `COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `oven owner stop --help`, `oven bakery status --help`, `oven inspect dependencies --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
 
-`oven --version` prints `oven 0.6.0-dev.8` and `incan --version` prints `incan 0.6.0-dev.8`, then exit `0`. `--version --help` prints its usage and example.
+`oven --version` prints `oven 0.6.0-dev.9` and `incan --version` prints `incan 0.6.0-dev.9`, then exit `0`. `oven version` and `incan version` without arguments print the same. `--version --help` prints its usage and example.
 
 ## Unit options
 
@@ -89,6 +99,49 @@ Without `--workspace` or `--member`, the selection is the implicit scope, report
 
 `--workspace` reports `workspace` and `--member` reports `explicit_members`. A command with a member selection, or at a workspace root whose implicit scope is its default members or every member, runs once per selected member in declaration order. Before each it prints `workspace member NAME: PATH`; it exits with the first failing member's status. A command that names a `PATH` at such a root acts on that `PATH`. `run` and `oven version` act on one project: a selection of more than one member exits `1` with `requires exactly one workspace member; select one with --member NAME_OR_PATH`. A selector that names no member, a selection outside a workspace and a member without a `loaf.toml` exit `1` before any member runs.
 
+## `oven new` and `oven init`
+
+`oven new` creates a project in `--dir PATH`, or else in `./NAME` with each space in `NAME` written as `_`; one of them is required. `oven init` makes the directory `PATH`, the current directory by default, a project. Neither prompts: `--yes` and `-y` are accepted and change nothing. `--dir` is accepted only by `oven new`, and `--name`, `--version` and `--detect` only by `oven init`.
+
+The project name is `--name`, otherwise `NAME` on `oven new`, otherwise the directory's name, lowercased, with each space written as `_`. A name that is not a valid Loaf name is refused with ``project name `NAME` is not a Loaf name: REASON; choose one with --name``. `--version VERSION`, `0.1.0` by default, must be a SemVer version.
+
+Both write the same starter project: `loaf.toml`, `src/main.incn`, `src/greetings.incn`, `tests/test_main.incn`, `README.md` and a `.gitignore` that ignores `target/`. The manifest's `[project]` table has `name`, `version`, `description`, `authors` (`--author`, as a one-element array) and `license` when given, `readme = "README.md"` and `requires-incan` for the running toolchain's minor line, `>=0.6.0-dev.9, <0.7.0` on this toolchain. `[project.scripts]` maps `main` to `src/main.incn`.
+
+Without `--force`, `oven new` refuses a directory that exists and is not empty, with `project directory 'DIR' already exists and is not empty (use --force to reuse it)`, and `oven init` refuses a directory that has a `loaf.toml`, with `manifest already exists at 'PATH'`. `oven init` writes the manifest and leaves every other starter file that already exists; with `--force` it overwrites them, except that `--detect` keeps an existing `src/main.incn`. When `src/main.incn` is kept, `src/greetings.incn` and `tests/test_main.incn` are not written. `oven new --force` overwrites the starter files in the existing directory.
+
+Success prints the following and exits `0`:
+
+```text
+Created project 'NAME' at DIR
+
+  loaf.toml              Project manifest
+  src/main.incn          Entry point
+  tests/test_main.incn   Starter test
+
+Run it:     incan run src/main.incn
+Test it:    incan test tests/test_main.incn
+Release it: incan build src/main.incn --profile release
+```
+
+An unknown option, a missing option value or an extra operand exits `2`. A refusal exits `1`.
+
+## `oven version`
+
+Without arguments, `oven version` prints the toolchain version, as `oven --version` does. With `BUMP` or `--set VERSION`, exactly one of them, it changes the version of one project:
+
+| Selection | Manifest changed |
+| --- | --- |
+| `--project PATH` | `PATH/loaf.toml`; a directory without one is refused with `no loaf.toml in PATH` |
+| `--member NAME_OR_PATH`, `-p NAME_OR_PATH` or `--workspace` | The one workspace member the [member selection](#member-selection) selects |
+| None, at a workspace root whose implicit scope is its default members or every member | The one member that scope selects |
+| None, elsewhere | The nearest `loaf.toml` at or above the current directory; none is refused with ``no loaf.toml found; run `oven init` or `oven new NAME` to create a project`` |
+
+A member selection of more than one member exits `1` with `requires exactly one workspace member; select one with --member NAME_OR_PATH`.
+
+The `[project]` table's `version` must be a quoted SemVer version. `major`, `minor` and `patch` increment that component and set the lower ones to `0`; they drop the prerelease identifiers unless `--keep-prerelease` is given. `alpha`, `beta`, `rc` and `dev` advance `CHANNEL.N` to `CHANNEL.N+1` when the version's prerelease is that channel with a number, and otherwise set the prerelease to `CHANNEL.1`, leaving the release components. A bump drops build metadata. `--set VERSION` writes `VERSION`, which must be a SemVer version. Only the quoted value on the `version` line changes; every other byte of `loaf.toml` stays. `--dry-run` writes nothing.
+
+The command prints `dry-run: true` first for a dry run, then `old version: OLD`, `new version: NEW`, `modified files:` and the manifest's path indented by two spaces, and exits `0`. An unknown bump, a bump given with `--set`, neither of them, an unknown option and a missing option value exit `2`. A refusal exits `1`. `incan version` with arguments exits `2` naming `oven version`.
+
 ## `oven workspace inspect`
 
 Reports the workspace at or above the current directory and the members a [member selection](#member-selection) selects. The text report is `Workspace: ROOT`, `Manifest: PATH`, `Selected scope (ORIGIN)`, one `  - NAME (ROOT)` line per selected member with its absolute root, and `Canonical lock: ROOT/oven.lock`; when a member other than the root project has an `oven.lock` of its own, `Stale member-local locks:` follows, with one `  - PATH` line per such lock: the workspace root holds the one lock. `--format json` prints an object with `schema_version` `1`, `workspace` (`root`, `manifest_path`), `members`, `default_members`, `exclusions` (the declared `exclude`), `invocation` (`current_dir`), `selected_scope` (`origin` and its `members`, each `name` and absolute `root`), `lock`, `capabilities`, `warnings` and the root's shared tables `shared_dependencies`, `shared_environments`, `shared_policy` and `shared_sources` ([`[workspace]`](project_configuration.md#workspace)). Each entry of `members` has `name`, `path`, `root`, `manifest_path`, `is_root_member`, `effective_dependencies`, `workspace_environment_extends` and `capabilities`:
@@ -120,7 +173,7 @@ An unknown environment or script exits `1` before anything runs.
 
 ## `oven lock`
 
-Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. After that line, it prints one `untested lower bound: LOAF BOUND is not published; locked VERSION` line for each local requirement whose lower bound names a version the registry does not publish, because the bound itself was not tested. A requirement's lower bound is the version its `^`, `~`, `>=`, `=` or partial wildcard comparator names, with a missing minor or patch as `0`. A generated write adds no other stdout or stderr.
+Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. After that line, it prints one `untested lower bound: LOAF BOUND is not published; locked VERSION` line for each local requirement whose lower bound names a version the registry does not publish. A requirement's lower bound is the version its `^`, `~`, `>=`, `=` or partial wildcard comparator names, with a missing minor or patch as `0`. A generated write adds no other stdout or stderr.
 
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
@@ -182,7 +235,9 @@ Checks the Rust libraries of the Loaf at `PATH`, or of the Loaf at or above the 
 
 ## `incan explain`
 
-`CODE` names a stable diagnostic in the installed compiler's catalog, matched without regard to ASCII case. The command prints its title, severity, phase, summary, explanation, examples, common causes, fixes and documentation link when present, then exits `0`. An unknown code exits `1` and names the three nearest catalog codes. Missing or extra operands and unknown options exit `2`. No project is required. This command is available with either engine selection.
+`CODE` names a stable diagnostic in the installed compiler's catalog, matched without regard to ASCII case. The command prints its title, severity, phase, summary, explanation, examples, common causes, fixes and documentation link when present, then exits `0`. An unknown code exits `1` and names the three nearest catalog codes. Missing or extra operands, unknown options and a `--format` other than `text` or `json` exit `2`. No project is required. This command is available with either engine selection.
+
+`--format json` prints the same entry as one JSON object with `schema_version` `1`, Boolean `found` `true` and `entry`: `code`, `title`, `severity`, `phase`, `summary`, `explanation`, the string arrays `examples`, `common_causes` and `fixes`, and `docs_url`, a string or null. For an unknown code it prints `schema_version` `1`, `found` `false`, `code` as given and `close_matches`, the nearest catalog codes, and exits `1`.
 
 ## `oven test`
 
@@ -219,7 +274,11 @@ Collected test functions return `None` or `Result[None, E]`, and each of their p
 
 An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
-A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `OUTPUT_DIR`, after `PATH`, receives a copy of a program build's executable under the same name, replacing a file of that name; a library or Rust-project build refuses it. `--lib` is not accepted. `--report json` runs the build with its stdout sent to stderr, then prints a JSON report to stdout, or writes it to `--report-output PATH`: `schema_version` `1`, `command` `build`, `incan_version`, `path` (the given `PATH`, empty without one), `profile`, `status` (`succeeded` or `failed`), `exit_code`, `artifacts`, each the `kind` (`executable` or `library`), `path`, `size` and `sha256` of a file the build writes, and `timings` (`total_milliseconds`). Without `PATH` the artifacts are those of the project at the working directory. `--report` accepts only `json`, and `--report-output` requires it; the command exits with the build's status.
+A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `OUTPUT_DIR`, after `PATH`, receives a copy of a program build's executable under the same name, replacing a file of that name; a library or Rust-project build refuses it. `--lib` is not accepted.
+
+`--codegraph` also publishes a library's checked graph as an `.incngraph` file in its artifact directory, for inspection without its sources. It requires a build that selects a `lib.incn` library; any other build exits `2` with `--codegraph requires an Incan library build`.
+
+`--report json` runs the same build and prints one JSON build report on stdout, or writes it to `--report-output PATH`. The build's own output goes to stderr, and the command exits with the build's status. The report has `schema_version` `1`, `command` `build`, `incan_version`, `path` (the given `PATH`, empty without one), `profile` (the `--profile` value, `debug` without one), `status` (`succeeded` or `failed`), `exit_code`, `artifacts`, each with `kind` (`executable` or `library`), `path` and, when the file exists, `size` and `sha256`, and `timings` with `total_milliseconds`. Without `PATH` the artifacts are those of the project at the working directory. A `--report` other than `json`, and `--report-output` without `--report json`, exit `2`.
 
 With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
 
@@ -381,6 +440,14 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `incan tools metadata model PATH MODEL [--format incan|json]` prints one [contract-backed model](contract_metadata.md) by its `logical_type_name` or `stable_model_id`. `PATH` is a project directory or source, whose declared bundles are all read, publishable or not; a bundle JSON file; or a `.incnlib` artifact, which carries only publishable bundles. `incan` (default) prints the formatted model source; `json` prints the canonical bundle. A model that is not there exits `1` with ``model `MODEL` was not found in checked model metadata for PATH (available: ...)``.
 
+## `incan tools doctor`
+
+`incan tools doctor [--format text|json]` reports how this installation resolves: the toolchain version, the running program, the current directory, the Incan home and the toolchain versions installed in it, whether the running toolchain is one of them, where `incan`, `oven` and `incan-lsp` resolve on `PATH` and in the home's `bin` directory, and notes for editor setup. Each location states whether the file exists, whether it is executable and the target of a symbolic link. A missing home or toolchain is reported, not refused: the command exits `0`.
+
+The text report starts with `Incan tools doctor`, then `version:`, `current_exe:`, `cwd:`, `home:`, `active toolchain:` with `installed` or ``not installed; run `incan toolchain install ARCHIVE` ``, and `installed toolchains:`, followed by a `PATH PROGRAM:` block per program, a `home bin:` block and an `editor setup:` block.
+
+`--format json` prints an object with `schema_version` `1`, `version`, `current_exe`, `cwd`, `home`, `installed_toolchains`, Boolean `active_toolchain_installed`, `path`, `home_bin` and `editor_setup`, an array of strings. `path` maps each program to its first executable match on `PATH`, or null, and `home_bin` maps each program to its file in the home's `bin`; a location has `path`, Boolean `exists` and `executable`, and `symlink_target`, a string or null. An unknown option exits `2`; a `--format` other than `text` or `json` and an extra operand exit `1`.
+
 ## `oven inspect dependencies`
 
 Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:
@@ -394,6 +461,14 @@ LIBRARY
 ```
 
 `KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`oven describe-unit`](#oven-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
+
+## `oven inspect features`
+
+Prints the package features that a feature selection activates for the project at or above `PATH` (default `.`; a source file selects its project) and for each package that selection reaches, and the dependency edges those features select. `--features`, `--no-default-features` and `--all-features` select the root package's features as the [unit options](#unit-options) do. The text report is one `Package NAME: FEATURE, ...` line per reached package, then one `Edge REQUESTER -> DEPENDENCY (as ALIAS)` line per selected edge.
+
+`--format json` prints an object with `schema_version` `1`, `packages` and `edges`. Each package has `package`, `project_root`, `active_features` in ascending order and `reasons`, which maps each active feature to an array of reasons. A reason's `kind` is `default` for the root's `default` feature, `requested` for a root feature `--features` or `--all-features` selects, `included_by`, with the including feature of the same package as `source`, or `requested_by_dependent`. Each edge has `requester`, `alias` and `dependency`.
+
+A path without a `loaf.toml` at or above it exits `1` with `no loaf.toml at or above PATH`. Unknown options exit `2`. `incan inspect features` exits `2` naming `oven inspect features`.
 
 ## `oven inspect interop-plan`
 
@@ -463,7 +538,7 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
 
-`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.8/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
+`install ARCHIVE` stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.9/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
 
 ## Environment variables
 
