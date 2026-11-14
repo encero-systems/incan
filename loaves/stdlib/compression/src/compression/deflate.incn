@@ -9,14 +9,15 @@ from rust::std::io import BufReader, Cursor, Read
 from rust::flate2 import Compression as FlateCompression
 from rust::flate2::bufread import DeflateDecoder
 from rust::flate2::read import DeflateEncoder
-pub from std.compression._core import Codec, CompressionError
 from std.compression._core import (
+    Codec,
+    CompressionError,
     _codec_error,
     _level_or_default,
     _validate_chunk_size,
     _write_sink_bytes,
 )
-pub from std.fs import File
+from std.fs import File
 from std.io import _BytesIO
 
 
