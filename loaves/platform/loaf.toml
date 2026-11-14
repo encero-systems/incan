@@ -11,6 +11,9 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
+[rust.lints.rust]
+deprecated = "allow"  # libc deprecates its mach clock bindings for the `mach2` crate; moving is a dependency change
+
 [build]
 rust-edition = "2024"
 

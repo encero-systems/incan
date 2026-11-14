@@ -32,6 +32,9 @@ edition = "2024"
 name = "incan_driver"
 type = "lib"
 
+[rust.lints.clippy]
+too_many_arguments = "allow"  # `typecheck_modules` threads each session input; a parameter struct is a refactor
+
 # Additional dependencies of the driver's own test harness.
 [envs.test.dependencies]
 byteorder = { loaf = "crates-io/byteorder", version = "1" }

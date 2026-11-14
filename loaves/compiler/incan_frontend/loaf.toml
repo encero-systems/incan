@@ -31,6 +31,14 @@ edition = "2024"
 name = "incan_frontend"
 type = "lib"
 
+[rust.lints.rust]
+dead_code = "allow"  # unwired checker paths, test-only helpers and generated schema items need a wire-or-delete decision
+
+[rust.lints.clippy]
+large_enum_variant = "allow"  # checker and Body IR enums keep their payloads inline; boxing a variant changes its layout
+too_many_arguments = "allow"  # checker passes thread their context explicitly; a parameter struct is a refactor
+type_complexity = "allow"  # checker tables nest maps, tuples and closures; naming each type is a refactor
+
 # Filesystem fixtures belong to the frontend's own test harness, not its library artifact.
 [envs.test.dependencies]
 tempfile = { loaf = "crates-io/tempfile", version = "3" }

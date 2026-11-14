@@ -17,3 +17,7 @@ version = "0.6.0-dev.9"
 edition = "2024"
 name = "incan_syntax"
 type = "lib"
+
+[rust.lints.clippy]
+large_enum_variant = "allow"  # AST enums keep their payloads inline; boxing a variant changes its layout
+too_many_arguments = "allow"  # a diagnostic constructor takes each labeled place; a parameter struct is a refactor

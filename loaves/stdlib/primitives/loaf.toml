@@ -12,6 +12,14 @@ edition = "2024"
 [rust.source]
 root = "rust"
 
+[rust.lints.rust]
+dead_code = "allow"  # `LockResource::File` holds the lock's file for its drop, which no read sees
+
+[rust.lints.clippy]
+len_without_is_empty = "allow"  # `Buffer.len` mirrors the Incan surface, which has no `is_empty`
+ptr_arg = "allow"  # the native boundary passes `&Vec<u8>`; a slice parameter changes the binding
+type_complexity = "allow"  # one semantic-block table type; naming it is a refactor
+
 [dependencies]
 crc32fast = { loaf = "crates-io/crc32fast", version = "1", features = [], default-features = true }
 hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"], default-features = true }
