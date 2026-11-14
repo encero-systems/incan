@@ -1,0 +1,59 @@
+# behavior: RFC 129's cart example with explicit `BorrowedMut` locals: a method appends its `str` parameter through an explicit writable alias of a field, and a body holding explicit aliases calls that method with a literal (RFC 129, #1846).
+# pending: the source flow stops twice (`INCAN-T0123`): at `items.append(item)`, "a non-Copy builtin method argument needs checked ownership transfer materialization", and at `cart.add("plum")`, "ordinary argument requires inferred access or mutable binding facts".
+# expect-stdout:
+#   ["apple", "plum"]
+#   ["pear", "orange"]
+#   10
+#   ["pear"]
+#   ["pear", "orange", "kiwi"]
+#   ["pear", "orange", "kiwi"]
+
+"""RFC 129's cart, order and basket examples with explicit writable aliases."""
+
+
+class Cart:
+    pub items: list[str]
+
+    pub def add(mut self, item: str) -> None:
+        mut items: BorrowedMut[list[str]] = self.items
+        items.append(item)
+
+    pub def replace(mut self) -> None:
+        mut items: BorrowedMut[list[str]] = self.items
+        items = ["pear"]
+        items.append("orange")
+
+
+class Order:
+    pub quantity: int
+
+
+class Basket:
+    pub cart: Cart
+
+    pub def replace(mut self) -> None:
+        mut cart: BorrowedMut[Cart] = self.cart
+        cart = Cart(items=["pear"])
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    cart.add("plum")
+    println(cart.items)
+    cart.replace()
+    println(cart.items)
+    mut order = Order(quantity=1)
+    mut quantity: BorrowedMut[int] = order.quantity
+    quantity += 1
+    quantity = quantity * 5
+    println(order.quantity)
+    mut basket = Basket(cart=Cart(items=["apple"]))
+    basket.replace()
+    println(basket.cart.items)
+    mut annotated: BorrowedMut[list[str]] = cart.items
+    annotated.append("kiwi")
+    println(cart.items)
+    mut copied = cart.items.clone()
+    copied.append("fig")
+    copied = ["lime"]
+    println(cart.items)
