@@ -1,0 +1,9 @@
+# behavior: Android platform facts belong to the `aarch64-linux-android` target only, as in 0.5 (#3135)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   Android platform facts require the `aarch64-linux-android` target, found `aarch64-apple-ios`
+
+def main() -> None:
+    println("unreachable")

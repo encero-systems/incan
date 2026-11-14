@@ -3,7 +3,7 @@
 #   oven check src/main.incn
 # expect-exit: 1
 # expect-stderr-contains:
-#   artifact kind `bundled` is not supported; this toolchain links `static` archives
+#   artifact kind `bundled` is not supported
 
 def main() -> None:
     println("unreachable")
