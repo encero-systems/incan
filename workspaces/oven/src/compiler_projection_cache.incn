@@ -9,7 +9,7 @@ from compiler_source_projection import (
     project_source,
     signature_record,
 )
-from unit import UnitDescription
+from unit import UnitDescription, dependency_source_roots
 
 
 pub def projection_cache(
@@ -36,7 +36,49 @@ pub def projection_cache(
         path = Path(unit.project_root).joinpath(module)
         source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
         projections[module] = project_source(origin, module, source)?
+    mut roots: Dict[str, str] = {}
+    for dependency in dependency_source_roots(unit):
+        roots[dependency[0]] = dependency[1]
+    for value in outputs.values:
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in roots:
+                        key = editable_dependency_projection_key(package, dependency.module)
+                        if key not in projections:
+                            projections[key] = editable_dependency_projection(roots[package], package, dependency.module)?
+                None => pass
     return Ok(projections)
+
+
+pub def editable_dependency_projection_key(package: str, module: str) -> str:
+    """Key one editable package projection without colliding with project-relative module paths."""
+    return "editable-package:" + str(len(package)) + ":" + package + ":" + module
+
+
+pub def cached_editable_dependency_signature_record(
+    projections: &Dict[str, SourceProjection],
+    package: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Select an editable dependency signature from the publication-scoped projection cache."""
+    key = editable_dependency_projection_key(package, module)
+    return Ok(signature_record(compiled_owner_source(projections[key], module, name, identity)?))
+
+
+def editable_dependency_projection(root: str, package: str, module: str) -> Result[SourceProjection, str]:
+    """Project one selected editable dependency module once for the complete body publication."""
+    base = Path(root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    for candidate in candidates:
+        if candidate.is_file():
+            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
+            return project_source(package, module, source)
+    return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
 pub def cached_project_signature_record(

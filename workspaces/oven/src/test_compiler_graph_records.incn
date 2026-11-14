@@ -71,6 +71,10 @@ from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    editable_dependency_projection_key,
+)
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -228,6 +232,30 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         family_key("final", "run44-body"),
         "profile",
     )? is None
+    return Ok(None)
+
+
+pub def test_editable_dependency_signatures_use_the_captured_projection() -> Result[None, str]:
+    """Multiple reads from one editable module select signatures from its one publication-scoped projection."""
+    source = "pub def value() -> int:\n    return 1\n\npub enum CodecFault:\n    Invalid\n"
+    mut projections: Dict[str, compiler_source_projection.SourceProjection] = {}
+    projections[editable_dependency_projection_key("provider", "lib")] = project_source("provider", "lib", source)?
+    value = cached_editable_dependency_signature_record(
+        projections,
+        "provider",
+        "lib",
+        "value",
+        "provider|module:lib|value|function|module|0|() -> int",
+    )?
+    fault = cached_editable_dependency_signature_record(
+        projections,
+        "provider",
+        "lib",
+        "CodecFault",
+        "provider|module:lib|CodecFault|enum|module|0|CodecFault",
+    )?
+    assert value.key.origin == "provider" and value.key.facet == "value"
+    assert fault.key.origin == "provider" and fault.key.facet == "enum:CodecFault"
     return Ok(None)
 
 
