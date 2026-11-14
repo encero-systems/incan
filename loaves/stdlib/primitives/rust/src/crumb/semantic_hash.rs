@@ -9,6 +9,7 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 /// One logical value after notation translation, mirroring the Incan `Value` carrier.
+#[derive(Clone)]
 pub(super) enum Value {
     Absent,
     Some(Box<Value>),
@@ -30,6 +31,7 @@ pub(super) enum Value {
 }
 
 /// One stored field with its identity, canonical participation and declared absence.
+#[derive(Clone)]
 pub(super) struct Field {
     pub(super) identity: Vec<u8>,
     pub(super) canonical: bool,

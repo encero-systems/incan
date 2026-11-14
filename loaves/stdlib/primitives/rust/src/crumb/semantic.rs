@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 
 #[path = "semantic_adaptation.rs"]
 mod adaptation;
+#[path = "semantic_blocks.rs"]
+mod blocks;
 #[path = "semantic_columns.rs"]
 mod columns;
 #[path = "semantic_hash.rs"]
@@ -540,6 +542,25 @@ mod tests {
         assert_eq!(refused.kind, 0);
         assert!(refused.encoded.is_empty());
         assert_eq!(refused.decoded, b"\x01\x10nonminimal_delta");
+    }
+
+    #[test]
+    fn column_blocks_round_trip_packed_numbers_and_refuse_nonminimal_bases() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"01010003d808","type":"i8","logical_count":4,"expected":{"status":"accepted","values":[{"kind":"int","type":"i8","value":"0"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"4"}],"encoding":1}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(accepted.encoded, [0x01, 0x01, 0x00, 0x03, 0xd8, 0x08]);
+        assert_eq!(&accepted.decoded[..2], [0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"0101000209","type":"i8","logical_count":2,"expected":{"status":"refused","kind":"nonminimal_base"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0fnonminimal_base");
     }
 
     #[test]
