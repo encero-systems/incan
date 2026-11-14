@@ -1,8 +1,9 @@
 //! The installed compiler records of one Loaf and their two digests (RFC 179).
 //!
 //! The toolchain's driver exports these records once at installation: one record per exported declaration and
-//! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation and
-//! its Rust ABI, and the Loaf's metadata record, which carries the digests.
+//! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation, its
+//! Rust ABI, its executable descriptor and public executable identities (all executable resolution reads besides the
+//! metadata), and the Loaf's metadata record, which carries the digests.
 //!
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
@@ -19,6 +20,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::executable_surface::own_public_identities;
 use super::{LibraryManifest, LibraryManifestError};
 
 /// The record identity and value schema every installed compiler record follows.
@@ -50,6 +52,10 @@ pub enum RecordFamily {
     SoftKeyword,
     ContractMetadata,
     Documentation,
+    /// The executable descriptor executable resolution checks a reached Loaf against.
+    ExecutableDescriptor,
+    /// The public executable identities a Loaf declares itself.
+    PublicIdentities,
     RustAbi,
 }
 
@@ -74,6 +80,8 @@ impl RecordFamily {
             Self::SoftKeyword => "soft-keyword",
             Self::ContractMetadata => "contract-metadata",
             Self::Documentation => "documentation",
+            Self::ExecutableDescriptor => "executable-descriptor",
+            Self::PublicIdentities => "public-identities",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -134,6 +142,12 @@ impl LibraryManifest {
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
         }
+        // Executable resolution reads these two, never the whole contract metadata (RFC 179).
+        if let Some(descriptor) = &self.contract_metadata.executable_representation {
+            records.push(record(RecordFamily::ExecutableDescriptor, 0, &self.name, descriptor)?);
+        }
+        let identities = own_public_identities(self);
+        records.push(record(RecordFamily::PublicIdentities, 0, &self.name, &identities)?);
         if let Some(rust_abi) = &self.rust_abi {
             records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
         }

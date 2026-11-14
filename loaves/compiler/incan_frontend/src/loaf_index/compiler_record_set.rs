@@ -30,6 +30,9 @@ use crate::library_manifest::executable_surface::ExecutableSurface;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
+/// The record families of a Loaf's executable surface besides its metadata; a manifest projection never selects them.
+const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
+const PUBLIC_IDENTITIES: &str = "public-identities";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -63,6 +66,8 @@ struct RecordSet {
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
+    /// Executable surfaces this process already read and authenticated, by package prefix.
+    surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
 }
 
 /// One authenticated, decoded record group and the manifest digest its metadata names.
@@ -93,13 +98,14 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
+        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES);
         match self {
-            Self::Complete => family != DOCUMENTATION,
+            Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
                 family,
                 "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
             ),
-            Self::Documented => true,
+            Self::Documented => !surface,
         }
     }
 
@@ -124,6 +130,7 @@ impl RecordSet {
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
+            surfaces: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -286,14 +293,87 @@ pub(super) fn read_surface(dir: &Path, name: &str) -> Result<Option<(Arc<Executa
     read_surface_in(set, dir, name)
 }
 
-/// Read one Loaf group's executable surface from `set`.
+/// Read one Loaf group's executable surface from `set`: its metadata, descriptor and public identities records only.
+///
+/// A set converted before surfaces were published has no public-identities record; the caller then derives the
+/// surface from the executable projection.
 fn read_surface_in(
     set: &RecordSet,
     dir: &Path,
     name: &str,
 ) -> Result<Option<(Arc<ExecutableSurface>, String)>, LoafIndexError> {
-    Ok(read_group(set, dir, name, Projection::Execution)?
-        .map(|(manifest, digest)| (Arc::new(ExecutableSurface::of(&manifest)), digest)))
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/");
+    if let Some(found) = set.surfaces.lock().unwrap_or_else(PoisonError::into_inner).get(&prefix) {
+        return Ok(Some(found.clone()));
+    }
+    let entries = set
+        .entries
+        .iter()
+        .filter(|entry| entry.key.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    let selected = select_records(entries, &prefix, dir, name)?
+        .into_iter()
+        .filter(|(family, _, _)| matches!(*family, "metadata" | EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES))
+        .collect::<Vec<_>>();
+    if !selected.iter().any(|(family, _, _)| *family == PUBLIC_IDENTITIES) {
+        return Ok(None);
+    }
+    validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
+    let mut metadata: Option<Metadata> = None;
+    let mut surface = ExecutableSurface {
+        name: name.to_owned(),
+        version: String::new(),
+        descriptor: None,
+        public_identities: BTreeSet::new(),
+    };
+    for (family, _, entry) in selected {
+        if entry.revision != entry.value {
+            return Err(unreadable(
+                dir,
+                name,
+                format!(
+                    "compiler-record `{}` has distinct revision and value identities",
+                    entry.key
+                ),
+            ));
+        }
+        let bytes = open_value(&set.root, &entry.value)
+            .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
+        set.count_read(bytes.len());
+        let invalid = |error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}"));
+        match family {
+            "metadata" => metadata = Some(LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?),
+            EXECUTABLE_DESCRIPTOR => {
+                surface.descriptor = Some(LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?)
+            }
+            _ => surface.public_identities = LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?,
+        }
+    }
+    let metadata = metadata.ok_or_else(|| {
+        unreadable(
+            dir,
+            name,
+            "compiler-record metadata requires exactly one value".to_owned(),
+        )
+    })?;
+    if metadata.name != name {
+        return Err(unreadable(
+            dir,
+            name,
+            format!("compiler records name the Loaf `{}`", metadata.name),
+        ));
+    }
+    surface.version = metadata.version;
+    let found = (Arc::new(surface), metadata.manifest_digest);
+    set.surfaces
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, found.clone());
+    Ok(Some(found))
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.

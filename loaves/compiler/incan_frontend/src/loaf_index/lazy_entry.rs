@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
+use crate::library_manifest::executable_surface::ExecutableSurface;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
 const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
@@ -74,6 +75,7 @@ pub(super) struct IndexedLoaf {
     pub summary: Summary,
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
+    surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
 }
 
 impl IndexedLoaf {
@@ -86,6 +88,7 @@ impl IndexedLoaf {
             summary: Summary::from_artifact(&entry.artifact),
             entry: Arc::default(),
             execution: Arc::default(),
+            surface: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
         indexed
@@ -109,6 +112,7 @@ impl IndexedLoaf {
             },
             entry: Arc::default(),
             execution: Arc::default(),
+            surface: Arc::default(),
         }
     }
 
@@ -131,6 +135,7 @@ impl IndexedLoaf {
                 summary,
                 entry: Arc::default(),
                 execution: Arc::default(),
+                surface: Arc::default(),
             });
         }
         if !super::compiler_record_set::configured()
@@ -144,6 +149,7 @@ impl IndexedLoaf {
                 summary,
                 entry: Arc::default(),
                 execution: Arc::default(),
+                surface: Arc::default(),
             });
         }
         let before = observation(&path);
@@ -207,6 +213,33 @@ impl IndexedLoaf {
                     return Ok(manifest);
                 }
                 Ok(Arc::clone(&self.demand()?.artifact.manifest))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(Clone::clone)
+    }
+
+    /// What executable resolution reads of this Loaf: from its own records when the installed set publishes them,
+    /// otherwise derived from the executable projection.
+    pub fn executable_surface(&self) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
+        self.surface
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((surface, digest)) =
+                        super::compiler_record_set::read_surface(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(LoafIndexError::Unreadable {
+                            path: self
+                                .dir
+                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            reason: "executable surface records differ from their admitted inventory".to_owned(),
+                        });
+                    }
+                    return Ok(surface);
+                }
+                let manifest = self.execution_manifest()?;
+                Ok(Arc::new(ExecutableSurface::of(&manifest)))
             })
             .as_ref()
             .map(Arc::clone)

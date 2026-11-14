@@ -105,9 +105,10 @@ fn equal_manifests_give_equal_records_and_digests() -> Result<(), String> {
             RecordFamily::Metadata,
             RecordFamily::Function,
             RecordFamily::ContractMetadata,
-            RecordFamily::Documentation
+            RecordFamily::Documentation,
+            RecordFamily::PublicIdentities
         ],
-        "one metadata record, one record per declaration, the contract facts and their documentation"
+        "one metadata record, one record per declaration, the contract facts, their documentation and the public identities"
     );
     Ok(())
 }
