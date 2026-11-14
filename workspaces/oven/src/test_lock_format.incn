@@ -1,6 +1,8 @@
 """Format-1 oven.lock contracts for serialization, identity and tamper refusal."""
 
+from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
 from files import read, write
+from interop_lock import interop_difference, locked_interop
 from lock_format import (
     LockDependency,
     LockFeatures,
@@ -133,4 +135,50 @@ pub def test_edited_graph_is_refused_with_an_entry_name() -> Result[None, str]:
         Err(message) =>
             assert "graph differs at Loaf acme/published@1.2.3" in message
             assert "run `oven lock`" in message
+    return Ok(None)
+
+
+pub def test_c_interop_facts_are_locked_and_name_what_changed() -> Result[None, str]:
+    """
+    A root's C interop contract is locked with each declared file's digest.
+
+    1. The facts round-trip through the lock and are part of its graph identity.
+    2. A changed bundled file is named as that artifact.
+    3. A changed requirement is named as the target's contract.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    runtime = root.joinpath("libbridge.so")
+    write(runtime, "first\n")?
+    bundled = CInteropArtifact(
+        name="bridge",
+        kind=CArtifactKind.Bundled,
+        path="libbridge.so",
+        runtime_name="libbridge.so",
+        placement="jniLibs/arm64-v8a",
+        minimum_platform="24",
+    )
+    target = CInteropTarget(target="aarch64-linux-android", artifacts=[bundled])
+    first = locked_interop(root.0, [target])?
+    # 1. The lock carries the facts, and they are part of what its graph identity authenticates.
+    mut lock = example_lock()?
+    plain = lock.graph
+    lock.interop = first
+    lock.graph = graph_identity(lock)?
+    assert lock.graph != plain
+    path = root.joinpath("oven.lock")
+    write_lock(path, lock)?
+    stored = read_lock(path)?
+    assert stored.interop == first
+    assert lock_text(stored)? == lock_text(lock)?
+    # 2. Other bytes in a bundled file are another lock.
+    write(runtime, "second\n")?
+    changed = locked_interop(root.0, [target])?
+    assert interop_difference(first, changed) == "bundled artifact `bridge` of `aarch64-linux-android`"
+    assert interop_difference(first, first) == ""
+    # 3. Another requirement is another contract.
+    wider = CInteropTarget(target="aarch64-linux-android", definitions=["WIDE=1"], artifacts=[bundled])
+    write(runtime, "first\n")?
+    widened = locked_interop(root.0, [wider])?
+    assert interop_difference(first, widened) == "the C interop contract of `aarch64-linux-android`"
     return Ok(None)
