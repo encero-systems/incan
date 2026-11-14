@@ -3,9 +3,12 @@
 from std.json import JsonValue
 from std.primitives.crumb import Budget
 from std.primitives.crumb.admission import RecordShape, check_written, plan_adaptation
-from std.primitives.crumb.column_key_read import key_at, read_keys
-from std.primitives.crumb.column_value_dictionary import build_keys, encode_keys
-from std.primitives.crumb.description_dictionary import admit_dictionary
+from std.primitives.crumb.column_block_read import read_block
+from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_key_read import ColumnKeys, key_at, read_keys
+from std.primitives.crumb.column_presence import cell_type
+from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, dictionary_type, encode_keys
+from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import Reader, frame
 from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
@@ -15,17 +18,29 @@ from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.selectors import parse_type
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.text_printer import print_comic
-from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.crumb.types import AbsentPolicy, NominalKind, TypeNode
 from std.primitives.crumb.values import Projection, Value
 from std.primitives.hash import sha256
 from std.primitives.text import encode_utf8
 from adaptation_cases import absent_value, convert
-from case_data import CaseOperation, HashKind, array, field, fields as fixture_fields, hex_bytes, node, nodes, text
-from column_case_data import key_values
+from case_data import (
+    CaseOperation,
+    FixtureScalarAlias,
+    HashKind,
+    absence,
+    array,
+    field,
+    fields as fixture_fields,
+    hex_bytes,
+    node,
+    nodes,
+    text,
+)
+from column_case_data import encoding, key_values
 from column_read_data import case_budget, category
 from corpus import CorpusCase
 from encoding_test_support import backing
-from fixture_adapter import logical, logical_items, metadata, record
+from fixture_adapter import integer, logical, logical_items, metadata, record
 from text_cases import case_context, corpus_document
 
 
@@ -249,8 +264,11 @@ def print_twin(document: JsonValue) -> Result[bytes, str]:
 
 
 def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
-    """Write a column dictionary's independently authored keys; other column operations have no Incan twin yet."""
-    if text(document, "operation")? != CaseOperation.ColumnDictionary.value():
+    """Write a column dictionary's or block's authored input; the remaining column operations have no twin yet."""
+    operation = text(document, "operation")?
+    if operation == CaseOperation.ColumnBlock.value():
+        return block_twin_encode(document)
+    if operation != CaseOperation.ColumnDictionary.value():
         return Ok(None)
     mut setup = column_setup()?
     registry = KindRegistry.create([], setup).map_err((e) => e.message())?
@@ -266,6 +284,8 @@ def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
 
 def column_twin_decode(document: JsonValue) -> Result[bytes, str]:
     """Read the literal dictionary, or each proper prefix when asked, into keys or one typed refusal category."""
+    if text(document, "operation")? == CaseOperation.ColumnBlock.value():
+        return block_twin_decode(document)
     mut setup = column_setup()?
     registry = KindRegistry.create([], setup).map_err((e) => e.message())?
     dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
@@ -300,3 +320,92 @@ def column_twin_decode(document: JsonValue) -> Result[bytes, str]:
 def column_setup() -> Result[Budget, str]:
     """The harness's separate setup allowance for type parsing, expectations and re-encoding."""
     return Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((error) => error.message())
+
+
+def block_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
+    """Write a column block's authored values with its authored encoding; a refused case writes nothing."""
+    expected = field(document, "expected")?
+    if expected.get("values").is_none():
+        return Ok(Some(b""))
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = block_type(document, setup)?
+    absent = block_absence(document)?
+    writer_keys, _ = block_keys(document, node, absent, dictionary, setup)?
+    values = logical_items(array(expected, "values")?)?
+    selected = encoding(integer(expected, "encoding")?)?
+    return Ok(
+        Some(write_block(node, absent, values, selected, writer_keys, dictionary, setup).map_err((e) => e.message())?),
+    )
+
+
+def block_twin_decode(document: JsonValue) -> Result[bytes, str]:
+    """Read the literal block into its encoding and logical values, or one typed refusal category."""
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = block_type(document, setup)?
+    absent = block_absence(document)?
+    _, keys = block_keys(document, node, absent, dictionary, setup)?
+    data = hex_bytes(text(document, "input_hex")?)?
+    rows = integer(document, "logical_count")?
+    mut lengths: list[int] = [len(data)]
+    if document.get("transform").is_some():
+        lengths = [length for length in range(len(data))]
+    mut output = EncodingBuffer.create()
+    for length in lengths:
+        mut budget = case_budget(document)?
+        match read_block(node, absent, rows, backing(data[:length])?, 0, keys, dictionary, budget):
+            Err(error) =>
+                output.octet(1, setup).map_err((e) => e.message())?
+                output
+                    .append(frame(encode_utf8(category(error)?), setup).map_err((e) => e.message())?, setup)
+                    .map_err((e) => e.message())?
+            Ok((block, values)) =>
+                result = value_hash(Value.List(values), Projection.Object, setup, true).map_err((e) => e.message())?
+                preimage = match result.preimage:
+                    Some(captured) => captured
+                    None => return Err("block twin did not capture its values preimage")
+
+                output.octet(0, setup).map_err((e) => e.message())?
+                output.count(block.encoding.value(), setup).map_err((e) => e.message())?
+                output.append(frame(preimage, setup).map_err((e) => e.message())?, setup).map_err((e) => e.message())?
+    return output.finish(setup).map_err((e) => e.message())
+
+
+def block_type(document: JsonValue, mut setup: Budget) -> Result[TypeNode, str]:
+    """Parse the declared block type, translating the legacy negative-vector spelling explicitly."""
+    mut name = text(document, "type")?
+    if let Some(alias) = FixtureScalarAlias.from_value(name):
+        name = alias.scalar_kind().value()
+    return parse_type(name, setup).map_err((e) => e.message())
+
+
+def block_absence(document: JsonValue) -> Result[AbsentPolicy, str]:
+    """The declared absence policy, required when the case names none."""
+    if let Some(value) = document.get("absent"):
+        return absence(value.expect_str().map_err((e) => e.message())?)
+    return Ok(AbsentPolicy.Required)
+
+
+def block_keys(
+    document: JsonValue,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[tuple[Option[ColumnDictionary], Option[ColumnKeys]], str]:
+    """Build the case's external dictionary for the writer and admit its encoding for the reader."""
+    stored_type = cell_type(node, absent, setup).map_err((e) => e.message())?
+    input_keys = key_values(document, text(document, "type")?, "dictionary_keys_hex", "dictionary_values")?
+    if len(input_keys) == 0:
+        return Ok((None, None))
+    mut key_type = stored_type.clone()
+    if not dictionary_type(stored_type):
+        supplied = array(document, "dictionary_values")?
+        key_type = parse_type(text(supplied[0], "type")?, setup).map_err((e) => e.message())?
+    built = build_keys(key_type, input_keys, dictionary, setup).map_err((e) => e.message())?
+    raw = encode_keys(key_type, built, dictionary, setup).map_err((e) => e.message())?
+    keys = read_keys(key_type, backing(raw)?, 0, dictionary, setup).map_err((e) => e.message())?
+    return Ok((Some(built), Some(keys)))
