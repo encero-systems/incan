@@ -439,12 +439,14 @@ pub def plan_remove(name: str, text: str, manifest: str) -> Result[ManifestChang
 
 def entry_line(key: str, entry: Dict[str, TomlValue]) -> str:
     """
-    `KEY: NAME REQUIREMENT` for a registry entry; `KEY: path DIR` for a local one, after its Loaf name when it has
-    one.
+    `KEY: NAME REQUIREMENT` for a registry entry, `KEY: provider NAME REQUIREMENT` for a provider requirement (RFC
+    117), and `KEY: path DIR` for a local one, after its Loaf name when it has one.
     """
     mut loaf = ""
     if "loaf" in entry:
         loaf = entry["loaf"].as_str().unwrap_or("")
+    elif "provider" in entry:
+        loaf = "provider " + entry["provider"].as_str().unwrap_or("")
     if "path" in entry:
         path = entry["path"].as_str().unwrap_or("")
         if loaf == "":
