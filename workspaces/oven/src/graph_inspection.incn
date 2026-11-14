@@ -11,7 +11,9 @@ from files import json_text, read
 from graph_cache import (
     GraphUnit,
     cache_file,
+    published,
     read_graph,
+    relationships,
     stamp_file,
     tree_inputs,
     unchecked_note,
@@ -23,7 +25,7 @@ from observation import file_digest, trace, watch_inputs, watched_inputs
 from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
-from graph_queries import matches, query, query_group, text
+from graph_queries import matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
 from graph_snapshot import snapshot_identity, snapshot_status
 from graph_context import pack
@@ -604,11 +606,7 @@ def render(
         )
     if selected.query != "":
         started = Instant.now()
-        group = query_group(selected.query)
-        mut definition: Option[str] = None
-        if selected.query == "defs":
-            definition = Some(selected.term)
-        records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)?
+        records = query_records(paths, root, selected, toolchain, degraded, snapshot)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
         if selected.format == "json" and selected.query == "defs":
             return definition_response(records, selected.term, selected.limit)
@@ -621,6 +619,62 @@ def render(
     if selected.format == "json":
         return json_text(JsonValue.array(records))
     return Ok("\n".join([json_text(record)? for record in records]))
+
+
+def query_records(
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    toolchain: Toolchain,
+    degraded: bool,
+    snapshot: str,
+) -> Result[list[JsonValue], str]:
+    """
+    The records a query reads: every module and declaration, and the relationships its term can select.
+
+    1. A definition query reads modules and declarations only.
+    2. Any other query reads them first, because they decide what its term names.
+    3. A published graph then gives only the relationships filed under what the term names, never its whole group;
+       a project's own graph gives all of its relationships. Each is kept once per identity.
+    4. Relationships are joined to declaration keys exactly as a whole read joins them.
+    """
+    # 1. Definitions need no relationship.
+    group = query_group(selected.query)
+    if selected.query == "defs" or "," not in group:
+        mut definition: Option[str] = None
+        if selected.query == "defs":
+            definition = Some(selected.term)
+        return read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)
+    # 2. Modules and declarations of every unit, under the one header.
+    kind = group.split(",")[1]
+    nodes = read_records(paths, root, toolchain, "nodes", selected.strict, degraded, snapshot)?
+    keys = selection_keys(nodes, selected.term)
+    mut seen: Dict[str, bool] = {}
+    for record in nodes:
+        seen[text(record, "id")] = true
+    # 3. Each unit's relationships of the query's kind, in unit order.
+    mut relationships_read: list[JsonValue] = []
+    for unit in paths:
+        started = Instant.now()
+        mut lines: list[str] = []
+        if published(unit):
+            lines = relationships(unit, toolchain, kind, keys)?
+        else:
+            lines = read_graph(unit, toolchain, kind)?.split("\n")
+        for line in lines:
+            if line.strip() == "":
+                continue
+            record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
+            if text(record, "record") == "header":
+                continue
+            key = text(record, "id")
+            if key != "" and key in seen:
+                continue
+            seen[key] = true
+            relationships_read.append(record)
+        trace(f"graph relationships {unit.package}: {started.elapsed().as_millis()} ms")
+    # 4. The declarations key the relationships; they are already keyed themselves.
+    return Ok(nodes + link_keys(relationships_read, nodes)?)
 
 
 def definition_response(records: list[JsonValue], term: str, limit: int) -> Result[str, str]:
