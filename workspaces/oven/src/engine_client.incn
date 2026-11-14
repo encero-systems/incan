@@ -18,8 +18,7 @@ from engine_wire import Refusal
 from files import json_text
 from incan_units import run_program
 from json_fields import required_text
-from observation import file_metadata, trace
-from retained_readings import installed_digest
+from observation import observe, file_metadata, trace
 from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
@@ -189,7 +188,7 @@ def installed_compiler() -> Result[str, str]:
 def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     """Prepare service negotiation only for a request that cannot be answered by a local record read."""
     binary = executable()?
-    generation = service_generation(binary)?
+    generation = fingerprint([binary, observe(Path(binary))?.stamp])?
     return Ok(
         Identity(
             store_id=physical_store_identity(store)?,
@@ -199,11 +198,6 @@ def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
             uid=owner_uid(store).map_err(detail)?,
         ),
     )
-
-
-pub def service_generation(binary: str) -> Result[str, str]:
-    """Name the engine service implementation by exact bytes, independent of its installed path."""
-    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])
 
 
 def physical_store_identity(store: Path) -> Result[str, str]:
