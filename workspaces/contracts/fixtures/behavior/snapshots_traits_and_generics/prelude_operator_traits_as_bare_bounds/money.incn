@@ -1,0 +1,23 @@
+from std.traits.ops import Add, Div, Mod, Mul, Neg, Sub
+
+
+pub model Cents with Add[Cents, Cents], Sub[Cents, Cents], Mul[Cents, Cents], Div[Cents, Cents], Neg[Cents], Mod[Cents, Cents]:
+    pub value: int
+
+    def __add__(self, other: Cents) -> Cents:
+        return Cents(value=self.value + other.value)
+
+    def __sub__(self, other: Cents) -> Cents:
+        return Cents(value=self.value - other.value)
+
+    def __mul__(self, other: Cents) -> Cents:
+        return Cents(value=self.value * other.value)
+
+    def __div__(self, other: Cents) -> Cents:
+        return Cents(value=self.value // other.value)
+
+    def __neg__(self) -> Cents:
+        return Cents(value=0 - self.value)
+
+    def __mod__(self, other: Cents) -> Cents:
+        return Cents(value=self.value % other.value)

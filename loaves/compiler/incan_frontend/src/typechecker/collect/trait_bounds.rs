@@ -110,14 +110,17 @@ impl TypeChecker {
     /// Materialize a bare source-defined standard-prelude trait used as a generic bound.
     ///
     /// Compiler-owned builtin traits are installed with the root symbol table, but traits such as `Mod` are authored
-    /// in `std.traits` and re-exported by `std.prelude`. Generic bounds need the full source contract so operator and
-    /// method lookup can observe its hooks. An existing binding wins, so a local trait with the same spelling never
-    /// acquires standard-library semantics.
+    /// in `std.traits` or `std.derives` and published by `std.prelude`. The prelude declaration, not a compiler
+    /// spelling table, decides which traits are ambient, as it does for values. Generic bounds need the full source
+    /// contract so operator and method lookup can observe its hooks. An existing binding wins, so a local trait with
+    /// the same spelling never acquires standard-library semantics. A builtin derive's trait, such as `Copy`, keeps
+    /// the derive relation instead: the automatic and implied derives that satisfy it are the checker's, not the
+    /// source trait's adoptions.
     pub(super) fn materialize_implicit_prelude_trait_bound(&mut self, name: &str, span: Span) {
-        if name.contains('.') || self.lookup_symbol(name).is_some() {
+        if name.contains('.') || self.lookup_symbol(name).is_some() || self.builtin_derive_bound(name).is_some() {
             return;
         }
-        let prelude_path = vec!["std".to_string(), "traits".to_string(), "prelude".to_string()];
+        let prelude_path = vec!["std".to_string(), "prelude".to_string()];
         if let Some(info) = self.lookup_imported_module_trait(&prelude_path, name) {
             self.define_hidden_trait_symbol(name, info, span);
             self.source_import_targets.insert(

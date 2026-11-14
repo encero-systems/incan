@@ -1,0 +1,13 @@
+"""Generic functions bounded by the prelude's indexing traits, with no import: the prelude makes them ambient."""
+
+
+pub def first[T with Index[int, str]](values: T) -> str:
+    return values[0]
+
+
+pub def replace_first[T with IndexMut[int, str]](mut values: T, value: str) -> None:
+    values[0] = value
+
+
+pub def kept[T with Sliceable[str]](values: T) -> T:
+    return values
