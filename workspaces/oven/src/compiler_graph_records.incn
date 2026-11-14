@@ -136,11 +136,11 @@ pub def prepare_evaluation(
     stage_put(transaction, receipt_key, receipt_bytes)
     stage_put(transaction, evaluation_key, evaluation)
     stage_put(transaction, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
+    outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
     for index in range(len(edges)):
         edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
-        identity = digest(edge)
-        stage_put(transaction, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
-        stage_put(transaction, f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}", edge)
+        stage_put(transaction, f"{outgoing}{index}", edge)
+        stage_put(transaction, incoming_key(edge)?, edge)
     return Ok(
         PreparedEvaluation(
             value_key=value_key,
@@ -258,11 +258,11 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
 
     An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
     evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
-    index together with its evaluation's edges. An output written again under its own key keeps it, but the edges its
-    earlier evaluation read leave unless the transaction writes them again: what it read now carries new evidence, so
-    the incoming entries are new keys. A family selection and a reader lookup then meet one output per slot and one
-    edge per current read instead of one per earlier edit. The superseded values, evaluations and receipts stay,
-    content named.
+    index. A slot's edges are keyed by the slot and the read, not by the evaluated context or the read's evidence, so
+    the new evaluation writes its edges over the earlier one's, under the same keys; only the earlier edges it does not
+    write again leave. A family selection and a reader lookup then meet one output per slot and one edge per current
+    read instead of one per earlier edit, and the edge indexes do not grow with edits. The superseded values,
+    evaluations and receipts stay, content named.
     """
     mut writing: set[str] = set()
     for write in transaction.writes:
@@ -277,34 +277,57 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
         for old in keys_with_prefix(selected, slot).map_err((error) => error.message())?:
             if old not in writing:
                 stage_delete(transaction, old)
-            evaluation = required_value(selected, old)?.decode().map_err(
-                (_) => "compiler output index entry is not UTF-8",
-            )?
-            retire_edges(selected, transaction, evaluation, writing)?
+        fields = slot.split("\t")
+        retire_edges(selected, transaction, outgoing_prefix(fields[1], "\t".join(fields[2:7])), writing)?
     return Ok(None)
 
 
 def retire_edges(
     selected: Snapshot,
     mut transaction: Transaction,
-    evaluation_key: str,
+    outgoing: str,
     writing: set[str],
 ) -> Result[None, str]:
-    """Remove an earlier evaluation's outgoing edges and their incoming entries, except those written again."""
-    for outgoing in keys_with_prefix(selected, "incan.engine.edge-out\t" + evaluation_key + "\t").map_err(
-        (error) => error.message(),
-    )?:
-        encoded = required_value(selected, outgoing)?
-        edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-            (error) => error.message(),
-        )?
-        if outgoing not in writing:
-            stage_delete(transaction, outgoing)
-        target = required_text(edge, "target")?
-        incoming = f"incan.engine.edge-in\t{target}\t{required_text(edge, "kind")?}\t{digest(encoded)}"
+    """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
+    for key in keys_with_prefix(selected, outgoing).map_err((error) => error.message())?:
+        encoded = required_value(selected, key)?
+        if key not in writing:
+            stage_delete(transaction, key)
+        incoming = incoming_key(encoded)?
         if incoming not in writing:
             stage_delete(transaction, incoming)
     return Ok(None)
+
+
+def outgoing_prefix(profile: str, slot: str) -> str:
+    """
+    Where an evaluation's outgoing edges are listed: under its profile and slot, not its evaluated context, so the next
+    evaluation of the slot writes its edges over the earlier one's instead of beside them.
+    """
+    return f"incan.engine.edge-out\t{profile}\t{slot}\t"
+
+
+def incoming_key(encoded: bytes) -> Result[str, str]:
+    """
+    The reverse index entry of one encoded edge: its target and kind, then the identity of the read itself, made of the
+    reading slot, profile and selection. Its evidence and the reader's evaluated context are left out, so the next
+    evaluation of the slot that makes the same read replaces the entry in place instead of adding one beside it.
+    """
+    edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+        (error) => error.message(),
+    )?
+    selection = json_text(edge.require("selection").map_err((error) => error.message())?)?
+    read = record_slot(required_text(edge, "reader")?)? + "\n" + required_text(edge, "profile")? + "\n" + selection
+    target = required_text(edge, "target")?
+    return Ok(f"incan.engine.edge-in\t{target}\t{required_text(edge, "kind")?}\t{digest(read.encode("utf-8"))}")
+
+
+def record_slot(key: str) -> Result[str, str]:
+    """An encoded record key's slot: every field but the evaluated context, which an edit changes."""
+    fields = key.split("\t")
+    if len(fields) != 6:
+        return Err("compiler graph record key is malformed")
+    return Ok("\t".join(fields[:5]))
 
 
 pub def evaluation_record_key(profile: str, output: str) -> str:

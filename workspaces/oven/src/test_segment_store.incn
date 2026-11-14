@@ -49,8 +49,20 @@ from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
-from compiler_graph_records import readers_of, reusable_family_records
-from pub::internal_models.records import RecordKey
+from compiler_graph_records import prepare_evaluation, readers_of, reusable_family_records, supersede_outputs
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadReceipt,
+    ReadScope,
+    RecordKey,
+    RecordRead,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    StoreRecordSource,
+    encode_record_key,
+)
 
 static observed_work: dict[str, int] = {}
 
@@ -408,6 +420,65 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
             ], prefix
     assert pages[1] <= pages[0] + 10, f"family selection read {pages[0]} pages at scale 1 and {pages[1]} at scale 100"
     return Ok(None)
+
+
+pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits_came_before() -> Result[None, str]:
+    """
+    Keys that change together sit together. Each edit evaluates one declaration's slot in a new context that reads the
+    same dependency with new evidence, and retires the earlier evaluation. Its edges are written over the earlier ones
+    under the same keys, so after any number of edits the edge indexes hold exactly the current evaluation's entries,
+    tombstones included, and a reader lookup finds the current evaluation.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = RecordKey(
+        family="final",
+        identity="function:helper",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    mut reader = dependency
+    for edit in range(12):
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = RecordKey(
+            family="body-ir",
+            identity="function:main",
+            identity_profile="profile",
+            origin="origin",
+            facet="facet",
+            context=f"edit {edit}",
+        )
+        mut transaction = begin(selected)
+        rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+        receipt = edge_receipt(selected, reader, read)?
+        _ = prepare_evaluation(transaction, "claim", rank, f"main {edit}".encode("utf-8"), receipt)?
+        supersede_outputs(selected, transaction)?
+        _ = commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut edges: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-"):
+            edges.append(entry.key)
+    assert len(edges) == 2, f"after 12 edits of one declaration the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+def edge_receipt(selected: Snapshot, output: RecordKey, read: RecordRequest) -> Result[ReadReceipt, str]:
+    """The completed receipt of an evaluation of `output` that reads one record through the store."""
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(read.key)?])
+    mut reads = RecordReads.start(scope, preparation, [read])
+    match reads.read(source, read):
+        RecordRead.Failed(_) => return Err("the dependency read failed")
+        _ => pass
+    return reads.finish().map_err((_) => "the dependency receipt failed")
 
 
 pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it_writes() -> Result[None, str]:
