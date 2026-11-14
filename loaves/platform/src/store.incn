@@ -167,6 +167,8 @@ pub model Transaction:
     pub id: str
     pub writes: list[Write]
     pub payloads: list[PreparedPayload] = []
+    # The view revision a compared publication read; it publishes only while the view still has that revision.
+    pub compared: Option[str] = None
 
 
 pub model ReadCounts:
@@ -565,6 +567,16 @@ pub def begin(view: Snapshot) -> Transaction:
     )
 
 
+pub def begin_compared(view: Snapshot) -> Transaction:
+    """
+    A transaction on `view` that publishes only onto the revision it read. When another publication moved the view
+    on, writes that would still change it are refused as a conflict; writes it already holds publish nothing.
+    """
+    mut transaction = begin(view)
+    transaction.compared = Some(view.index)
+    return transaction
+
+
 pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
     """`transaction` with a value written under `key`, valid only while `expect` holds at commit."""
     mut next = transaction
@@ -654,6 +666,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         return publish_fork(root, latest, first, staged).map((view) => Publication(snapshot=view))
     # 1. Duplicate views are combined before their preconditions are checked.
     mut writes: Dict[str, list[Write]] = {}
+    mut compared: Dict[str, str] = {}
     for transaction in transactions:
         if (
             transaction.root.placement != root.placement
@@ -665,10 +678,16 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
         mut combined = writes.get(transaction.view, [])
         combined.extend(transaction.writes)
         writes[transaction.view] = combined
+        if let Some(revision) = transaction.compared:
+            compared[transaction.view] = revision
     mut changed: Dict[str, list[Write]] = {}
     for view in sorted([name for name in writes.keys()]):
-        remaining = pending_writes(view_snapshot(latest, view)?, writes[view])?
+        current = view_snapshot(latest, view)?
+        remaining = pending_writes(current, writes[view])?
         if len(remaining) > 0:
+            # A compared view that moved on since its transaction read it would lose the other publication's writes.
+            if view in compared and compared[view] != current.index:
+                return Err(failure("conflict", view, "the view moved on since this transaction read it"))
             changed[view] = remaining
     if len(changed) == 0:
         return pinned_publication(latest, execution_view)

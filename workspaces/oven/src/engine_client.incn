@@ -20,7 +20,7 @@ from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from retained_readings import installed_digest
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, put, view_snapshot
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
@@ -64,9 +64,10 @@ pub def execute(
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     # A home that has bound its view names its project views from it; one without (an `INCAN_BAKERY` invocation)
     # keeps naming them from its path.
+    bound = selected_home_view()?
     mut scope = home()?.0
-    if let Some(bound) = selected_home_view()?:
-        scope = bound
+    if let Some(found) = bound:
+        scope = found
     view = project_view_name(scope, absolute.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
     mut policy = ""
     if proofs:
@@ -75,8 +76,13 @@ pub def execute(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     compiler = installed_compiler()?
-    if not proofs:
-        if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if selected.index == "":
+        # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
+        if let Some(found) = bound:
+            fork_project_view(store, found, view)?
+    elif not proofs:
+        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
@@ -125,20 +131,31 @@ pub def execute(
     return code
 
 
+def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, str]:
+    """
+    Start a program's project view as a fork of the home's view: it shares the home view's index pages and copies none
+    of its records. A request that forked it first leaves it as that request made it.
+    """
+    match fork(snapshot(store, home_view).map_err((error) => error.message())?, view):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            if error.kind == "conflict":
+                return Ok(None)
+            return Err(error.message())
+
+
 def execute_local(
     store: Path,
+    selected: Snapshot,
     compiler: str,
     command: str,
     source: Path,
-    view: str,
     profile: str,
     arguments: list[str],
     argv0: Option[str],
 ) -> Result[Option[i32], str]:
-    """An unchanged local capture and selected native record need no service request or control round trips."""
-    selected = snapshot(store, view).map_err((error) => error.message())?
-    if selected.index == "":
-        return Ok(None)
+    """An unchanged local capture of an existing project view and its selected native record need no service request."""
+    view = selected.view
     capturing = begin_work()
     captured = prepare_submit(
         store,

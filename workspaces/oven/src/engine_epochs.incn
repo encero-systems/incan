@@ -15,7 +15,7 @@ from engine_capture import (
     selected_home,
 )
 from engine_messages import Submit
-from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put
+from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin_compared, commit, lookup, owned, put
 from store_path_conversion import snapshot
 from unit_freshness import fingerprint
 from jec import begin as begin_work, record as record_work
@@ -102,7 +102,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
             encoded = epoch.encoded()?
             revision = fingerprint([encoded])?
             identity = epoch.identity()?
-            mut transaction = begin(before)
+            mut transaction = begin_compared(before)
             transaction = put(transaction, epoch_key(revision), encoded.encode("utf-8"))
             transaction = put(transaction, head, f"{revision} {identity}".encode("utf-8"))
 
@@ -145,7 +145,7 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
             encoded = epoch.encoded()?
             refreshed.epoch = epoch
             refreshed.revision = fingerprint([encoded])?
-            mut transaction = begin(captured.snapshot)
+            mut transaction = begin_compared(captured.snapshot)
             transaction = put(transaction, epoch_key(refreshed.revision), encoded.encode("utf-8"))
             transaction = put(transaction, captured.head, f"{refreshed.revision} {captured.identity}".encode("utf-8"))
             refreshed.transaction = Some(transaction)
