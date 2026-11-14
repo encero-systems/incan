@@ -58,6 +58,7 @@ const FROM_PROFILE: str = "../../../"
 const RESTATED_RECORD_SUFFIX: str = "native.json.oven-unit"
 pub const PACK_USAGE: str = "incan toolchain pack OUT"
 pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
+pub const VERIFY_USAGE: str = "incan toolchain verify ASSET"
 const RUST_TOOLCHAIN: str = "1.98.0"
 const RUST_INSTALL_COMMAND: str = "rustup toolchain install 1.98.0 --profile minimal --component rustc-dev"
 
@@ -66,21 +67,23 @@ pub def help_text(command: str) -> str:
     """Describe the selected archive operation without loading or changing an installation."""
     if command == "pack":
         return render(PACK_USAGE, [], "incan toolchain pack toolchain.tar.zst")
+    if command == "verify":
+        return render(VERIFY_USAGE, [], "incan toolchain verify toolchain.tar.zst")
     return render(INSTALL_USAGE, [], "incan toolchain install toolchain.tar.zst")
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[tuple[str, str], str]:
     """Require an archive command and one operand, rejecting unknown commands and options before I/O."""
     if len(arguments) == 0:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err("expected `pack OUT`, `install ARCHIVE` or `verify ASSET`")
     command = arguments[0]
-    if command not in ["pack", "install"] and not command.startswith("-"):
+    if command not in ["pack", "install", "verify"] and not command.startswith("-"):
         return Err(f"unknown command `{command}`")
     match unknown_option(arguments):
         Some(reason) => return Err(reason)
         None => pass
     if len(arguments) != 2:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err("expected `pack OUT`, `install ARCHIVE` or `verify ASSET`")
     return Ok((command, arguments[1]))
 
 
@@ -90,8 +93,27 @@ pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
     if command == "pack":
         pack_toolchain(Path(operand))?
         return Ok(0)
+    if command == "verify":
+        verify_asset(Path(operand))?
+        return Ok(0)
     install_toolchain(Path(operand))?
     return Ok(0)
+
+
+pub def verify_asset(asset: Path) -> Result[None, str]:
+    """
+    Verify a release asset's signature bundle, `ASSET.sigstore.json` beside it, against the signer and trust root
+    this home carries (DD-0016). This is the one verifier: every install channel calls it, and none falls back to a
+    checksum, so a home that carries no signer refuses instead of reporting an unverified asset as fine.
+    """
+    match admit_release(asset, home()?)?:
+        Some(verified) =>
+            println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
+            return Ok(None)
+        None =>
+            return Err(
+                f"cannot verify {asset.0}: this home carries no release signer, which a signed release installs",
+            )
 
 
 pub def pack_toolchain(output: Path) -> Result[None, str]:
