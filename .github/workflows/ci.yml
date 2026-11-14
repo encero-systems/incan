@@ -56,3 +56,7 @@ jobs:
           incan run scripts/check_changed_rustdocs.incn -- --base "$base_ref"
       - name: Check the AGENTS.md skill table
         run: incan run scripts/check_agents_doc_sync.incn
+      - name: Lint the Rust facets with clippy
+        run: |
+          rustup component add --toolchain 1.98.0 clippy
+          make lint
