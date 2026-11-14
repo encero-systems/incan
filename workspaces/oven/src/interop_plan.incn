@@ -1,7 +1,8 @@
 """
 `oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]`: what a build for one target links for C
-interop, read from the project's and its path dependencies' manifests: Cloves with their configurations, the declared
-static archives in link order with their identities, binding relations and checked headers.
+interop, read from the project's and its path dependencies' manifests: Cloves with their configurations, the target's
+requirements (toolchain and SDK capabilities, platform facts, definitions and system capabilities), the declared static
+archives in link order with their identities, binding relations and checked headers.
 """
 
 from std.encoding.hex import hexlify
@@ -9,7 +10,8 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from c_facet import configuration_names, resolve_configuration
-from c_interop import host_triple, linked_artifacts
+from c_interop import CArtifactKind, CInteropTarget, host_triple, linked_artifacts
+from c_interop_requirements import CCapabilityRequirement, CPlatformKind
 from files import json_text, read
 from json_fields import required_items, required_text, string_value
 from intake import LocalProject, intake
@@ -106,6 +108,7 @@ def project_plan(project: LocalProject, target: str) -> Result[JsonValue, str]:
     for entry in project.intent.c_targets:
         if entry.target != target:
             continue
+        fields["requirements"] = target_requirements(entry)
         headers = headers + entry.headers
         for artifact in linked_artifacts(entry):
             path = Path(project.root).joinpath(artifact.path)
@@ -135,6 +138,58 @@ def project_plan(project: LocalProject, target: str) -> Result[JsonValue, str]:
     fields["bindings"] = JsonValue.array(relations)
     fields["headers"] = texts(headers)
     return Ok(JsonValue.object(fields))
+
+
+def target_requirements(entry: CInteropTarget) -> JsonValue:
+    """The target's toolchain and SDK capabilities, platform fact, definitions and system capabilities."""
+    mut fields: Dict[str, JsonValue] = {"definitions": texts(entry.definitions)}
+    if let Some(toolchain) = entry.toolchain:
+        fields["toolchain"] = capability_json(toolchain)
+    if let Some(sdk) = entry.sdk:
+        fields["sdk"] = capability_json(sdk)
+    if let Some(platform) = entry.platform:
+        mut fact = platform.deployment_target
+        if platform.kind == CPlatformKind.Android:
+            fact = f"api-level {platform.api_level}"
+        fields["platform"] = JsonValue.object(
+            {"kind": JsonValue.string(platform.kind.value()), "fact": JsonValue.string(fact)},
+        )
+    mut system: list[JsonValue] = []
+    for artifact in entry.artifacts:
+        if artifact.kind == CArtifactKind.System:
+            system.append(
+                JsonValue.object(
+                    {"name": JsonValue.string(artifact.name), "capability": JsonValue.string(artifact.capability)},
+                ),
+            )
+    fields["system"] = JsonValue.array(system)
+    return JsonValue.object(fields)
+
+
+def capability_json(requirement: CCapabilityRequirement) -> JsonValue:
+    """A capability requirement; an empty version accepts any version."""
+    return JsonValue.object(
+        {"capability": JsonValue.string(requirement.capability), "version": JsonValue.string(requirement.version)},
+    )
+
+
+def requirement_lines(requirements: JsonValue) -> Result[list[str], str]:
+    """The target requirements, one line each."""
+    mut lines: list[str] = []
+    for key in ["toolchain", "sdk"]:
+        if let Some(requirement) = requirements.get(key):
+            mut line = f"  {key} {field_text(requirement, "capability")?}"
+            version = field_text(requirement, "version")?
+            if version != "":
+                line = line + f" {version}"
+            lines.append(line)
+    if let Some(platform) = requirements.get("platform"):
+        lines.append(f"  platform {field_text(platform, "kind")?} {field_text(platform, "fact")?}")
+    for definition in field_texts(requirements, "definitions")?:
+        lines.append(f"  definition {definition}")
+    for system in field_items(requirements, "system")?:
+        lines.append(f"  system artifact {field_text(system, "name")?}: {field_text(system, "capability")?}")
+    return Ok(lines)
 
 
 def built_profiles(directory: Path) -> Result[list[str], str]:
@@ -191,6 +246,8 @@ def project_lines(project: JsonValue) -> Result[list[str], str]:
             if len(definitions) > 0:
                 line = line + " " + " ".join(definitions)
             lines.append(line)
+    if let Some(requirements) = project.get("requirements"):
+        lines.extend(requirement_lines(requirements)?)
     for archive in field_items(project, "static_archives")?:
         mut line = f"  static archive {field_text(archive, "name")?}: {field_text(archive, "path")?} (links as {field_text(
             archive,
