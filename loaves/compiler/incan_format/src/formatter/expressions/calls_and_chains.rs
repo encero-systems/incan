@@ -267,7 +267,7 @@ impl Formatter {
         self.writer.write(")");
     }
 
-    /// Format a source expression, retaining triple-quoted literal spelling instead of reconstructing its value.
+    /// Format a source expression, retaining a string literal's spelling instead of reconstructing it from its value.
     ///
     /// Spans distinguish equal-valued literals with different spellings and remain stable during speculative layout.
     pub(in crate::formatter) fn format_spanned_expr(&mut self, expr: &Spanned<Expr>) {
@@ -278,7 +278,8 @@ impl Formatter {
         self.format_expr(&expr.node);
     }
 
-    /// Write an original triple-quoted token verbatim, including content indentation, escapes and delimiters.
+    /// Write an original string token verbatim: its delimiters, its escapes exactly as spelled (`"\u{1b}"` stays an
+    /// escape, never a raw control character) and a triple-quoted literal's content indentation.
     pub(super) fn write_source_string(&mut self, span: Span) -> bool {
         let Some(raw) = self
             .source
@@ -287,7 +288,7 @@ impl Formatter {
         else {
             return false;
         };
-        if !raw.starts_with("\"\"\"") && !raw.starts_with("'''") {
+        if !raw.starts_with('"') && !raw.starts_with('\'') {
             return false;
         }
         self.writer.write(raw);
