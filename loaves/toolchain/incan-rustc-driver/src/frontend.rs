@@ -14,7 +14,7 @@ use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSe
 use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
-use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure, NativeAnchors};
+use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_loaf_names::native_crate_name;
@@ -182,9 +182,6 @@ pub(crate) struct Dependencies {
     plan_record_report: Option<PathBuf>,
     /// Bakery-selected plan-function products; private target caches are never record authority.
     plan_record_products: Option<PathBuf>,
-    /// The current home's toolchain and bakery roots, which anchor native-closure references (`--toolchain-root`,
-    /// `--bakery-root`). A root Oven does not name leaves paths under it absolute.
-    pub(crate) anchors: NativeAnchors,
 }
 
 impl Dependencies {
@@ -228,7 +225,6 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut graph_body_output = None;
     let mut plan_record_report = None;
     let mut plan_record_products = None;
-    let mut anchors = NativeAnchors::default();
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -247,8 +243,6 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
             "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
-            "--toolchain-root" => anchors.toolchain = Some(PathBuf::from(value)),
-            "--bakery-root" => anchors.bakery = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -271,7 +265,6 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         graph_body_output,
         plan_record_report,
         plan_record_products,
-        anchors,
     })
 }
 
@@ -580,10 +573,8 @@ fn reached_names(program: &CheckedProgram) -> BTreeSet<String> {
 /// Consumers that require the provider's compiled crate still refuse until ordinary compilation supplies it.
 pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     crate::native_timing::observe_frontend(false);
-    let [unit_path, sysroot, directory, options @ ..] = arguments else {
-        return Err(
-            "usage: --source-interface UNIT SYSROOT DIRECTORY [--toolchain-root DIR] [--bakery-root DIR]".into(),
-        );
+    let [unit_path, sysroot, directory] = arguments else {
+        return Err("usage: --source-interface UNIT SYSROOT DIRECTORY".into());
     };
 
     // ---- Checking inputs without an existing native publication ----
@@ -597,7 +588,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
     if library.exists() {
         return Err("a source interface cannot replace a compiled library's publication".into());
     }
-    let dependencies = dependencies(&unit, options)?;
+    let dependencies = dependencies(&unit, &[])?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let loaf_links = unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     let mut closure = LoafNativeClosure {
@@ -628,7 +619,6 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         manifest,
         &program.modules[program.own..],
         &closure,
-        &dependencies.anchors,
         program.graph.as_deref(),
     )
     .map_err(|error| error.to_string())?;
@@ -648,7 +638,7 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--toolchain-root DIR] [--bakery-root DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
                 .into(),
         );
     }
@@ -723,13 +713,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     }
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
-    let native_externs = crate::native_crates::link_externs(
-        &plan,
-        &dependencies.externs,
-        &loaves,
-        &reached_names(&program),
-        &dependencies.anchors,
-    )?;
+    let native_externs =
+        crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &reached_names(&program))?;
     let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
     let publication = if let Some(mut manifest) = program.manifest.take() {
         publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
@@ -744,7 +729,6 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             manifest,
             &program.modules[program.own..],
             &closure,
-            &dependencies.anchors,
             program.graph.as_deref(),
         )
         .map_err(|error| error.to_string())?;

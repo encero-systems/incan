@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::plan::{CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind};
 use incan_driver::unit::UnitLoaf;
-use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
+use incan_frontend::loaf_index::LoafNativeClosure;
 use rustc_ast::{
     self as ast,
     visit::{self, Visitor},
@@ -126,13 +126,11 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
 /// coherent dependency closure.
 /// Ambient standard packages contribute bindings only when the checked executable declaration closure reaches
 /// them. Explicit non-standard providers retain their existing exact-binding authority.
-/// Each closure's anchored references resolve against the current home's `anchors`.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
     direct: &[(String, PathBuf)],
     loaves: &[UnitLoaf],
     reached: &BTreeSet<String>,
-    anchors: &NativeAnchors,
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let roots = native_roots(plan)
         .into_iter()
@@ -141,7 +139,7 @@ pub(crate) fn link_externs(
     let closures = loaves
         .iter()
         .filter(|loaf| !loaf.standard || reached.contains(&loaf.name))
-        .map(|loaf| LoafNativeClosure::read(&loaf.dir, &loaf.name, anchors).map_err(|error| error.to_string()))
+        .map(|loaf| LoafNativeClosure::read(&loaf.dir, &loaf.name).map_err(|error| error.to_string()))
         .collect::<Result<Vec<_>, _>>()?;
     let mut selected = direct.to_vec();
     for root in roots {

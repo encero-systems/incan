@@ -31,14 +31,13 @@ from registry_units import RegistryUnits
 from rust_target import target_configuration
 from search_index import search_index
 from sysroot_access import declared_libraries, runtime_sysroot
-from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler
+from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
 from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
-from native_references import closure_reference, native_anchors
 from unit_compiler import compile_prepared_unit
 from callable_products import retain_callable_products
 from unit_freshness import Key, artifact_files, unit_key
@@ -592,13 +591,11 @@ def expose_macro_crates(
         Some(listed) =>
             entries = array(listed, ["macro_externs"]).map_err((_) => f"{closure.0}: macro_externs is not a list")?
             malformed = f"{closure.0}: a macro extern is not a name and a path"
-            anchors = native_anchors()?
             for entry in entries:
                 pair = strings(entry, ["macro_externs"]).map_err((_) => malformed)?
                 if len(pair) != 2:
                     return Err(malformed)
                 if pair[0] in toolchain_crates:
                     continue
-                path = closure_reference(closure.parent(), pair[1], anchors)?
-                result = add_extern(result, NativeCrate(name=pair[0], path=path))?
+                result = add_extern(result, NativeCrate(name=pair[0], path=located(closure.parent(), pair[1])))?
             return Ok(result)

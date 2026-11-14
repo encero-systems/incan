@@ -15,7 +15,7 @@ This is the artifact/index design supporting the accepted record. [DD-0013](../.
 | `<name>.incnlib` | the library manifest: public exports, vocabulary, soft keywords, contract metadata, the Rust ABI of its Rust facet |
 | `<name>.incnbody` | the governed bodies: the executable representation of every body a caller instantiates (functions with type parameters) |
 | `lib<name>.rlib` | the library unit: every other body, compiled once, with a crate-root export for each public name |
-| `<name>.native.json` | the unit's native closure (`incan.native-closure/2`): the rlibs and search paths it links, each named from the Loaf's directory, the selected toolchain or the bakery, so every home that shares the bakery resolves it |
+| `<name>.native.json` | the unit's native closure: the rlibs and search paths it links |
 | `<name>.incngraph` | the Loaf's checked declarations, references, calls and imports, with span-free identities and Loaf-relative paths in a versioned indexed-postcard artifact |
 
 ### The index

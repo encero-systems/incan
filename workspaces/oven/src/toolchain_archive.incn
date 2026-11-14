@@ -23,14 +23,6 @@ from toolchain import (
     finish_installation,
     toolchain_directory,
 )
-from native_references import (
-    NATIVE_CLOSURE_SCHEMA,
-    NativeAnchor,
-    NativeAnchors,
-    RUST_NATIVE_SCHEMA,
-    closure_reference,
-    native_anchors,
-)
 from rust_registry import read_registry_units
 from rust_target import decoded
 from registry_units import RegistryUnit
@@ -471,71 +463,53 @@ def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
 
 def stage_native(source: Path, destination: Path, stage: Path, prefix: str) -> Result[None, str]:
     """
-    Resolve a closure's anchored references once and express its native dependencies from its installed directory.
+    Resolve a closure's original paths once and express its native dependencies from its installed directory.
 
     1. Stage the artifact of every extern and name it from the Loaf's profile directory.
     2. Stage the search directories the same way.
     3. Stage the crates its attribute macros expand against.
-    4. Write the rewritten document, anchored at the Loaf's directory under its anchored schema.
+    4. Write the rewritten document.
     """
     document = read_json(source)?
-    anchors = native_anchors()?
     # 1. The prefix names the archive root from this closure's destination directory.
     listed = document.require("externs").map_err((error) => error.message())?
-    externs = stage_extern_pairs(source, listed, stage, prefix, anchors)?
+    externs = stage_extern_pairs(source, listed, stage, prefix)?
     # 2. The directories the closure searches are staged and named the same way, and missing ones are dropped.
     mut directories: list[str] = []
     for item in required_items(document, "search")?:
-        directories.append(closure_reference(source.parent(), string_value(item)?, anchors)?)
+        directories.append(located(source.parent(), string_value(item)?))
     search = stage_search(directories, stage, prefix)?
     # 3. The crates the Loaf's attribute macros expand against travel and are named the same way.
     updated = replaced(document, "externs", JsonValue.array(externs))?
-    macros = stage_macro_externs(source, updated, stage, prefix, anchors)?
+    macros = stage_macro_externs(source, updated, stage, prefix)?
     # 4. Everything else the document says is kept as it was.
-    sibling = f"{NativeAnchor.Sibling.value()}:"
-    rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(sibling + path) for path in search]))?
-    mut schema = NATIVE_CLOSURE_SCHEMA
-    if destination.name() == "native.json":
-        schema = RUST_NATIVE_SCHEMA
-    write_json(destination, replaced(rewritten, "schema", JsonValue.string(schema))?)?
+    rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(path) for path in search]))?
+    write_json(destination, rewritten)?
     if record_path(source).is_file():
         record_payload(destination, published_identity(source)?)?
         stage_publication(record_path(destination), record_path(destination))?
     return Ok(None)
 
 
-def stage_extern_pairs(
-    source: Path,
-    listed: JsonValue,
-    stage: Path,
-    prefix: str,
-    anchors: NativeAnchors,
-) -> Result[list[JsonValue], str]:
-    """Stage each native `[name, reference]` pair and anchor it at the closure's destination directory."""
+def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path, prefix: str) -> Result[list[JsonValue], str]:
+    """Stage each native `[name, path]` pair and name it relative to the closure's destination directory."""
     mut result: list[JsonValue] = []
     for value in array_value(listed)?:
         pair = array_value(value)?
         if len(pair) != 2:
             return Err(f"{source.0}: native extern must be [name, path]")
         path = string_value(pair[1])?
-        relative = stage_artifact(Path(closure_reference(source.parent(), path, anchors)?), stage)?
-        anchored = f"{NativeAnchor.Sibling.value()}:{prefix}{relative}"
-        result.append(JsonValue.array([pair[0], JsonValue.string(anchored)]))
+        relative = stage_artifact(Path(located(source.parent(), path)), stage)?
+        result.append(JsonValue.array([pair[0], JsonValue.string(prefix + relative)]))
     return Ok(result)
 
 
-def stage_macro_externs(
-    source: Path,
-    document: JsonValue,
-    stage: Path,
-    prefix: str,
-    anchors: NativeAnchors,
-) -> Result[JsonValue, str]:
+def stage_macro_externs(source: Path, document: JsonValue, stage: Path, prefix: str) -> Result[JsonValue, str]:
     """Stage the Rust crates a Loaf's attribute macros expand against; a document without any stays as it is."""
     match document.get("macro_externs"):
         None => return Ok(document)
         Some(listed) =>
-            pairs = stage_extern_pairs(source, listed, stage, prefix, anchors)?
+            pairs = stage_extern_pairs(source, listed, stage, prefix)?
             return replaced(document, "macro_externs", JsonValue.array(pairs))
 
 

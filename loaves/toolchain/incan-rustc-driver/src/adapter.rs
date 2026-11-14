@@ -160,8 +160,7 @@ pub fn compile(
     }
     let search = crate::native_search::dependencies(&all, dependency_search_paths);
     if let Some(store) = shared_store {
-        // Rustc's relative `-Crpath` entries would name the store from the staged output, not from the viewed copy.
-        args.push("-Cprefer-dynamic".into());
+        args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
         // The adapter interposes its own executable only to give every object a content-derived store path before
         // forwarding the otherwise unchanged argument vector to ld. Darwin records those paths in the debug map.
@@ -174,9 +173,9 @@ pub fn compile(
             args.push("-Clinker-flavor=ld".into());
             args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
         }
-        // The executable is linked in the bakery and run from a copy elsewhere, so its carriers are found through
-        // absolute search paths into the bakery's shared native store, which every home on that bakery reads.
-        args.extend(absolute_rpaths(&shared, identity, darwin));
+        // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
+        // through absolute search paths, which do not depend on where the copy lives.
+        args.extend(absolute_rpaths(&all, identity, darwin));
     }
     if access.links_sysroot() && kind != UnitKind::Library {
         args.extend(sysroot_linkage(identity));
@@ -337,10 +336,8 @@ fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
     args
 }
 
-/// Absolute run-time search paths for a shared-linkage executable: the directory of each shared carrier, in the
-/// bakery's shared native store, and the toolchain's standard library directory. A viewed copy of the executable loads
-/// them wherever it is placed, and no path names the home that linked it. Proc-macro and other compile-time
-/// libraries are never loaded at run time, so their directories are not searched.
+/// Absolute run-time search paths for a shared-linkage executable: each shared library's directory and the
+/// toolchain's own library directory, so a copy of the executable loads them wherever it is placed.
 fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
     let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
     for (_, path) in linked {

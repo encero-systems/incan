@@ -34,7 +34,7 @@ use incan_frontend::library_manifest::{
     ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
     NativeUnionOwnerExport, TypeRef,
 };
-use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
+use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryMetadataModule, CheckedRegistryMetadataPackage,
@@ -337,15 +337,13 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 }
 
 /// Prepare a Loaf's native files beside its rlib: governed bodies, native closure, optional ABI cache and manifest.
-/// Inspection graphs have a separate requested publication and proof. The native closure names its inputs from the
-/// current home's `anchors`, so homes that share a bakery publish the same closure bytes. The manifest is written last,
-/// so its presence means the native artifact set is complete.
+/// Inspection graphs have a separate requested publication and proof. The manifest is written last, so its presence
+/// means the native artifact set is complete.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
-    anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
@@ -376,10 +374,7 @@ pub fn prepare_loaf_publication(
     let rust_abi = prepare_rust_abi_cache(&mut manifest)?;
 
     // ---- Native closure and manifest ----
-    let published = closure
-        .published(dir, anchors)
-        .map_err(|error| CliError::failure(format!("cannot publish the native closure of {name}: {error}")))?;
-    let closure = serde_json::to_vec_pretty(&published)
+    let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
     let manifest = manifest
         .to_json_string()
@@ -400,10 +395,31 @@ pub fn write_loaf(
     manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
-    anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, anchors, graph)?.write(dir)
+    prepare_loaf_publication(dir, manifest, bodies, closure, graph)?.write(dir)
+}
+
+/// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
+/// home does not change its closure bytes. Native inputs outside that root retain their exact selected paths.
+/// Readers resolve relative paths against the publishing Loaf's directory before comparing or linking artifacts.
+fn sibling_relative_closure(directory: &Path, closure: &LoafNativeClosure) -> LoafNativeClosure {
+    let mut published = closure.clone();
+    let Some(root) = directory.parent().and_then(Path::parent) else {
+        return published;
+    };
+    let paths = published
+        .externs
+        .iter_mut()
+        .chain(&mut published.macro_externs)
+        .map(|(_, path)| path)
+        .chain(&mut published.search);
+    for path in paths {
+        if let Ok(relative) = path.strip_prefix(root) {
+            *path = Path::new("../..").join(relative);
+        }
+    }
+    published
 }
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts
