@@ -649,7 +649,7 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     identity = reference_cache_identity(
         run.seed_oven,
         run.seed_lsp,
-        run.seed_home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
+        run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("toolchain.json"),
         contracts_tree,
         stdlib_tree,
     )?
