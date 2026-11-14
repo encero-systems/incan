@@ -21,6 +21,7 @@ from semver_req import Version, VersionReq, parse_requirement, parse_version, re
 from unit import project_root_of
 from intake import read_project
 from workspace_inheritance import workspace_envs
+from workspace_shared import toml_json
 
 pub const ENV_USAGE: str = "oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]"
 pub const STANDARD: FrozenList[str] = ["dev", "test", "lint", "docs"]
@@ -44,7 +45,8 @@ pub model Resolved:
     pub cwd: str = "."
     pub variables: Dict[str, str] = {}
     pub scripts: Dict[str, list[str]] = {}
-    pub dependencies: int = 0
+    # Each layer's `[envs.NAME.dependencies]` entries as declared; a later layer replaces an alias.
+    pub dependencies: Dict[str, JsonValue] = {}
 
 
 pub model EnvRequest:
@@ -135,12 +137,15 @@ pub def env_command(request: EnvRequest) -> Result[i32, str]:
     if request.action == "show":
         match request.environment:
             None =>
-                println(overview(document, declared)?)
+                if request.format == "json":
+                    println(overview_document(document, declared)?.to_pretty_json().map_err((error) => error.message())?)
+                else:
+                    println(overview(document, declared)?)
                 return Ok(0)
             Some(name) =>
                 resolved = resolve(document, declared, name)?
                 if request.format == "json":
-                    println(resolved_document(resolved).to_pretty_json().map_err((error) => error.message())?)
+                    println(resolved_document(resolved, root).to_pretty_json().map_err((error) => error.message())?)
                 else:
                     println(shown(resolved))
                 return Ok(0)
@@ -274,7 +279,8 @@ pub def resolve(document: TomlValue, declared: Dict[str, TomlValue], name: str) 
             entries = environment["dependencies"]
                 .as_table()
                 .map_err((error) => f"[envs.{layer}] dependencies: {error.message()}")?
-            resolved.dependencies += len(entries)
+            for alias in sorted([alias for alias in entries.keys()]):
+                resolved.dependencies[alias] = toml_json(entries[alias])
     return Ok(resolved)
 
 
@@ -442,10 +448,26 @@ def overview(document: TomlValue, declared: Dict[str, TomlValue]) -> Result[str,
     for name in environment_names(declared):
         resolved = resolve(document, declared, name)?
         row = f"{pad(name, 8)} {pad(requirement_text(resolved), 21)} {pad(state(resolved), 12)} {pad(resolved.cwd, 4)} "
-        lines.append(
-            row + f"{pad(str(len(resolved.variables)), 9)} {pad(str(len(resolved.scripts)), 8)} {resolved.dependencies}",
-        )
+        dependencies = len(resolved.dependencies)
+        lines.append(row + f"{pad(str(len(resolved.variables)), 9)} {pad(str(len(resolved.scripts)), 8)} {dependencies}")
     return Ok("\n".join(lines))
+
+
+def overview_document(document: TomlValue, declared: Dict[str, TomlValue]) -> Result[JsonValue, str]:
+    """`oven env show --format json` without ENV: one object per environment, in 0.5.1's shape."""
+    mut rows: list[JsonValue] = []
+    for name in environment_names(declared):
+        resolved = resolve(document, declared, name)?
+        mut row: Dict[str, JsonValue] = {}
+        row["name"] = JsonValue.string(name)
+        row["requires_incan"] = JsonValue.string(requirement_text(resolved))
+        row["toolchain_status"] = JsonValue.string(state(resolved))
+        row["cwd"] = JsonValue.string(resolved.cwd)
+        row["env_vars"] = JsonValue.int(len(resolved.variables))
+        row["scripts"] = JsonValue.int(len(resolved.scripts))
+        row["dependencies"] = JsonValue.int(len(resolved.dependencies))
+        rows.append(JsonValue.object(row))
+    return Ok(JsonValue.array(rows))
 
 
 def pad(text: str, width: int) -> str:
@@ -466,7 +488,7 @@ def shown(resolved: Resolved) -> str:
         f"  cwd: {resolved.cwd}",
         f"  env vars: {len(resolved.variables)}",
         f"  scripts: {len(resolved.scripts)}",
-        f"  dependencies: {resolved.dependencies}",
+        f"  dependencies: {len(resolved.dependencies)}",
     ]
     if len(resolved.variables) > 0:
         lines = lines + ["", "Environment Variables"]
@@ -479,26 +501,47 @@ def shown(resolved: Resolved) -> str:
     return "\n".join(lines)
 
 
-def resolved_document(resolved: Resolved) -> JsonValue:
-    """The JSON form of `oven env show ENV`."""
+def resolved_document(resolved: Resolved, root: Path) -> JsonValue:
+    """The JSON form of `oven env show ENV`, in 0.5.1's shape: `cwd` is absolute and the chain starts at `project`."""
     mut variables: Dict[str, JsonValue] = {}
     for key in resolved.variables.keys():
         variables[key] = JsonValue.string(resolved.variables[key])
     mut scripts: Dict[str, JsonValue] = {}
     for key in resolved.scripts.keys():
         scripts[key] = JsonValue.array([JsonValue.string(word) for word in resolved.scripts[key]])
-    requirements = [JsonValue.object(
+    chain = ["project"] + resolved.chain
+    mut directory = root
+    if resolved.cwd != ".":
+        directory = root.joinpath(resolved.cwd)
+    mut fields: Dict[str, JsonValue] = {}
+    fields["env"] = JsonValue.string(resolved.name)
+    fields["overlay_chain"] = JsonValue.array([JsonValue.string(name) for name in chain])
+    fields["requires_incan"] = requirement_document(resolved)
+    fields["cwd"] = JsonValue.string(directory.0)
+    fields["env_vars"] = JsonValue.object(variables)
+    fields["scripts"] = JsonValue.object(scripts)
+    fields["dependencies"] = JsonValue.object(resolved.dependencies)
+    return JsonValue.object(fields)
+
+
+def requirement_document(resolved: Resolved) -> JsonValue:
+    """The active toolchain, the effective requirement (null when nothing constrains it), its layers and the verdict."""
+    layers = [JsonValue.object(
         {"source": JsonValue.string(layer.source), "requirement": JsonValue.string(layer.requirement)},
     ) for layer in resolved.requirements]
-    return JsonValue.object(
-        {"name": JsonValue.string(resolved.name), "overlay_chain": JsonValue.array(
-            [JsonValue.string(name) for name in resolved.chain],
-        ), "requires_incan": JsonValue.array(requirements), "active_incan": JsonValue.string(TOOLCHAIN), "toolchain": JsonValue.string(
-            state(resolved),
-        ), "cwd": JsonValue.string(resolved.cwd), "env_vars": JsonValue.object(variables), "scripts": JsonValue.object(
-            scripts,
-        )},
-    )
+    mut effective = JsonValue.null()
+    if len(resolved.requirements) > 0:
+        effective = JsonValue.string(requirement_text(resolved))
+    mut holds = false
+    match satisfied(resolved.requirements):
+        Ok(verdict) => holds = verdict
+        Err(_) => pass
+    mut fields: Dict[str, JsonValue] = {}
+    fields["active_version"] = JsonValue.string(TOOLCHAIN)
+    fields["effective"] = effective
+    fields["layers"] = JsonValue.array(layers)
+    fields["satisfied"] = JsonValue.bool(holds)
+    return JsonValue.object(fields)
 
 
 pub def env_help() -> str:
