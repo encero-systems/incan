@@ -1,0 +1,44 @@
+"""A compile-time worker runs with no writes, no reads outside its own artifact, and its pipes (RFC 160)."""
+
+from rust::std::env::consts import OS
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from worker_containment import run_contained, seatbelt_profile
+
+
+pub def test_a_contained_worker_cannot_write_or_read_outside_its_grant_and_keeps_its_channel() -> Result[None, str]:
+    """
+    The empty grant, enforced by the operating system on macOS.
+
+    1. A worker that writes a file is stopped, and the file does not exist.
+    2. A worker that reads a file outside its own artifact is stopped, and nothing of the file comes back.
+    3. A worker that only answers on its output pipe runs.
+    """
+    if OS != "macos":
+        return Ok(None)
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    # 1. No writes.
+    written = scratch.path().joinpath("written")
+    touched = run_contained(Path("/usr/bin/touch"), [written.0])?
+    assert not touched.success, touched.status
+    assert not written.is_file()
+    # 2. No reads beyond the worker and the system's own libraries.
+    secret = scratch.path().joinpath("secret")
+    secret.write_text("a user's file\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    read = run_contained(Path("/bin/cat"), [secret.0])?
+    assert not read.success, read.status
+    assert read.stdout == "", read.stdout
+    # 3. The channel to the compiler is the worker's whole world.
+    answered = run_contained(Path("/bin/echo"), ["registration"])?
+    assert answered.success, answered.status
+    assert answered.stdout == "registration\n", answered.stdout
+    return Ok(None)
+
+
+pub def test_a_worker_whose_path_cannot_be_named_in_a_profile_is_refused() -> Result[None, str]:
+    """A path with a quote or a backslash would end the profile's own text, so it is refused, never escaped."""
+    assert seatbelt_profile("/tmp/worker").is_ok()
+    assert seatbelt_profile("/tmp/wor\"ker").is_err()
+    assert seatbelt_profile("/tmp/wor\\ker").is_err()
+    assert seatbelt_profile("relative/worker").is_err()
+    return Ok(None)
