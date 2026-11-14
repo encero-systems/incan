@@ -34,6 +34,11 @@ pub def dependency_replacement(alias: str, value: TomlValue, manifest: str, fiel
             package = text(entry["package"], manifest, field + ["package"])?
         if "crate" in entry:
             package = text(entry["crate"], manifest, field + ["crate"])?
+        # A local Cargo crate becomes a local Rust-facet Loaf, never a registry one.
+        if "path" in entry:
+            path = text(entry["path"], manifest, field + ["path"])?
+            local = f"{alias} = {{ loaf = \"{package}\", path = \"{path}\" }}"
+            return Ok(f"{local}, with a {path}/loaf.toml whose [rust] table declares the crate")
         if "version" in entry:
             version = text(entry["version"], manifest, field + ["version"])?
         if "features" in entry:
