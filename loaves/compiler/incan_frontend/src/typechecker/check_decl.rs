@@ -27,7 +27,7 @@ use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface, TypeChecker,
     YieldContext,
 };
-use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
+use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc, rust_auto_trait};
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods;

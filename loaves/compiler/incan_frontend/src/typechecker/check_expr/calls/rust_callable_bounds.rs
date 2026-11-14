@@ -283,7 +283,12 @@ impl TypeChecker {
 
     /// Prove a captured native carrier from exact retained impl templates, recursively satisfying their conditions.
     /// Reference captures cannot authorize escaping borrowed storage, and incomplete evidence stays fail-closed.
-    fn capture_has_native_auto_trait(&self, ty: &ResolvedType, marker: &str, depth: usize) -> bool {
+    pub(in crate::typechecker) fn capture_has_native_auto_trait(
+        &self,
+        ty: &ResolvedType,
+        marker: &str,
+        depth: usize,
+    ) -> bool {
         if depth > 24 || matches!(ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) {
             return false;
         }
