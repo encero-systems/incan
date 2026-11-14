@@ -307,10 +307,8 @@ fn resolve_from_catalog(
     resolved.entries = package_entries(&resolved.package_versions, &visited, &parents);
     for module in modules.values_mut() {
         crate::body_ir::retain_published_module(module);
-        // Canonical lookup is name-first; module initialization follows checked physical declaration order.
-        module
-            .static_declarations
-            .sort_by_key(|storage| storage.canonical.declaration_span.start);
+        // Canonical lookup is name-first; module initialization follows the declaring module's order.
+        incan_semantics_core::body_ir::order_static_initialization(&mut module.static_declarations);
     }
     resolved.modules = modules.into_values().collect();
     Ok(resolved)

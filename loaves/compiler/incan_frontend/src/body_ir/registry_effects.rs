@@ -189,6 +189,7 @@ pub(super) fn collect(
         canonical,
         ty: body.return_type.clone(),
         initial: bir::StaticInitializer::Computed(Box::new(body)),
+        initialization_order: 0,
     });
 }
 

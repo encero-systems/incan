@@ -75,6 +75,16 @@ pub struct StaticDeclaration {
     pub ty: IncanType,
     /// Initialization value; repeated reads must not reinitialize an assigned cell.
     pub initial: StaticInitializer,
+    /// Position among the declaring module's storage initializations, in checked source order. The declaring
+    /// compilation records it; a consumer never derives it from a declaration site.
+    #[serde(default)]
+    pub initialization_order: u32,
+}
+
+/// Put storage in the order its module initializes it. Every producer and consumer of a module's statics orders them
+/// here, so initialization follows one rule.
+pub fn order_static_initialization(statics: &mut [StaticDeclaration]) {
+    statics.sort_by_key(|storage| storage.canonical.declaration_span.start);
 }
 
 /// One checked decorator replacement and the source callable it receives during initialization.

@@ -113,7 +113,7 @@ pub(super) fn build_module_seed_observed(
         }
     }
     retain_source_body_contracts(program, type_info, &mut bodies);
-    static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
+    bir::order_static_initialization(&mut static_declarations);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let published_callables = published_callables::collect(program, &bodies);
     bir::BodyIrModule {

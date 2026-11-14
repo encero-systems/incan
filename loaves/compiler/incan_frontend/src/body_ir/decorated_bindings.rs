@@ -269,6 +269,7 @@ fn retain_binding(
         canonical,
         ty,
         initial: bir::StaticInitializer::Computed(Box::new(initializer)),
+        initialization_order: 0,
     };
     let original_body = body.clone();
     if let Some(wrapper) = wrapper(&original_body, &replacement) {

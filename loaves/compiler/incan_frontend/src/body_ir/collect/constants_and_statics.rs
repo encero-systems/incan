@@ -276,7 +276,12 @@ pub(in crate::body_ir) fn collect_statics(
                     lowering_facts,
                 )))
             });
-            Some(bir::StaticDeclaration { canonical, ty, initial })
+            Some(bir::StaticDeclaration {
+                canonical,
+                ty,
+                initial,
+                initialization_order: 0,
+            })
         })
         .collect()
 }
@@ -310,6 +315,7 @@ pub(in crate::body_ir) fn collect_computed_constants(
                 canonical,
                 ty,
                 initial: bir::StaticInitializer::Computed(Box::new(body)),
+                initialization_order: 0,
             })
         })
         .collect()

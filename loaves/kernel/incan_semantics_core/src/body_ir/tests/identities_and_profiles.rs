@@ -421,3 +421,27 @@ fn equal_identity_maps_share_one_map() {
     assert_eq!(*bodies[1].named_type_identities, module_wide);
     assert!(bodies[2].named_type_identities.is_empty());
 }
+
+/// A module initializes its storage in the order the declaring compilation recorded. A declaration site is where the
+/// source text lay when the module was checked, so storage whose site lies first may still initialize second.
+#[test]
+fn storage_initializes_in_its_recorded_order_wherever_its_site_lies() {
+    let storage = |name: &str, site: usize, initialization_order: u32| StaticDeclaration {
+        canonical: crate::CanonicalSymbolId::module_declaration(
+            vec!["app".into()],
+            name,
+            crate::SemanticSourceTargetKind::Static,
+            crate::HirSourceSpan::new(site, site + 10),
+        ),
+        ty: IncanType::Primitive(crate::IncanPrimitiveType::Int),
+        initial: StaticInitializer::Literal(Constant::Int(0)),
+        initialization_order,
+    };
+    let mut statics = vec![storage("total", 5, 1), storage("seed", 40, 0)];
+    order_static_initialization(&mut statics);
+    let names = statics
+        .iter()
+        .map(|storage| storage.canonical.declaration_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["seed", "total"]);
+}
