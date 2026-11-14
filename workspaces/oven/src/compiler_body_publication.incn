@@ -497,11 +497,11 @@ pub def prepare_compiled_bodies(
     for namespace in outputs.namespaces:
         projection = source_projection(unit, origin, namespace.module)?
         key = namespace_key(origin, namespace.module)
-        mut reads = [request(projection.header.key), request(projection.declarations.key)]
+        mut reads = [prepared_product_request(projection.header.key), prepared_product_request(projection.declarations.key)]
         for owner in projection.owners:
-            reads.append(request(owner.key))
+            reads.append(prepared_product_request(owner.key))
         for dependency in namespace.dependencies:
-            reads.append(request(declaration_index_key(origin, dependency)))
+            reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
         value = encode_graph_namespace_value(
             GraphNamespaceValue(
                 module=namespace.module,
@@ -522,18 +522,18 @@ pub def prepare_compiled_bodies(
         projection = source_projection(unit, origin, value.module)?
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
-        mut local_reads = [request(owner.key), request(projection.header.key), request(projection.declarations.key)]
+        mut local_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(projection.declarations.key)]
         for declaration in declarations[value.module]:
-            local_reads.append(request(declaration))
+            local_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
             match dependency_read_key(unit, origin, dependency, editable_packages)?:
-                Some(key) => local_reads.append(request(key))
+                Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
-                Some(key) => local_reads.append(request(key))
+                Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_signature_key(unit, origin, dependency, editable_packages)?:
-                Some(key) => local_reads.append(request(key))
+                Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
         local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
         _ = prepare_evaluation(
@@ -546,22 +546,22 @@ pub def prepare_compiled_bodies(
         source.add(encode_record_key(local_key)?, value.local)
         final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
         mut final_reads = [
-            request(owner.key),
-            request(projection.header.key),
-            request(projection.declarations.key),
-            request(local_key),
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+            prepared_product_request(local_key),
         ]
         for declaration in declarations[value.module]:
-            final_reads.append(request(declaration))
+            final_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
             match dependency_read_key(unit, origin, dependency, editable_packages)?:
-                Some(key) => final_reads.append(request(key))
+                Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
-                Some(key) => final_reads.append(request(key))
+                Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_signature_key(unit, origin, dependency, editable_packages)?:
-                Some(key) => final_reads.append(request(key))
+                Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
         final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
         _ = prepare_evaluation(
@@ -573,7 +573,7 @@ pub def prepare_compiled_bodies(
         )?
         source.add(encode_record_key(final_key)?, value.final)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
-        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [request(final_key)])?
+        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [prepared_product_request(final_key)])?
         _ = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
@@ -841,8 +841,8 @@ def prepare_lowering_records(
         body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        signature_reads = [request(key) for key in body.signature_reads]
-        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [request(body_ir_key)] + signature_reads)?
+        signature_reads = [prepared_product_request(key) for key in body.signature_reads]
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [prepared_product_request(body_ir_key)] + signature_reads)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
@@ -854,7 +854,7 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(demand_key)?, demand_value)
         plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
         check_reused_output(selected, event, plan_key, product)?
-        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [request(demand_key)] + signature_reads)?
+        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [prepared_product_request(demand_key)] + signature_reads)?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -875,7 +875,7 @@ def prepare_lowering_records(
         key = body_key("plan-function", origin, body.identity, "entry", required_event_text(event, "key")?)
         product = required_event_text(event, "product")?.encode("utf-8")
         check_reused_output(selected, event, key, product)?
-        receipt = prepared_receipt(staged_source, scope, key, [request(demand_key)])?
+        receipt = prepared_receipt(staged_source, scope, key, [prepared_product_request(demand_key)])?
         _ = prepare_evaluation(
             prepared,
             "plan-entry-" + body.identity,
@@ -967,16 +967,16 @@ def prepare_native_interface(
     if required_event_text(document, "schema")? != "incan.native-interface/1":
         return Err("native-interface has an unsupported schema")
     key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
-    mut reads = [request(plan) for plan in plans]
+    mut reads = [prepared_product_request(plan) for plan in plans]
     mut modules: list[str] = []
     for body in bodies:
         if body.module not in modules:
             projection = source_projection(unit, origin, body.module)?
             source.add(encode_record_key(projection.header.key)?, projection.header.text.encode("utf-8"))
-            reads.append(request(projection.header.key))
+            reads.append(prepared_product_request(projection.header.key))
             for owner in projection.owners:
                 source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
-                reads.append(request(owner.key))
+                reads.append(prepared_product_request(owner.key))
             modules.append(body.module)
     receipt = prepared_receipt(source, scope, key, reads)?
     _ = prepare_evaluation(
@@ -1266,9 +1266,9 @@ def root(encoded: bytes) -> Result[str, str]:
     return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
 
 
-def request(key: RecordKey) -> RecordRequest:
-    """Read complete scalar facts while binding opaque Body IR through a bounded semantic witness."""
-    if key.family == "body-ir":
+pub def prepared_product_request(key: RecordKey) -> RecordRequest:
+    """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
+    if key.family in ["body-ir", "plan-function"]:
         selected = PayloadSelection(reference=key.context, offset=0, length=0)
         return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
     return RecordRequest(key=key, selection=RecordSelection.Field("value"))
