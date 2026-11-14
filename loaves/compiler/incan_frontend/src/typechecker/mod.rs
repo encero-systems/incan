@@ -876,7 +876,7 @@ pub struct TypeChecker {
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
-    pub dependency_member_reexports: HashMap<String, Arc<HashMap<String, DependencyMemberReexport>>>,
+    pub(crate) dependency_member_reexports: HashMap<String, Arc<HashMap<String, DependencyMemberReexport>>>,
     /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
     /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
     body_ir_dependency_pub_reexports: HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>,

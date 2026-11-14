@@ -246,7 +246,7 @@ impl BodyBuilder<'_, '_> {
     pub(super) fn explicit_place_operand(
         &mut self,
         place: bir::Place,
-        ty: &IncanType,
+        _ty: &IncanType,
         access: IncanInputAccess,
         expression: &ast::Spanned<ast::Expr>,
     ) -> Result<bir::Operand, String> {

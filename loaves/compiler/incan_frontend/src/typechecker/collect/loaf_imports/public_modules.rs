@@ -128,17 +128,13 @@ impl TypeChecker {
             .contract_metadata
             .identity_graph
             .canonical_for_public_path(&public_path);
-        let mut kinds = self.public_member_symbol_kinds(
-            manifest,
-            source_module_path,
-            &declarations,
-            projected_canonical.as_ref(),
-        );
+        let mut kinds =
+            self.public_member_symbol_kinds(manifest, source_module_path, declarations, projected_canonical.as_ref());
         let mut type_alias = declarations
             .iter()
             .find_map(|declaration| Self::public_member_type_alias(manifest, source_module_path, declaration));
         let (resolved_source_module_path, resolved_source_name) =
-            Self::public_member_source(manifest, &declarations, source_module_path, member);
+            Self::public_member_source(manifest, declarations, source_module_path, member);
         let source_path = resolved_source_module_path
             .iter()
             .cloned()

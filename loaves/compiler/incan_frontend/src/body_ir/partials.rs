@@ -139,7 +139,7 @@ fn function_target(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&span)
+        .get(span)
         .and_then(|binding| binding.identity.as_ref())
         == Some(canonical);
     if !physically_owned {

@@ -266,8 +266,7 @@ impl Builder<'_> {
                 let Some(view) = self.view_source(expression)? else {
                     return Ok(None);
                 };
-                self.evaluate_view_source(expression, view, incoming)
-                    .map(|result| Some(result))
+                self.evaluate_view_source(expression, view, incoming).map(Some)
             }
         }
     }

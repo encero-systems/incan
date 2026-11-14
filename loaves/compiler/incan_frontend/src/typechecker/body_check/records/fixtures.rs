@@ -82,7 +82,7 @@ fn verify_checked_fixture(
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
     drop(checker);
-    let restored = restore(&positions, &program, owner, &fields)?;
+    let restored = restore(&positions, &program, owner, fields)?;
     compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));

@@ -54,14 +54,13 @@ impl TypeChecker {
                     .get(subject_name)
                     .and_then(|identity| identity.canonical.as_ref())
             });
-        let names_same_declaration = resolved_matches
+        resolved_matches
             || carrier.as_deref() == Some(subject_name)
             || carrier.as_ref().is_some_and(|carrier| {
                 subject_identity.is_some_and(|identity| {
                     incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(carrier.as_str())
                 })
-            });
-        names_same_declaration
+            })
     }
 
     /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.

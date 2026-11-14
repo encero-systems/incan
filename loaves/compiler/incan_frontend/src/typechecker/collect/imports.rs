@@ -574,19 +574,18 @@ impl TypeChecker {
             );
         }
         self.record_imported_function_binding(&local_name, &kind);
-        if matches!(kind, SymbolKind::Static(_)) {
-            if let Some((definition, owner_module_path)) =
+        if matches!(kind, SymbolKind::Static(_))
+            && let Some((definition, owner_module_path)) =
                 self.dependency_registry_definition_for_path(resolved_module, &item.name)
-            {
-                self.type_info.registry.imported_definitions.insert(
-                    local_name.clone(),
-                    ImportedRegistryDefinitionInfo {
-                        definition,
-                        owner_module_path,
-                        owner_binding: item.name.clone(),
-                    },
-                );
-            }
+        {
+            self.type_info.registry.imported_definitions.insert(
+                local_name.clone(),
+                ImportedRegistryDefinitionInfo {
+                    definition,
+                    owner_module_path,
+                    owner_binding: item.name.clone(),
+                },
+            );
         }
         if let Some(mut projection) = projection {
             projection.name.clone_from(&local_name);

@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory, SurfaceTypeKind};
 use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_semantics_core::IncanPrimitiveType;
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
-use incan_semantics_core::{IncanPrimitiveType, SymbolNamespace};
 
 use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 

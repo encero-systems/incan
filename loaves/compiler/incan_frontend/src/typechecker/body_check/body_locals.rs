@@ -209,15 +209,14 @@ impl BodyLocal {
         let dictionary = local
             .dictionary
             .iter()
-            .filter_map(|(order, span, value)| {
-                (!local.expressions.read_only_dict_lookups.contains(span)).then(|| {
-                    (
-                        *order,
-                        positions.store(crate::diagnostics::errors::kept_dict_lookup_value_cannot_be_copied(
-                            value, *span,
-                        )),
-                    )
-                })
+            .filter(|(_, span, _)| !local.expressions.read_only_dict_lookups.contains(span))
+            .map(|(order, span, value)| {
+                (
+                    *order,
+                    positions.store(crate::diagnostics::errors::kept_dict_lookup_value_cannot_be_copied(
+                        value, *span,
+                    )),
+                )
             })
             .collect();
         if local.kind == LocalOwnerKind::Declaration {

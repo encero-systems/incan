@@ -426,10 +426,10 @@ impl NativeDesugarerRuntime {
             return;
         }
         let staged = self.directory.join(format!("{digest}.{}.tmp", std::process::id()));
-        if let Ok(bytes) = serde_json::to_vec(reply) {
-            if fs::write(&staged, bytes).is_ok() {
-                let _ = fs::rename(&staged, self.directory.join(format!("{digest}.json")));
-            }
+        if let Ok(bytes) = serde_json::to_vec(reply)
+            && fs::write(&staged, bytes).is_ok()
+        {
+            let _ = fs::rename(&staged, self.directory.join(format!("{digest}.json")));
         }
     }
 
