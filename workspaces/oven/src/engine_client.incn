@@ -98,17 +98,20 @@ pub def execute(
         _ = channel.transport.close()
         return Ok(0)
     mut binary = ""
+    mut program = ""
     match read_program(store, complete.result_handles)?:
         None => return Err("engine completed without a native descriptor")
         Some(unit) =>
             if unit.identity != complete.admission_proof:
                 return Err("engine completion and admitted native identity disagree")
             binary = unit.binary
-    # 3. Complete already holds this caller's execution lease; the engine never runs or retries user code.
+            program = unit.identity
+    # 3. Complete already holds this caller's execution lease, and the run leases the unit in the bakery until the
+    # program exits; the engine never runs or retries user code.
     executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
-        code = run_program(Path(binary), arguments, argv0, true)
+        code = run_program(Path(binary), arguments, argv0, true, program)
     record_work(Operation.EngineChild, source.0, executing)
     # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
@@ -165,7 +168,7 @@ def execute_local(
             )
             if command == "run":
                 executing = begin_work()
-                code = run_program(Path(unit.binary), arguments, argv0, true)?
+                code = run_program(Path(unit.binary), arguments, argv0, true, unit.identity)?
                 record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))
