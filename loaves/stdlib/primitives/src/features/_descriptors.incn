@@ -633,7 +633,7 @@ pub const build_reports_and_rust_inspection_references: FrozenList[CapabilityRef
     CapabilityReference(label="Release 0.4", path="../../release_notes/0_4.md"),
 ]
 pub const build_test_oven_observability_forms: FrozenList[str] = [
-    "OVEN_TRACE=- incan run src/main.incn",
+    "INCAN_ENGINE_TRACE=trace incan run src/main.incn",
     "oven describe-unit src/main.incn",
 ]
 pub const build_test_oven_observability_references: FrozenList[CapabilityReference] = [

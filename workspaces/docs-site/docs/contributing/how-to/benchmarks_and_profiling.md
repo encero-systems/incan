@@ -9,7 +9,7 @@ From the repository root, measure the hello example:
 ```bash
 incan build examples/simple/hello.incn
 time incan run examples/simple/hello.incn
-OVEN_TRACE=- incan run examples/simple/hello.incn
+mkdir -p trace && INCAN_ENGINE_TRACE=trace incan run examples/simple/hello.incn
 ```
 
 The default profile is `debug`. For optimized measurements use `--profile release` with a toolchain containing release-profile standard packages. Do not compare a first compilation with an unchanged executable run.

@@ -385,11 +385,44 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |
 | `OVEN_OWNER_IDLE` | Seconds a resident owner started by this command may serve nothing before it retires: a whole number, at least `4`. Default: `600`. |
-| `OVEN_TRACE` | `-` writes invocation traces to stderr; another nonempty value names a trace output file. |
-| `INCAN_ENGINE_TRACE` | Existing directory for per-process engine JSONL traces. |
-| `INCAN_JEC_TRACE` | Existing directory for per-process JEC compatibility traces. |
+| `INCAN_ENGINE_TRACE` | Existing directory, the [tracing](#tracing) channel. |
 
-A requested trace that cannot be written produces one `incan: trace incomplete: REASON` warning on stderr after command or program output. Write, text-bound, record-bound and invalid-span failures are reported without changing the command's exit status. Successful or disabled file tracing leaves program stdout and stderr bytes unchanged. A program terminated by a signal while Oven waits to report a failed trace returns the shell status `128 + signal`.
+## Tracing
+
+`INCAN_ENGINE_TRACE` names an existing directory, the tracing channel. Every process of a command writes its records to its own file there: Oven to `engine-oven-<pid>.jsonl`, the compiler to `engine-compiler-<pid>.jsonl`, the editor server to `engine-lsp-<pid>.jsonl`. Each line is one JSON object with `schema` `incan.engine.trace/1`, its `producer`, its `process` and an `operation` that names its category. `kind` is `span` for a timed operation, `line` for a text record (its text in `key`), and `invocation` records, from the compiler, carry their own fields. Tracing never writes the console: a command prints the same stdout and stderr bytes and exits the same with tracing on or off.
+
+| Category (`operation`) | Producer | What it records |
+| --- | --- | --- |
+| `reason` | Oven | Why a unit was compiled, reused or refused, as `oven: …` text in `key`. |
+| `cli_start`, `file_read`, `file_hash`, `file_stat`, `manifest_parse`, `unit_description`, and the other work operations | Oven, compiler worker | One span per operation, with its input in `key`, its bytes and its duration. |
+| `invocation` | compiler | Instrumented compiler boundaries and their fields. |
+| `rust_facts` | compiler | Rust ABI fact extraction and reads. |
+| `typecheck_memory` | compiler | Memory at checker module boundaries. |
+| `lowering` | compiler | Lowering stages and bodies. |
+| `lowering_footprint` | compiler | Memory at lowering boundaries. |
+| `native_timing` | compiler | Native phase timings, when `INCAN_NATIVE_TIMING` is set. |
+| `vocab_runtime` | compiler | Vocabulary desugarer responses. |
+| `redo` | compiler | Lowering requests repeated within one invocation. |
+| `lsp_graph` | editor server | Editor graph analysis phases. |
+
+These variables select parts of the same records and are read for one release. Each one set gives one notice that names its replacement, written where the variable sends its output:
+
+| Variable | Replaced by |
+| --- | --- |
+| `OVEN_TRACE` | `INCAN_ENGINE_TRACE`, categories `reason`, `native_timing`, `vocab_runtime`, `redo` |
+| `INCAN_JEC_TRACE` | `INCAN_ENGINE_TRACE`, the work operation categories |
+| `INCAN_TRACE_DIR` | `INCAN_ENGINE_TRACE`, category `invocation` |
+| `INCAN_TRACE_RUST_FACTS` | `INCAN_ENGINE_TRACE`, category `rust_facts` |
+| `INCAN_TRACE_TYPECHECK_MEMORY` | `INCAN_ENGINE_TRACE`, category `typecheck_memory` |
+| `INCAN_TRACE_LOWERING` | `INCAN_ENGINE_TRACE`, category `lowering` |
+| `INCAN_TRACE_LOWERING_FOOTPRINT` | `INCAN_ENGINE_TRACE`, category `lowering_footprint` |
+| `INCAN_TRACE_GRAPH` | `INCAN_ENGINE_TRACE`, category `lsp_graph` |
+| `INCAN_VERIFY_TRACES` | `INCAN_ENGINE_TRACE` for installation verification, which keeps each phase's channel under the run's `traces/` |
+| `INCAN_RELINK_TRACE` | `INCAN_ENGINE_TRACE`, category `relink`, for the driver relink script |
+
+`INCAN_TRACE_PARENT`, `INCAN_ENGINE_RUN` and `INCAN_ENGINE_REQUEST` are set by the programs that start other processes, to link their records, and `INCAN_RELEASE_TRACE_DIR` and `INCAN_RELEASE_TRACE_PARENT` by the release script, to file the spans of the verification it starts with its own; none of them is a switch to set by hand.
+
+A requested trace that cannot be written produces one `incan: trace incomplete: REASON` warning on stderr after command or program output. Write, text-bound, record-bound and invalid-span failures are reported without changing the command's exit status. A program terminated by a signal while Oven waits to report a failed trace returns the shell status `128 + signal`.
 
 ## Exit codes
 

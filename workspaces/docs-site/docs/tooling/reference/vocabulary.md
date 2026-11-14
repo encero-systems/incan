@@ -51,7 +51,7 @@ Published metadata version 1 and syntax version 3 are supported. A different ver
 | `INCAN_VOCAB_POLICY` | Defaults to `locked-dependencies`, admitting the exact native units in the resolved provider lock. Other values, including `deny`, deny execution. |
 | `target/incan/vocabulary/providers.lock.json` | Resolved provider, vocabulary-unit identity, manifest hash, worker hash and policy. |
 | `target/incan/vocab-responses/evidence.jsonl` | Provider, vocabulary-unit identity, requesting module, policy, admission, granted capabilities and response decision (`computed`, `reused` or `denied`). |
-| `OVEN_TRACE=-` | Writes vocabulary admission and response decisions to stderr. A nonempty path selects a trace file. |
+| `INCAN_ENGINE_TRACE` | Records vocabulary admission and response decisions in the [tracing](cli_reference.md#tracing) channel, as `reason` and `vocab_runtime` records. |
 
 Admission precedes response-cache reuse and worker execution. Worker artifact paths must remain inside the dependency artifact root, and their bytes must match the published hash. A worker invocation receives no capabilities; the worker starts with an empty environment, and its standard error is discarded. Admission does not provide an operating-system sandbox.
 

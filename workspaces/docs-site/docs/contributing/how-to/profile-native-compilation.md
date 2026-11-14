@@ -13,12 +13,12 @@ incan run src/main.incn
 Edit its source, then capture the changed invocation in a fresh directory:
 
 ```sh
-OVEN_OWNER=off INCAN_TRACE_DIR=/tmp/incan-native-trace INCAN_NATIVE_TIMING=1 OVEN_TRACE=- incan run src/main.incn
+mkdir -p /tmp/incan-native-trace && OVEN_OWNER=off INCAN_ENGINE_TRACE=/tmp/incan-native-trace INCAN_NATIVE_TIMING=1 incan run src/main.incn
 ```
 
 For a test unit, replace `run src/main.incn` with `test tests/test_value.incn`. `OVEN_OWNER=off` keeps the capture in this invocation's environment; a project owner can retain the tracing settings it inherited at startup. Change the source before capturing: an unchanged executable can be reused and has no new compiler phases to report. Keep successful test payloads distinct between measurement batches too; an operating system may recognize a binary it has already validated even when it was just rebuilt.
 
-`INCAN_TRACE_DIR` produces the native driver's `PID-TIMESTAMP.jsonl` records. `INCAN_NATIVE_TIMING`, when set, additionally writes rustc phase timings as `time: {"pass":...,"time":...}` lines on standard error; `time` is seconds. It enables timing diagnostics within the pinned driver without granting unstable command-line options. Oven relays a resident compiler's diagnostics through the ordinary request console.
+The channel holds the native driver's `invocation` records in `engine-compiler-<pid>.jsonl`. `INCAN_NATIVE_TIMING`, when set, additionally writes rustc phase timings as `native_timing` records; `time` is seconds. It enables timing diagnostics within the pinned driver without granting unstable command-line options. Oven relays a resident compiler's diagnostics through the ordinary request console.
 
 The requested diagnostic settings select the resident project owner as well as the compiler worker. Enabling or disabling them takes effect on the next command, including when this project already has a running owner. The compiler phase timings also apply to hand-written Rust units compiled through the driver.
 
@@ -54,4 +54,4 @@ Measure an initial iteration build separately from an edit rebuild: the first cr
 
 Debug `run` and `test` reuse native shared libraries. Warm the dependency identities before collecting an edit batch; their first preparation is a separate cold condition. `build` outputs and release executables retain their ordinary archive linkage. See [Native linkage during development](../explanation/development-linking.md).
 
-Unset `INCAN_TRACE_DIR`, `INCAN_NATIVE_TIMING` and `OVEN_TRACE`. Retain every sample and report medians, ranges and the number below the target. Keep edited sources distinct, use a new directory for each new-project sample, and measure unchanged invocations separately. Keep dependency builds and unrelated experiments outside the measured interval.
+Unset `INCAN_ENGINE_TRACE` and `INCAN_NATIVE_TIMING`. Retain every sample and report medians, ranges and the number below the target. Keep edited sources distinct, use a new directory for each new-project sample, and measure unchanged invocations separately. Keep dependency builds and unrelated experiments outside the measured interval.

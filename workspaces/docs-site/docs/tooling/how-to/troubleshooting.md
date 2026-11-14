@@ -35,7 +35,7 @@ An unchecked-unit warning means reference and call information may be incomplete
 ## Observe rebuilds
 
 ```bash
-OVEN_TRACE=- incan run src/main.incn
+mkdir -p trace && INCAN_ENGINE_TRACE=trace incan run src/main.incn
 ```
 
-A `reused` line means the executable was retained. A `compiled (...)` line records why it was rebuilt. Tests always execute; their outcomes are not cached.
+Oven's `reason` records in `trace/engine-oven-<pid>.jsonl` say what happened: a `reused` reason means the executable was retained, and a `compiled (...)` reason records why it was rebuilt. Tests always execute; their outcomes are not cached.
