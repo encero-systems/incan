@@ -28,6 +28,8 @@ pub const DEFAULT_RUNS: int = 3
 pub const INTERVAL_MS: u64 = 50
 const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
 const LOWERING_COMMANDS: FrozenList[str] = ["oven"]
+# How far a compiler's footprint may stand above its live heap just after it returned freed heap.
+pub const RELEASE_MARGIN_BYTES: int = 512 * MIB
 const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
 
 
@@ -72,6 +74,27 @@ pub model Measurement:
     pub largest_process: str
     pub largest_process_peak_bytes: int
     pub wall_ms: int
+    pub live_peak_bytes: int = -1
+    pub live_peak_process: int = 0
+    pub releases: int = 0
+    pub release_excess_bytes: int = 0
+    pub release_excess_at: str = ""
+
+
+pub model HeapTrace:
+    """
+    What a run's compiler processes traced about their heaps.
+
+    `live_peak_bytes` is the greatest live heap any process recorded, -1 when none did. `releases` counts the marks
+    taken just after a process returned freed heap; `release_excess_bytes` is the greatest footprint above the live
+    heap at any of them, and `release_excess_at` names that mark and its process.
+    """
+
+    pub live_peak_bytes: int
+    pub live_peak_process: int
+    pub releases: int
+    pub release_excess_bytes: int
+    pub release_excess_at: str
 
 
 def main() -> None:
@@ -384,6 +407,21 @@ pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[
             exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {limit} bytes")
     if len(exceeded) > 0:
         return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
+    return Ok(None)
+
+
+pub def no_heap_trace() -> HeapTrace:
+    """The reading of a run no compiler process traced."""
+    return HeapTrace(live_peak_bytes=-1, live_peak_process=0, releases=0, release_excess_bytes=0, release_excess_at="")
+
+
+pub def heap_trace(trace: str, seen: HeapTrace) -> Result[HeapTrace, str]:
+    """Fold one compiler trace into `seen`. It reads nothing yet."""
+    return Ok(no_heap_trace())
+
+
+pub def require_released_heap(results: list[Measurement]) -> Result[None, str]:
+    """Refuse any Oven run whose footprint stays above its live heap after a heap release. It refuses nothing yet."""
     return Ok(None)
 
 
