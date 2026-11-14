@@ -155,6 +155,9 @@ pub enum StoredRvalue:
     Range(list[StoredOperand])
     MutBorrow(StoredPlace)
     IsVariant(StoredPlace, int)
+    ReifyFunction(StoredOperand)
+    FunctionAddress(StoredOperand)
+    ClosureObject(StoredPlace)
 
 
 @derive(Serialize, Deserialize)
@@ -473,6 +476,9 @@ def store_nominal_rvalue(value: RvalueKind, mut remap: NominalRemap) -> Result[S
         RvalueKind.Range(operands) => return Ok(StoredRvalue.Range(store_operands(operands, remap)?))
         RvalueKind.MutBorrow(place) => return Ok(StoredRvalue.MutBorrow(store_place(place, remap)?))
         RvalueKind.IsVariant(place, variant) => return Ok(StoredRvalue.IsVariant(store_place(place, remap)?, variant))
+        RvalueKind.ReifyFunction(operand) => return Ok(StoredRvalue.ReifyFunction(store_operand(operand, remap)?))
+        RvalueKind.FunctionAddress(operand) => return Ok(StoredRvalue.FunctionAddress(store_operand(operand, remap)?))
+        RvalueKind.ClosureObject(place) => return Ok(StoredRvalue.ClosureObject(store_place(place, remap)?))
         _ => return Err("scalar function products refuse this native operation")
 
 
@@ -522,6 +528,9 @@ def restore_nominal_rvalue(value: StoredRvalue, mut remap: NominalRemap) -> Resu
         StoredRvalue.Range(operands) => return Ok(RvalueKind.Range(restore_operands(operands, remap)?))
         StoredRvalue.MutBorrow(place) => return Ok(RvalueKind.MutBorrow(restore_place(place, remap)?))
         StoredRvalue.IsVariant(place, variant) => return Ok(RvalueKind.IsVariant(restore_place(place, remap)?, variant))
+        StoredRvalue.ReifyFunction(operand) => return Ok(RvalueKind.ReifyFunction(restore_operand(operand, remap)?))
+        StoredRvalue.FunctionAddress(operand) => return Ok(RvalueKind.FunctionAddress(restore_operand(operand, remap)?))
+        StoredRvalue.ClosureObject(place) => return Ok(RvalueKind.ClosureObject(restore_place(place, remap)?))
         _ => return Err("unknown stored native operation")
 
 

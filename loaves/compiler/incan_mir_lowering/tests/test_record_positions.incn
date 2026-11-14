@@ -45,7 +45,7 @@ pub def test_moved_body_lines_keep_the_plan_product() -> Result[None, str]:
     match retained_scalar(products.0, inputs, unit, Some(owner), after_nodes):
         None => assert false, "a comment that moved lines inside the body made the product a miss"
         Some(product) =>
-            function, _runtime, _references = product
+            function, _runtime, _references, _frames = product
             assert function == after, "the reused product kept the lines of the body it was captured from"
     retain_scalar(products.0, inputs, after, empty_runtime, empty_nominals, after_nodes)?
     assert only_product(products)? == stored, "moved lines changed the plan product's bytes"

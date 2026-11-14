@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.json import JsonValue, parse
-from pub::incan_mir_plan import NominalReference, Plan, PlanType
+from pub::incan_mir_plan import Function, NominalReference, Plan, PlanType, product_frame_names
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products, encode_entry_binding
 from record_positions import place_positions, relocate_product
@@ -15,9 +15,11 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
     events = scalar_events(report_path)?
     # Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface.
     mut references: list[list[NominalReference]] = []
-    keyed = keyed_plan_products(plan, products, report_path, events, references)?
+    mut carried: list[str] = []
+    keyed = keyed_plan_products(plan, products, report_path, events, references, carried)?
     if len(events) != len(plan.functions):
-        if has_scalar_refusal(report_path)?:
+        # Helper frames travel inside their caller's product, so a unit with any publishes no whole-unit interface.
+        if len(carried) != 0 or has_scalar_refusal(report_path)?:
             return Ok(None)
         return Err("native-interface refuses generated functions without graph body witnesses")
     if len(keyed) != len(plan.functions):
@@ -68,6 +70,7 @@ def keyed_plan_products(
     report: Path,
     events: &list[JsonValue],
     mut references: list[list[NominalReference]],
+    mut carried: list[str],
 ) -> Result[list[str], str]:
     """
     Make each keyed product byte-identical to its whole-plan function, relocated to the declaration's position.
@@ -75,7 +78,8 @@ def keyed_plan_products(
     Lowering captures a product before unit-level runtime resolution rewrites its calls. A fresh product therefore
     retains the final function under the same inputs, and its event carries the replaced bytes to Bakery admission.
     A reused product must already be final. A declaration without a product stays ordinary. `references` receives,
-    per keyed product, the positions its declaration ordinals take in this unit.
+    per keyed product, the positions its declaration ordinals take in this unit, and `carried` the names of the helper
+    frames those products carry.
     """
     mut keyed: list[str] = []
     for function in plan.functions:
@@ -90,7 +94,8 @@ def keyed_plan_products(
         reported = event.to_json().map_err((error) => error.message())?
         resolved = event_references(reported)?
         nodes = event_positions(reported)?
-        record, positions = finalize_scalar(products, key, function, reused, resolved, nodes)?
+        frames = carried_frames(plan, text(event, "product")?, carried)?
+        record, positions = finalize_scalar(products, key, function, reused, resolved, nodes, frames)?
         if record != text(event, "product")?:
             mut fields = event.expect_object().map_err((error) => error.message())?
             fields["product"] = JsonValue.string(record)
@@ -151,3 +156,20 @@ def write(path: Path, value: JsonValue) -> Result[None, str]:
     """Retain one complete invocation-local output; failure refuses publication."""
     encoded = value.to_json().map_err((error) => error.message())?
     return path.write_text(encoded, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def carried_frames(plan: &Plan, record: str, mut carried: list[str]) -> Result[list[Function], str]:
+    """Select, in a product's order, the whole-plan helper frames it carries, and record their names."""
+    payload = text(parse(record).map_err((error) => error.message())?, "function")?
+    mut frames: list[Function] = []
+    for name in product_frame_names(payload)?:
+        mut found = false
+        for function in plan.functions:
+            if function.name == name:
+                frames.append(function)
+                found = true
+                break
+        if not found:
+            return Err(f"plan-function frame {name} is missing from the whole-program plan")
+        carried.append(name)
+    return Ok(frames)
