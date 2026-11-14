@@ -293,16 +293,23 @@ impl IndexedLoaf {
     /// One declaration's signature, layout or defaults, by its module-qualified name: its own records when the
     /// installed set publishes them, otherwise projected from the executable projection's checked API. An overloaded
     /// name has one value per overload.
+    ///
+    /// A set that publishes declaration records holds one for every fact a declaration has, so a missing record there
+    /// is a fact the declaration does not have, such as the defaults of a function without parameters; only a set
+    /// converted before declarations had records is projected.
     pub fn declaration_facts(
         &self,
         facet: DeclarationFacet,
         declaration: &str,
     ) -> Result<Vec<serde_json::Value>, LoafIndexError> {
         let family = RecordFamily::of_declaration(facet).as_str();
-        if super::compiler_record_set::configured()
-            && let Some(values) = self.named_records(family, declaration)?
-        {
-            return Ok(values.as_ref().clone());
+        if super::compiler_record_set::configured() {
+            if let Some(values) = self.named_records(family, declaration)? {
+                return Ok(values.as_ref().clone());
+            }
+            if self.names_record(&[RecordFamily::DeclarationSignature.as_str()], None)? == Some(true) {
+                return Ok(Vec::new());
+            }
         }
         let manifest = self.execution_manifest()?;
         let Some(api) = manifest.contract_metadata.split_documentation().0.api else {
