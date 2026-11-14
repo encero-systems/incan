@@ -46,6 +46,7 @@ from compiler_source_projection import (
     SourceProjectionRecord,
     compiled_owner_source,
     declaration_index_key,
+    import_declaration_indexes,
     owner_source_key,
     project_source,
     signature_record,
@@ -420,6 +421,13 @@ pub def prepare_compiled_bodies(
                     stage_put(prepared, owner_key, owner_value)
                     source.add(owner_key, owner_value)
             modules.add(fallback.module)
+    # A rechecked namespace reads each import's declaration index, also when that module's bodies were all retained.
+    mut staged: list[str] = []
+    for module in modules:
+        staged.append(module)
+    for index in import_declaration_indexes(origin, unit.project_root, outputs.namespaces, staged)?:
+        stage_put(prepared, encode_record_key(index.key)?, index.text.encode("utf-8"))
+        source.add(encode_record_key(index.key)?, index.text.encode("utf-8"))
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in outputs.values:
         for dependency in value.dependency_reads:
