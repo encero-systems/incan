@@ -185,13 +185,19 @@ def inherited_edge(
     """
     A member's `{ workspace = true }` edge, taken from its workspace root's `[workspace.dependencies]` entry
     (`workspace_inheritance`): a local edge's path rebased onto the member, the member's `features` added to the
-    entry's and its `optional` kept.
+    entry's and its `optional` kept. Its own path, Loaf, version or other identity field is refused, as in 0.5.1: the
+    root's entry owns them.
     """
     field = [group, alias]
-    allowed(entry, ["workspace", "features", "optional"], manifest, field)?
     if not flag(entry, "workspace", false, manifest, field)?:
         detail = "workspace inheritance is spelled `workspace = true`"
         return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Invalid, detail))
+    for key in ["path", "loaf", "version", "default-features", "package", "crate", "target"]:
+        if key in entry:
+            spelled = f"`{alias}` inherits from the workspace: `{key}` and its other identity fields"
+            detail = f"{spelled} belong to [workspace.dependencies]"
+            return Err(refusal(manifest, field + [key], IntakeErrorKind.Invalid, detail))
+    allowed(entry, ["workspace", "features", "optional"], manifest, field)?
     shared = inherited(alias, manifest)?
     root_field = ["workspace", "dependencies", alias]
     root = table(shared.value, shared.root_manifest, root_field)?
