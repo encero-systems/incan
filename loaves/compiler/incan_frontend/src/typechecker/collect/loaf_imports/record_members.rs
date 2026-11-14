@@ -325,10 +325,10 @@ fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// Whether `ty` names built-in types and type parameters only, which no provider's type remapping can change.
+/// Whether `ty` names built-in types, `None` and type parameters only, which no provider's type remapping can change.
 fn built_in_type(ty: &TypeRef) -> bool {
     match ty {
-        TypeRef::Named { name, origin } => origin.is_none() && builtin_type_name(name).is_some(),
+        TypeRef::Named { name, origin } => origin.is_none() && ResolvedType::builtin_simple(name).is_some(),
         TypeRef::Applied { name, args, origin } => {
             origin.is_none() && builtin_type_name(name).is_some() && args.iter().all(built_in_type)
         }
