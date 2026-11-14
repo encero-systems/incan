@@ -23,6 +23,8 @@ struct PendingBodyValue {
     final_value: Vec<u8>,
     body_ir: Vec<u8>,
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
+    /// Whether the checker restored this body from a selected record instead of checking its statements.
+    restored: bool,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR frame.
@@ -148,7 +150,10 @@ impl GraphBodyOutput {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     match encoded_body_value(&module_path, &fields) {
-                        Ok(value) => self.values.push(value),
+                        Ok(value) => self.values.push(PendingBodyValue {
+                            restored: checker.restored_body_record(fields.span),
+                            ..value
+                        }),
                         Err(reason) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
@@ -271,12 +276,20 @@ impl GraphBodyOutput {
         } else {
             format!("{reusable_declarations}/{all_declarations} reusable declarations; refusals {refusal_text}")
         };
+        // A selected record the checker refused is not restored: that body was checked afresh, and Oven counts it so.
+        let restored = self
+            .values
+            .iter()
+            .filter(|value| value.restored)
+            .map(|value| value.identity.clone())
+            .collect::<Vec<_>>();
         let report = serde_json::to_vec(&serde_json::json!({
             "schema": "incan.checker-reuse/1",
             "summary": summary,
             "reusable_declarations": reusable_declarations,
             "all_declarations": all_declarations,
             "artifact_refusals": artifact_refusals,
+            "restored": restored,
         }))
         .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
@@ -390,6 +403,7 @@ fn encoded_body_value(
         final_value,
         body_ir: Vec::new(),
         dependency_reads,
+        restored: false,
     })
 }
 

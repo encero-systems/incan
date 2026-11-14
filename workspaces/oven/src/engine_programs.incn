@@ -81,7 +81,7 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
-    # Checked bodies a check restored from the request view's records; a build reports its reuse as `checker_reuse`.
+    # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
     pub body_reuses: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
@@ -333,9 +333,11 @@ pub def obtain(
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
         native = None
     mut body_evaluations = 0
+    mut body_reuses = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
+        # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         checker_counts = checker_record_counts(ready, compiled_key)?
         bodies = prepare_compiled_bodies(
             request_transaction,
@@ -344,9 +346,11 @@ pub def obtain(
             Some(plan_record_report_path(ready, compiled_key)),
             Some(graph),
             retained_bodies,
+            checker_counts.restored,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations
+        body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     supersede_outputs(graph, request_transaction)?
@@ -364,6 +368,7 @@ pub def obtain(
             unit=Some(unit),
             evaluations=produced.evaluations,
             body_evaluations=body_evaluations,
+            body_reuses=body_reuses,
             body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
