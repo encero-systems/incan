@@ -45,12 +45,7 @@ from crate.datetime.civil.naive._format_text import (
     _parse_fractional_nanos,
 )
 from crate.datetime.civil.naive._fixed_offset import _format_offset
-from crate.datetime.civil.naive._strptime_fields import (
-    _StrptimeFields,
-    _parse_temporal_literal,
-    _parse_temporal_directive,
-    _resolve_parsed_hour,
-)
+from crate.datetime.civil.naive._strptime_fields import _StrptimeFields
 pub from crate.datetime.civil.naive._calendar import is_leap_year, days_in_month
 pub from crate.datetime.civil.naive._fixed_offset import FixedOffset, utc, _ParsedOffset, _parse_offset
 pub from crate.datetime.civil.naive._ordinal_bytes import (
@@ -993,18 +988,18 @@ pub def _strptime_temporal(
     # 2. Fields retain the last authored value while literals consume exactly one matching character.
     while format_index < len(expanded):
         if expanded[format_index:format_index + 1] != "%":
-            _parse_temporal_literal(fields, value, expanded[format_index:format_index + 1])?
+            fields.parse_literal(value, expanded[format_index:format_index + 1])?
             format_index += 1
         else:
             parsed = _read_directive(expanded, format_index)?
             directive = expanded[parsed.value:parsed.value + 1]
             format_index = parsed.next
-            _parse_temporal_directive(fields, value, directive, allow_date, allow_time, allow_offset)?
+            fields.parse_directive(value, directive, allow_date, allow_time, allow_offset)?
 
     # 3. Complete consumption precedes derived-field checks, preserving the first reported error.
     if fields.next != len(value):
         return Err(DateTimeError(detail="trailing text after strptime parse"))
-    hour = _resolve_parsed_hour(fields)?
+    hour = fields.resolved_hour()?
     date = _resolve_parsed_date(fields)?
 
     # 4. Checked constructors enforce final ranges after directive precedence has been resolved.
