@@ -1,0 +1,9 @@
+[project]
+name = "dependency_class_with_constructed_field_defaults"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+channels = { path = "deps/channels" }
