@@ -9,8 +9,10 @@ prefix is a legacy spelling: relative to the Loaf's directory, or absolute as wr
 """
 
 from std.fs import Path
+from std.json import JsonValue
 from home_paths import bakery, toolchain_directory
 from toolchain import located
+from toolchain_types import NativeCrate
 
 # The schema of a published Loaf native closure whose references are anchored.
 pub const NATIVE_CLOSURE_SCHEMA: str = "incan.native-closure/2"
@@ -85,3 +87,17 @@ pub def anchored_reference(path: str, anchors: NativeAnchors) -> str:
         if root != "" and path.startswith(root + "/"):
             return f"{anchor.value()}:{path[len(root) + 1:]}"
     return f"{NativeAnchor.Absolute.value()}:{path}"
+
+
+pub def rust_native_document(bindings: list[NativeCrate], search: list[str], anchors: NativeAnchors) -> JsonValue:
+    """A Rust facet's `native.json`: its selected externs and search directories, anchored in the current home."""
+    mut externs: list[JsonValue] = []
+    for binding in bindings:
+        reference = anchored_reference(binding.path, anchors)
+        externs.append(JsonValue.array([JsonValue.string(binding.name), JsonValue.string(reference)]))
+    directories = [JsonValue.string(anchored_reference(directory, anchors)) for directory in search]
+    return JsonValue.object(
+        {"schema": JsonValue.string(RUST_NATIVE_SCHEMA), "externs": JsonValue.array(externs), "search": JsonValue.array(
+            directories,
+        )},
+    )
