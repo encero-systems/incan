@@ -144,7 +144,7 @@ pub def prepare_evaluation(
     incoming = incoming_keys(encoded)?
     for index in range(len(encoded)):
         stage_put(transaction, f"{outgoing}{index}", encoded[index])
-        stage_put(transaction, incoming[index], encoded[index])
+        stage_put(transaction, incoming[index], encode_incoming(value_key, receipt.scope.profile, edges[index])?)
     return Ok(
         PreparedEvaluation(
             value_key=value_key,
@@ -325,8 +325,8 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
                 or required_text(edge, "target")? != exact
             ):
                 continue
-            reader = required_text(edge, "reader")?
-            readers[reader] = decode_record_key(reader)?
+            if let Some(reader) = current_reader(selected, profile, required_text(edge, "reader")?)?:
+                readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
 
 
@@ -510,8 +510,39 @@ def encode_evaluation(
     return Ok(json_text(document)?.encode("utf-8"))
 
 
+def current_reader(selected: Snapshot, profile: str, reader: str) -> Result[Option[str], str]:
+    """
+    The record an incoming entry's reader names now. The entry names the reading slot, and the output index names the
+    slot's current record; an entry an earlier Oven wrote names the reading record itself.
+    """
+    if len(reader.split("\t")) == 6:
+        return Ok(Some(reader))
+    indexed = "incan.engine.output\t" + profile + "\t" + reader
+    match get(selected, indexed).map_err((error) => error.message())?:
+        Some(output) =>
+            return Ok(Some(output.decode().map_err((_) => "compiler output index entry is not UTF-8")?))
+        None => return Ok(None)
+
+
+def encode_incoming(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
+    """
+    Encode an incoming entry's value: the reading slot, the profile and the exact record read. Neither the reader's
+    evaluated context nor the read's evidence is in it, so the next evaluation of the slot that reads the same record
+    stages the same bytes, and the commit leaves the entry as it is.
+    """
+    document = JsonValue.object(
+        {
+            "schema": JsonValue.string(EDGE_SCHEMA),
+            "reader": JsonValue.string(record_slot(reader)?),
+            "profile": JsonValue.string(profile),
+            "target": JsonValue.string(edge.target),
+        },
+    )
+    return Ok(json_text(document)?.encode("utf-8"))
+
+
 def encode_edge(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
-    """Encode one edge value shared byte-for-byte by its outgoing and incoming indexes."""
+    """Encode an outgoing edge's value: the read, its exact target and the evidence it witnessed."""
     document = JsonValue.object(
         {"schema": JsonValue.string(EDGE_SCHEMA), "reader": JsonValue.string(reader), "profile": JsonValue.string(
             profile,
