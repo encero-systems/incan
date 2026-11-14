@@ -523,15 +523,22 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     if prefix != "":
         files = [file for file in fact.files if file.path.startswith(prefix + "/")]
     mut same_identity = prefix != ""
+    mut pinned = true
     if prefix == "" and destination.joinpath(VIEW_RECORD).is_file():
         marker = read_json(destination.joinpath(VIEW_RECORD))?
         same_identity = required_text(marker, "identity")? == fact.identity
+        pinned = marker.get("selection") != None
+        if pinned and required_text(marker, "selection")? != payload_selection(fact):
+            same_identity = false
     if (
         same_identity
         and not destination.is_symlink()
         and destination.is_dir()
         and all_same(store, files, destination, prefix)
     ):
+        # A current view an earlier Oven made names the identity alone; it gains the selection its files prove.
+        if not pinned:
+            publish(destination.joinpath(VIEW_RECORD), json_text(view_record(fact))?)?
         return Ok(None)
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
@@ -543,7 +550,7 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
         make_directory(target.parent())?
         clone(payload_path(store, file.digest), target, file.program)?
     if prefix == "":
-        marker = JsonValue.object({"identity": JsonValue.string(fact.identity)})
+        marker = view_record(fact)
         publish(staged.joinpath(VIEW_RECORD), json_text(marker)?)?
     swap_in(staged, destination, store, files, prefix)?
     admit_views(files, destination, prefix)?
@@ -665,9 +672,34 @@ def library_fact(store: Path, marker: JsonValue) -> Result[Fact, str]:
                         return Err(f"{file.path}: library payload is damaged")
                 return Ok(fact)
     identity = required_text(marker, "identity")?
-    match find(store, identity)?:
+    match viewed_bake(store, marker)?:
         None => return Err(f"library's baked unit is absent: {identity}")
         Some(fact) => return Ok(fact)
+
+
+def view_record(fact: Fact) -> JsonValue:
+    """
+    What a whole-unit view records of the bake it was made from: the unit, and the exact payload set (RFC 124).
+
+    The selection is what lets the view keep its bake when another valid bake of the unit, with unequal payloads,
+    is stored later.
+    """
+    return JsonValue.object(
+        {"identity": JsonValue.string(fact.identity), "selection": JsonValue.string(payload_selection(fact))},
+    )
+
+
+def viewed_bake(store: Path, marker: JsonValue) -> Result[Option[Fact], str]:
+    """
+    The bake a view record selects: the one whose payloads it pinned while the store still holds it, and otherwise
+    the unit's only bake. A record that names the identity alone, or whose pinned bake was replaced, selects by
+    identity, which a conflicted unit refuses.
+    """
+    identity = required_text(marker, "identity")?
+    if marker.get("selection") != None:
+        if let Some(fact) = find_selected(store, identity, required_text(marker, "selection")?)?:
+            return Ok(Some(fact))
+    return find(store, identity)
 
 
 def library_layout(fact: Fact) -> Result[str, str]:
@@ -749,8 +781,7 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
     store = bakery()?
     if marker.get("layout") != None:
         return Ok(Some(library_directory(store, directory)?))
-    identity = required_text(marker, "identity")?
-    match find(store, identity)?:
+    match viewed_bake(store, marker)?:
         None => return Ok(None)
         Some(fact) =>
             repair_view(store, fact, directory)?
