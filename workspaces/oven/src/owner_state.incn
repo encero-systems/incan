@@ -88,13 +88,7 @@ pub model Held:
     pub def key(mut self, compiler: str, toolchain: Toolchain) -> Result[Key, str]:
         """Reconcile the unit's inputs against what earlier requests observed."""
         selected = selected_unit_compiler(self.unit, toolchain, compiler)?
-        graph: Option[SourceGraph] = source_graph(
-            self.unit,
-            toolchain,
-            f"{selected} {self.described}",
-            ledger_name(self.unit),
-            self.ledger,
-        )?
+        graph: Option[SourceGraph] = source_graph(self.unit, toolchain, f"{selected} {self.described}", self.ledger)?
         mut key = reconciled_key(self.unit, selected, self.described, self.ledger, graph)?
         key.compiler = compiler
         return Ok(key)

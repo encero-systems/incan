@@ -3,12 +3,17 @@ The source graph a program or test unit's compilation reads: the files module co
 imports looked for, as the compiler reports them.
 
 Oven keys such a unit by its graph instead of by every file under the source root, so a file nothing imports never
-rebuilds the unit, while a file created where an import looked does. The graph is recorded beside the unit's ledger
-with the digest of each file it read, and is asked of the compiler again only when one of those files changed or one
-of those absent paths appeared, the only edits that can change what collection reads.
+rebuilds the unit, while a file created where an import looked does. The graph is recorded with the digest of each file
+it read, and is asked of the compiler again only when one of those files changed or one of those absent paths appeared,
+the only edits that can change what collection reads.
+
+A unit is asked for under each scope it is keyed in: its compiler and description, which preparation extends. One
+record per entry keeps the current graph of each scope, so that neither evicts the other.
 """
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import sha256
 from std.json import JsonValue
 from compiler_worker import captured_resident
 from driver_command import driver_command
@@ -22,7 +27,9 @@ from unit import UnitDescription
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
-const GRAPH_SCHEMA: str = "incan.oven.source-graph/1"
+const GRAPH_SCHEMA: str = "incan.oven.source-graph/2"
+# The scopes one record keeps: a unit is asked for under its description before and after preparation.
+const RECORDED_SCOPES: int = 4
 
 
 pub model SourceGraph:
@@ -55,7 +62,6 @@ pub def source_graph(
     unit: UnitDescription,
     toolchain: Toolchain,
     scope: str,
-    name: str,
     mut project: Ledger,
 ) -> Result[Option[SourceGraph], str]:
     """
@@ -69,7 +75,7 @@ pub def source_graph(
     # 1. Only a plain program or test unit is collected from its entry alone.
     if not graph_keyed(unit):
         return Ok(None)
-    location = Path(unit.project_root).joinpath("target/incan/units").joinpath(f"{name}.source-graph.json")
+    location = graph_location(unit.project_root, unit.profile, unit.kind, unit.source)
     # 2. Unchanged reads and still-absent lookups collect the same graph.
     if let Some(graph) = recorded_graph(location, scope, project)?:
         return Ok(Some(graph))
@@ -81,34 +87,58 @@ pub def source_graph(
             return Ok(Some(graph))
 
 
+pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -> Path:
+    """
+    Where the graphs of one entry's unit are recorded: one record per project, profile, kind and resolved entry, for
+    every scope it is asked for under.
+    """
+    mut resolved = entry
+    match Path(entry).resolve():
+        Ok(found) => resolved = found.0
+        Err(_) => pass
+    name = hexlify(sha256.digest(f"{profile}\n{kind}\n{resolved}".encode("utf-8")))[:24]
+    return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.json")
+
+
 def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Option[SourceGraph], str]:
-    """A recorded graph of the same scope that is still current; anything else is a miss, never an error."""
+    """The recorded graph of `scope` while it is still current; anything else is a miss, never an error."""
+    for entry in recorded_entries(location):
+        if required_text(entry, "scope").unwrap_or("") == scope:
+            return current_graph(entry, project)
+    return Ok(None)
+
+
+def recorded_entries(location: Path) -> list[JsonValue]:
+    """The graphs a record holds, newest first; a missing, malformed or older record holds none."""
     if not location.is_file():
-        return Ok(None)
+        return []
     match read_json(location):
-        Err(_) => return Ok(None)
+        Err(_) => return []
         Ok(document) =>
             if required_text(document, "schema").unwrap_or("") != GRAPH_SCHEMA:
-                return Ok(None)
-            if required_text(document, "scope").unwrap_or("") != scope:
-                return Ok(None)
-            mut read: list[str] = []
-            for entry in required_items(document, "read").unwrap_or([]):
-                path = required_text(entry, "path").unwrap_or("")
-                if path == "" or not Path(path).is_file():
-                    return Ok(None)
-                if project.digest(Path(path))? != required_text(entry, "digest").unwrap_or(""):
-                    return Ok(None)
-                read.append(path)
-            mut absent: list[str] = []
-            for entry in required_items(document, "absent").unwrap_or([]):
-                path = entry.as_str().unwrap_or("")
-                if path == "" or Path(path).exists():
-                    return Ok(None)
-                absent.append(path)
-            if len(read) == 0:
-                return Ok(None)
-            return Ok(Some(SourceGraph(read=read, absent=absent)))
+                return []
+            return required_items(document, "graphs").unwrap_or([])
+
+
+def current_graph(entry: JsonValue, mut project: Ledger) -> Result[Option[SourceGraph], str]:
+    """A recorded graph whose read files are unchanged and whose absent paths are still absent, else `None`."""
+    mut read: list[str] = []
+    for item in required_items(entry, "read").unwrap_or([]):
+        path = required_text(item, "path").unwrap_or("")
+        if path == "" or not Path(path).is_file():
+            return Ok(None)
+        if project.digest(Path(path))? != required_text(item, "digest").unwrap_or(""):
+            return Ok(None)
+        read.append(path)
+    mut absent: list[str] = []
+    for item in required_items(entry, "absent").unwrap_or([]):
+        path = item.as_str().unwrap_or("")
+        if path == "" or Path(path).exists():
+            return Ok(None)
+        absent.append(path)
+    if len(read) == 0:
+        return Ok(None)
+    return Ok(Some(SourceGraph(read=read, absent=absent)))
 
 
 def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
@@ -147,17 +177,25 @@ def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> R
 
 
 def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) -> Result[None, str]:
-    """Record the graph with the digest of each file it read; a record that cannot be written only costs a collection."""
+    """
+    Record the graph of `scope` with the digest of each file it read, first, before the other scopes' graphs that are
+    still current; a stale one is dropped. A record that cannot be written only costs a collection.
+    """
     mut read: list[JsonValue] = []
     for path in graph.read:
         read.append(
             JsonValue.object({"path": JsonValue.string(path), "digest": JsonValue.string(project.digest(Path(path))?)}),
         )
-    document = JsonValue.object(
-        {"schema": JsonValue.string(GRAPH_SCHEMA), "scope": JsonValue.string(scope), "read": JsonValue.array(read), "absent": JsonValue.array(
-            [JsonValue.string(path) for path in graph.absent],
-        )},
-    )
+    absent = JsonValue.array([JsonValue.string(path) for path in graph.absent])
+    mut graphs = [JsonValue.object({"scope": JsonValue.string(scope), "read": JsonValue.array(read), "absent": absent})]
+    for entry in recorded_entries(location):
+        if len(graphs) >= RECORDED_SCOPES:
+            break
+        if required_text(entry, "scope").unwrap_or("") == scope:
+            continue
+        if current_graph(entry, project)? is not None:
+            graphs.append(entry)
+    document = JsonValue.object({"schema": JsonValue.string(GRAPH_SCHEMA), "graphs": JsonValue.array(graphs)})
     _ = publish(location, json_text(document)?)
     return Ok(None)
 

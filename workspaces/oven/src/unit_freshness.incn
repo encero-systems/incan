@@ -172,7 +172,7 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
     described = description_digest(unit)?
     # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
-    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", ledger_name(unit), project)?
+    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", project)?
     mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
