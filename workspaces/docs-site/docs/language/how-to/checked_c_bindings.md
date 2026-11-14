@@ -56,7 +56,29 @@ Check the binding source:
 incan check src/main.incn --format json
 ```
 
-A successful check verifies the supported source contract; it does not establish an Android or iOS package. Dev.8 does not accept `--interop-target`, `inspect interop-plan`, interop bake or stage commands.
+A successful check verifies the supported source contract against the host; it does not establish an Android or iOS package.
+
+## Verify against a declared target
+
+Declare what another target requires next to its headers: the compatible toolchain and SDK capabilities, the preprocessor definitions, and, for Android or iOS, the platform's version fact:
+
+```toml
+[[interop.c.targets]]
+target = "aarch64-apple-ios"
+toolchain = { capability = "apple-clang", version = ">=17" }
+sdk = { capability = "iphoneos", version = ">=18" }
+platform = { kind = "ios", deployment-target = "13.0" }
+headers = ["interop/include/bridge.h"]
+definitions = ["BRIDGE_MOBILE=1"]
+```
+
+Check the bindings against that target instead of the host:
+
+```sh
+incan check --interop-target aarch64-apple-ios src/main.incn
+```
+
+The check verifies each binding's signatures, layouts and enum values with Clang for that target and its definitions; a layout that differs on that target is refused. It refuses a target the package does not declare, and a `toolchain` or `sdk` requirement the selected C toolchain or SDK does not meet, by name. On macOS the selected toolchain is Xcode's Clang with the target's SDK; `INCAN_C_ABI_CLANG` selects another Clang explicitly, as an Android NDK Clang for `aarch64-linux-android`, whose NDK supplies the `android-ndk` toolchain and `android` SDK capabilities. `build`, `test` and `run` accept the same option; the program is still built for the host, and nothing is cross-compiled.
 
 ## Link a package-owned static archive
 
