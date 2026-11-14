@@ -106,7 +106,7 @@ pub def load_toolchain() -> Result[Toolchain, str]:
     """
     mut directory = toolchain_directory()?
     if directory.is_dir():
-        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        directory = directory.resolve().map_err((error) => f"cannot {error.message()}")?
     return load_toolchain_at(directory)
 
 
@@ -148,7 +148,7 @@ pub def readmit_selected_installation() -> Result[Installation, str]:
     """Explicitly re-admit the selected unfinished installation in the home that owns its catalog."""
     mut directory = toolchain_directory()?
     if directory.is_dir():
-        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        directory = directory.resolve().map_err((error) => f"cannot {error.message()}")?
     return readmit_installation(directory)
 
 
@@ -281,10 +281,10 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
     loaves = directory.joinpath("loaves")
     if not loaves.is_dir():
         return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
-    for package in loaves.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for package in loaves.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if not package.is_dir():
             continue
-        for profile in package.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for profile in package.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if profile.is_dir():
                 for artifact in admit_provider(profile)?:
                     paths[artifact.0] = artifact
@@ -294,7 +294,7 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
 def admit_provider(directory: Path) -> Result[list[Path], str]:
     """Admit every transported payload with a producer record before a consumer names its identity."""
     mut paths: list[Path] = []
-    for record in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for record in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if record.is_file() and record.name().endswith(".oven-unit"):
             path = Path(record.0[:-10])
             import_publication(path)?

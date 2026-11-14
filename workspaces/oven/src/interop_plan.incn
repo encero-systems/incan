@@ -114,7 +114,7 @@ def project_plan(project: LocalProject, target: str) -> Result[JsonValue, str]:
             path = Path(project.root).joinpath(artifact.path)
             mut identity = "missing"
             if path.is_file():
-                raw = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+                raw = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
                 identity = "sha256:" + hexlify(sha256.digest(raw))
             mut archive = {"name": JsonValue.string(artifact.name), "path": JsonValue.string(artifact.path), "link_name": JsonValue.string(
                 artifact.link_name,

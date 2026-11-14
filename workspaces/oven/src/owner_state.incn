@@ -200,7 +200,7 @@ pub model Owner:
         Hold the toolchain and worker selection by its admitted installation page. Frozen installation files and SDK
         probes were reconciled while that page was admitted; an unchanged request never re-observes them.
         """
-        directory = toolchain_directory()?.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        directory = toolchain_directory()?.resolve().map_err((error) => f"cannot {error.message()}")?
         match self.toolchain:
             Some(loaded) =>
                 if admitted_identity(directory)? == Some(self.toolchain_admission):

@@ -78,7 +78,7 @@ def bound(store: Path, fact: Fact) -> Result[Path, str]:
         target = directory.joinpath(file.path)
         make_directory(target.parent())?
         if target.is_symlink():
-            target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
-        target.symlink_to(payload_path(store, file.digest)).map_err((error) => f"cannot link {error.message()}")?
+            target.unlink().map_err((error) => f"cannot {error.message()}")?
+        target.symlink_to(payload_path(store, file.digest)).map_err((error) => f"cannot {error.message()}")?
     publish(marker, fact.identity)?
     return Ok(directory)

@@ -50,7 +50,7 @@ def physical(path: Path) -> Result[str, str]:
     """Resolve an existing directory so references compare against the spelling readers resolve to."""
     if not path.exists():
         return Ok(path.0)
-    return Ok(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0)
+    return Ok(path.resolve().map_err((error) => f"cannot {error.message()}")?.0)
 
 
 pub def anchor_arguments(advertised: bool) -> Result[list[str], str]:

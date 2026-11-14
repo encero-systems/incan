@@ -94,7 +94,7 @@ pub def parse_selection(arguments: list[str]) -> Result[Selection, str]:
 
 pub def find_workspace(start: Path) -> Result[Workspace, str]:
     """The nearest workspace root at or above `start`, read with its members."""
-    mut directory = start.absolute().map_err((error) => f"cannot resolve {start.0}: {error.message()}")?
+    mut directory = start.absolute().map_err((error) => f"cannot {error.message()}")?
     if start.0 == ".":
         directory = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
     while true:

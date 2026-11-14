@@ -62,7 +62,7 @@ pub def compile_binary(
     """
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
-    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     mut output_name = name
     if testing:
         output_name = f"{test_role}-{name}-tests"

@@ -69,7 +69,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
             return Err("unit records check requires a text or json report format")
     elif submit.options != "":
         return Err("unit records run and build accept no additional build options")
-    source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot resolve source {error.message()}")?
+    source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
     selected = selected_home()?

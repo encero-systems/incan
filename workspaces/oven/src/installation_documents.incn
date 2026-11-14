@@ -31,10 +31,10 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
     loaves = directory.joinpath("loaves")
     if loaves.is_dir():
         directories[loaves.0] = observe(loaves)?.stamp
-        for package in loaves.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for package in loaves.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if package.is_dir():
                 directories[package.0] = observe(package)?.stamp
-                for profile in package.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+                for profile in package.iterdir().map_err((error) => f"cannot {error.message()}")?:
                     if profile.is_dir():
                         directories[profile.0] = observe(profile)?.stamp
     for native in toolchain.externs:
@@ -43,14 +43,14 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
     installed_native = directory.joinpath("native")
     if installed_native.is_dir():
         directories[installed_native.0] = observe(installed_native)?.stamp
-        for producer in installed_native.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for producer in installed_native.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if producer.is_dir():
                 directories[producer.0] = observe(producer)?.stamp
     mut documents: Dict[str, Document] = {}
     mut payloads: Dict[str, InstalledPayload] = {}
     # 2. Each record is parsed at admission, and its original generation remains an explicit witness.
     for path in sorted([path for path in directories.keys()]):
-        for entry in Path(path).iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for entry in Path(path).iterdir().map_err((error) => f"cannot {error.message()}")?:
             if not selected(entry.name()) or not entry.is_file():
                 continue
             before = observe(entry)?.stamp

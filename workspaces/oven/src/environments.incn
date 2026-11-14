@@ -550,7 +550,7 @@ pub def command_admission(command: str, arguments: list[str]) -> Result[None, st
             operand = argument
             break
         index += 1
-    path = Path(operand).absolute().map_err((error) => f"cannot resolve {operand}: {error.message()}")?
+    path = Path(operand).absolute().map_err((error) => f"cannot {error.message()}")?
     mut root = project_root_of(path)
     if path.is_dir():
         root = project_root_of(path.joinpath("loaf.toml"))

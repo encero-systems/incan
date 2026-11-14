@@ -40,7 +40,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     split. Oven owns content admission and records only the resulting installed store root plus sealed-set digest.
     Scratch exports never become a selectable cache, and a shipped export is removed once its set is admitted.
     """
-    temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot create temporary directory {error.message()}")?
+    temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot {error.message()}")?
     shipped = installed.joinpath(SHIPPED_RECORDS)
     mut converted = shipped
     if not shipped.joinpath("index.json").is_file():
@@ -62,7 +62,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
         path = converted.joinpath(object)
         if file_digest(path)? != revision:
             return Err(f"compiler record `{key}` differs from revision {revision}")
-        view = write_value(view, key, path.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
+        view = write_value(view, key, path.read_bytes().map_err((error) => f"cannot {error.message()}")?)?
         records.append(Record(key=key, revision=revision, payloads=[], references=[]))
         receipt.append(f"{key}\t{revision}")
     profile = compiler_record_profile()

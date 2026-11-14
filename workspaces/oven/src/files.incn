@@ -11,7 +11,7 @@ from frozen_inputs import read as frozen_document
 pub def read(path: Path) -> Result[str, str]:
     """Read a file as strict UTF-8 text, naming the source when reading fails."""
     clock = begin()
-    result = path.read_text("utf-8", "strict").map_err((error) => f"cannot read {path.0}: {error.message()}")
+    result = path.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")
     if clock is not None:
         match result:
             Ok(content) => record(Operation.FileRead, path.0, clock, text_size(content, clock))
@@ -23,7 +23,7 @@ pub def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a strict UTF-8 file, naming the destination when writing fails."""
     return path
         .write_text(text, "utf-8", "strict", None)
-        .map_err((error) => f"cannot write {path.0}: {error.message()}")
+        .map_err((error) => f"cannot {error.message()}")
 
 
 pub def open_stream(path: str) -> Result[File, str]:
@@ -36,7 +36,7 @@ pub def open_stream(path: str) -> Result[File, str]:
 
 pub def remove(path: Path) -> Result[None, str]:
     """Remove a file, naming it when removal fails."""
-    return path.unlink().map_err((error) => f"cannot remove {path.0}: {error.message()}")
+    return path.unlink().map_err((error) => f"cannot {error.message()}")
 
 
 pub def discard_file(path: Path) -> None:
@@ -46,7 +46,7 @@ pub def discard_file(path: Path) -> None:
 
 pub def make_directory(path: Path) -> Result[None, str]:
     """Create a directory and its missing parents, naming the destination when creation fails."""
-    return path.mkdir(true, true).map_err((error) => f"cannot create directory {path.0}: {error.message()}")
+    return path.mkdir(true, true).map_err((error) => f"cannot {error.message()}")
 
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:

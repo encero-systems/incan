@@ -97,7 +97,7 @@ pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str)
 def mirror_directory(source: Path, destination: Path, relative: str, document: str) -> Result[int, str]:
     """Mirror one directory's files, leaving out the document, build output and hidden entries."""
     mut written = 0
-    for entry in source.iterdir().map_err((error) => f"cannot list {source.0}: {error.message()}")?:
+    for entry in source.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
         if name.startswith(".") or name == "target":
             continue
@@ -107,7 +107,7 @@ def mirror_directory(source: Path, destination: Path, relative: str, document: s
         if entry.is_dir():
             written += mirror_directory(entry, destination.joinpath(name), path, document)?
         elif entry.is_file() and path != document:
-            content = entry.read_bytes().map_err((error) => f"cannot read {entry.0}: {error.message()}")?
+            content = entry.read_bytes().map_err((error) => f"cannot {error.message()}")?
             if write_if_changed(destination.joinpath(name), content)?:
                 written += 1
     return Ok(written)
@@ -117,7 +117,7 @@ def remove_absent(source: Path, destination: Path, relative: str, document: str)
     """Remove mirrored files and directories the program no longer has; the document always stays."""
     if not destination.is_dir():
         return Ok(None)
-    for entry in destination.iterdir().map_err((error) => f"cannot list {destination.0}: {error.message()}")?:
+    for entry in destination.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
         mut path = name
         if relative != "":
@@ -129,20 +129,20 @@ def remove_absent(source: Path, destination: Path, relative: str, document: str)
             if original.is_dir():
                 remove_absent(original, entry, path, document)?
             elif not document.startswith(path + "/"):
-                entry.remove_tree().map_err((error) => f"cannot remove {entry.0}: {error.message()}")?
+                entry.remove_tree().map_err((error) => f"cannot {error.message()}")?
         elif not original.is_file():
-            entry.unlink().map_err((error) => f"cannot remove {entry.0}: {error.message()}")?
+            entry.unlink().map_err((error) => f"cannot {error.message()}")?
     return Ok(None)
 
 
 def write_if_changed(path: Path, content: bytes) -> Result[bool, str]:
     """Write `content` at `path` unless the file already holds exactly those bytes."""
     if path.is_file():
-        current = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+        current = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
         if current == content:
             return Ok(false)
-    path.parent().mkdir(true, true).map_err((error) => f"cannot create {path.parent().0}: {error.message()}")?
-    path.write_bytes(content).map_err((error) => f"cannot write {path.0}: {error.message()}")?
+    path.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    path.write_bytes(content).map_err((error) => f"cannot {error.message()}")?
     return Ok(true)
 
 

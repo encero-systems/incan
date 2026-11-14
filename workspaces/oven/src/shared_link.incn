@@ -44,7 +44,7 @@ pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[
     if not development_link(unit, requested):
         return Ok([])
     directory = bakery()?.joinpath("native-shared").absolute().map_err(
-        (error) => f"cannot make absolute {error.message()}",
+        (error) => f"cannot {error.message()}",
     )?
     return Ok(["--shared-native", directory.0])
 
