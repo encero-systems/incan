@@ -861,9 +861,9 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             )
 
 
-def read_file(path: Path) -> Result[bytes, str]:
-    """A file's bytes."""
-    return path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")
+pub def read_file(path: Path) -> Result[bytes, str]:
+    """A file's bytes, naming the read and the path when reading fails, as `files.read` does."""
+    return path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")
 
 
 def absolute(path: str) -> str:

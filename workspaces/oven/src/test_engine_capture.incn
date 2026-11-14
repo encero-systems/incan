@@ -18,6 +18,7 @@ from engine_capture import (
     capture,
     capture_with,
     decoded_epoch,
+    read_file,
 )
 from engine_epochs import capture_submit, prepare_submit, after_projection
 from pub::incan_platform.store import commit
@@ -312,6 +313,17 @@ pub def test_a_file_changing_during_its_read_is_retried_then_reported_unstable()
     assert always.unstable == [helper.0] and always.epoch is None
     assert always.counters.retries == READ_ATTEMPTS - 1
     assert always.counters.in_reach.reads == 3 + READ_ATTEMPTS
+    return Ok(None)
+
+
+pub def test_a_source_that_cannot_be_read_names_the_read_and_its_path() -> Result[None, str]:
+    """A source the capture cannot read is refused with the attempted operation and its exact path."""
+    scratch = scratch_directory()?
+    missing = scratch.path().joinpath("app/src/missing.incn")
+    match read_file(missing):
+        Ok(_) => return Err(f"{missing.0}: a missing source was read")
+        Err(reason) =>
+            assert reason.startswith(f"cannot read {missing.0}: "), reason
     return Ok(None)
 
 
