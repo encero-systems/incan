@@ -55,6 +55,14 @@ const PROJECT_KEYS: FrozenList[str] = [
     "requires-incan",
     "private",
     "registry-id",
+    # 0.5.1's further package metadata, accepted as authored; like the fields above, it does not reach a unit.
+    "maintainers",
+    "homepage",
+    "repository",
+    "documentation",
+    "issues",
+    "keywords",
+    "classifiers",
 ]
 
 
