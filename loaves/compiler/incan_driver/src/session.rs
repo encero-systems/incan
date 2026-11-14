@@ -174,8 +174,11 @@ impl CompilationSession {
         }
         let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
         let loaves = Arc::new(loaves);
-        // The implicit prelude also owns the linked string-conversion and entry-initialization contracts.
-        let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);
+        // The implicit prelude also owns the linked string-conversion and entry-initialization contracts. Formatting
+        // and import collection link nothing, so they leave its manifest to demand; reading it was most of their time.
+        if !formatting {
+            let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);
+        }
         let library_imported_vocab = loaves.imported_vocab();
         let library_imported_dsl_surfaces = loaves.imported_dsl_surfaces();
         loaves
