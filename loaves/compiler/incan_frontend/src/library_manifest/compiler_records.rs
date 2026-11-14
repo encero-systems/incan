@@ -71,7 +71,8 @@ pub enum RecordFamily {
     Layout,
     /// Which parameters and fields of one declaration have a default, and the defaults.
     Default,
-    /// One public namespace of the checked API: its members, child modules and the identities of its public paths.
+    /// One public namespace of the checked API: its members, child modules and the identities of its public paths, and
+    /// what its parent namespace publishes under its name.
     PublicNamespace,
     RustAbi,
 }
@@ -314,7 +315,8 @@ fn declaration_fact_records(
 }
 
 /// One record per public namespace of the documentation-free `api`, named by its path: its members, its child modules
-/// and the identities of the public paths directly under it, so a consumer resolves an import of it from that record.
+/// and the identities of the public paths directly under it, and what its parent publishes under its name, so a
+/// consumer resolves an import of it from that record.
 fn namespace_records(
     api: &crate::api_metadata::CheckedApiMetadataPackage,
     graph: &super::LibraryIdentityGraph,
@@ -330,12 +332,28 @@ fn namespace_records(
             .iter()
             .filter(|export| export.public_path.len() == prefix.len() + 1 && export.public_path.starts_with(&prefix))
             .collect::<Vec<_>>();
-        let value = json!({
+        let mut value = json!({
             "path": namespace.path,
             "members": namespace.members,
             "child_modules": namespace.child_modules,
             "identities": identities,
         });
+        // What the parent namespace publishes under this namespace's name, so a consumer importing this namespace from
+        // its parent reads this record alone, never the parent's, which carries every member of its child modules.
+        if let Some((name, parent)) = namespace.path.split_last()
+            && !parent.is_empty()
+            && let Some(parent) = api
+                .public_namespaces
+                .iter()
+                .find(|candidate| candidate.path.as_slice() == parent)
+        {
+            let named = parent
+                .members
+                .iter()
+                .filter(|member| member.name == *name)
+                .collect::<Vec<_>>();
+            value["parent_members"] = json!(named);
+        }
         records.push(record(
             RecordFamily::PublicNamespace,
             index,

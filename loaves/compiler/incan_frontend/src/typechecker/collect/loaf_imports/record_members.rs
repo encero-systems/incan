@@ -76,9 +76,26 @@ impl TypeChecker {
         module_path: &[String],
         member: &str,
     ) -> bool {
-        !module_path.is_empty()
-            && matches!(self.loaves.public_namespace(library, module_path), Ok(Some(namespace))
-                if namespace_members(&namespace, member).is_empty())
+        self.record_namespace_members(library, module_path, member)
+            .is_some_and(|members| members.is_empty())
+    }
+
+    /// The members the public namespace `module_path` of `library` publishes under `member`, from its records. When
+    /// `member` is also a child namespace, that child's record names them, so the parent's record, which carries every
+    /// member of its child modules, is not read. `None` when the records cannot tell.
+    fn record_namespace_members(&self, library: &str, module_path: &[String], member: &str) -> Option<Vec<Value>> {
+        if module_path.is_empty() {
+            return None;
+        }
+        let mut child = module_path.to_vec();
+        child.push(member.to_owned());
+        if let Ok(Some(namespace)) = self.loaves.public_namespace(library, &child)
+            && let Some(members) = namespace.get("parent_members").and_then(Value::as_array)
+        {
+            return Some(members.clone());
+        }
+        let namespace = self.loaves.public_namespace(library, module_path).ok()??;
+        Some(namespace_members(&namespace, member).into_iter().cloned().collect())
     }
 
     /// Resolve a function published by a public namespace from the namespace's record and the function's own
@@ -92,8 +109,7 @@ impl TypeChecker {
         member: &str,
     ) -> Option<ResolvedPublicModuleSymbol> {
         let admitted = self.loaves.admitted(library)?;
-        let namespace = self.loaves.public_namespace(library, module_path).ok()??;
-        let members = namespace_members(&namespace, member);
+        let members = self.record_namespace_members(library, module_path, member)?;
         let [found] = members.as_slice() else {
             return None;
         };
@@ -129,6 +145,7 @@ impl TypeChecker {
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_owned()))
             .collect::<Vec<_>>();
+        let namespace = self.loaves.public_namespace(library, module_path).ok()??;
         let identities: Vec<ExportIdentity> = serde_json::from_value(namespace.get("identities")?.clone()).ok()?;
         let matching = identities
             .iter()
