@@ -1,5 +1,4 @@
 # behavior: a consumer omits a dependency parameter whose default constructs a model with a native `Rc.new(RefCell.new(...))` field default, and constructs that model itself with the field omitted; both evaluate the dependency's defaults
-# pending: a dependency's published model does not carry the native callees its field-default frame calls, and the dependency's own callable inventory omits them when no body of its own lowers that frame, so the consumer's lowering refuses `std::cell::RefCell::new` as an unresolved call target
 # expect-stdout:
 #   1
 #   1

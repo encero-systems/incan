@@ -327,16 +327,27 @@ pub(super) fn project_body(
     })
 }
 
+/// A published nominal layout, the declarations it requires, and the native callees its retained default frames
+/// select. A consumer that omits a field or a partial's argument evaluates those frames in its own body, so it needs
+/// the producer's selections exactly as for a compiled callable's default frame.
+pub(super) struct ProjectedNominal {
+    pub nominal: crate::body_ir::NominalDeclaration,
+    pub requirements: BTreeSet<CanonicalSymbolId>,
+    pub callables: Vec<crate::body_ir::LoafCallable>,
+}
+
 /// Audit a checked plain-model layout with the same type/reference rules used for executable bodies.
 ///
 /// Every field, including private storage, retains its checked identity and type in the required execution layout.
-/// A generic layout also retains its own template binding when none of its field types names the owner.
+/// A generic layout also retains its own template binding when none of its field types names the owner. Native calls
+/// in its default frames are selected from `native_callables`, the package's whole checked inventory.
 pub(super) fn project_nominal(
     source: &crate::body_ir::NominalDeclaration,
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
-) -> Result<(crate::body_ir::NominalDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    native_callables: &[&crate::body_ir::LoafCallable],
+) -> Result<ProjectedNominal, CoverageReason> {
     // Local inheritance is executable only with the validated full source module; package closure is not admitted.
     if source.class_inheritance.is_some() {
         return Err(CoverageReason::UnsupportedConstruct);
@@ -395,16 +406,20 @@ pub(super) fn project_nominal(
     if let Some(method) = &mut nominal.display_method {
         audit.identity(method, true)?;
     }
+    // Default frames run in the consumer's body; their native selections travel with the layout.
+    let mut native_calls = Vec::new();
     if let Some(defaults) = &source.field_default_body {
         let projected = project_body(defaults, module, library, eligible)?;
         nominal.field_default_body = Some(Box::new(projected.body));
         audit.requirements.extend(projected.requirements);
+        native_calls.extend(projected.native_calls);
     }
     for binding in &mut nominal.method_partial_defaults {
         audit.identity(&mut binding.target, true)?;
         let projected = project_body(&binding.frame, module, library, eligible)?;
         *binding.frame = projected.body;
         audit.requirements.extend(projected.requirements);
+        native_calls.extend(projected.native_calls);
     }
     let carrier = if source.type_parameters.is_empty() {
         source.carrier_name()
@@ -418,7 +433,14 @@ pub(super) fn project_nominal(
         audit.used_nominal_types.insert(carrier, nominal.canonical.clone());
     }
     nominal.named_type_identities = audit.used_nominal_types;
-    Ok((nominal, audit.requirements))
+    // A selection the inventory cannot supply leaves the layout as it was: a consumer that omits such a field still
+    // refuses at its own lowering, naming the callee, while every consumer that supplies it keeps the layout.
+    let callables = selected_native_calls(&native_calls, native_callables).unwrap_or_default();
+    Ok(ProjectedNominal {
+        nominal,
+        requirements: audit.requirements,
+        callables,
+    })
 }
 
 /// Project a checked normal enum, retaining canonical variant addresses and auditing every payload type.
