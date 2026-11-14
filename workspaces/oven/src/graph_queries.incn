@@ -84,6 +84,15 @@ class Index:
             return [f"{record_kind} {label} {where}"]
         return []
 
+    pub def named(self, term: str) -> list[str]:
+        """The term, and the ids and identities of the declarations and modules it names."""
+        return [term] + self.selected + self.modules + self.identities + self.canonical_targets
+
+    pub def shares(self, record: JsonValue) -> bool:
+        """Whether a declaration is one the term names, or shares a proved identity with one."""
+        proved = identity(record)
+        return text(record, "id") in self.selected or (proved != "" and proved in self.identities)
+
     def names_selection(self, record: JsonValue, term: str) -> bool:
         """Match a recorded target against exact ids or checked identities without duplicating the index."""
         proved = identity(record)
@@ -265,3 +274,61 @@ def indexed(records: list[JsonValue], term: str) -> Index:
     for record in records:
         index.add(record, term)
     return index
+
+
+def distinct(values: list[str]) -> list[str]:
+    """The values that are not empty, once each, in their first order."""
+    mut seen: Dict[str, bool] = {}
+    mut result: list[str] = []
+    for value in values:
+        if value != "" and value not in seen:
+            seen[value] = true
+            result.append(value)
+    return result
+
+
+def structured(value: JsonValue, key: str) -> str:
+    """A structured identity as the text identities are compared by, empty when the record carries none."""
+    item = nested(value, key)
+    match item.as_object():
+        None => return ""
+        Some(_) => return item.to_json().unwrap_or("")
+
+
+pub def relationship_keys(record: JsonValue) -> list[str]:
+    """
+    Every value a query can select a reference, call or import by.
+
+    `Index.lines` selects a relationship through the declaration or module it targets or belongs to, through an
+    identity it shares with a selected declaration, or through its own name and ids. A relationship none of whose
+    keys is among `selection_keys` gives no line for that term.
+    """
+    label = display(record)
+    parts = label.split("::")
+    mut keys: list[str] = []
+    for field in ["target_id", "declaration_id", "source_id", "owner_id", "module_id", "id", "raw_id"]:
+        keys.append(text(record, field))
+    keys.extend([identity(record), canonical(record), label, parts[len(parts) - 1]])
+    keys.extend([structured(record, "stable_identity"), structured(record, "canonical_identity")])
+    return distinct(keys)
+
+
+pub def selection_keys(nodes: list[JsonValue], term: str) -> list[str]:
+    """
+    Every value by which a relationship can name what `term` selects among these modules and declarations.
+
+    1. The term itself, and the ids and identities of the declarations and modules it names.
+    2. A relationship is joined to a selected declaration's key through any declaration that shares that key, so each
+       such declaration's id and identities count too.
+    """
+    # 1. The term, and what it names.
+    index = indexed(nodes, term)
+    mut keys = index.named(term)
+    # 2. Every declaration that shares a selected identity.
+    for record in nodes:
+        if text(record, "record") != "declaration":
+            continue
+        if index.shares(record):
+            keys.extend([text(record, "id"), identity(record), canonical(record)])
+            keys.extend([structured(record, "stable_identity"), structured(record, "canonical_identity")])
+    return distinct(keys)

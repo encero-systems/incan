@@ -1,0 +1,43 @@
+"""A published graph's relationships are prepared once and read by the keys a query's term can select."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.tempfile import TemporaryDirectory
+from graph_cache import relationship_candidates, write_relationships
+from graph_queries import selection_keys
+
+
+def reference(id: str, target: str, name: str) -> str:
+    """One decoded reference line: its id, the declaration it targets (if resolved) and the name it was written as."""
+    mut fields = {"record": JsonValue.string("reference"), "id": JsonValue.string(id), "name": JsonValue.string(name)}
+    if target != "":
+        fields["target_id"] = JsonValue.string(target)
+    return JsonValue.object(fields).to_json().unwrap()
+
+
+def declaration(id: str, name: str) -> JsonValue:
+    """One declaration a term can name."""
+    return parse(f"{{\"record\":\"declaration\",\"id\":\"{id}\",\"name\":\"{name}\"}}").unwrap()
+
+
+pub def test_a_term_reads_only_the_relationships_it_can_select() -> Result[None, str]:
+    """
+    A prepared graph gives a query the relationships filed under what its term names: the references to the declaration
+    the term selects and the unresolved ones written with its name, in their recorded order, and no other line. A line
+    after non-ASCII text is still read whole.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    location = scratch.path().joinpath("graph.relationships")
+    accented = reference("graph:r4", "graph:d2", "nœud")
+    to_helper = reference("graph:r1", "graph:d1", "helper")
+    to_other = reference("graph:r2", "graph:d2", "other")
+    unresolved = reference("graph:r3", "", "helper")
+    header = "{\"record\":\"header\"}"
+    write_relationships(location, "\n".join([header, accented, to_helper, to_other, unresolved]) + "\n")?
+    nodes = [declaration("graph:d1", "helper"), declaration("graph:d2", "other")]
+    selected = relationship_candidates(location, selection_keys(nodes, "helper"))?
+    assert selected == [to_helper, unresolved], "\n".join(selected)
+    others = relationship_candidates(location, selection_keys(nodes, "other"))?
+    assert others == [accented, to_other], "\n".join(others)
+    assert relationship_candidates(location, selection_keys(nodes, "absent"))? == []
+    return Ok(None)
