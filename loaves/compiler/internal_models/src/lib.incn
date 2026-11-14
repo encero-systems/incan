@@ -149,11 +149,5 @@ pub from checker_records import (
     record_root,
 )
 pub from checker_field_grammar import CodecFault
-pub from compiled_body_frames import (
-    CompiledBodyOutput,
-    encode_compiled_body_outputs,
-    compiled_body_frame_size,
-    decode_compiled_body_frame,
-    decode_compiled_body_payload,
-)
+pub from compiled_body_rows import CompiledBodyOutput, encode_compiled_body_rows, decode_compiled_body_row
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

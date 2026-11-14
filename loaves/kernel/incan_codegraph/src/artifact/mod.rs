@@ -1,18 +1,20 @@
-//! Versioned indexed-postcard Loaf graphs. The index locates independent records; decoding does not need source or a
+//! Versioned indexed Crumb-row Loaf graphs. The index locates independent records; decoding does not need source or a
 //! checker.
 
+mod crumb;
 mod paths;
 mod value;
 
 use crate::CodegraphRecord;
+use crumb::{decode_payload_row, encode_payload_row};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 use value::GraphValue;
 
-/// Layout version of `.incngraph`: little-endian u32 version, u64 index length, postcard index, then postcard records.
-pub const GRAPH_ARTIFACT_VERSION: u32 = 1;
+/// Layout version of `.incngraph`: little-endian u32 version, u64 index length, postcard index, then Crumb rows.
+pub const GRAPH_ARTIFACT_VERSION: u32 = 2;
 
 /// A malformed or unsupported graph never supplies partial semantic facts to an inspection consumer.
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +39,7 @@ struct Entry {
     length: u64,
 }
 
-/// Shared field names and record ranges are decoded once; record payloads remain lazy.
+/// Record ranges are decoded once; independently typed Crumb rows remain lazy.
 #[derive(Serialize, Deserialize)]
 struct Index {
     fields: Vec<String>,
@@ -60,8 +62,12 @@ pub fn encode_graph(records: &[CodegraphRecord], root: &Path) -> Result<Vec<u8>,
             .unwrap_or_default()
             .to_owned();
         let id = wire.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
-        let bytes = postcard::to_allocvec(&GraphValue::pack(wire, &mut fields)?)
+        let document = postcard::to_allocvec(&GraphValue::pack(wire, &mut fields)?)
             .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+        let (selector, model) = crumb_model(&kind)
+            .ok_or_else(|| GraphArtifactError::Malformed(format!("unknown graph record kind {kind}")))?;
+        let bytes = encode_payload_row(selector.to_vec(), model.to_string(), kind.clone(), id.clone(), document)
+            .ok_or_else(|| GraphArtifactError::Malformed("cannot encode graph Crumb row".into()))?;
         entries.push(Entry {
             kind,
             id,
@@ -214,11 +220,18 @@ impl GraphArtifact {
     fn value(&self, entry: &Entry) -> Result<Value, GraphArtifactError> {
         let offset = usize::try_from(entry.offset).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
         let length = usize::try_from(entry.length).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
-        let value: GraphValue = postcard::from_bytes(&self.payload[offset..offset + length])
-            .map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
+        let row = decode_payload_row(&self.payload[offset..offset + length])
+            .ok_or_else(|| GraphArtifactError::Malformed("invalid graph Crumb row".into()))?;
+        let (selector, model) = crumb_model(&entry.kind)
+            .ok_or_else(|| GraphArtifactError::Malformed(format!("unknown graph record kind {}", entry.kind)))?;
+        if row.selector != selector || row.model != model || row.kind != entry.kind || row.id != entry.id {
+            return Err(GraphArtifactError::Malformed("record does not match its index".into()));
+        }
+        let value: GraphValue =
+            postcard::from_bytes(&row.payload).map_err(|error| GraphArtifactError::Malformed(error.to_string()))?;
         let value = value.unpack(&self.index.fields)?;
-        if value.get("record").and_then(Value::as_str) != Some(entry.kind.as_str())
-            || value.get("id").and_then(Value::as_str).unwrap_or_default() != entry.id
+        if value.get("record").and_then(Value::as_str) != Some(row.kind.as_str())
+            || value.get("id").and_then(Value::as_str).unwrap_or_default() != row.id
         {
             return Err(GraphArtifactError::Malformed("record does not match its index".into()));
         }
@@ -228,5 +241,108 @@ impl GraphArtifact {
             return Err(GraphArtifactError::Malformed("unsupported graph wire schema".into()));
         }
         Ok(value)
+    }
+}
+
+fn crumb_model(kind: &str) -> Option<(&'static [u8], &'static str)> {
+    Some(match kind {
+        "header" => (b"cghead\0", "incan.codegraph.header/2"),
+        "file" => (b"cgfile\0", "incan.codegraph.file/2"),
+        "namespace" => (b"cgnmsp\0", "incan.codegraph.namespace/2"),
+        "module" => (b"cgmodu\0", "incan.codegraph.module/2"),
+        "declaration" => (b"cgdecl\0", "incan.codegraph.declaration/2"),
+        "import" => (b"cgimpt\0", "incan.codegraph.import/2"),
+        "export" => (b"cgexpt\0", "incan.codegraph.export/2"),
+        "reference" => (b"cgrefe\0", "incan.codegraph.reference/2"),
+        "call" => (b"cgcall\0", "incan.codegraph.call/2"),
+        "containment" => (b"cgcont\0", "incan.codegraph.containment/2"),
+        "diagnostic" => (b"cgdiag\0", "incan.codegraph.diagnostic/2"),
+        "registry" => (b"cgregi\0", "incan.codegraph.registry/2"),
+        "c_binding" => (b"cgbind\0", "incan.codegraph.c-binding/2"),
+        "c_binding_call" => (b"cgclal\0", "incan.codegraph.c-binding-call/2"),
+        "c_binding_facade" => (b"cgfacd\0", "incan.codegraph.c-binding-facade/2"),
+        "capability" => (b"cgcapb\0", "incan.codegraph.capability/2"),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GraphArtifact, crumb_model, encode_graph};
+    use crate::{
+        CODEGRAPH_SCHEMA_VERSION, CodegraphFileRecord, CodegraphHeaderRecord, CodegraphLanguage, CodegraphMode,
+        CodegraphProvenance, CodegraphRecord,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn all_sixteen_record_kinds_have_distinct_crumb_models() {
+        let kinds = [
+            "header",
+            "file",
+            "namespace",
+            "module",
+            "declaration",
+            "import",
+            "export",
+            "reference",
+            "call",
+            "containment",
+            "diagnostic",
+            "registry",
+            "c_binding",
+            "c_binding_call",
+            "c_binding_facade",
+            "capability",
+        ];
+        let mut selectors = std::collections::BTreeSet::new();
+        let mut models = std::collections::BTreeSet::new();
+        for kind in kinds {
+            let Some((selector, model)) = crumb_model(kind) else {
+                panic!("missing Crumb model for {kind}");
+            };
+            assert_eq!(selector.len(), 7);
+            assert!(selectors.insert(selector));
+            assert!(models.insert(model));
+        }
+    }
+
+    #[test]
+    fn every_indexed_graph_record_is_an_independent_crumb_row() -> Result<(), Box<dyn std::error::Error>> {
+        let records = vec![
+            CodegraphRecord::Header(CodegraphHeaderRecord {
+                schema_version: CODEGRAPH_SCHEMA_VERSION,
+                compiler_version: "test".to_string(),
+                mode: CodegraphMode::Strict,
+                root_path: "src/main.incn".to_string(),
+                languages: vec![CodegraphLanguage::Incan],
+                package: None,
+                semantic_contexts: Vec::new(),
+                degraded: false,
+            }),
+            CodegraphRecord::File(CodegraphFileRecord {
+                id: "file:src/main.incn".to_string(),
+                language: CodegraphLanguage::Incan,
+                path: "src/main.incn".to_string(),
+                size_bytes: 12,
+                provenance: CodegraphProvenance::Source,
+                degraded: false,
+            }),
+        ];
+        let encoded = encode_graph(&records, Path::new("."))?;
+        let graph = GraphArtifact::decode(&encoded)?;
+        for entry in &graph.index.entries {
+            let offset = usize::try_from(entry.offset)?;
+            let length = usize::try_from(entry.length)?;
+            assert_eq!(&graph.payload[offset..offset + length][..4], b"CRMB");
+        }
+        assert_eq!(
+            graph.records(Path::new("."), "")?,
+            records
+                .iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?
+        );
+        Ok(())
     }
 }
