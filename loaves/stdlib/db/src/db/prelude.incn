@@ -1,10 +1,11 @@
 """
 Typed embedded storage over the platform's store substrate (RFC 165).
 
-Open a store with `memory()` or `open(path)` and release it with `close()`. Every operation returns
-`Result[..., DbError]`; match on `DbError.kind`, never on its detail text.
+Open a store with `memory()` or `open(path)`, select a named view with `store.view(name)`, and release the store
+with `close()`. Every operation returns `Result[..., DbError]`; match on `DbError.kind`, never on its detail text.
 """
 
 pub from crate.db.errors import DbError, DbErrorKind, DbOperation
 pub from crate.db.handle import Placement
 pub from crate.db.store import Store, memory, open
+pub from crate.db.views import View

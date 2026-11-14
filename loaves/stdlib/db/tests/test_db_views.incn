@@ -1,0 +1,59 @@
+"""Named views: opened or created empty in one publication, with names the store can record."""
+
+from std.tempfile import TemporaryDirectory
+from db.errors import DbError, DbErrorKind, DbOperation
+from db.store import memory, open
+
+
+pub def test_a_view_is_created_once_and_reopened_by_name() -> Result[None, str]:
+    """The first `view(name)` creates an empty view; later calls, and a reopened store, find that same view."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("site.db")
+    store = checked(open(path))?
+    assert checked(store.views())? == [], "a new store already names views"
+    published = checked(store.view("published"))?
+    assert published.name == "published"
+    _ = checked(store.view("published"))?
+    _ = checked(store.view("drafts"))?
+    assert checked(store.views())? == ["drafts", "published"]
+    checked(store.close())?
+    reopened = checked(open(path))?
+    assert checked(reopened.views())? == ["drafts", "published"], "views did not survive reopening"
+    return Ok(None)
+
+
+pub def test_a_view_name_the_store_cannot_record_is_refused() -> Result[None, str]:
+    """An empty name, or one holding whitespace or a control character, is refused before anything is published."""
+    store = checked(memory())?
+    for name in ["", " lead", "trail ", "two words", "tab\there", "line\nbreak", "del\x7f"]:
+        match store.view(name):
+            Ok(_) =>
+                assert false, f"accepted the view name {name}"
+            Err(error) =>
+                assert error.kind == DbErrorKind.InvalidName, error.message()
+                assert error.operation == DbOperation.View, error.message()
+    assert checked(store.views())? == [], "a refused name was published"
+    return Ok(None)
+
+
+pub def test_a_closed_store_refuses_its_views() -> Result[None, str]:
+    """After `close()`, opening or listing views is refused as closed."""
+    store = checked(memory())?
+    _ = checked(store.view("published"))?
+    checked(store.close())?
+    match store.view("published"):
+        Ok(_) =>
+            assert false, "a closed store opened a view"
+        Err(error) =>
+            assert error.kind == DbErrorKind.Closed, error.message()
+    match store.views():
+        Ok(_) =>
+            assert false, "a closed store listed its views"
+        Err(error) =>
+            assert error.kind == DbErrorKind.Closed, error.message()
+    return Ok(None)
+
+
+def checked[T](result: Result[T, DbError]) -> Result[T, str]:
+    """A `std.db` result with its failure as the test's message."""
+    return result.map_err((error) => error.message())

@@ -1,12 +1,14 @@
 """Opening and closing a store: an isolated memory store, or a disk store that is never adopted from foreign files."""
 
 from std.fs import Path
-from pub::incan_platform.store import check_format, read_store_identity, store_identity
+from pub::incan_platform.store import HOME_VIEW, check_format, read_store_identity, store_identity
+from pub::incan_platform.store import fork as substrate_fork, snapshot as substrate_snapshot
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
 from crate.db.handle import Placement, StoreHandle
+from crate.db.views import View, check_view_name
 
 
 pub class Store:
@@ -35,6 +37,24 @@ pub class Store:
         """
         self.handle.close()
         return Ok(None)
+
+    pub def view(self, name: str) -> Result[View, DbError]:
+        """
+        The view named `name`, created empty when the store has no view of that name.
+
+        Creating a view is one atomic publication. Two callers creating the same name at once both receive that one
+        view; neither replaces the other.
+        """
+        self.handle.require_open(DbOperation.View)?
+        check_view_name(DbOperation.View, name)?
+        if name not in self.views()?:
+            create_view(self.handle, name)?
+        return Ok(View.of(self.handle.clone(), name))
+
+    pub def views(self) -> Result[list[str], DbError]:
+        """The names of the store's views in its current generation, in name order."""
+        self.handle.require_open(DbOperation.View)?
+        return view_names(self.handle)
 
 
 pub def memory() -> Result[Store, DbError]:
@@ -89,3 +109,26 @@ def refuse_foreign(root: StorePath) -> Result[None, DbError]:
 def not_a_store(root: StorePath, detail: str) -> DbError:
     """The refusal to open a path that holds something other than a store."""
     return DbError.refused(DbErrorKind.Scope, DbOperation.Open, root.value, detail)
+
+
+def view_names(handle: StoreHandle) -> Result[list[str], DbError]:
+    """The view names the store's current generation records, in name order."""
+    current = substrate_snapshot(handle.root, HOME_VIEW).map_err((error) => store_failure(DbOperation.View, error))?
+    return Ok([entry.view for entry in current.views])
+
+
+def create_view(handle: StoreHandle, name: str) -> Result[None, DbError]:
+    """
+    Publish an empty view `name`.
+
+    The substrate forks the absent view of that name, whose root is empty, under its publication lock. When another
+    caller published the name first, the fork is refused as a conflict and the name exists: that is the same view.
+    """
+    absent = substrate_snapshot(handle.root, name).map_err((error) => store_failure(DbOperation.View, error))?
+    match substrate_fork(absent, name):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            failed = store_failure(DbOperation.View, error)
+            if failed.kind == DbErrorKind.Conflict and name in view_names(handle)?:
+                return Ok(None)
+            return Err(failed)

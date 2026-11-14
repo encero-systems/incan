@@ -1,0 +1,35 @@
+"""Named views of a store: roots that change only through publication."""
+
+from crate.db.errors import DbError, DbErrorKind, DbOperation
+from crate.db.handle import StoreHandle
+
+
+pub model View:
+    """One named view of an opened store. Reads and writes reach it through snapshots and transactions."""
+
+    handle: StoreHandle
+    pub name: str
+
+    @staticmethod
+    pub def of(handle: StoreHandle, name: str) -> View:
+        """The view `name` of the store `handle` opened; the caller has checked that it exists."""
+        return View(handle=handle, name=name)
+
+
+pub def check_view_name(operation: DbOperation, name: str) -> Result[None, DbError]:
+    """
+    Refuse a view name the store cannot record.
+
+    A name is nonempty and holds no whitespace or control character, so it is one token wherever the store records it.
+    """
+    if name == "":
+        return Err(invalid_view_name(operation, name, "a view name is empty"))
+    for character in name:
+        if character <= " " or character == "\x7f":
+            return Err(invalid_view_name(operation, name, "a view name holds whitespace or a control character"))
+    return Ok(None)
+
+
+def invalid_view_name(operation: DbOperation, name: str, detail: str) -> DbError:
+    """The refusal of one view name."""
+    return DbError.refused(DbErrorKind.InvalidName, operation, name, detail)
