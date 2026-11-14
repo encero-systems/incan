@@ -1,5 +1,8 @@
 """Select private callable products by complete source-independent semantic input equivalence."""
 
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
+from rust::std::rc import Rc
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, read_json
@@ -163,11 +166,12 @@ def closure_inputs(
             if len(pair) != 2:
                 return Err("native closure binding must name exactly one alias and artifact")
             name = string_value(pair[0])?
-            path = located(directory, string_value(pair[1])?, anchors)?
+            path = located(directory, string_value(pair[1])?, locations, anchors)?
             inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities, locations, anchors)?)
     inputs.append("search")
     for item in required_items(closure, "search")?:
-        inputs.append(search_identity(located(directory, string_value(item)?, anchors)?, locations, anchors)?)
+        searched = located(directory, string_value(item)?, locations, anchors)?
+        inputs.append(search_identity(searched, locations, anchors)?)
     return Ok(inputs)
 
 
@@ -176,6 +180,36 @@ model LoafLocations:
 
     directories: Dict[str, str] = {}
     rlibs: Dict[str, str] = {}
+    paths: ResolvedPaths = ResolvedPaths()
+
+
+model ResolvedPaths:
+    """
+    The physical locations one selection has resolved. Its Loaves' native closures name the same installed files many
+    times over, and nothing moves them while it runs, so each path is read from the filesystem once per selection.
+    """
+
+    state: Rc[RefCell[ResolvedPathState]] = Rc.new(RefCell.new(ResolvedPathState()))
+
+    def resolved(self, path: Path) -> Result[Path, str]:
+        """`path`'s physical location, resolved on its first use in this selection."""
+        mut held = self.state.as_ref().borrow_mut()
+        return remembered_location(path, held.deref_mut())
+
+
+model ResolvedPathState:
+    """Physical locations by the path that was resolved."""
+
+    locations: Dict[str, str] = {}
+
+
+def remembered_location(path: Path, mut state: &mut ResolvedPathState) -> Result[Path, str]:
+    """The location this selection first resolved for `path`."""
+    if path.0 in state.locations:
+        return Ok(Path(state.locations[path.0]))
+    selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    state.locations[path.0] = selected.0
+    return Ok(selected)
 
 
 def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
@@ -185,12 +219,12 @@ def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
     """
     mut locations = LoafLocations()
     for loaf in unit.loaves:
-        directory = Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+        directory = locations.paths.resolved(Path(loaf.dir))?.0
         if directory not in locations.directories:
             locations.directories[directory] = loaf.name
         expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
         if frozen_observation(expected).is_some() or expected.is_file():
-            rlib = expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+            rlib = locations.paths.resolved(expected)?.0
             if rlib not in locations.rlibs:
                 locations.rlibs[rlib] = loaf.name
     return Ok(locations)
@@ -204,7 +238,7 @@ def binding_identity(
     anchors: NativeAnchors,
 ) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain anchored native identity."""
-    path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    path = locations.paths.resolved(Path(native.path))?
     if native.name not in unit.rust_crates and path.0 in locations.rlibs:
         return Ok(f"loaf:{native.name}:{locations.rlibs[path.0]}")
     return fingerprint([native.name, anchored_reference(path.0, anchors), identities.identity(path)?])
@@ -212,16 +246,16 @@ def binding_identity(
 
 def search_identity(path: Path, locations: LoafLocations, anchors: NativeAnchors) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
-    selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    selected = locations.paths.resolved(path)?
     if selected.0 in locations.directories:
         return Ok(f"loaf:{locations.directories[selected.0]}")
     return Ok(anchored_reference(selected.0, anchors))
 
 
-def located(directory: Path, path: str, anchors: NativeAnchors) -> Result[Path, str]:
+def located(directory: Path, path: str, locations: LoafLocations, anchors: NativeAnchors) -> Result[Path, str]:
     """Resolve a published native-closure reference against the current home, then to its physical path."""
     selected = Path(closure_reference(directory, path, anchors)?)
-    return selected.resolve().map_err((error) => f"cannot resolve {error.message()}")
+    return locations.paths.resolved(selected)
 
 
 def native_search_inputs(
