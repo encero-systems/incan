@@ -520,7 +520,7 @@ def records_command(command: str, arguments: list[str]) -> None:
     match parse_options(own, "."):
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
-            options = validated(command, located(command, parsed))
+            options = records_validated(command, located(command, parsed))
             if (
                 options.feature_options
                 or len(options.substitutes) > 0
@@ -546,6 +546,15 @@ def records_command(command: str, arguments: list[str]) -> None:
                 execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
                 format,
             )
+
+
+def records_validated(command: str, options: Options) -> Options:
+    """Validate a records command's options; the records engine produces the engine report run and build ask for."""
+    mut shared = options
+    if command in ["run", "build"]:
+        shared.engine_report = false
+    _ = validated(command, shared)
+    return options
 
 
 def records_route(command: str, arguments: list[str]) -> bool:
