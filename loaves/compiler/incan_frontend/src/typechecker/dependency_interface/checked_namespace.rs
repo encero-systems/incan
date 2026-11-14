@@ -114,10 +114,9 @@ impl CheckedNamespaceInterface {
     /// Rebuild the exact immutable dependency tables consumed by downstream editable modules.
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
-        let converter = TypeChecker::new();
+        let mut converter = TypeChecker::new();
         let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
         let mut symbols = HashMap::new();
-        let mut callables = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
         for declaration in &self.api.declarations {
@@ -147,15 +146,6 @@ impl CheckedNamespaceInterface {
                 continue;
             };
             converter.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
-            if let SymbolKind::Function(function_info) = &kind {
-                callables.insert(
-                    identity.clone(),
-                    DeclarationCallableTypes {
-                        params: function_info.params.clone(),
-                        return_type: function_info.return_type.clone(),
-                    },
-                );
-            }
             symbols.insert(name.to_owned(), kind.clone());
             symbol_rows.push((
                 Symbol {
@@ -173,13 +163,35 @@ impl CheckedNamespaceInterface {
             .iter()
             .flat_map(namespace_exports)
             .collect::<Vec<_>>();
-        let symbols = Arc::new(symbols);
-        let identities = Arc::new(
-            self.identities
+        let identities = self
+            .identities
+            .iter()
+            .map(|(name, identity)| (name.clone(), identity.clone()))
+            .collect::<HashMap<_, _>>();
+        let nominal_scope = Arc::new(
+            identities
                 .iter()
+                .filter(|(_, identity)| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::Newtype
+                    )
+                })
                 .map(|(name, identity)| (name.clone(), identity.clone()))
                 .collect(),
         );
+        for (name, kind) in &symbols {
+            if let Some(identity) = identities.get(name) {
+                converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
+            }
+        }
+        converter.retain_nominal_scope_carriers(&nominal_scope);
+        let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
+        let symbols = Arc::new(symbols);
+        let identities = Arc::new(identities);
         let mut interface = ModuleDependencyInterface {
             module_name: self.module_name.clone(),
             module_path: self.module_path.clone(),
@@ -193,9 +205,9 @@ impl CheckedNamespaceInterface {
             direct_member_symbols: symbols,
             direct_member_type_aliases: Arc::default(),
             direct_member_identities: identities,
-            declaration_nominal_scopes: Arc::default(),
-            retained_nominal_carriers: Arc::default(),
-            declaration_callables: Arc::new(callables),
+            declaration_nominal_scopes: Arc::new(converter.declaration_nominal_scopes.clone()),
+            retained_nominal_carriers: Arc::new(converter.retained_nominal_carriers.clone()),
+            declaration_callables: Arc::new(converter.declaration_callables.clone()),
             member_reexports: Arc::new(reexports),
             body_ir_pub_reexports: Arc::default(),
             direct_member_partial_projections: Arc::default(),
@@ -203,8 +215,8 @@ impl CheckedNamespaceInterface {
             derivable_trait_identities: Arc::default(),
             module_traits: Arc::default(),
             trait_rust_derive_paths: Arc::default(),
-            transitive_public_types: Arc::default(),
-            transitive_public_traits: Arc::default(),
+            transitive_public_types: Arc::new(transitive_public_types),
+            transitive_public_traits: Arc::new(transitive_public_traits),
             compiled_libraries: Arc::from([]),
             public_library_type_identities: Arc::default(),
             symbol_rows: Arc::from(symbol_rows),
@@ -328,5 +340,48 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
         crate::api_metadata::ApiDeclaration::Static(item) => vec![ExportedSymbol::Static(item.name.clone())],
         crate::api_metadata::ApiDeclaration::Alias(item) => vec![ExportedSymbol::Reexported(item.name.clone())],
         crate::api_metadata::ApiDeclaration::Partial(item) => vec![ExportedSymbol::Function(item.name.clone())],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
+    #[test]
+    fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
+        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["domain".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
+            .ok_or("model namespace was not retained")?;
+        let installed = retained.installable()?;
+        let order = retained.identities.get("Order").ok_or("missing Order identity")?;
+        let scope = installed
+            .declaration_nominal_scopes
+            .get(order)
+            .ok_or("missing Order declaration scope")?;
+        assert_eq!(scope.get("Order"), Some(order));
+        let carrier =
+            incan_semantics_core::body_ir::nominal_carrier_key(order).ok_or("missing Order nominal carrier")?;
+        assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));
+        assert!(installed.transitive_public_types.contains_key("Order"));
+        assert!(installed.transitive_public_types.contains_key(&carrier));
+        let SymbolKind::Type(TypeInfo::Model(model)) = installed
+            .direct_member_symbols
+            .get("Order")
+            .ok_or("missing Order symbol")?
+        else {
+            return Err("Order is not a retained model".into());
+        };
+        assert!(model.fields.contains_key("quantity"));
+        assert!(model.fields.contains_key("unit_price"));
+        Ok(())
     }
 }
