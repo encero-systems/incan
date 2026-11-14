@@ -53,6 +53,62 @@ impl TypeChecker {
         true
     }
 
+    /// Bind `from <loaf>.<path> import <member>, …` from the Loaf's records when every item is a member they settle
+    /// exactly (see [`Self::record_module_member`]); a member takes precedence over a child namespace of its name, as
+    /// on the manifest route. Returns `false`, binding nothing, when one is not, and the manifest then decides the
+    /// import.
+    pub(super) fn collect_record_member_imports(
+        &mut self,
+        import: &LoafImport,
+        items: &[ImportItem],
+        span: Span,
+    ) -> bool {
+        let library = import.key.as_str();
+        if import.module.is_empty() || self.loaf_is_not_prepared(library) {
+            return false;
+        }
+        let Some(admitted) = self.loaves.admitted(library) else {
+            return false;
+        };
+        let mut members = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(resolved) = self.record_module_member(library, &import.module, &item.name) else {
+                return false;
+            };
+            let Some(source_module_path) = resolved
+                .source_module_path
+                .strip_prefix(admitted.binding_root.as_slice())
+            else {
+                return false;
+            };
+            members.push(PublicModuleMember {
+                kind: resolved.kind,
+                canonical: resolved.canonical,
+                source_module_path: source_module_path.to_vec(),
+                source_name: resolved.source_name,
+                type_alias: None,
+                partial_projection: None,
+            });
+        }
+        let mut source_module = admitted.binding_root.clone();
+        source_module.extend(import.module.iter().cloned());
+        for (item, member) in items.iter().zip(members) {
+            let local_name = Self::import_item_local_name(item);
+            if self.validate_protected_builtin_binding(&local_name, span) {
+                continue;
+            }
+            self.validate_root_namespace(&local_name, span);
+            if !self.loaf_import_needs_binding(&local_name, &source_module, &item.name, span) {
+                continue;
+            }
+            let mut binding_path = source_module.clone();
+            binding_path.push(item.name.clone());
+            self.define_pub_module_import_symbol(library, local_name.clone(), binding_path, member, span);
+            self.record_standard_surface_import(&admitted.binding_root, &import.module, item, &local_name, span);
+        }
+        true
+    }
+
     /// Whether the records prove `item`, imported from the namespace `module` of `library`, is one of its public
     /// namespaces and no declaration: no package-root export for a root import, no member of the parent namespace
     /// otherwise.
