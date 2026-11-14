@@ -43,7 +43,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN14 | Positional magic numbers (`parts[3]`) | 257 | 257 | 257 |
 | IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 11 |
 | IN16 | Failure messages that name no subject | 341 | 341 | 341 |
-| MD1 | Hard-wrapped Markdown prose | 32 | 28 | 32 |
+| MD1 | Hard-wrapped Markdown prose | 34 | 30 | 5 |
 | MD2 | RFC references in user-facing docs | 12 | 12 | 12 |
 | MD3 | Workstation paths in committed text | 8 | 0 | 8 |
 | PR1 | Production Python outside the allowed uses | 0 | 0 | 0 |
@@ -227,6 +227,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 - Source: `AGENTS.md`, "Docs-site Workflow" ("Line length: no hard wrap … and other non-code markdown files"); `.agents/skills/review/SKILL.md`, Checklist 5.
 - Search: [`markdown_wrap.awk`](#markdown_wrapawk) over every tracked `*.md` outside `fixtures`.
 - Not real: the button rows of `workspaces/docs-site/docs/index.md` (2), the generated `workspaces/docs-site/docs/language/reference/feature_inventory.md` (1, fixed in its generator) and the generated `workspaces/benchmarks/results/results.md` (1).
+- Left: `workspaces/docs-site/docs/language/reference/stdlib/json.md:28`. Joining it touches a reference page, and that page must first reach its contract (its line 45 states a rationale).
 
 ### MD2 RFC references in user-facing docs
 
@@ -321,7 +322,7 @@ fence { next }
   kind = ""
   if (item($0)) kind = "item"
   else if (prose($0)) kind = "prose"
-  else if ((prevkind == "item" || prevkind == "cont") && $0 ~ /^[ ]{2,4}[^ -*+0-9|>`<!]/ && $0 !~ /^[ ]*([-*+]|[0-9]+[.)])[ ]/) kind = "cont"
+  else if ((prevkind == "item" || prevkind == "cont") && $0 ~ /^[ ]{2,4}[^ *+0-9|>`<!-]/ && $0 !~ /^[ ]*([-*+]|[0-9]+[.)])[ ]/) kind = "cont"
   if ((kind == "prose" && prevkind == "prose") || (kind == "cont" && (prevkind == "item" || prevkind == "cont"))) {
     if (!reported) { print FILENAME ":" startline ":" start; reported = 1 }
   } else { reported = 0; start = $0; startline = FNR }

@@ -365,8 +365,7 @@ Each worker must perform this loop inside its slice:
    - and `scope.md` is honestly satisfied,
    or report a concrete blocker with its classification.
 
-The slice's `.agents/state/review-report.md` must be kept current throughout this loop.
-The slice folder under `STATE_ROOT/<slice-id>/` must also stay current throughout this loop.
+The slice's `.agents/state/review-report.md` must be kept current throughout this loop. The slice folder under `STATE_ROOT/<slice-id>/` must also stay current throughout this loop.
 
 Allowed slice states:
 
@@ -415,8 +414,7 @@ The orchestrator must:
 - invoke `flag-compiler-bug` for real out-of-scope compiler defects found during integration
 - repeat until no actionable integrated items remain and the original scope is honestly satisfied
 
-The orchestrator worktree's `.agents/state/review-report.md` is the integration source of truth.
-The orchestrator's `STATE_ROOT/overview.md` is the integration state source of truth.
+The orchestrator worktree's `.agents/state/review-report.md` is the integration source of truth. The orchestrator's `STATE_ROOT/overview.md` is the integration state source of truth.
 
 Worker cleanup is part of integration, not optional closeout. For every slice marked `done`:
 

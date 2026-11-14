@@ -24,21 +24,15 @@ The important parts are:
 
 - `from pub::styleforge ...` activates the vocab metadata shipped by the producer library.
 - `style:` and `spacing:` are library-defined block keywords, not core Incan keywords.
-- Inside `style:`, `.card:hover, #title` is accepted as a selector list, `--accent-color: #1166ff;` as a custom
-  property declaration with a color literal, `var(--accent-color)` as a custom-property reference, and
+- Inside `style:`, `.card:hover, #title` is accepted as a selector list, `--accent-color: #1166ff;` as a custom property declaration with a color literal, `var(--accent-color)` as a custom-property reference, and
   `padding: 16px;` as a dimension declaration -- exactly the constructs the `Style` submode enumerates, nothing
   more.
-- `spacing:` claims the narrower `SelectorDeclarationValue` submode: a single bare declaration-value fragment
-  (`2rem`) outside a full style block.
-- Outside these two block bodies, `#1166ff`, `.card:hover`, and `--accent-color` are not ordinary Incan expression
-  syntax -- they only mean something inside the descriptor's claimed position.
+- `spacing:` claims the narrower `SelectorDeclarationValue` submode: a single bare declaration-value fragment (`2rem`) outside a full style block.
+- Outside these two block bodies, `#1166ff`, `.card:hover`, and `--accent-color` are not ordinary Incan expression syntax -- they only mean something inside the descriptor's claimed position.
 
 ## What this proves, and what it does not
 
-This example proves the parser-to-typechecker-to-lowering contract: the fragment parses through its own dedicated
-submode grammar, produces a typed `EmbeddedFragmentExpr` artifact with real source spans, and that artifact reaches
-Body IR successfully. It does **not** register a desugarer or lowering hook, so it has no runtime meaning yet --
-`incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
+This example proves the parser-to-typechecker-to-lowering contract: the fragment parses through its own dedicated submode grammar, produces a typed `EmbeddedFragmentExpr` artifact with real source spans, and that artifact reaches Body IR successfully. It does **not** register a desugarer or lowering hook, so it has no runtime meaning yet -- `incan check` proves its parser/typechecker contract. Running or building the consumer is refused with `unsupported source construct: embedded DSL fragment expression`. The consumer is listed in `examples/check-only.txt`; the examples runner checks it.
 
 Files worth reading in order:
 
