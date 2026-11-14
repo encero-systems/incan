@@ -1,0 +1,26 @@
+# behavior: An Incan int outside a `c.i32` parameter's range stops the program before the foreign call instead of being narrowed silently, as 0.5.1's checked conversion did (#3132).
+# pending: an out-of-range argument is narrowed silently (this program prints 705032704 and exits 0); 0.5.1 panicked with this message
+# expect-stderr-contains:
+#   outside the declared c.i32 range
+# expect-exit: 101
+
+from std.interop import c
+
+
+binding LibC:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def absolute(value: int) -> int:
+    """Pass an ordinary Incan integer to a 32-bit C parameter."""
+    unsafe:
+        return LibC.absolute(value)
+
+
+def main() -> None:
+    """Call with a value no `c.i32` holds."""
+    println(absolute(5000000000))

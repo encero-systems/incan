@@ -1,0 +1,44 @@
+# behavior: An opaque C resource is opened as a nullable owned result, borrowed for one call and released through its declared operation, as 0.5.1's `resource`, `c.Owned` and `c.Borrowed` did (#3132).
+# pending: checked C resources do not lower yet (`unsupported checked C result carrier`); 0.5.1 built this program
+# expect-stdout:
+#   opened true
+
+from std.interop import c
+
+
+binding Stdio:
+    header = "stdio.h"
+    link = c.system_library("c")
+
+    resource Stream:
+        native = "FILE"
+        release = close
+
+    symbol close(stream: c.Owned[Stream]) -> c.i32:
+        native = "fclose"
+
+    symbol open(path: c.ConstPtr[c.c_char], mode: c.ConstPtr[c.c_char]) -> Option[c.Owned[Stream]]:
+        native = "fopen"
+
+    symbol descriptor(stream: c.Borrowed[Stream]) -> c.i32:
+        native = "fileno"
+
+
+def probe() -> Result[bool, str]:
+    """Open a stream, read its descriptor through a borrow and release it."""
+    path = c.cstr("/dev/null")?
+    mode = c.cstr("r")?
+    unsafe:
+        match Stdio.open(path.as_const_ptr(), mode.as_const_ptr()):
+            Some(stream) =>
+                number = Stdio.descriptor(stream)
+                Stdio.close(stream)
+                return Ok(number > 2)
+            None => return Err("not opened")
+
+
+def main() -> None:
+    """Print whether the stream opened above the standard descriptors."""
+    match probe():
+        Ok(opened) => println(f"opened {opened}")
+        Err(reason) => println(reason)
