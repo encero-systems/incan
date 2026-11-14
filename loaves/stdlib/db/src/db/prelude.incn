@@ -1,8 +1,10 @@
 """
 Typed embedded storage over the platform's store substrate (RFC 165).
 
-Open a store with `memory()` or `open(path)`, select a named view with `store.view(name)`, and release the store
-with `close()`. Every operation returns `Result[..., DbError]`; match on `DbError.kind`, never on its detail text.
+Open a store with `memory()` or `open(path)` and select a named view with `store.view(name)`. Read a view through
+`view.snapshot()`, change it through `view.begin()` and the transaction's `commit()` or `abort()`, and start a new view
+from a snapshot with `store.fork(snapshot, name)`. Release the store with `close()`. Every operation returns
+`Result[..., DbError]`; match on `DbError.kind`, never on its detail text.
 """
 
 pub from crate.db.errors import DbError, DbErrorKind, DbOperation
