@@ -144,13 +144,32 @@ impl TypeChecker {
         scopes
     }
 
-    /// Return the declaration scope of one checked API module of `library`, building the library's scopes once.
+    /// Return the declaration scope of one checked API module of `library`: from the module's own type scope record
+    /// when the Loaf's records hold one that followed its spellings as this index binds the Loaf, and otherwise from
+    /// `manifest`, building the library's scopes once.
     pub(super) fn pub_library_declaration_scope(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
         module_path: &[String],
     ) -> HashMap<String, String> {
+        let standard = self
+            .loaves
+            .admitted(library)
+            .map(|admitted| admitted.binding_root == ["std"]);
+        if let Ok(Some(scope)) = self.loaves.type_scope(library, module_path)
+            && standard == Some(scope.standard)
+        {
+            return scope
+                .names
+                .into_iter()
+                .filter(|(_, declared)| declared.scoped)
+                .map(|(spelling, declared)| {
+                    let key = Self::declaration_type_key(library, &declared.module, &declared.name);
+                    (spelling, key)
+                })
+                .collect();
+        }
         if !self.pub_library_declaration_scopes.contains_key(library) {
             let scopes = self.build_pub_library_declaration_scopes(library, manifest);
             self.pub_library_declaration_scopes.insert(library.to_string(), scopes);

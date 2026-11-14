@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 
 use super::declaration_records::{DeclarationFacet, declaration_facts};
 use super::executable_surface::{own_public_identities, runtime_bindings};
+use super::type_scope::module_type_scopes;
 use super::{LibraryManifest, LibraryManifestError};
 
 /// The record identity and value schema every installed compiler record follows.
@@ -76,6 +77,8 @@ pub enum RecordFamily {
     PublicNamespace,
     /// One name an exported enum publishes at the package root beside its own: a variant or a variant alias.
     EnumVariant,
+    /// One module's type scope: the type or trait declaration each spelling among its declarations names.
+    TypeScope,
     RustAbi,
 }
 
@@ -108,6 +111,7 @@ impl RecordFamily {
             Self::Default => "default",
             Self::PublicNamespace => "public-namespace",
             Self::EnumVariant => "enum-variant",
+            Self::TypeScope => "type-scope",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -178,6 +182,7 @@ impl LibraryManifest {
         if let Some(api) = &contract_facts.api {
             records.extend(declaration_fact_records(api)?);
             records.extend(namespace_records(api, &contract_facts.identity_graph, &self.name)?);
+            records.extend(type_scope_records(api, &contract_facts.identity_graph, &self.name)?);
         }
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
@@ -388,6 +393,20 @@ fn namespace_records(
         )?);
     }
     Ok(records)
+}
+
+/// One record per module of the documentation-free `api`, named by its path: its type scope, so a consumer reads how
+/// one module spells the Loaf's types from that record.
+fn type_scope_records(
+    api: &crate::api_metadata::CheckedApiMetadataPackage,
+    graph: &super::LibraryIdentityGraph,
+    package: &str,
+) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+    module_type_scopes(api, graph, package)
+        .iter()
+        .enumerate()
+        .map(|(index, scope)| record(RecordFamily::TypeScope, index, &scope.module.join("::"), scope))
+        .collect()
 }
 
 /// Encode one record value with the compiler-record codec.
