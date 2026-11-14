@@ -4,7 +4,7 @@ from rust::std::string import String as RustString
 from rust::std::env import current_exe
 from rust::std::process import Command, exit as native_exit
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
@@ -41,6 +41,7 @@ from pub::incan_platform.store import (
     durable_syncs,
     graph_barriers,
     keys_with_prefix,
+    manifest_path,
 )
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -463,6 +464,32 @@ pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys
         println(
             f"S2 selected read: scale={scale} segments={len(latest.segments)} pages={after.pages - before.pages} records={after.records - before.records} frame_bytes={after.bytes - before.bytes}",
         )
+    return Ok(None)
+
+
+pub def test_a_commit_s_manifest_does_not_grow_with_the_store_s_generations() -> Result[None, str]:
+    """
+    Every commit adds a segment, yet the manifest a commit writes, and every later snapshot reads and checks, holds the
+    same bytes at generation 3 and at generation 203: a seal costs a long-lived home what it costs a new one.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut sizes: list[int] = []
+    mut written = 0
+    for generations in [3, 200]:
+        for _item in range(generations):
+            written += 1
+            write_one(root, f"key-{written}", "value").map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        manifest = Path(manifest_path(latest.root, latest.generation, latest.digest).value)
+        size = manifest.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        started = Instant.now()
+        write_one(root, f"timed-{written}", "value").map_err((error) => error.message())?
+        elapsed = started.elapsed().as_secs_f64() * 1000.0
+        println(f"S2 manifest: generation={latest.generation} manifest_bytes={size} next_commit_ms={elapsed}")
+        written += 1
+        sizes.append(size)
+    assert sizes[1] == sizes[0], f"the manifest grew from {sizes[0]} to {sizes[1]} bytes over 200 generations"
     return Ok(None)
 
 
