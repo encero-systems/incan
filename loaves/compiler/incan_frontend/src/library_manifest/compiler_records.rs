@@ -8,11 +8,12 @@
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
 //! - The **semantic facts digest** covers every record except documentation: each record's key, kind, model description
-//!   hash and canonical hash, in key order. A canonical hash leaves out source positions: anchor spans and the spans
-//!   inside canonical identities. The metadata record's canonical value also leaves out its publication fields: the
-//!   Loaf's version, the version of the toolchain that checked it and the digest of the manifest file, which covers
-//!   docstrings. Republishing a Loaf under another version, or changing only its documentation, whatever its length,
-//!   keeps its semantic facts digest.
+//!   hash and canonical hash, in key order. A canonical hash leaves out source positions: anchor spans, the spans
+//!   inside canonical identities, and the executable descriptor's digest of the governed bodies' bytes, whose Body IR
+//!   carries spans. The metadata record's canonical value also leaves out its publication fields: the Loaf's version,
+//!   the version of the toolchain that checked it and the digest of the manifest file, which covers docstrings.
+//!   Republishing a Loaf under another version, or changing only its documentation, whatever its length, keeps its
+//!   semantic facts digest.
 //!
 //! The digest fields themselves are left out of the metadata value both digests cover.
 
@@ -31,6 +32,9 @@ const PUBLICATION_FIELDS: [&str; 3] = ["version", "incan_version", "manifest_dig
 
 /// The fields that hold source positions: an anchor's span and a canonical identity's declaration span.
 const POSITION_FIELDS: [&str; 2] = ["span", "declaration_span"];
+
+/// The executable descriptor's field naming the governed bodies by the digest of their bytes, which carry positions.
+const BODIES_DIGEST_FIELD: &str = "content_digest";
 
 /// The closed record families of one Loaf's installed compiler records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -297,7 +301,7 @@ fn digests(
         .iter()
         .filter(|record| record.family != RecordFamily::Documentation)
     {
-        semantic.push(semantic_entry(record, &canonical_value(&record.value)?));
+        semantic.push(semantic_entry(record, &canonical_value(record.family, &record.value)?));
     }
     semantic.push(semantic_entry(&metadata_record, &metadata_canonical));
     content.sort();
@@ -313,9 +317,23 @@ fn digests(
 /// Spans locate a declaration in its producer's source, and a declaration's canonical identity carries its span; a
 /// docstring that changes length moves every later one. What a declaration is stays in its identity's namespace,
 /// origin and name, the parts `StableDeclarationId` keeps, and in the rest of its record.
-fn canonical_value(value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
+///
+/// The executable descriptor names the governed bodies by the digest of their `.incnbody` bytes, and their Body IR
+/// carries spans and node identities derived from spans, so a longer docstring changes that digest while every body
+/// stays what it was. The descriptor's representation version stays a compile fact; what the bodies execute is
+/// identified by the content of the native library compiled from the same checked bodies, which a consumer's unit
+/// identity folds beside these facts.
+fn canonical_value(family: RecordFamily, value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
     let mut decoded: Value = LibraryManifest::decode_compiler_record_value(value)?;
     without_positions(&mut decoded);
+    let descriptor = match family {
+        RecordFamily::ExecutableDescriptor => Some(&mut decoded),
+        RecordFamily::ContractMetadata => decoded.get_mut("executable_representation"),
+        _ => None,
+    };
+    if let Some(Value::Object(descriptor)) = descriptor {
+        descriptor.remove(BODIES_DIGEST_FIELD);
+    }
     LibraryManifest::encode_compiler_record_value(&decoded)
 }
 
