@@ -20,15 +20,16 @@ pub model InheritedDependency:
     pub path: Option[str] = None
 
 
-pub def inherited(alias: str, manifest: str) -> Result[InheritedDependency, IntakeError]:
+pub def inherited(alias: str, manifest: str, entry: list[str]) -> Result[InheritedDependency, IntakeError]:
     """
-    The `[workspace.dependencies]` entry for `alias` of the workspace root that lists `manifest`'s project.
+    The `[workspace.dependencies]` entry for `alias` of the workspace root that lists `manifest`'s project; a refusal
+    names the member's inheriting entry, `entry`.
 
     1. Walk up from the member's directory to the nearest `loaf.toml` with a `[workspace]` table.
     2. Require the project to be that root or one of its `members`.
     3. Rebase a `path` from the root onto the member.
     """
-    field = ["dependencies", alias, "workspace"]
+    field = entry + ["workspace"]
     member = absolute_directory(manifest)
     # 1. The nearest workspace root.
     match enclosing_workspace(member):
