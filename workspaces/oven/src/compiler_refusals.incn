@@ -102,7 +102,7 @@ pub def check_or_replay(
     3. Retain a certified, normally completed report only while the unit's inputs are still those of the key.
     """
     label = f"unit {unit.package} check"
-    identity = fingerprint([CHECK_DOMAIN, key.digest, format])?
+    identity = fingerprint([CHECK_DOMAIN, key.replayed(), format])?
     arguments = ["--check", description.0, toolchain.sysroot, "--format", format]
     # 1. A stored report of this identity is shown as the compiler printed it, in this project's paths.
     cacheable = key.refusal == "" and ordinary_compilation() and complete_artifacts(unit)?
@@ -211,7 +211,7 @@ def certified(path: Path, receipt: str) -> bool:
 def still_keyed(unit: UnitDescription, toolchain: Toolchain, key: Key) -> bool:
     """Whether the unit's inputs are still those the compiler ran for; a failed reconciliation counts as a change."""
     match unit_key(unit, toolchain):
-        Ok(current) => return current.digest == key.digest
+        Ok(current) => return current.digest == key.digest and current.replayed() == key.replayed()
         Err(_) => return false
 
 
@@ -345,8 +345,8 @@ pub def outcome_record(store: Path, identity: str) -> Result[Option[Path], str]:
 
 
 pub def refusal_identity(key: Key) -> Result[str, str]:
-    """The identity a compilation's certified refusal is retained under."""
-    return fingerprint([REFUSAL_DOMAIN, key.digest])
+    """The identity a compilation's certified refusal is retained under: its raw identity, since a refusal shows source."""
+    return fingerprint([REFUSAL_DOMAIN, key.replayed()])
 
 
 def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None, str]:

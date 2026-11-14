@@ -133,6 +133,15 @@ pub model Key:
     pub descriptor: str = ""
     # The admitted compiler input for revalidation; an opaque caller-owned key may omit its derivation context.
     pub compiler: str = ""
+    # The identity over every authored byte, comments included, for outcomes that show source text or byte offsets:
+    # replayed check reports and refusals, and codegraph exports. Empty when it equals `digest`.
+    pub replay: str = ""
+
+    pub def replayed(self) -> str:
+        """The identity of an outcome that renders source: the raw identity, or `digest` when they agree."""
+        if self.replay != "":
+            return self.replay
+        return self.digest
 
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
@@ -383,13 +392,18 @@ pub def unit_key_with(
     3. Combine them with the compiler and the description into the key.
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
-    sources = source_contents(unit, project, graph)?
+    # A program or test unit's native code reads only positioned code, so comments that move no code are not its inputs.
+    native = unit.kind in ["program", "test"]
+    sources = source_contents(unit, project, graph, native)?
     # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
     # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
     # frozen installation inputs after admission.
     artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
+    mut replay = ""
+    if native:
+        replay = assembled(compiler, described, source_contents(unit, project, graph, false)?, artifacts)?.digest
     return Ok(
         Key(
             digest=key.digest,
@@ -398,31 +412,43 @@ pub def unit_key_with(
             provenance=[unit.project_root, unit.source],
             descriptor=fingerprint([json_text(unit.to_json())?])?,
             compiler=key.compiler,
+            replay=replay,
         ),
     )
 
 
-def source_contents(unit: UnitDescription, mut project: Ledger, graph: Option[SourceGraph]) -> Result[list[str], str]:
+def source_contents(
+    unit: UnitDescription,
+    mut project: Ledger,
+    graph: Option[SourceGraph],
+    code: bool,
+) -> Result[list[str], str]:
     """
     Resolve declared entries from their project and identify their roles without physical source locations.
 
     A unit with a source graph reads exactly its graph's files, and the graph's absent paths are inputs too: a file
     created at one changes what collection reads. Any other unit reads every source under its roots.
+    With `code`, an Incan source counts by its positioned code (`Ledger.code_digest`) instead of its bytes.
     """
     root = Path(unit.source_root)
     declared = Path(unit.project_root)
-    mut contents = ["entry", entry_scope(Path(unit.source), root), project.digest(Path(unit.source))?]
+    mut entry_digest = ""
+    if code:
+        entry_digest = project.code_digest(Path(unit.source))?
+    else:
+        entry_digest = project.digest(Path(unit.source))?
+    mut contents = ["entry", entry_scope(Path(unit.source), root), entry_digest]
     match graph:
         Some(collected) =>
             # The collection's own paths are physical; bind them under the physical root.
             physical = root.resolve().unwrap_or(root)
             entry = Path(unit.source).resolve().unwrap_or(Path(unit.source)).0
             modules = [path for path in collected.read if path != entry and path != unit.source]
-            contents.extend(source_inputs(modules, physical, project)?)
+            contents.extend(source_inputs(modules, physical, project, code)?)
             contents.extend(["absent"] + absent_inputs(collected.absent, physical))
         None =>
             modules = [path for path in unit_files(unit, project)? if path != unit.source]
-            contents.extend(source_inputs(modules, root, project)?)
+            contents.extend(source_inputs(modules, root, project, code)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     if let Some(entry) = unit.vocab_entry:
@@ -586,3 +612,11 @@ pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Ke
     for index in range(len(staged)):
         place(staged[index], finals[index])?
     return record(stamp, key, finals)
+
+
+pub def replay_key(key: Key) -> Key:
+    """`key` under its raw identity, for an output that shows source text or positions, such as a codegraph export."""
+    mut raw = key
+    raw.digest = key.replayed()
+    raw.replay = ""
+    return raw

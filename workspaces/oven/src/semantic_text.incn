@@ -48,6 +48,7 @@ class SemanticScanner:
     only_strings: bool = true
     tail: str = ""
     pub lines: list[LogicalLine] = []
+    pub layout: str = ""
 
     pub def scan(mut self, source: str) -> None:
         """Read every character of `source`, then close its last line."""
@@ -93,6 +94,7 @@ class SemanticScanner:
         if character == self.quote and self.opening < 3:
             self.opening += 1
             self.line += character
+            self.layout += character
             if self.opening == 3:
                 self.triple = true
                 self.mode = ScanMode.Text
@@ -112,12 +114,15 @@ class SemanticScanner:
             self.escaped = false
             self.closing = 0
             self.line += character
+            self.layout += character
         elif character == "\\":
             self.escaped = true
             self.closing = 0
             self.line += character
+            self.layout += character
         elif character == self.quote:
             self.line += character
+            self.layout += character
             self.closing += 1
             if not self.triple or self.closing == 3:
                 self.closing = 0
@@ -129,6 +134,7 @@ class SemanticScanner:
         else:
             self.closing = 0
             self.line += character
+            self.layout += character
 
     def remember(mut self, character: str) -> None:
         """Keep the last two code characters; a trailing backslash continues the statement on the next line."""
@@ -143,11 +149,13 @@ class SemanticScanner:
             self.indentation = self.pending
             self.has_content = true
         self.line += self.pending + character
+        self.layout += self.pending + character
         self.pending = ""
         self.line_output = true
 
     def end_physical_line(mut self) -> None:
         """Drop trailing whitespace; continue a bracketed or backslash-continued statement, otherwise close it."""
+        self.layout += "\n"
         self.pending = ""
         if self.depth > 0 or self.tail.endswith("\\"):
             if self.line_output:
@@ -204,3 +212,18 @@ def documents(lines: list[LogicalLine], index: int) -> bool:
         if level == indent and lines[later].text.strip() != "pass":
             return true
     return false
+
+
+pub def positioned_code(source: str) -> str:
+    """
+    The text of a source file without its comments or trailing whitespace, with every line kept, so every line and
+    column of code is where it was; blank lines after the last code are dropped. Two files with the same positioned
+    code compile to the same native code and line tables: a comment text edit, or a comment ending a line or the file,
+    leaves it unchanged, while a comment line inserted above code moves that code and changes it.
+    """
+    mut scanner = SemanticScanner()
+    scanner.scan(source)
+    mut text = scanner.layout
+    while text.endswith("\n"):
+        text = text[:len(text) - 1]
+    return text

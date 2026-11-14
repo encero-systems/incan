@@ -27,6 +27,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
+from semantic_text import positioned_code
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
@@ -103,10 +104,14 @@ pub model Observation:
 
 
 model FileEntry:
-    """A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled."""
+    """
+    A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled. `code` is
+    the digest of the file's text without comments, every position kept, once something asked for it.
+    """
 
     stamp: str
     digest: str
+    code: str = ""
 
 
 model DirectoryEntry:
@@ -142,6 +147,26 @@ pub model Ledger:
         self.changed = true
         self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content)
         return Ok(content)
+
+    pub def code_digest(mut self, path: Path) -> Result[str, str]:
+        """
+        The digest of `path`'s text without its comments, every line and column of code kept; read only when its
+        metadata differs from the retained observation or no code digest was retained. A comment edit that moves no
+        code leaves it unchanged.
+        """
+        observed = observe(path)?
+        if path.0 in self.files and self.files[path.0].stamp == observed.stamp and self.files[path.0].code != "":
+            return Ok(self.files[path.0].code)
+        trace(f"hashing {path.0}")
+        content = file_digest(path)?
+        mut code = content
+        match path.read_text("utf-8", "strict"):
+            Ok(text) => code = hexlify(sha256.digest(positioned_code(text).encode("utf-8")))
+            Err(_) => pass
+        self.hashed += 1
+        self.changed = true
+        self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content, code=code)
+        return Ok(code)
 
     pub def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
         """
@@ -202,7 +227,11 @@ pub model Ledger:
             return Err("a ledger of other files")
         # 2. Every row is read in full, so a ledger with one malformed row retains nothing.
         for row in rows(document, "files")?:
-            self.files[text_of(row, "path")?] = FileEntry(stamp=text_of(row, "stamp")?, digest=text_of(row, "digest")?)
+            self.files[text_of(row, "path")?] = FileEntry(
+                stamp=text_of(row, "stamp")?,
+                digest=text_of(row, "digest")?,
+                code=text_of(row, "code").unwrap_or(""),
+            )
         for row in rows(document, "directories")?:
             self.directories[text_of(row, "path")?] = DirectoryEntry(
                 stamp=text_of(row, "stamp")?,
@@ -277,7 +306,9 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
 def file_row(path: str, entry: FileEntry) -> JsonValue:
     """One file of the saved document."""
     return JsonValue.object(
-        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest)},
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest), "code": JsonValue.string(
+            entry.code,
+        )},
     )
 
 

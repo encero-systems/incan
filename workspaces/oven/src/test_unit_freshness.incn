@@ -67,6 +67,11 @@ def verify_be34_position_changes(scratch: Path) -> Result[None, str]:
     write(source, "# position-only edit\n" + helper + main)?
     commented = reconcile(scratch, setup)?
     assert commented.key != original.key, "BE-34: the native unit reads changed positions"
+    # Rewording that comment moves no code: the native unit keeps its key, while replayed source sees the edit.
+    write(source, "# a reworded position-only edit\n" + helper + main)?
+    reworded = reconcile(scratch, setup)?
+    assert reworded.key == commented.key, "a comment text edit moves no code and keeps the native key"
+    assert reworded.replay != commented.replay, "a replayed check or refusal still sees the edited comment"
     write(source, main + "\n" + helper)?
     moved = reconcile(scratch, setup)?
     assert moved.key != original.key, "BE-34: moving declarations updates native position inputs"

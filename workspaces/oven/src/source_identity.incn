@@ -4,11 +4,12 @@ from std.fs import Path
 from observation import Ledger
 
 
-pub def source_inputs(paths: list[str], root: Path, mut ledger: Ledger) -> Result[list[str], str]:
+pub def source_inputs(paths: list[str], root: Path, mut ledger: Ledger, code: bool = false) -> Result[list[str], str]:
     """
     Preserve which source supplies each logical module or included input while excluding its physical root.
 
-    RFC 106's semantic digest replaces this content-based seam when the compiler publishes it.
+    With `code`, each source counts by its positioned code rather than its bytes (`Ledger.code_digest`). RFC 106's
+    semantic digest replaces this content-based seam when the compiler publishes it.
     """
     mut inputs: list[str] = []
     mut bindings: Dict[str, str] = {}
@@ -19,7 +20,10 @@ pub def source_inputs(paths: list[str], root: Path, mut ledger: Ledger) -> Resul
                 return Err(f"unit identity refused: ambiguous external source binding {binding}")
             continue
         bindings[binding] = path
-        inputs.append(f"{binding} {ledger.digest(Path(path))?}")
+        if code:
+            inputs.append(f"{binding} {ledger.code_digest(Path(path))?}")
+        else:
+            inputs.append(f"{binding} {ledger.digest(Path(path))?}")
     return Ok(sorted(inputs))
 
 
