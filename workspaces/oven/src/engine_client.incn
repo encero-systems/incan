@@ -1,5 +1,7 @@
 """Submit program requests to the records engine, retain execution interest and relay only the caller's console."""
 
+from rust::std::io import Write, stdin, stdout
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.environ import get_optional, get_or
 from std.json import JsonValue, parse
@@ -13,7 +15,7 @@ from engine_epochs import record_text, prepare_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
-from overlay_request import OverlayRequest
+from overlay_request import OverlayRequest, parse_served
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -63,6 +65,44 @@ pub def execute_overlay(request: OverlayRequest) -> Result[str, str]:
     answer = answer_overlay(channel, store, request)
     _ = channel.transport.close()
     return answer
+
+
+pub def serve_overlays(profile: str) -> Result[i32, str]:
+    """
+    Answer overlay requests, one JSON line each on standard input, over one engine connection.
+
+    Each answer is one `incan.overlay-diagnostics/1` line. A request that fails is answered with its reason, and the
+    next request gets a new connection, because the old one may be what failed.
+    """
+    store = bakery()?
+    mut channel = engine_channel(store)?
+    input = stdin()
+    while true:
+        mut incoming = RustString.new()
+        match input.read_line(incoming):
+            Ok(count) =>
+                if count == 0:
+                    _ = channel.transport.close()
+                    return Ok(0)
+            Err(error) => return Err(f"cannot read an overlay request: {error}")
+        line = str(incoming)
+        if line.strip() == "":
+            continue
+        mut answer = ""
+        match parse_served(line, profile):
+            Err(reason) => answer = failed_answer(-1, reason)?
+            Ok(request) =>
+                match answer_overlay(channel, store, request):
+                    Ok(document) => answer = document
+                    Err(reason) =>
+                        _ = channel.transport.close()
+                        channel = engine_channel(store)?
+                        answer = failed_answer(request.version, reason)?
+        println(answer)
+        match stdout().flush():
+            Ok(_) => pass
+            Err(error) => return Err(f"cannot flush an overlay answer: {error}")
+    return Ok(0)
 
 
 def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -> Result[str, str]:
@@ -155,6 +195,16 @@ def engine_channel(store: Path) -> Result[Channel, str]:
     mut channel = connect(store, identity).map_err(detail)?
     channel.transport.wait_at_most(0)
     return Ok(channel)
+
+
+def failed_answer(version: int, reason: str) -> Result[str, str]:
+    """The answer line of a request that could not be answered."""
+    answer = JsonValue.object(
+        {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(version), "error": JsonValue.string(
+            reason,
+        )},
+    )
+    return answer.to_json().map_err((error) => error.message())
 
 
 def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:

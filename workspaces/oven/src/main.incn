@@ -7,8 +7,8 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from engine_selector import Engine, select as select_engine
-from engine_client import execute as execute_records, execute_overlay
-from overlay_request import parse_overlay
+from engine_client import execute as execute_records, execute_overlay, serve_overlays
+from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
@@ -192,6 +192,14 @@ def dispatch(command: str, rest: list[str]) -> None:
             Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
             Ok(_) => pass
     # An editor's overlay request: one unsaved buffer, answered by the records engine in the editor view (14.1).
+    if command == "check" and "--overlay-serve" in rest:
+        match parse_serve(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(profile) =>
+                match serve_overlays(profile):
+                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
+                    Ok(_) => return
+        return
     if command == "check" and "--overlay" in rest:
         match parse_overlay(rest):
             Err(reason) => syntax_error(command, reason)
