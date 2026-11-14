@@ -194,6 +194,26 @@ mod tests {
         assert_eq!(component_waves(&components, 2)?, vec![vec![1], vec![0]]);
         Ok(())
     }
+
+    #[test]
+    fn a_component_reads_the_modules_it_imports_where_they_are_kept() -> Result<(), String> {
+        let authored = vec![
+            Some(BodyIrModule::declarations_only("pub::app::models".to_string())),
+            None,
+        ];
+        let component = AuthoredComponent {
+            members: vec![1],
+            dependencies: vec![0],
+        };
+        let imported = imported_modules(&component, &authored)?;
+        let read: &BodyIrModule = &imported[0];
+        let kept = authored[0].as_ref().ok_or("the imported module is missing")?;
+        assert!(
+            std::ptr::eq(read, kept),
+            "a component must read an imported module in place, not a copy of it"
+        );
+        Ok(())
+    }
 }
 
 /// Lower one dependency-ready wave with bounded scoped threads and return results in component order.
@@ -282,14 +302,7 @@ fn lower_component(
 ) -> Result<Vec<(usize, BodyIrModule)>, String> {
     let mut context_modules = Vec::with_capacity(dependency_bodies.len() + component.dependencies.len());
     context_modules.extend_from_slice(dependency_bodies);
-    for &dependency in &component.dependencies {
-        context_modules.push(
-            authored[dependency]
-                .as_ref()
-                .ok_or("Body IR source dependency is incomplete")?
-                .clone(),
-        );
-    }
+    context_modules.extend(imported_modules(component, authored)?);
     let context_len = context_modules.len();
     for &index in &component.members {
         let module = &modules[index];
@@ -339,6 +352,22 @@ fn lower_component(
     }
     let lowered = context_modules.split_off(context_len);
     Ok(component.members.iter().copied().zip(lowered).collect())
+}
+
+/// The completed source modules `component` imports, in import order.
+fn imported_modules(
+    component: &AuthoredComponent,
+    authored: &[Option<BodyIrModule>],
+) -> Result<Vec<BodyIrModule>, String> {
+    component
+        .dependencies
+        .iter()
+        .map(|&dependency| {
+            authored[dependency]
+                .clone()
+                .ok_or_else(|| "Body IR source dependency is incomplete".to_string())
+        })
+        .collect()
 }
 
 /// Construct authored source bodies through compilation's sequential module boundary.
