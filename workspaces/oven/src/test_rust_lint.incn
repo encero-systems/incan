@@ -1,7 +1,8 @@
 """Clippy over Rust facets: a Loaf's `[rust.lints]` levels decide what fails the lint, and clean code passes."""
 
+from rust::std::process import Command
 from std.fs import Path
-from files import make_directory, write
+from files import make_directory, read, write
 from rust_build import RustBuild
 from rust_lint import finding_counts, lint_rust
 from rust_registry import read_registry_units
@@ -50,6 +51,40 @@ pub def test_a_denied_clippy_finding_fails_the_lint_and_a_clean_library_passes()
         Ok(_) => return Err("a finding the Loaf denies passed the lint")
         Err(reason) =>
             assert "clippy reported errors in violating" in reason, reason
+    return Ok(None)
+
+
+pub def test_an_edited_prebuilt_crate_is_linted_from_its_sources_and_refuses_nothing() -> Result[None, str]:
+    """
+    Lint a consumer of `incan_lang`, a crate the toolchain ships prebuilt, after editing a copy of its sources.
+
+    1. Copy `incan_lang`'s Loaf, deny `needless_return` in it and add a function with one.
+    2. The consumer links the prebuilt crate and lints clean, and the edited crate's own finding fails the lint by
+       name: the lint checked the edited sources, and nothing refused the edit as a mix of generations.
+    """
+    scratch = scratch_directory()?
+    # 1. The copy keeps the crate's name, so the toolchain's prebuilt `incan_lang` is the one it would replace.
+    edited = scratch.path().joinpath("incan_lang")
+    make_directory(edited)?
+    source = Path("../../loaves/kernel/incan_lang").resolve().map_err((error) => f"cannot {error.message()}")?
+    mut copy = Command.new("/bin/cp")
+    copy.arg("-R").arg(source.joinpath("src").0).arg(source.joinpath("loaf.toml").0).arg(edited.0)
+    assert copy.status().map_err((error) => str(error))?.success()
+    probe = "\n/// A lint probe.\npub fn lint_probe() -> u32 {\n    return 7;\n}\n"
+    write(edited.joinpath("src/lib.rs"), read(edited.joinpath("src/lib.rs"))? + probe)?
+    lints = "\n[rust.lints.clippy]\nneedless_return = 'deny'\n"
+    write(edited.joinpath("loaf.toml"), read(edited.joinpath("loaf.toml"))? + lints)?
+    # 2. A consumer re-exports the crate, so it compiles against the prebuilt one whatever the edit added.
+    consumer = scratch.path().joinpath("consumer")
+    make_directory(consumer.joinpath("src"))?
+    manifest = "[project]\nname='consumer'\nversion='1.0.0'\n[rust]\ntype='lib'\n"
+    edge = "[dependencies]\nincan_lang={loaf='incan_lang',path='../incan_lang'}\n"
+    write(consumer.joinpath("loaf.toml"), manifest + edge)?
+    write(consumer.joinpath("src/lib.rs"), "/// The language crate this consumer reaches.\npub use incan_lang;\n")?
+    match lint_project(consumer):
+        Ok(_) => return Err("the edited crate's denied finding passed the lint")
+        Err(reason) =>
+            assert "clippy reported errors in incan_lang" in reason, reason
     return Ok(None)
 
 

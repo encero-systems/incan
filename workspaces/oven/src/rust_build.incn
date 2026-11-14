@@ -124,6 +124,9 @@ pub model RustBuild:
     pub unattended: bool = false
     # Stable trust evidence keyed by selected Loaf package identity.
     pub covered_by: Dict[str, str] = {}
+    # A lint checks and links nothing it compiles from edited prebuilt sources: their consumers keep the installed
+    # crate, so an edit to it never mixes native generations or refuses the lint (#3126).
+    pub check_only: bool = false
 
 
 pub def rust_output(project: Path, profile: str) -> Path:

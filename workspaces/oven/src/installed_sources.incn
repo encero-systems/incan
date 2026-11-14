@@ -26,14 +26,6 @@ const PROOFS: FrozenList[str] = ["library.portable-inputs", "library.oven-inputs
 const SOURCES_PART: str = "sources "
 
 
-pub def require_installed_sources(facets: list[LocalFacet], request: RustBuild) -> Result[None, str]:
-    """Refuse a build that reaches installed native crates built from other sources than the selected ones."""
-    differing = differing_crates(facets, request)?
-    if len(differing) == 0:
-        return Ok(None)
-    return Err(mismatch(differing))
-
-
 pub def mismatch(differing: list[str]) -> str:
     """The refusal: the rule, the crates it names, and both ways forward."""
     standard = home().map((path) => path.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("stdlib").0)
