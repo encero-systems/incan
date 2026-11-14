@@ -286,6 +286,32 @@ fn a_byte_literal_keeps_its_escapes() -> Result<(), String> {
 }
 
 #[test]
+fn a_string_literal_keeps_its_spelling() -> Result<(), String> {
+    // Literals were rebuilt from their decoded values: `"\u{1b}"` came back as a raw ESC character, `"\u{41}"` as
+    // `"A"` and `"\u{9}"` as `"\t"`. A formatter never changes how a literal is spelled.
+    let source = r#"def main() -> None:
+    escape = "\u{1b}"
+    letter = "\u{41}"
+    println(escape + letter + "\u{9}")
+"#;
+    let once = formatted(source)?;
+    assert!(
+        once.contains(r#"escape = "\u{1b}""#),
+        "the escape was respelled:\n{once:?}"
+    );
+    assert!(
+        once.contains(r#"letter = "\u{41}""#),
+        "the escape was respelled:\n{once:?}"
+    );
+    assert!(
+        once.contains(r#"letter + "\u{9}")"#),
+        "the escape was respelled:\n{once:?}"
+    );
+    assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
+    Ok(())
+}
+
+#[test]
 fn a_guarded_match_arm_keeps_its_guard_and_still_parses() -> Result<(), String> {
     // `incan fmt` used to write the guard before an arrow -- `_ if n <= 0 => ...` -- which the parser then rejected,
     // so `examples/simple/fib.incn` was reformatted into a syntax error. The guard is no longer the arrow form's
