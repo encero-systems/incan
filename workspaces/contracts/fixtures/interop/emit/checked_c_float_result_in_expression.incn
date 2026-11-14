@@ -1,0 +1,22 @@
+# behavior: A `c.f64` call result is an operand of an expression with a float literal without first being bound to a local, as 0.5.1 accepted (#3132).
+# pending: the comparison is refused at lowering (`mixed numeric arithmetic without retained coercion`); binding the result to a local first works
+# expect-stdout:
+#   true
+#   5.0
+
+from std.interop import c
+
+
+binding LibMath:
+    header = "math.h"
+    link = c.system_library("m")
+
+    symbol root(value: c.f64) -> c.f64:
+        native = "sqrt"
+
+
+def main() -> None:
+    """Compare and add a checked C float result directly."""
+    unsafe:
+        println(LibMath.root(16.0) == 4.0)
+        println(LibMath.root(16.0) + 1.0)
