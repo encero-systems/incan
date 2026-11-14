@@ -122,7 +122,11 @@ pub def test_native_product_round_trips_formatting_frame() -> Result[None, str]:
 
 
 pub def test_native_product_records_expose_only_incan_identities() -> Result[None, str]:
-    """The stored product and the identical engine payload contain no native crate path or carrier name."""
+    """
+    The stored product and the identical engine payload name Incan identities, never a native crate path or carrier
+    name. A call into Rust's `std`, `core` or `alloc`, whose paths the toolchain pins, keeps the `rust::<path>`
+    identity Incan source imports it by. A call into any other Rust crate is refused.
+    """
     span = source_span(file="interface_audit.incn", line=1, column=1)
     function = Function(
         name="main",
@@ -174,12 +178,18 @@ pub def test_native_product_records_expose_only_incan_identities() -> Result[Non
         assert rust_name not in product, f"stored product exposes native representation `{rust_name}`"
     restored, restored_runtime = decode_product(product)?
     assert restored == function and restored_runtime == runtime
-    unsupported = [ExternalFunction(
-        path="core::clone::Clone::clone",
+    for path in ["std::vec::Vec::push", "core::clone::Clone::clone", "alloc::vec::Vec::new"]:
+        standard = [ExternalFunction(path=path, parameters=[PlanType.StrRef], return_type=PlanType.String, span=span)]
+        stored = encode_product(function, standard)?
+        assert '"path":"rust::' + path + '"' in stored, f"stored product does not name `{path}` by its Rust import"
+        restored_standard, restored_externals = decode_product(stored)?
+        assert restored_standard == function and restored_externals == standard
+    other_crate = [ExternalFunction(
+        path="serde_json::to_string",
         parameters=[PlanType.StrRef], return_type=PlanType.String, span=span,
     )]
-    match encode_product(function, unsupported):
-        Ok(_) => assert false, "stored product admitted a native path without an Incan identity"
+    match encode_product(function, other_crate):
+        Ok(_) => assert false, "stored product admitted a Rust crate outside std, core and alloc"
         Err(_) => pass
     return Ok(None)
 
