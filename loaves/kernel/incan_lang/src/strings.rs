@@ -179,12 +179,10 @@ pub fn str_slice(
             return Ok(out);
         }
         let stride = step.unsigned_abs();
-        let mut distance = 0_u64;
-        for character in s[start_byte..end_byte].chars() {
-            if distance % stride == 0 {
+        for (distance, character) in s[start_byte..end_byte].chars().enumerate() {
+            if (distance as u64).is_multiple_of(stride) {
                 out.push(character);
             }
-            distance += 1;
         }
         return Ok(out);
     }
@@ -196,12 +194,10 @@ pub fn str_slice(
         return Ok(out);
     }
     let stride = step.unsigned_abs();
-    let mut distance = 0_u64;
-    for character in s[end_byte..start_byte].chars().rev() {
-        if distance % stride == 0 {
+    for (distance, character) in s[end_byte..start_byte].chars().rev().enumerate() {
+        if (distance as u64).is_multiple_of(stride) {
             out.push(character);
         }
-        distance += 1;
     }
 
     Ok(out)
