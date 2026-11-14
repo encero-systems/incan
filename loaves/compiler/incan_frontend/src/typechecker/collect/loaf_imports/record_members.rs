@@ -156,8 +156,8 @@ impl TypeChecker {
 
     /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
     /// member's own declaration records. `None` when they cannot settle it exactly: no records, another kind of member,
-    /// an alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
-    /// manifest then resolves the member.
+    /// an alias, overloads, a bounded type parameter, a signature naming anything but built-in types and its own type
+    /// parameters, or no single declaration identity; the manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -190,7 +190,7 @@ impl TypeChecker {
             serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
         let built_in = match &declaration {
             ApiDeclaration::Function(function) => {
-                function.type_params.is_empty()
+                function.type_params.iter().all(|param| param.bounds.is_empty())
                     && function.params.iter().all(|param| built_in_type(&param.ty))
                     && built_in_type(&function.return_type)
             }
@@ -239,7 +239,7 @@ fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// Whether `ty` names built-in types only, which no provider's type remapping can change.
+/// Whether `ty` names built-in types and type parameters only, which no provider's type remapping can change.
 fn built_in_type(ty: &TypeRef) -> bool {
     match ty {
         TypeRef::Named { name, origin } => origin.is_none() && builtin_type_name(name).is_some(),
@@ -247,6 +247,7 @@ fn built_in_type(ty: &TypeRef) -> bool {
             origin.is_none() && builtin_type_name(name).is_some() && args.iter().all(built_in_type)
         }
         TypeRef::Function { params, return_type } => params.iter().all(built_in_type) && built_in_type(return_type),
+        TypeRef::TypeParam { .. } => true,
         _ => false,
     }
 }
