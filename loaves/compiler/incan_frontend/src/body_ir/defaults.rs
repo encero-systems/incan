@@ -116,7 +116,7 @@ pub(super) fn attach_nominal_field_defaults(
             builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         }
         let named_type_identities =
-            builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+            builder.finish_type_identities(super::parameter_types::shared_declared_type_identities(facts.type_info));
         declaration.field_default_body = Some(Box::new(bir::Body {
             trait_default_instantiation: None,
             nominal_instantiation: Vec::new(),
@@ -132,7 +132,7 @@ pub(super) fn attach_nominal_field_defaults(
             explicit_input_bindings: Vec::new(),
             returned_view: None,
             callable_representation: None,
-            named_type_identities: std::sync::Arc::new(named_type_identities),
+            named_type_identities,
             param_locals: params.iter().map(|param| param.local).collect(),
             params,
             locals: builder.locals,

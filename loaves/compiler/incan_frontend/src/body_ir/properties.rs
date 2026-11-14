@@ -61,7 +61,7 @@ pub(super) fn lower_getter_body(
 
     // ---- Retained callable ----
     let named_type_identities =
-        builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+        builder.finish_type_identities(super::parameter_types::shared_declared_type_identities(facts.type_info));
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
@@ -83,7 +83,7 @@ pub(super) fn lower_getter_body(
                 .type_info
                 .is_closure_returning_type(property.node.return_type.span),
         }),
-        named_type_identities: std::sync::Arc::new(named_type_identities),
+        named_type_identities,
         params: vec![bir::CallableParam {
             local: receiver,
             kind: IncanCallableParamKind::Normal,

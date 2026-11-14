@@ -288,7 +288,13 @@ pub type SharedIdentities = std::sync::Arc<std::collections::BTreeMap<String, Ca
 pub fn share_equal_identity_maps(bodies: &mut [Body]) {
     use std::hash::{Hash, Hasher};
     let mut distinct: std::collections::HashMap<u64, Vec<SharedIdentities>> = std::collections::HashMap::new();
+    // Bodies built from their module's shared map arrive already shared; recognize those without hashing the map.
+    let mut kept: std::collections::HashSet<*const std::collections::BTreeMap<String, CanonicalSymbolId>> =
+        std::collections::HashSet::new();
     for body in bodies {
+        if kept.contains(&std::sync::Arc::as_ptr(&body.named_type_identities)) {
+            continue;
+        }
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         body.named_type_identities.as_ref().hash(&mut hasher);
         let candidates = distinct.entry(hasher.finish()).or_default();
@@ -298,7 +304,10 @@ pub fn share_equal_identity_maps(bodies: &mut [Body]) {
         });
         match equal {
             Some(position) => body.named_type_identities = std::sync::Arc::clone(&candidates[position]),
-            None => candidates.push(std::sync::Arc::clone(&body.named_type_identities)),
+            None => {
+                kept.insert(std::sync::Arc::as_ptr(&body.named_type_identities));
+                candidates.push(std::sync::Arc::clone(&body.named_type_identities));
+            }
         }
     }
 }
