@@ -2,6 +2,7 @@
 
 from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
 from files import read, write
+from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
 from lock_format import (
     LockDependency,
@@ -14,6 +15,7 @@ from lock_format import (
     read_lock,
     write_lock,
 )
+from project_lock import local_interop
 from scratch import scratch_directory
 
 
@@ -181,4 +183,37 @@ pub def test_c_interop_facts_are_locked_and_name_what_changed() -> Result[None, 
     write(runtime, "first\n")?
     widened = locked_interop(root.0, [wider])?
     assert interop_difference(first, widened) == "the C interop contract of `aarch64-linux-android`"
+    return Ok(None)
+
+
+pub def test_a_path_dependency_s_c_interop_contract_is_locked_under_its_package() -> Result[None, str]:
+    """
+    A path dependency's `[[interop.c.targets]]` contract is locked beside the root's, keyed by its package.
+
+    1. The root's contract carries no package; the dependency's carries its package.
+    2. A changed bundled file in the dependency is named with its package.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    dependency = scratch.path().joinpath("bridge")
+    for directory in [root, dependency]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    head = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[interop.c]\n\n[[interop.c.targets]]\n"
+    write(root.joinpath("loaf.toml"), head.replace("{name}", "app") + "target = \"aarch64-apple-darwin\"\n")?
+    android = "target = \"aarch64-linux-android\"\nsdk = { capability = \"android\" }\n"
+    platform = "platform = { kind = \"android\", api-level = 24 }\n\n[[interop.c.targets.artifacts]]\n"
+    bundled = "name = \"runtime\"\nkind = \"bundled\"\npath = \"libruntime.so\"\nruntime-name = \"libruntime.so\"\n"
+    placement = "placement = \"jniLibs/arm64-v8a\"\nminimum-platform = \"24\"\n"
+    write(dependency.joinpath("loaf.toml"), head.replace("{name}", "bridge") + android + platform + bundled + placement)?
+    write(dependency.joinpath("libruntime.so"), "first\n")?
+    projects = [("app", root.0), ("bridge", dependency.0)]
+    resolved = root.resolve().map_err((error) => error.message())?.0
+    # 1. Each project's contract, the dependency's under its package.
+    first = local_interop(resolved, projects, ManifestReader())?
+    keys = [(entry.package, entry.target) for entry in first]
+    assert keys == [("", "aarch64-apple-darwin"), ("bridge", "aarch64-linux-android")]
+    # 2. Other bytes in the dependency's bundled file are named with the dependency.
+    write(dependency.joinpath("libruntime.so"), "second\n")?
+    second = local_interop(resolved, projects, ManifestReader())?
+    assert interop_difference(first, second) == "bundled artifact `runtime` of `aarch64-linux-android` in `bridge`"
     return Ok(None)
