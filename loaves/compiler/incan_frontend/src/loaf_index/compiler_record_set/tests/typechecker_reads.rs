@@ -200,3 +200,26 @@ fn a_program_reads_each_record_it_checks_with_once() -> Result<(), Box<dyn std::
     );
     Ok(())
 }
+
+/// Importing the namespace `encoding.base64` reads its own record, never that of its parent `encoding`, which publishes
+/// every member of its child modules: the child's record says whether the parent publishes a member of its name.
+#[test]
+fn importing_a_child_namespace_reads_no_record_of_its_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let read = standard_import_reads()?;
+    let namespace = format!("/{}/", RecordFamily::PublicNamespace.as_str());
+    let parent = format!("/{}", content_name(b"encoding"));
+    let child = format!("/{}", content_name(b"encoding::base64"));
+    assert!(
+        read.iter().any(|key| key.contains(&namespace) && key.ends_with(&child)),
+        "the import reads `encoding::base64`'s record; it read {read:?}"
+    );
+    let parents = read
+        .iter()
+        .filter(|key| key.contains(&namespace) && key.ends_with(&parent))
+        .collect::<Vec<_>>();
+    assert!(
+        parents.is_empty(),
+        "the import read the parent namespace's record: {parents:?}"
+    );
+    Ok(())
+}
