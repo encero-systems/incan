@@ -5,7 +5,9 @@
 //! test, as 0.5.1 did: a fixture that depends on fixtures receives them as arguments, an autouse fixture runs after
 //! the requested ones, and a fixture's setup runs again for every parameter that names it. A fixture that `yield`s
 //! its value becomes one stage of the entry: the statements before `yield` set it up, the rest of the case runs
-//! where it yielded, and the statements after it tear it down once that returns.
+//! where it yielded, and the statements after it tear it down once that returns. For a test that returns `None`, the
+//! rest of the case runs inside `std.testing`'s native panic boundary, so the teardown also runs after a failed
+//! assertion and the failure is raised again with its message, as 0.5.1 tears down after a failing test.
 //!
 //! The entries are Incan source appended to the test file and checked with it, so diagnostics, lowering and the
 //! harness see ordinary functions. The test file's text is otherwise unchanged except that a `yield` fixture's own
@@ -22,6 +24,11 @@ use incan_frontend::testing_markers::{TestingMarkerKind, resolve_testing_marker_
 /// The prefix of every generated entry and local. Source names may not start with `__incan_`, which the checker
 /// reserves for names it generates itself, so the source-level entries use this one.
 const PREFIX: &str = "incan_case";
+
+/// The import a guarded `yield` stage needs: `std.testing`'s native boundary that returns a panic's text instead of
+/// unwinding, and its failure primitive that raises it again after the teardown.
+const PANIC_BOUNDARY_IMPORT: &str =
+    "from rust::incan_std_testing import panic_text as incan_case_panic_text, fail_t as incan_case_fail\n";
 
 /// Runner-provided fixtures that 0.5.1 injects but the native harness does not provide yet.
 const BUILTIN_FIXTURES: &[&str] = &["tmp_path", "tmp_workdir", "env"];
@@ -157,6 +164,10 @@ pub(crate) fn plan(
         checked.push('\n');
     }
     checked.push_str(&generated);
+    if generated.contains(&format!("{PREFIX}_panic_text(")) {
+        checked.push_str("\n\n");
+        checked.push_str(PANIC_BOUNDARY_IMPORT);
+    }
     Ok(NativeCases {
         cases,
         source: Some(checked),
@@ -567,11 +578,15 @@ impl<'a> EntryWriter<'a> {
         if stage.returns_value {
             written.push_str(&format!("{PREFIX}_outcome = {next}"));
         } else {
-            written.push_str(&next);
+            written.push_str(&format!("{PREFIX}_panic = {PREFIX}_panic_text(() => {next})"));
         }
         written.push_str(self.text(yielded.span.end, self.line_end(last.span.end)));
         if stage.returns_value {
             written.push_str(&format!("\n{indent}return {PREFIX}_outcome"));
+        } else {
+            written.push_str(&format!(
+                "\n{indent}match {PREFIX}_panic:\n{indent}    Some({PREFIX}_message) => {PREFIX}_fail({PREFIX}_message)\n{indent}    None => pass"
+            ));
         }
         written.push('\n');
         Ok(written)

@@ -1,9 +1,14 @@
-# behavior: tests receive fixtures by parameter name and fixtures the fixtures they name; an autouse fixture runs for every test; a `yield` fixture injects the value it yields; a module-scoped fixture serves each test that names it, as 0.5.1 runs them (#3149)
+# behavior: tests receive fixtures by parameter name and fixtures the fixtures they name; an autouse fixture runs for every test; a `yield` fixture injects the value it yields and tears down after its test, also after a failed assertion; a module-scoped fixture serves each test that names it, as 0.5.1 runs them (#3149)
 # expect-stdout-contains:
 #   test_fixtures.incn::test_uses_fixture PASSED
 #   test_fixtures.incn::test_depends_on_fixtures PASSED
 #   test_fixtures.incn::test_yields_a_value PASSED
 #   test_fixtures.incn::test_shares_a_module_fixture PASSED
+#   test_fixtures.incn::test_tears_down_after_a_failure FAILED
+# expect-stderr-contains:
+#   failing with 7
+#   close resource 7
+# expect-exit: 1
 
 """Fixtures run as 0.5.1 runs them: by parameter name, dependencies first, teardown after the test."""
 
@@ -61,3 +66,9 @@ def test_yields_a_value(resource: int) -> None:
 def test_shares_a_module_fixture(shared: str) -> None:
     """A module-scoped fixture's value reaches the test."""
     assert_eq(shared, "shared")
+
+
+def test_tears_down_after_a_failure(resource: int) -> None:
+    """A failed assertion still tears its fixtures down; only a failed test's output is shown."""
+    println(f"failing with {resource}")
+    assert_eq(resource, 8)
