@@ -37,7 +37,7 @@ from scalar_store import (
     report_scalar,
     report_scalar_refusal,
 )
-from record_positions import relative_body_positions
+from record_positions import body_position_map
 from nominal_records import product_nominal_table, retain_named_scalar, sync_carriers
 from std.fs import Path
 from table_views import borrowed_at
@@ -460,7 +460,15 @@ def lower_ordinary_frame(
 
     A product names the unit's models and enums by declaration identity; `nominals` describes the current tables.
     """
-    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted, record_report is not None)
+    product_inputs = ordinary_product_inputs(
+        context, body, source, file, program.overflow_checks, products, admitted, record_report is not None,
+    )
+    mut inputs: Option[list[str]] = None
+    mut positions: list[tuple[int, int]] = []
+    if let Some(selected) = product_inputs:
+        witness_inputs, body_positions = selected
+        inputs = Some(witness_inputs)
+        positions = body_positions
     mut record_identity = ""
     if record_report is not None:
         match body.canonical:
@@ -483,10 +491,19 @@ def lower_ordinary_frame(
     if let Some(directory) = products:
         if let Some(witness) = inputs:
             sync_carriers(nominals, program, intrinsics)
-            if let Some(product) = retained_scalar(directory, witness, nominals, Some(location(body.span, source, file))):
+            current = Some(location(body.span, source, file))
+            if let Some(product) = retained_scalar(directory, witness, nominals, current, positions):
                 function, runtime, references = product
                 report_scalar(
-                    record_report, directory, witness, record_identity, function.name, true, len(runtime), references,
+                    record_report,
+                    directory,
+                    witness,
+                    record_identity,
+                    function.name,
+                    true,
+                    len(runtime),
+                    references,
+                    positions,
                 )?
                 return Ok((function, runtime, [], []))
     function, runtime, pending, synthesized = lower_function(
@@ -503,7 +520,7 @@ def lower_ordinary_frame(
     if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                match retain_named_scalar(directory, witness, function, runtime, nominals):
+                match retain_named_scalar(directory, witness, function, runtime, nominals, positions):
                     Ok(references) =>
                         report_scalar(
                             record_report,
@@ -514,6 +531,7 @@ def lower_ordinary_frame(
                             false,
                             len(runtime),
                             references,
+                            positions,
                         )?
                     Err(reason) =>
                         # The ordinary compiler already has its complete lowered function. Record the optional
@@ -547,8 +565,12 @@ def ordinary_product_inputs(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
     records: bool,
-) -> Option[list[str]]:
-    """Retain exact checked input only for frames whose complete read witnesses the source producer proved."""
+) -> Option[tuple[list[str], list[tuple[int, int]]]]:
+    """
+    Retain exact checked input only for frames whose complete read witnesses the source producer proved.
+
+    A records key is the checked meaning; the body's node positions return beside it as the product's position map.
+    """
     if products is None:
         return None
     match admitted.get(body.direct_call_id):
@@ -563,16 +585,17 @@ def ordinary_product_inputs(
                         meaning = match native_digest(body):
                             Ok(value) => value
                             Err(_) => return None
-                        positions = match relative_body_positions(input, source, file, span):
+                        positions = match body_position_map(input, source, file, span):
                             Ok(value) => value
                             Err(_) => return None
                         generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
                             Ok(value) => value
                             Err(_) => return None
-                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), positions)
+                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), len(positions))
                         inputs.append(generation)
-                        return Some(inputs)
-                    return Some(scalar_inputs(input, name, span, overflow_checks, str(witness)))
+                        return Some((inputs, positions))
+                    unpositioned: list[tuple[int, int]] = []
+                    return Some((scalar_inputs(input, name, span, overflow_checks, str(witness)), unpositioned))
 
 
 pub def validate_program_entry_selection(

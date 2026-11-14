@@ -5,8 +5,8 @@ from std.json import JsonValue, parse
 from pub::incan_mir_plan import NominalReference, Plan, PlanType
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products, encode_entry_binding
-from record_positions import relocate_product
-from scalar_store import event_references, finalize_scalar
+from record_positions import place_positions, relocate_product
+from scalar_store import event_positions, event_references, finalize_scalar
 
 
 pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
@@ -87,14 +87,16 @@ def keyed_plan_products(
         event = matches[0]
         key = text(event, "key")?
         reused = event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?
-        resolved = event_references(event.to_json().map_err((error) => error.message())?)?
-        record, positions = finalize_scalar(products, key, function, reused, resolved)?
+        reported = event.to_json().map_err((error) => error.message())?
+        resolved = event_references(reported)?
+        nodes = event_positions(reported)?
+        record, positions = finalize_scalar(products, key, function, reused, resolved, nodes)?
         if record != text(event, "product")?:
             mut fields = event.expect_object().map_err((error) => error.message())?
             fields["product"] = JsonValue.string(record)
             write(report.joinpath(key + ".event"), JsonValue.object(fields))?
         product = text(parse(record).map_err((error) => error.message())?, "function")?
-        keyed.append(relocate_product(product, str(function.span.file), function.span.line)?)
+        keyed.append(relocate_product(place_positions(product, nodes)?, str(function.span.file), function.span.line)?)
         references.append(positions)
     return Ok(keyed)
 
