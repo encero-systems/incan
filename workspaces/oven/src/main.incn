@@ -30,7 +30,7 @@ from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
-from dependency_commands import DependencyVerb, dependency_command, parse_dependency_command
+from dependency_commands import dependency_command, parse_dependency_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import (
@@ -92,6 +92,7 @@ const INSTALLATION_COMMANDS: FrozenList[str] = [
     "inspect",
     "lock",
     "add",
+    "dependency",
     "update",
     "trust",
 ]
@@ -241,7 +242,7 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "explain":
         explain(rest)
         return
-    if command in ["lock", "add", "update"]:
+    if command in ["lock", "add", "dependency", "update"]:
         lock(command, rest)
         return
     if command == "run":
@@ -454,10 +455,7 @@ def lock(command: str, arguments: list[str]) -> None:
                     Err(reason) => outcome = Err(reason)
                     Ok(result) => outcome = Ok(locked_report(result))
     else:
-        mut verb = DependencyVerb.Add
-        if command == "update":
-            verb = DependencyVerb.Update
-        match parse_dependency_command(verb, arguments):
+        match parse_dependency_command(command, arguments):
             Err(reason) => syntax_error(command, reason)
             Ok(request) =>
                 match command_admission(command, [request.project]):
