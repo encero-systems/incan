@@ -17,7 +17,7 @@ oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
-oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]
+oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
 oven inspect run ID --proofs
 
 incan --help | -h | help
@@ -263,7 +263,7 @@ Graph options, schemas, queries, context packs and snapshot checks are specified
 
 ## `incan inspect bindings`
 
-`incan inspect bindings [--format text|json] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
+`incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
 
 ```text
 binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
@@ -275,6 +275,8 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 ```
 
 `FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
+
+`--format receipt` prints 0.5.1's binding-use receipt, `schema_version` 2, with no source locations or paths: `bindings` (each binding's `module`, `name` and descriptor `identity`), `calls` (each direct native call's `binding_identity`, `symbol` and calling function `owner`, with its `name` and `visibility`), `facades` (each public function over a private raw bridge, with the bridge's calls), and `compatibility`. `--target TRIPLE` joins the project's `[[interop.c.targets]]` contract for `TRIPLE` as the current `oven.lock` records it: the receipt adds `target` with its `locked_target_identity`, and each binding's declared `target_artifacts`. `--target` requires `--format receipt`. Refused: a `--target` without a lock or with a stale one (`run oven lock`), an undeclared target, and a binding relation that names a binding the compilation did not produce.
 
 ## `incan inspect registry`
 
@@ -324,7 +326,7 @@ project NAME
 
 ## `oven interop stage`
 
-`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes. It first refreshes the project's `oven.lock`, as `build` does; with `--locked` it refuses a missing lock or one that would change, so it stages only files whose digests the lock records:
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`; 0.5.1's `--project PATH` is accepted for it) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes. It first refreshes the project's `oven.lock`, as `build` does; with `--locked` it refuses a missing lock or one that would change, so it stages only files whose digests the lock records:
 
 | Adapter | Target | Staged file |
 | --- | --- | --- |
@@ -340,6 +342,10 @@ staged TRIPLE for the ADAPTER adapter in PATH
 ```
 
 It never starts Gradle, Xcode or a signing tool, and produces no installable application. Refused: a target the project does not declare; with `--locked`, a missing `oven.lock` or a changed contract or bundled file, named by the lock refusal; an adapter whose target or platform facts do not match; an existing `--output`, which is never replaced; a bundled artifact that is not a regular file; and two bundled artifacts with one staged path.
+
+`--format json` prints 0.5.1's stage report instead: `target`, `adapter`, `manifest` (the manifest's path), `lock` (the lock's graph identity, where 0.5.1 named its receipt and plan), `bundled_files`, and `cargo_process_started` and `platform_build_process_started`, both `false`. 0.5.1's `--base-receipt` and `--store` are refused by name, exit `2`: 0.6 stages what `oven.lock` records, from the home's store.
+
+0.5.1's `incan oven interop bake` has no 0.6 command: an ordinary `oven build` compiles each [`[c]`](project_configuration.md#c) Clove and links the static archives `[interop.c]` declares. `incan oven interop bake` and `oven interop bake` exit `2` naming `oven build`. Every other `incan oven COMMAND` exits `2` naming `oven COMMAND`, and `incan inspect interop-plan` names `oven inspect interop-plan`.
 
 ## `incan mcp`
 
