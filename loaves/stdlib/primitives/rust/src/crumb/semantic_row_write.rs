@@ -39,7 +39,7 @@ pub(super) fn write_rows(rows: &Rows) -> Option<Vec<u8>> {
 }
 
 /// Emit one description in its original mode with complete D metadata.
-fn encode_entry(entry: &Stored) -> Option<Vec<u8>> {
+pub(super) fn encode_entry(entry: &Stored) -> Option<Vec<u8>> {
     let mut budget = Budget::new(u64::MAX, u64::MAX, u64::MAX);
     let mut output = Vec::new();
     if !entry.inline {
@@ -100,7 +100,7 @@ fn without(value: &Meta, name: &str) -> Option<Meta> {
 }
 
 /// Write one root row: an enum's variant index, then the presence bitmap and indexed field cells.
-fn write_root(entry: &Stored, value: &Value, dictionary: &[Stored]) -> Option<Vec<u8>> {
+pub(super) fn write_root(entry: &Stored, value: &Value, dictionary: &[Stored]) -> Option<Vec<u8>> {
     match value {
         Value::Record(fields) if entry.record => write_fields(&entry.fields, fields, dictionary),
         Value::Enum(identity, fields) if !entry.record => {

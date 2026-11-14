@@ -2,7 +2,8 @@
 //!
 //! This mirrors `column_key_read.read_keys` and `column_value_dictionary.build_keys`/`encode_keys`. Decoding reads
 //! the literal input (or every proper prefix when the case asks for them) into keys or one typed refusal category;
-//! encoding writes the case's independently authored keys. Column blocks live in `semantic_blocks.rs`.
+//! encoding writes the case's independently authored keys. Column blocks and complete columns live in
+//! `semantic_blocks.rs`, column envelopes in `semantic_envelope.rs`.
 
 use std::cmp::Ordering;
 
@@ -153,6 +154,7 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
         "column_dictionary" => {}
         "column_block" => return super::blocks::decode(document),
         "column_data" => return super::blocks::decode_column(document),
+        "binary_decode" => return super::envelope::decode(document),
         _ => return None,
     }
     let data = hex(document.get("input_hex")?.as_str()?)?;
@@ -188,6 +190,7 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
         "column_dictionary" => {}
         "column_block" => return super::blocks::encode(document),
         "column_data" => return super::blocks::encode_column(document),
+        "binary_decode" => return super::envelope::encode(document),
         _ => return None,
     }
     let expected = document.get("expected")?;
