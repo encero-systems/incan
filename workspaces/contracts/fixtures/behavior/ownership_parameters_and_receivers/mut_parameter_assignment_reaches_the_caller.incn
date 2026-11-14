@@ -1,0 +1,46 @@
+# behavior: assigning or compound-assigning to a caller-visible `mut` parameter replaces the caller's value through the borrow, and a scalar `mut` parameter stays the callee's own copy (RFC 129, #1846).
+# expect-stdout:
+#   ["pear"]
+#   pear!
+#   [0] 1
+#   3 2
+
+"""RFC 129's caller-visible parameter replacement."""
+
+
+def replace(mut items: list[str]) -> None:
+    items = ["pear"]
+
+
+def fruit() -> str:
+    return "pear"
+
+
+def shout(mut label: str) -> None:
+    label = fruit()
+    label += "!"
+
+
+def reset(mut items: list[int]) -> int:
+    items = [0]
+    return len(items)
+
+
+def countdown(mut remaining: int) -> int:
+    remaining -= 1
+    return remaining
+
+
+def main() -> None:
+    mut items = ["apple"]
+    replace(items)
+    println(items)
+    mut label = "apple"
+    shout(label)
+    println(label)
+    mut numbers: list[int] = [1, 2]
+    size = reset(numbers)
+    println(f"{numbers} {size}")
+    remaining = 3
+    left = countdown(remaining)
+    println(f"{remaining} {left}")
