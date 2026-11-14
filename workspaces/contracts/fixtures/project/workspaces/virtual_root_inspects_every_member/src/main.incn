@@ -1,0 +1,14 @@
+# behavior: Without a member selection, `oven workspace inspect` at a virtual workspace's root reports every member, as 0.5.1's `workspace` scope did (#3141).
+# cli-commands:
+#   oven workspace inspect
+#   oven workspace inspect --format text
+# expect-stdout-contains:
+#   Selected scope (workspace)
+#     - alpha (alpha)
+#     - beta (beta)
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """No project owns this program; the virtual workspace root only lists its members."""
+    pass

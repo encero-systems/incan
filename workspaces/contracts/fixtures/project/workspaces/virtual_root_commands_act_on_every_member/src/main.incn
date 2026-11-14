@@ -1,0 +1,15 @@
+# behavior: Without a member selection, a project command at a virtual workspace's root acts on every member, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven check
+#   incan check
+#   oven test
+#   oven build
+#   incan fmt --check
+# expect-stdout-contains:
+#   workspace member alpha: alpha
+#   workspace member beta: beta
+# expect-exit: 0
+
+def main() -> None:
+    """No project owns this program; the virtual workspace root only lists its members."""
+    pass
