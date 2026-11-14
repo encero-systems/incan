@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 mod adaptation;
 #[path = "semantic_hash.rs"]
 mod hash;
+#[path = "semantic_print.rs"]
+mod print;
 
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {
@@ -42,6 +44,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "value_relation" => value_relation(&parsed),
         "hash_preimage" => hash_preimage(&parsed),
         "adaptation" => adaptation::adaptation(&parsed),
+        "text_print" => print::text_print(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -495,6 +498,20 @@ mod tests {
         assert_eq!(refused.kind, 0);
         assert_eq!(&refused.encoded[..17], b"\x01\x0fNominalMismatch");
         assert_eq!(&refused.encoded[17..], b"\x08/nominal");
+    }
+
+    #[test]
+    fn text_print_groups_consecutive_records_as_rows() {
+        let printed = evaluate_semantic_case(
+            "text_print".to_string(),
+            r#"{"document":{"descriptions":[{"path":"example.Point","kind":"Record","fields":[{"name":"x","type":"i64","absent":"required","canonical":true},{"name":"y","type":"i64","absent":"required","canonical":true}]}],"values":[{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"1"},"y":{"kind":"int","type":"i64","value":"2"}}},{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"3"},"y":{"kind":"int","type":"i64","value":"4"}}}]}}"#.to_string(),
+        );
+        assert_eq!(printed.kind, 0);
+        assert_eq!(
+            printed.encoded,
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n"
+        );
+        assert_eq!(printed.encoded, printed.decoded);
     }
 
     #[test]
