@@ -103,6 +103,20 @@ def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSna
     return Ok(snapshot)
 
 
+pub def read_stamps(reader: ManifestReader) -> Dict[str, str]:
+    """Every manifest this reader parsed, by path, with the filesystem identity the file had when it was read."""
+    mut held = reader.state.as_ref().borrow_mut()
+    return stamps_in(held.deref_mut())
+
+
+def stamps_in(mut store: &mut ManifestStore) -> Dict[str, str]:
+    """The identities a preparation's manifest memo recorded, by manifest path."""
+    mut stamps: Dict[str, str] = {}
+    for path in store.manifests.keys():
+        stamps[path] = store.manifests[path].stamp
+    return stamps
+
+
 pub def read_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
     """Normalize one parsed generation once, preserving its raw evidence and the independent parsed view."""
     snapshot = read_manifest_snapshot(root, reader)?
