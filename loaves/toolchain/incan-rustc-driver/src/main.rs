@@ -47,7 +47,6 @@ mod futures;
 mod generic_enums;
 mod generic_layouts;
 mod generic_loans;
-mod heap;
 mod identity;
 mod library_exports;
 mod model_debug;

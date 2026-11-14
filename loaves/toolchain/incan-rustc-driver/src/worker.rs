@@ -6,11 +6,11 @@
 //!
 //! Bootstrap boundary (DD-0013, "Language and platform boundary", adaptation 3): besides the entry itself, the Rust
 //! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) needs
-//! FFI that Incan refuses as unsafe, as does returning freed heap (`crate::heap`). Footprint readings live in the
-//! platform resource probe. The caller watch is a thread that observes the caller's socket while the compiler runs:
-//! dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a value without
-//! a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained `Send` evidence.
-//! What a departed caller means is the host's decision (`incan_worker_host::abandon`).
+//! FFI that Incan refuses as unsafe. Footprint readings live in the platform resource probe, and returning freed heap
+//! in the platform's `release_free_heap`. The caller watch is a thread that observes the caller's socket while the
+//! compiler runs: dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a
+//! value without a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained
+//! `Send` evidence. What a departed caller means is the host's decision (`incan_worker_host::abandon`).
 
 use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
@@ -40,7 +40,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     timing.mark("worker_observer_detached");
                 } else {
                     timing.mark("worker_observer_joined");
-                    crate::heap::release_free_memory();
+                    incan_platform::release_free_heap();
                     timing.mark("worker_heap_released");
                 }
                 incan_worker_host::complete(&mut host, outcome, footprint(), live_heap());
@@ -48,7 +48,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
-                crate::heap::release_free_memory();
+                incan_platform::release_free_heap();
                 incan_worker_host::complete_record(&mut host, reply, footprint(), live_heap());
             }
         }

@@ -1,9 +1,10 @@
-//! The platform's only unsafe Rust: sanctioned host clock and resource-probe bindings behind safe functions.
+//! The platform's only unsafe Rust: sanctioned host clock, resource-probe and heap-release bindings behind safe
+//! functions.
 //!
 //! RFC 005 refuses unsafe Rust calls from Incan. This facet contains only the OS calls needed to expose host-aligned
-//! nanoseconds and process resource readings; observation, process-tree policy and encoding stay in Incan. Neither
-//! supported clock advances during suspend or follows wall-clock adjustments. Values compare across processes on the
-//! same host boot.
+//! nanoseconds and process resource readings, and to return freed heap pages to the system; observation, process-tree
+//! policy, release policy and encoding stay in Incan. Neither supported clock advances during suspend or follows
+//! wall-clock adjustments. Values compare across processes on the same host boot.
 
 #[cfg(target_os = "macos")]
 use std::ffi::CStr;
@@ -31,7 +32,32 @@ unsafe extern "C" {
         addresses: *mut *mut libc::vm_address_t,
         count: *mut libc::c_uint,
     ) -> libc::kern_return_t;
+
+    /// libmalloc: return free pages of `zone` (every zone when null) to the system, up to `goal` bytes (all when zero).
+    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
 }
+
+/// Return every free heap page to the system, leaving live allocations untouched.
+///
+/// The system allocator keeps the pages of freed allocations, and the kernel charges them to the process footprint
+/// until the allocator gives them back. macOS asks every malloc zone for pressure relief; Linux with glibc trims the
+/// heap. When to release is the caller's policy.
+#[cfg(target_os = "macos")]
+pub fn release_free_heap() {
+    // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no live memory is touched.
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+}
+
+/// Return every free heap page to the system, leaving live allocations untouched.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn release_free_heap() {
+    // SAFETY: malloc_trim only returns free heap pages to the system.
+    unsafe { libc::malloc_trim(0) };
+}
+
+/// Other systems have no heap release; the call returns nothing to the system.
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+pub fn release_free_heap() {}
 
 /// Read the shared raw monotonic host clock in nanoseconds, excluding time suspended.
 ///

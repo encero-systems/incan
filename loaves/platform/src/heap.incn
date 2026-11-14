@@ -1,0 +1,8 @@
+"""The process heap's one sanctioned control: returning freed pages to the system."""
+
+from rust::incan_platform_clock import release_free_heap as native_release_free_heap
+
+
+pub def release_free_heap() -> None:
+    """Return every free heap page to the system, leaving live allocations untouched; when to call is policy."""
+    native_release_free_heap()
