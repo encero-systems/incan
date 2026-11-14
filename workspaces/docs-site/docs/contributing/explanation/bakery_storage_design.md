@@ -465,6 +465,19 @@ APFS supports clone-style sharing; Linux's reflink operation is conditional on t
 
 Do not hardlink canonical payloads into a path a build tool may mutate. Permissions that the same user can change are not a COW boundary. Executables/dylibs also need their platform loader/signing/relative-library layout preserved; test relocated execution rather than assuming any content-hash filename is runnable. A view is disposable presentation, never compilation authority or a second payload cache.
 
+### 7.5 Status: home and project views (BE-01)
+
+What holds today, against the architecture's [BE-01](build_engine_architecture.md#key-decisions):
+
+- **Binding.** A home binds the bakery its configuration selects (`[storage] root`, else `bakery` in the home) through `<home>/bakery.view` (`incan.store-view/1`: store id, locator, home view key). `run`, `test` and `build` bind it before building. A home's first build draws the key `home-<128 bits of OS entropy>`, makes the view's root durable under a claim, and only then publishes the descriptor; later builds read it.
+- **Relocation and copies.** A descriptor that names the store keeps its view when the store is found at another locator, and is rewritten with that locator. Copying or moving a descriptor never forks a view. A descriptor that names another store is refused, never replaced.
+- **Invocation overrides.** A bakery that `INCAN_BAKERY` selects serves one invocation and binds no view. Such an invocation uses the store's shared `home` view and names records-engine project views from the home's path.
+- **Sharing.** Homes share a bakery only by configuring the same `[storage] root`. A new home's default is its own bakery.
+- **What lives in a home's view.** Compiler snapshot descriptors are staged in the owner home's view, and a worker resolves only descriptors in the view its home's descriptor names. The records engine admits each installation in the home's view. Ordinary builds bind the view and stage no descriptor.
+- **Project views.** The records engine names a program's project view from the home view key, the source, the profile and any selected body-refusal diagnosis. A program's first build in a home forks the project view from the home view, so it shares the home view's index pages and copies none of its records.
+- **Publication.** Build-epoch captures publish with a compared transaction (`begin_compared`). A publication whose view moved on since it was read, and whose writes would change the view, is refused as a conflict; writes the view already holds publish nothing. There is no implicit merge-back.
+- **Not built.** Test and editor views, explicit merge, a command that creates or joins a view, and moving the other home-catalog records that still use the shared `home` view.
+
 ## 8. The Compiler's Record-by-Record Path
 
 ### 8.1 One read path, cold and warm
