@@ -508,6 +508,24 @@ pub def test_a_commit_s_manifest_does_not_grow_with_the_store_s_generations() ->
     return Ok(None)
 
 
+pub def test_a_snapshot_reads_its_manifest_once() -> Result[None, str]:
+    """
+    Opening a snapshot reads, checks and decodes the selected generation's manifest once: its lease is registered
+    under the same lifecycle gate, against the manifest just decoded. A cold test case opens about twenty snapshots.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    _ = write_one(root, "key", "value").map_err((error) => error.message())?
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    before = observed_work.get("store_manifest_read", 0)
+    held = snapshot(root).map_err((error) => error.message())?
+    reads = observed_work.get("store_manifest_read", 0) - before
+    observe_work(WorkObserver())
+    assert text(lookup(held, "key")) == "value"
+    assert reads == 1, f"opening one snapshot read its manifest {reads} times"
+    return Ok(None)
+
+
 pub def test_a_found_value_is_a_view_and_only_owned_copies_it() -> Result[None, str]:
     """
     A lookup answers with a view of the value inside its segment: it copies out the same key and location bytes
