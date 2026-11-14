@@ -126,8 +126,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # 1. The registry closure travels with the units the checkout's Loaves reach, each artifact directory once.
     shipped = stage_registry(toolchain, stage)?
     # 2. The driver and the Rust fact caches are linked in under names relative to the toolchain.
-    driver = "bin/" + Path(toolchain.driver).name()
-    link_file(Path(toolchain.driver), stage.joinpath(driver))?
+    driver = stage_driver(Path(toolchain.driver), stage)?
     abi = stage_abi_caches(toolchain.rust_abi, stage)?
     c_tools = stage_c_toolchain(toolchain, stage)?
     # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along,
@@ -155,6 +154,21 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
+
+
+pub def stage_driver(driver: Path, stage: Path) -> Result[str, str]:
+    """
+    Link the driver into the stage, with the development linker its relink shipped beside it under the driver's
+    digest, where the installed driver looks for it; returns the driver's name relative to the toolchain.
+    """
+    staged = "bin/" + driver.name()
+    link_file(driver, stage.joinpath(staged))?
+    prefix = "incan-rustc-driver-"
+    if driver.name().startswith(prefix):
+        linker = driver.parent().joinpath("incan-link-" + driver.name()[len(prefix):])
+        if linker.is_file():
+            link_file(linker, stage.joinpath("bin/" + linker.name()))?
+    return Ok(staged)
 
 
 def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[str, str]], str]:

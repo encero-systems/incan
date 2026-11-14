@@ -20,7 +20,7 @@ from scratch import scratch_directory
 from rust_registry import read_registry_units
 from rust_target import compiler_version, deployment_target
 from toolchain import Toolchain, load_toolchain, rust_compiler
-from toolchain_archive import portable_registry_unit, source_archive_name
+from toolchain_archive import portable_registry_unit, source_archive_name, stage_driver
 from unit_publication import record_path, record_payload
 from unit_freshness import fingerprint, sdk_settings_identity, unit_compiler_identity
 from freshness_fixtures import compiler_fingerprint, fixture, reconcile, unit_key, write
@@ -36,6 +36,30 @@ def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
     options.write(true)
     file = options.open(f"{path.0}").map_err((error) => f"{prefix}{error}")?
     file.set_modified(before).map_err((error) => f"{prefix}{error}")?
+    return Ok(None)
+
+
+pub def test_a_packed_toolchain_ships_its_driver_s_development_linker() -> Result[None, str]:
+    """
+    A packed toolchain carries the development linker a relink shipped beside its driver, under the driver's digest,
+    where the installed driver looks for it; a driver shipped without one is packed alone.
+    """
+    scratch = scratch_directory()?
+    installed = scratch.path().joinpath("installed/bin")
+    driver = installed.joinpath("incan-rustc-driver-0123456789ab")
+    write(driver, "driver")?
+    write(installed.joinpath("incan-link-0123456789ab"), "linker")?
+    stage = scratch.path().joinpath("stage")
+    assert stage_driver(driver, stage)? == "bin/incan-rustc-driver-0123456789ab"
+    assert stage.joinpath("bin/incan-rustc-driver-0123456789ab").is_file()
+    assert stage.joinpath("bin/incan-link-0123456789ab").is_file(), "the packed toolchain has no development linker"
+    alone = scratch.path().joinpath("alone/bin/incan-rustc-driver-ba9876543210")
+    write(alone, "driver")?
+    alone_stage = scratch.path().joinpath("alone-stage")
+    assert stage_driver(alone, alone_stage)? == "bin/incan-rustc-driver-ba9876543210"
+    assert [entry.name() for entry in alone_stage.joinpath("bin").iterdir().map_err((error) => error.message())?] == [
+        "incan-rustc-driver-ba9876543210",
+    ]
     return Ok(None)
 
 
