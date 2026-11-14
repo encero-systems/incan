@@ -41,8 +41,8 @@ def take(node: Node, dictionary: Dictionary) -> str:
         if name == "take" {
             assert_eq!(
                 body.params[0].input_access,
-                incan_semantics_core::IncanInputAccess::Inferred,
-                "moving a payload must retain the owned subject: {body:#?}"
+                incan_semantics_core::IncanInputAccess::InferredShared,
+                "an immutable subject borrows at entry before matching its payload: {body:#?}"
             );
         }
     }
@@ -223,9 +223,9 @@ def owned_some(packet: Packet) -> Option[list[str]]:
         ("plain_field", incan_semantics_core::IncanInputAccess::InferredShared),
         ("whole_ok", incan_semantics_core::IncanInputAccess::Inferred),
         ("whole_some", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_ok", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_err", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_some", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_ok", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("owned_err", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("owned_some", incan_semantics_core::IncanInputAccess::InferredShared),
     ] {
         let body = module
             .bodies
@@ -414,5 +414,182 @@ def main() -> Result[None, str]:
         .result_requirements
         .clear();
     assert!(stripped.input_profile_gap().is_some());
+    Ok(())
+}
+
+/// Only an input whose checked type has a shared executable form borrows at entry. A generator that the callee
+/// advances and a dictionary that a standard method reads keep their by-value inputs, while the model, text, bytes
+/// and list inputs beside them borrow.
+#[test]
+fn shared_inputs_require_a_shared_executable_form() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Item:
+    label: str
+
+def advance(values: Generator[int], item: Item) -> int:
+    mut total = len(item.label)
+    for value in values:
+        total += value
+    return total
+
+def lookup(table: dict[str, int], item: Item, text: str, data: bytes, items: list[int]) -> int:
+    match table.get(item.label):
+        Some(found) => return found + len(text) + len(data) + len(items)
+        None => return 0
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let inferred = incan_semantics_core::IncanInputAccess::Inferred;
+    let shared = incan_semantics_core::IncanInputAccess::InferredShared;
+    let expected = vec![
+        ("advance", vec![inferred, shared]),
+        ("lookup", vec![inferred, shared, shared, shared, shared]),
+    ];
+    let mut actual = Vec::new();
+    for (name, _) in &expected {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == *name)
+            .ok_or("missing shared-form body")?;
+        actual.push((
+            *name,
+            body.params
+                .iter()
+                .map(|parameter| parameter.input_access)
+                .collect::<Vec<_>>(),
+        ));
+    }
+    assert_eq!(
+        actual, expected,
+        "only an input with a shared executable form borrows at entry"
+    );
+    Ok(())
+}
+
+/// A parameter its body consumes on any path keeps its by-value input, so a caller's last use moves it; forwarding it
+/// to such a callee consumes it too. Only a parameter the body never consumes, on any path, borrows at entry.
+#[test]
+fn inputs_consumed_on_any_path_keep_their_by_value_input() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Native:
+    value: int
+
+model Holder:
+    item: Native
+
+def create(item: Native) -> Holder:
+    return Holder(item=item)
+
+def make(item: Native) -> Holder:
+    return create(item)
+
+def owned_local(item: Native) -> int:
+    mut current = item
+    current.value = 1
+    return current.value
+
+def store_if(item: Native, enabled: bool) -> Option[Holder]:
+    if enabled:
+        return Some(Holder(item=item))
+    return None
+
+def forward_if(item: Native, enabled: bool) -> Option[Holder]:
+    return store_if(item, enabled)
+
+def after_exit(item: Native, enabled: bool) -> Option[Holder]:
+    if not enabled:
+        return None
+    return Some(Holder(item=item))
+
+def read_if(item: Native, enabled: bool) -> int:
+    if enabled:
+        return item.value
+    return 0
+
+def read(item: Native) -> int:
+    return item.value
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let inferred = incan_semantics_core::IncanInputAccess::Inferred;
+    let shared = incan_semantics_core::IncanInputAccess::InferredShared;
+    let expected = vec![
+        ("create", inferred),
+        ("make", inferred),
+        ("owned_local", inferred),
+        ("store_if", inferred),
+        ("forward_if", inferred),
+        ("after_exit", inferred),
+        ("read_if", shared),
+        ("read", shared),
+    ];
+    let mut actual = Vec::new();
+    for (name, _) in &expected {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == *name)
+            .ok_or("missing consumption body")?;
+        actual.push((*name, body.params[0].input_access));
+    }
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+/// A published callable's parameter passing is part of its signature, so it follows the base's read-only rule
+/// whatever its body does; only a callable nothing outside the module can name borrows a parameter its body never
+/// consumes. A published body that clones a field out of its input therefore keeps the by-value input that a Rust
+/// caller or another package was compiled against.
+#[test]
+fn published_callables_keep_the_read_only_rule() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Activation:
+    snapshot: list[int]
+
+pub def published_clone(activation: Activation) -> list[int]:
+    held = activation.snapshot
+    return held
+
+def private_clone(activation: Activation) -> list[int]:
+    held = activation.snapshot
+    return held
+
+pub def published_read(activation: Activation) -> int:
+    return len(activation.snapshot)
+
+model Reader:
+    count: int
+
+    pub def published_method(self, activation: Activation) -> list[int]:
+        held = activation.snapshot
+        return held
+
+    def private_method(self, activation: Activation) -> list[int]:
+        held = activation.snapshot
+        return held
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    let inferred = incan_semantics_core::IncanInputAccess::Inferred;
+    let shared = incan_semantics_core::IncanInputAccess::InferredShared;
+    let expected = vec![
+        ("published_clone", inferred),
+        ("private_clone", shared),
+        ("published_read", shared),
+        ("published_method", inferred),
+        ("private_method", shared),
+    ];
+    let mut actual = Vec::new();
+    for (name, _) in &expected {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == *name)
+            .ok_or("missing visibility body")?;
+        let input = body.params.last().ok_or("missing visibility input")?;
+        actual.push((*name, input.input_access));
+    }
+    assert_eq!(actual, expected);
     Ok(())
 }

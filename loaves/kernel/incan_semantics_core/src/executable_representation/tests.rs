@@ -108,6 +108,7 @@ pub(super) fn module(bodies: Vec<Body>) -> BodyIrModule {
         type_alias_declarations: Vec::new(),
         trait_declarations: Vec::new(),
         trait_implementations: Vec::new(),
+        published_callables: Vec::new(),
         module_id: CompilerNodeId::module("lib"),
         loaf_callables: Vec::new(),
         native_union_declarations: Vec::new(),

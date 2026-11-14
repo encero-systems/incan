@@ -311,6 +311,24 @@ impl IncanType {
         self.union_members().is_some()
     }
 
+    /// Whether MIR lowering gives an inferred shared input of this checked type a shared executable form: a named
+    /// model, class, enum or native nominal, and an instantiated native item such as `Mutex[int]`, borrow as a nominal
+    /// reference, text as a string reference, and bytes or a list as a list reference.
+    ///
+    /// The frontend borrows an input of a callable nothing outside its module can name only at these types, because
+    /// lowering materializes that input's owned uses through these forms. Every other type keeps its by-value input
+    /// there: advancing a generator consumes its state, dictionaries and sets already reach the callee through the
+    /// collection reference ABI, and the remaining carriers have no owned-use materialization. A published callable
+    /// keeps the base's read-only rule at every type instead.
+    pub fn has_shared_executable_form(&self) -> bool {
+        match self {
+            Self::Named(_) => true,
+            Self::Generic { base, .. } if crate::body_ir::rust_item_identity(base).is_some() => true,
+            Self::Primitive(primitive) => matches!(primitive, IncanPrimitiveType::Str | IncanPrimitiveType::Bytes),
+            _ => self.collection_arguments(CollectionTypeId::List).is_some(),
+        }
+    }
+
     /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
     /// static initializers and their validation both read this rule.
     pub fn static_literal_carrier(&self) -> bool {
