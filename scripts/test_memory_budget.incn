@@ -1,15 +1,21 @@
-"""Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
+"""Verify memory-budget option, process-table, tree-walk, trace, budget and report contracts without compiling projects."""
 
+from std.json import JsonValue
 from pub::incan_platform.probes import ProcessResource, parse_process_table
 from memory_budget import (
     MIB,
+    RELEASE_MARGIN_BYTES,
+    HeapTrace,
     Measurement,
     budget_outcome,
+    heap_trace,
     measurements_report,
     measurements_tsv,
+    no_heap_trace,
     parse_options,
     process_tree,
     require_budget,
+    require_released_heap,
 )
 
 
@@ -43,6 +49,64 @@ def test_process_rows_and_tree_keep_only_current_descendants() -> Result[None, s
     return Ok(None)
 
 
+def test_heap_trace_keeps_the_greatest_live_heap_and_the_worst_heap_release() -> Result[None, str]:
+    """
+    Heap samples and timing marks both carry a footprint and a live heap. A mark taken just after a heap release is
+    a release, and the worst one is where the footprint stands furthest above the live heap. Other records are skipped.
+    """
+    trace = "\n".join(
+        [
+            trace_line("heap-sample: ", 7, 300, 100, "")?,
+            "{\"fields\":{\"message\":\"heap-sample: named in prose\"},\"kind\":\"event\",\"operation\":\"invocation\"}",
+            trace_line("native-time: ", 8, 900, 300, "plan_lowered")?,
+            trace_line("native-time: ", 8, 350, 200, "frontend_heap_released")?,
+            trace_line("native-time: ", 7, 180, 200, "checked_heap_released")?,
+            "",
+        ],
+    )
+    heap = heap_trace(trace, no_heap_trace())?
+    assert heap.live_peak_bytes == 300
+    assert heap.live_peak_process == 8
+    assert heap.releases == 2
+    assert heap.release_excess_bytes == 150
+    assert heap.release_excess_at == "frontend_heap_released in process 8"
+    earlier = HeapTrace(
+        live_peak_bytes=400,
+        live_peak_process=9,
+        releases=1,
+        release_excess_bytes=500,
+        release_excess_at="worker_heap_released in process 9",
+    )
+    folded = heap_trace(trace, earlier)?
+    assert folded.live_peak_bytes == 400
+    assert folded.releases == 3
+    assert folded.release_excess_bytes == 500
+    assert folded.release_excess_at == "worker_heap_released in process 9"
+    below = heap_trace(trace_line("native-time: ", 7, 180, 200, "checked_heap_released")?, no_heap_trace())?
+    assert below.releases == 1
+    assert below.release_excess_bytes == -20
+    assert heap_trace("", no_heap_trace())?.live_peak_bytes == -1
+    return Ok(None)
+
+
+def test_a_traced_run_returns_the_heap_it_frees() -> Result[None, str]:
+    """
+    Oven's run is refused when a compiler's footprint just after a heap release stands more than the margin above its
+    live heap, or when it traced no release at all. A run that is not traced is not held to it.
+    """
+    within = released("oven", 1, RELEASE_MARGIN_BYTES)
+    kept = released("oven", 2, RELEASE_MARGIN_BYTES + 1)
+    untraced = measured("oven", 3, MIB, 300_000)
+    assert RELEASE_MARGIN_BYTES == 256 * MIB
+    assert require_released_heap([within, measured("contracts", 1, MIB, 1_500)]) == Ok(None)
+    assert release_refusal([kept]) == f"footprint above the live heap after a heap release: oven run 2: {RELEASE_MARGIN_BYTES + 1} > {RELEASE_MARGIN_BYTES} bytes at frontend_heap_released in process 4242"
+    assert release_refusal([untraced]) == "footprint above the live heap after a heap release: oven run 3: no heap release traced"
+    tsv = measurements_tsv([kept], 2048 * MIB)
+    assert f"oven\t2\t{MIB}\tincan-rustc-driver\t{MIB}\t{MIB}\t{RELEASE_MARGIN_BYTES + 1}\t{6144 * MIB}\n" in tsv
+    assert "oven\t2\t1\tincan-rustc-driver\t1\t1\t256\t300\tunder" in measurements_report([kept], 2048 * MIB)
+    return Ok(None)
+
+
 def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
     """The gate compares bytes while the human report alone renders MiB and whole seconds."""
     under = measured("oven", 1, 2048 * MIB, 90_000)
@@ -50,11 +114,13 @@ def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Resul
     assert budget_outcome(under.tree_peak_bytes, 2048 * MIB) == "under"
     assert budget_outcome(over.tree_peak_bytes, 2048 * MIB) == "over"
     tsv = measurements_tsv([under, over], 2048 * MIB)
-    assert tsv.startswith("command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n")
-    assert f"contracts\t2\t{2048 * MIB + 1}\tincan-rustc-driver\t{2048 * MIB + 1}\t{2048 * MIB}\n" in tsv
+    assert tsv.startswith(
+        "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tlive_peak_bytes\trelease_excess_bytes\tbudget_bytes\n",
+    )
+    assert f"contracts\t2\t{2048 * MIB + 1}\tincan-rustc-driver\t{2048 * MIB + 1}\t-1\t0\t{2048 * MIB}\n" in tsv
     report = measurements_report([under, over], 2048 * MIB)
-    assert "oven\t1\t2048\tincan-rustc-driver\t2048\t90\tunder" in report
-    assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t1\tover" in report
+    assert "oven\t1\t2048\tincan-rustc-driver\t2048\t-\t-\t90\tunder" in report
+    assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t-\t-\t1\tover" in report
     assert require_budget([under], 2048 * MIB) == Ok(None)
     assert budget_refusal([measured("oven", 1, 2048 * MIB + 1, 90_000)], 2048 * MIB) == "accepted"
     assert budget_refusal([over], 2048 * MIB) == f"process-tree footprint budget exceeded: contracts run 2: {2048 * MIB + 1} > {2048 * MIB} bytes"
@@ -69,10 +135,10 @@ def test_oven_is_held_to_the_lowering_budget() -> Result[None, str]:
     over = measured("oven", 2, lowering + 1, 300_000)
     assert require_budget([within], budget) == Ok(None)
     assert budget_refusal([over], budget) == f"process-tree footprint budget exceeded: oven run 2: {lowering + 1} > {lowering} bytes"
-    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t{lowering}\n" in measurements_tsv([over], budget)
+    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t-1\t0\t{lowering}\n" in measurements_tsv([over], budget)
     report = measurements_report([within, over], budget)
-    assert "oven\t1\t6144\tincan-rustc-driver\t6144\t300\tunder" in report
-    assert "oven\t2\t6144\tincan-rustc-driver\t6144\t300\tover" in report
+    assert "oven\t1\t6144\tincan-rustc-driver\t6144\t-\t-\t300\tunder" in report
+    assert "oven\t2\t6144\tincan-rustc-driver\t6144\t-\t-\t300\tover" in report
     return Ok(None)
 
 
@@ -90,6 +156,45 @@ def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
         largest_process_peak_bytes=peak,
         wall_ms=wall_ms,
     )
+
+
+def released(command: str, run: int, excess: int) -> Measurement:
+    """Create one traced report row whose worst heap release left `excess` bytes of footprint above the live heap."""
+    mut result = measured(command, run, MIB, 300_000)
+    result.live_peak_bytes = MIB
+    result.live_peak_process = 4242
+    result.releases = 4
+    result.release_excess_bytes = excess
+    result.release_excess_at = "frontend_heap_released in process 4242"
+    return result
+
+
+def trace_line(prefix: str, process: int, footprint: int, live: int, boundary: str) -> Result[str, str]:
+    """One engine trace record carrying a compiler process's heap reading, escaped as the trace channel writes it."""
+    reading = JsonValue.object(
+        {
+            "boundary": JsonValue.string(boundary),
+            "footprint": JsonValue.int(footprint),
+            "live": JsonValue.int(live),
+            "process": JsonValue.int(process),
+        },
+    )
+    body = reading.to_json().map_err((error) => error.message())?
+    record = JsonValue.object(
+        {
+            "key": JsonValue.string(prefix + body),
+            "kind": JsonValue.string("line"),
+            "operation": JsonValue.string("native_timing"),
+        },
+    )
+    return record.to_json().map_err((error) => error.message())
+
+
+def release_refusal(results: list[Measurement]) -> str:
+    """Return one heap-release refusal for concise gate assertions."""
+    match require_released_heap(results):
+        Ok(_) => return "accepted"
+        Err(message) => return message
 
 
 def refusal(arguments: list[str]) -> str:
