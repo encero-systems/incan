@@ -1,6 +1,7 @@
 """File-operation diagnostics retain the attempted operation and exact path."""
 
 from files import make_directory, read, remove, write
+from observation import file_digest
 from scratch import scratch_directory
 from std.fs import Path
 from std.testing import fail
@@ -20,6 +21,7 @@ pub def test_file_errors_name_operation_and_path() -> Result[None, str]:
     missing = root.joinpath("missing.txt")
     require_context(read(missing), "read", missing)
     require_context(remove(missing), "remove", missing)
+    require_context(file_digest(missing), "read", missing)
     require_context(missing.resolve().map_err((error) => f"cannot resolve {error.message()}"), "resolve", missing)
     # 2. Output failures retain the intended destination, not only the operating-system message.
     unwritable = root.joinpath("missing/output.txt")

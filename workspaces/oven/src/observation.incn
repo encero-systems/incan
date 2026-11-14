@@ -328,7 +328,7 @@ def texts(items: list[str]) -> JsonValue:
 
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    content = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
     clock = begin()
     result = hexlify(sha256.digest(content))
     record(Operation.FileHash, path.0, clock, len(content))
