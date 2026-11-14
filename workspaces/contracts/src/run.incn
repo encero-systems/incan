@@ -1,7 +1,7 @@
 """Run one invocation through the same owning pool as concurrent contract commands."""
 
 from std.fs import Path
-pub from processes import Outcome, built_program, clear_trace, set_timeout, trace_file, unit_notes
+pub from processes import Outcome, built_program, clear_trace, set_timeout, trace_file, trace_lines, unit_notes
 from workers import Invocation, invoke_many
 
 

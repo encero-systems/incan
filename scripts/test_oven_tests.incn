@@ -128,7 +128,7 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     assert verification_phase_plans(0)[5].reservation == 6 * GIB
     assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
     traces = verification_trace_environment(Path("/evidence"), "census", true)
-    assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
+    assert traces["INCAN_ENGINE_TRACE"] == "/evidence/traces/census"
     assert traces["INCAN_NATIVE_TIMING"] == "1"
     assert len(traces) == 2
     assert verification_phase_arguments("census", Path("/run"), Path("/runner"), 6, 900) == [

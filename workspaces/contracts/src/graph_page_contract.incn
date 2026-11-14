@@ -43,7 +43,7 @@ pub def check_warm_pages(incan: str, project: Path) -> Result[None, str]:
     sleep(Duration.from_secs(3))
     _ = invoke(incan, arguments, project)?
     # 3. The warm request is traced alone.
-    warm = invoke(incan, arguments, project, [f"INCAN_JEC_TRACE={traces.0}"])?
+    warm = invoke(incan, arguments, project, [f"INCAN_ENGINE_TRACE={traces.0}"])?
     mut work = preparation_work(traces)?
     if warm.code != Some(0) or warm.stdout != first.stdout:
         return Err("a warm graph request answered differently from the cold one")
@@ -73,7 +73,7 @@ def preparation_work(directory: Path) -> Result[str, str]:
         for line in read(path)?.split("\n"):
             if line == "":
                 continue
-            category = required_text(parse_json(line)?, "category")?
+            category = required_text(parse_json(line)?, "operation")?
             if category in PREPARATION:
                 counts[category] = counts.get(category).unwrap_or(0) + 1
         remove(path)?
@@ -102,7 +102,7 @@ def serve(incan: str, project: Path, work_directory: Path, calls: list[JsonValue
     mut command = Command.new(incan)
     command.arg("mcp").arg(".").current_dir(project.0)
     if trace != "":
-        command.env("INCAN_JEC_TRACE", trace)
+        command.env("INCAN_ENGINE_TRACE", trace)
     command.stdin(File.open(requests.0).map_err((error) => str(error))?)
     output = command.output().map_err((error) => str(error))?
     requests.unlink().map_err((error) => error.message())?
