@@ -690,61 +690,41 @@ pub def frozen_text_membership(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """
-    Test text membership in a frozen list or set in place: the runtime compares each static element's text with the
-    needle, and no element is copied or formatted (#2944). A set is read as a list over its own static slice. Any
-    other membership keeps the ordinary route.
+    Test text membership in a frozen list or set in place: the frozen carrier compares each static element's text
+    with the borrowed needle, and no element is copied or formatted (#2944). Any other membership keeps the
+    ordinary route.
     """
-    mut set = false
-    match argument_type(builder, arguments, 0, span)?:
-        (PlanType.FrozenCollection(name, elements) | PlanType.FrozenCollectionRef(name, elements)) =>
-            if len(elements) != 1 or elements[0] not in [PlanType.StaticText, PlanType.FrozenStr]:
-                return Ok(false)
-            if name == "FrozenSet":
-                set = true
-            elif name != "FrozenList":
-                return Ok(false)
-        _ => return Ok(false)
-    mut frozen = literal(Constant.Unit, span)
-    match arguments[0].as_one():
-        Some(RustOperand.Place(_read)) =>
-            receiver = shared_receiver_place(builder, arguments, 0, span)?
-            storage = collection_read_storage(builder, receiver, span)?
-            frozen = read_place(storage, false, span)
-        Some(_value) => frozen = argument_value(builder, arguments, 0, span)?
-        None => return Err("unsupported Body IR spread frozen membership receiver")
+    ty = argument_type(builder, arguments, 0, span)?
+    mut path = ""
     mut elements: list[PlanType] = []
-    match operand_type(builder, frozen)?:
-        PlanType.FrozenCollection(_name, retained) => elements = retained
-        _ => return Err("unsupported Body IR frozen membership receiver value")
-    listed_type = PlanType.FrozenCollection("FrozenList", elements)
-    if set:
-        listed = temporary(builder, listed_type, span)
-        instantiated_external_call(
-            builder,
-            "incan_native_runtime::frozen_set_list",
-            elements,
-            [PlanType.FrozenCollection("FrozenSet", elements)],
-            listed_type,
-            [frozen],
-            listed,
-            span,
-        )?
-        frozen = read_place(listed, false, span)
-    mut needle = literal(Constant.Unit, span)
+    match ty:
+        PlanType.FrozenCollection(name, retained) =>
+            if len(retained) != 1 or retained[0] not in [PlanType.StaticText, PlanType.FrozenStr]:
+                return Ok(false)
+            if name == "FrozenList":
+                path = "incan_std_primitives::frozen::frozen_list_contains_text"
+            elif name == "FrozenSet":
+                path = "incan_std_primitives::frozen::frozen_set_contains_text"
+            else:
+                return Ok(false)
+            elements = retained
+        _ => return Ok(false)
     match arguments[1].as_one():
-        Some(value) => needle = borrow_text_operand(builder, value, span)?
+        Some(value) =>
+            needle = borrow_text_operand(builder, value, span)?
+            receiver = argument_value(builder, arguments, 0, span)?
+            output = call_destination(builder, destination, PlanType.Bool, span)?
+            instantiated_external_call(
+                builder,
+                path,
+                elements,
+                [ty, PlanType.StringRef],
+                PlanType.Bool,
+                [receiver, needle],
+                output,
+                span,
+            )?
+            if negated:
+                builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+            return Ok(true)
         None => return Err("unsupported Body IR frozen membership needle spread")
-    output = call_destination(builder, destination, PlanType.Bool, span)?
-    instantiated_external_call(
-        builder,
-        "incan_native_runtime::frozen_list_contains_text",
-        elements,
-        [listed_type, PlanType.StringRef],
-        PlanType.Bool,
-        [frozen, needle],
-        output,
-        span,
-    )?
-    if negated:
-        builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
-    return Ok(true)
