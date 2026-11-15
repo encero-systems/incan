@@ -1,0 +1,59 @@
+"""Go-to-definition through the source projections that an editor view and ordinary build share."""
+
+from std.fs import Path
+from std.json import JsonValue
+from compiler_source_projection import SourceProjection, SourceProjectionRecord, project_source
+from overlay_hover import declaration_facets, identifier_at, imported_module, imported_path, program_origin
+
+
+pub def overlay_definition(
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    line: int,
+    column: int,
+) -> Result[JsonValue, str]:
+    """
+    Locate the declaration named at one-based `line` and `column` from the same source projection used by builds.
+
+    1. Resolve a declaration in the unsaved document from its buffer projection.
+    2. Resolve an imported project declaration from that module's captured source shape.
+    """
+    name = identifier_at(text, line, column)
+    if name == "":
+        return Ok(JsonValue.null())
+    origin = program_origin(program, entry)?
+    if let Some(owner) = declaration_owner(project_source(origin, document, text)?, name):
+        return location(program.joinpath(document), text, owner)
+    match imported_module(text, name):
+        None => return Ok(JsonValue.null())
+        Some(found) =>
+            logical = imported_path(document, found[0])
+            source = program.joinpath(logical)
+            imported = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+            match declaration_owner(project_source(origin, logical, imported)?, found[1]):
+                Some(owner) => return location(source, imported, owner)
+                None => return Ok(JsonValue.null())
+
+
+def declaration_owner(projection: SourceProjection, name: str) -> Option[SourceProjectionRecord]:
+    """The top-level source owner whose compiler projection facet declares `name`."""
+    facets = declaration_facets(name)
+    for owner in projection.owners:
+        if owner.key.facet in facets:
+            return Some(owner)
+    return None
+
+
+def location(path: Path, source: str, owner: SourceProjectionRecord) -> Result[JsonValue, str]:
+    """Project one declaration owner's byte start into a one-based document location."""
+    rows = source[:owner.start].split("\n")
+    line = len(rows)
+    column = len(rows[len(rows) - 1]) + 1
+    fields = {
+        "path": JsonValue.string(path.0),
+        "line": JsonValue.int(line),
+        "column": JsonValue.int(column),
+    }
+    return Ok(JsonValue.object(fields))

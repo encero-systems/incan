@@ -85,7 +85,7 @@ pub def imported_module(text: str, name: str) -> Option[list[str]]:
     return None
 
 
-def imported_path(document: str, module: str) -> str:
+pub def imported_path(document: str, module: str) -> str:
     """The project-relative source of an imported module, beside the importing document."""
     relative = module.replace(".", "/") + ".incn"
     directory = Path(document).parent().0
@@ -94,7 +94,7 @@ def imported_path(document: str, module: str) -> str:
     return directory + "/" + relative
 
 
-def program_origin(program: Path, entry: Path) -> Result[str, str]:
+pub def program_origin(program: Path, entry: Path) -> Result[str, str]:
     """The record origin of the program: its package's name, or a manifest-free entry's file stem."""
     if program.joinpath("loaf.toml").is_file():
         project = read_project(program, ManifestReader()).map_err((error) => error.message())?
@@ -102,7 +102,7 @@ def program_origin(program: Path, entry: Path) -> Result[str, str]:
     return Ok(entry.stem())
 
 
-def declaration_facets(name: str) -> list[str]:
+pub def declaration_facets(name: str) -> list[str]:
     """The projection facets one top-level declaration named `name` can have, one per declaration kind."""
     mut facets = [name]
     for kind in ["model", "class", "enum", "trait", "newtype", "capability", "const", "static", "partial", "alias"]:
