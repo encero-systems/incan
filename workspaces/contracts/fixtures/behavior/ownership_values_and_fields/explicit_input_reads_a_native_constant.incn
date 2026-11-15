@@ -1,0 +1,24 @@
+# behavior: An explicit body reads a native enum's unit variant as the constant value it is, with no stored place behind it (RFC 164).
+# expect-stdout:
+#   true
+#   false
+
+from rust::std::cmp import Ordering
+
+
+model Entry:
+    count: int
+
+
+def order_of(entry: Borrowed[Entry]) -> Ordering:
+    """Classify the entry's count by a native constant."""
+    if entry.count < 0:
+        return Ordering.Less
+    return Ordering.Greater
+
+
+def main() -> None:
+    """Native unit variants read in an explicit body."""
+    entry = Entry(count=1)
+    println(order_of(entry) == Ordering.Greater)
+    println(order_of(entry) == Ordering.Less)
