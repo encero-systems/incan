@@ -1,0 +1,17 @@
+# behavior: `oven env run ENV SCRIPT --dry-run` prints the resolved environment and command without running the script (#3140).
+# cli-commands:
+#   oven env run release show --dry-run
+# expect-stdout-contains:
+#   env: release
+#   requires-incan: *
+#   active Incan: 0.6.0-dev.9 (satisfied)
+#   env-vars:
+#     CI_MODE=on
+#     STAGE=release
+#   command: sh -c "echo CI_MODE=$CI_MODE STAGE=$STAGE"
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose resolved environment the dry run reports."""
+    pass
