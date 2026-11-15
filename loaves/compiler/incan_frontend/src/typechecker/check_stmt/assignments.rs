@@ -166,6 +166,12 @@ impl TypeChecker {
             self.mutable_bindings.insert(assign.name.clone());
         }
 
+        // A native reference is the view an explicit `Borrowed[T]` or `BorrowedMut[T]` local holds (RFC 164).
+        let value_ty = explicit_mode
+            .as_ref()
+            .and_then(|mode| super::ownership_contracts::native_view_value(mode.mode, &value_ty))
+            .cloned()
+            .unwrap_or(value_ty);
         let ty = self.new_assignment_binding_type(assign, annotated_ty, value_ty);
         let ty = self.retain_qualified_assignment_binding_owner(assign, ty);
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
