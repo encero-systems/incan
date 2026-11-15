@@ -3,7 +3,15 @@
 from std.encoding.hex import unhexlify
 from registry_advisory import Advisory, AdvisoryAction, audit_advisories, verify_advisory
 from registry_checkpoint import Checkpoint, verify_checkpoint
-from registry_trust import Key, KeyKind, Signature, StatementKind, Trust, delegate, pin, verify_statement
+from registry_revocation import (
+    Revocation,
+    RevocationKind,
+    require_active_trust,
+    require_not_revoked,
+    verify_key_revocation,
+    verify_revocation,
+)
+from registry_trust import Key, KeyKind, Root, Signature, StatementKind, Trust, delegate, pin, verify_statement
 
 const REGISTRY: str = "0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"
 const ROOT_KEY: str = "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85"
@@ -13,6 +21,8 @@ const STATEMENT_SIGNATURE: str = "2961d41c64c5efba3893c948551347968816c96e8698f9
 const CHECKPOINT_SIGNATURE: str = "365659fdfdcc4112a663232595df04b7c7b3c4448ab8bcae7a9524dbca97e8b097afe2f8781082ed5eafb033d54a2f62a89ddd1957940e1fa82e930b39fb860a"
 const ADVISORY_SIGNATURE: str = "1625065e7a5641b472bdef895601ae28a6dd2b51d89bf1eca459850da719724ebd4266c778350662b45fd608621c4086560553d65bf14cd81c466f7326c39a0e"
 const WITHDRAWAL_SIGNATURE: str = "bdce9d3e4537dcbb6cca7f8c55e0e9b79e710d894a97cf2a390381245db688e8c022ca38f39503ad7d754522c91f58f3f3abfda6c11e21efd08e34effbaf4003"
+const KEY_REVOCATION_SIGNATURE: str = "3551cae58a5002baf206a274f1299b91aac2c187e1eebc1a53ea167a288bf17fe9a911ab4f8bd6554fc9aef0ab34843778933876fb4826117c53195a2d69020b"
+const ARTIFACT_REVOCATION_SIGNATURE: str = "b3863db52ec77e689d894e32dc0c19dfdb4fe170d43d8db97d27a6cdce2554b8409fb61bfc9f3610b70dea45c09ba5d19cd43849cbdcacc09ff822f19255a00c"
 
 
 def octets(text: str) -> Result[bytes, str]:
@@ -43,6 +53,11 @@ def changed(value: bytes) -> bytes:
 def trusted() -> Result[Trust, str]:
     """Build the fixture's root-delegated registry authority."""
     return delegate(pin(REGISTRY, key(ROOT_KEY)?)?, key(DELEGATED_KEY)?, signature(DELEGATION_SIGNATURE)?)
+
+
+def rooted() -> Result[Root, str]:
+    """Build the fixture's pinned root authority."""
+    return pin(REGISTRY, key(ROOT_KEY)?)
 
 
 def checkpoint() -> Checkpoint:
@@ -196,4 +211,46 @@ pub def test_an_unsigned_or_retargeted_advisory_is_refused() -> Result[None, str
         advisory(AdvisoryAction.Publish, 20, "unsafe fixture"),
         changed_signature,
     ).is_err()
+    return Ok(None)
+
+
+pub def test_only_the_root_can_revoke_a_registry_signing_key() -> Result[None, str]:
+    """A root-signed key revocation disables its delegated authority; a delegated signature cannot do so."""
+    trust = trusted()?
+    revoked = verify_key_revocation(
+        rooted()?,
+        trust,
+        30,
+        "compromised fixture",
+        signature(KEY_REVOCATION_SIGNATURE)?,
+    )?
+    match require_active_trust(trust, [revoked]):
+        Ok(_) => return Err("a revoked registry signing key remained active")
+        Err(reason) => assert reason == f"registry signing key {trust.key_id} is revoked: compromised fixture"
+    assert verify_key_revocation(
+        rooted()?,
+        trust,
+        30,
+        "compromised fixture",
+        signature(STATEMENT_SIGNATURE)?,
+    ).is_err()
+    return Ok(None)
+
+
+pub def test_a_signed_artifact_revocation_is_enforced_and_cannot_be_retargeted() -> Result[None, str]:
+    """A delegated registry event revokes exactly its signed artifact target and states the reason."""
+    target = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    event = Revocation(kind=RevocationKind.Artifact, target=target, reason="malicious fixture", sequence=31)
+    revoked = verify_revocation(trusted()?, event, signature(ARTIFACT_REVOCATION_SIGNATURE)?)?
+    match require_not_revoked(RevocationKind.Artifact, target, [revoked]):
+        Ok(_) => return Err("a revoked artifact remained admissible")
+        Err(reason) => assert reason == f"artifact {target} is revoked: malicious fixture"
+    assert require_not_revoked(RevocationKind.Publisher, target, [revoked]).is_ok()
+    retargeted = Revocation(
+        kind=RevocationKind.Artifact,
+        target="sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        reason="malicious fixture",
+        sequence=31,
+    )
+    assert verify_revocation(trusted()?, retargeted, signature(ARTIFACT_REVOCATION_SIGNATURE)?).is_err()
     return Ok(None)
