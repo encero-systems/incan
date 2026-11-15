@@ -1,7 +1,7 @@
 """Retain the compiler's exact checker-record fallback reasons when a later producer refuses an owner."""
 
 from pub::internal_models import CompiledBodyFallback
-from rust::incan_semantics_core import SymbolOrigin, decode_incan_symbol_identity
+from rust::incan_semantics_core import SymbolNamespace, SymbolOrigin, decode_incan_symbol_identity
 from std.fs import Path
 from unit import UnitDescription
 
@@ -85,3 +85,25 @@ def source_module(relative: str) -> str:
     elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
         parts = parts[:len(parts) - 1]
     return "/".join(parts)
+
+
+pub def member_event(identity: str) -> Result[bool, str]:
+    """Whether a lowering event names a member body, such as a method, which the graph holds no owner record for."""
+    match decode_incan_symbol_identity(identity).map_err((error) => str(error))?:
+        None => return Ok(false)
+        Some(selected) => return Ok(selected.namespace == SymbolNamespace.Member)
+
+
+pub def member_namespace(unit: UnitDescription, namespaces: list[str], identity: str) -> Result[Option[str], str]:
+    """
+    The module, among those this request staged a namespace record for, whose namespace record carries the Body IR of
+    the member a lowering event names. None when the member's module staged no namespace record.
+    """
+    owner = match event_owner(identity)?:
+        None => return Ok(None)
+        Some(value) => value
+
+    for module in namespaces:
+        if source_module_of(unit, module)? == Some(owner.module):
+            return Ok(Some(module))
+    return Ok(None)

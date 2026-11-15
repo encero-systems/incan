@@ -55,7 +55,7 @@ from frame_instances import (
 )
 from function_frames import lower_function
 from checked_values import location
-from plan_product_inputs import graph_owner, ordinary_product_inputs
+from plan_product_inputs import ordinary_product_inputs
 from instance_products import encode_requests, restore_requests
 from parallel_ranges import balanced_module_ranges
 
@@ -461,15 +461,14 @@ def lower_ordinary_frame(
     product_inputs = ordinary_product_inputs(
         context, body, source, file, program.overflow_checks, products, admitted, record_report is not None,
     )
-    # Bakery admits a plan product only for a body the compiled graph records as an owner.
-    member = record_report is not None and product_inputs is not None and not graph_owner(body)
+    # A member body gets a product as a module-level body does: Bakery witnesses its event against the namespace
+    # record of its module, which carries the module's whole Body IR.
     mut inputs: Option[list[str]] = None
     mut positions: list[tuple[int, int]] = []
     if let Some(selected) = product_inputs:
-        if not member:
-            witness_inputs, body_positions = selected
-            inputs = Some(witness_inputs)
-            positions = body_positions
+        witness_inputs, body_positions = selected
+        inputs = Some(witness_inputs)
+        positions = body_positions
     mut record_identity = ""
     if record_report is not None:
         match body.canonical:
@@ -481,14 +480,7 @@ def lower_ordinary_frame(
                     "body has no stable declaration identity",
                 )?
             Some(identity) => record_identity = encode_incan_symbol_identity(identity)
-        if member:
-            report_scalar_refusal(
-                record_report,
-                record_identity,
-                evaluator_name(context, body),
-                "plan products refuse a member body the compiled graph records no owner for",
-            )?
-        elif inputs is None:
+        if inputs is None:
             report_scalar_refusal(
                 record_report,
                 record_identity,
