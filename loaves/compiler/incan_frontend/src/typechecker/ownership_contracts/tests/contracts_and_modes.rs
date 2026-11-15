@@ -290,52 +290,64 @@ fn source_relationship_does_not_enable_execution() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// A mutable local that copies a stored string warns without rejecting or changing the program.
+/// RFC 129 writable alias rule 1: a `mut` local declared from a place of a mutable owner is a writable borrow of
+/// that place, with or without a value-type annotation, and for scalar fields too.
 #[test]
-fn mutable_stored_string_copy_warns() -> Result<(), Box<dyn std::error::Error>> {
+fn mutable_local_from_a_place_is_a_writable_alias() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "model Page:\n    title: str\ndef main() -> None:\n    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"new\"\n",
+        "model Page:\n    title: str\n    count: int\ndef main() -> None:\n    mut page = Page(title=\"old\", count=1)\n    mut title = page.title\n    title = \"new\"\n    mut count: int = page.count\n    count = 2\n",
     )?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let modes: Vec<_> = checker.type_info.protocols.explicit_local_modes.values().collect();
+    assert_eq!(modes.len(), 2, "{modes:?}");
+    assert!(
+        modes
+            .iter()
+            .all(|mode| mode.mode == incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut && mode.writable),
+        "{modes:?}"
+    );
     assert!(
         checker
             .warnings
             .iter()
-            .any(|warning| warning.message.contains("copies a place that a place binding borrows")),
+            .all(|warning| warning.stable_code() != Some("INCAN-T0125")),
         "{:?}",
         checker.warnings
     );
     Ok(())
 }
 
-/// The migration warning labels the place it copies with the local that receives the copy.
+/// RFC 129 writable alias rule 2: a read-only owner cannot be upgraded. The refusal names the owner and covers
+/// fields, whole values, scalars and text alike; nothing is copied or moved to make the alias legal.
 #[test]
-fn place_migration_warning_labels_the_copied_place() -> Result<(), Box<dyn std::error::Error>> {
+fn writable_alias_of_a_read_only_source_is_refused() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "model Page:\n    title: str\ndef main() -> None:\n    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"new\"\n",
+        "model Page:\n    title: str\ndef count_from(start: int, label: str) -> int:\n    mut index = start\n    mut text = label\n    index += 1\n    return index + len(text)\ndef main() -> None:\n    page = Page(title=\"old\")\n    mut title = page.title\n    title = \"new\"\n",
     )?;
-    let warning = checker
-        .warnings
+    let refusals: Vec<_> = checker
+        .errors
         .iter()
-        .find(|warning| warning.stable_code() == Some("INCAN-T0125"))
-        .ok_or("missing INCAN-T0125")?;
-    assert_eq!(warning.primary_label(), Some("this place is copied into 'title'"));
+        .filter(|error| error.stable_code() == Some("INCAN-T0126"))
+        .collect();
+    assert_eq!(refusals.len(), 3, "{:?}", checker.errors);
+    assert!(
+        refusals[2].message.contains("'title'") && refusals[2].message.contains("'page' is read-only"),
+        "{:?}",
+        refusals[2]
+    );
+    assert!(checker.type_info.protocols.explicit_local_modes.is_empty());
     Ok(())
 }
 
-/// Compatible annotations, scalar fields and read-only locals do not accidentally request independent copies.
+/// An explicit clone, a constructed value and a call result are owned locals, not aliases (rule 5), and a bare or
+/// `let` local declared from a place is not a writable alias.
 #[test]
-fn place_migration_includes_annotations_scalars_and_readonly() -> Result<(), Box<dyn std::error::Error>> {
+fn owned_initializers_and_read_only_locals_are_not_writable_aliases() -> Result<(), Box<dyn std::error::Error>> {
     let checker = checked(
-        "model Page:\n    count: int\ndef main() -> None:\n    page = Page(count=1)\n    mut count: int = page.count\n    let saved = page.count\n    copy = int(2)\n    fresh = Page(count=2)\n",
+        "model Page:\n    count: int\ndef main() -> None:\n    page = Page(count=1)\n    let saved = page.count\n    bare = page.count\n    mut fresh = Page(count=2)\n    fresh = Page(count=4)\n",
     )?;
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let warnings: Vec<_> = checker
-        .warnings
-        .iter()
-        .filter(|warning| warning.stable_code() == Some("INCAN-T0125"))
-        .collect();
-    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(checker.type_info.protocols.explicit_local_modes.is_empty());
     Ok(())
 }
 

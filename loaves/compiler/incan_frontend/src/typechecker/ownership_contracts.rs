@@ -354,12 +354,16 @@ impl TypeChecker {
         }
     }
 
-    /// Warn when a new local copies a place that a place binding borrows, without changing runtime behavior or
-    /// inferring a repair clone.
+    /// Internal migration finder: report a new local that copies a place a place binding would borrow, without
+    /// changing runtime behavior or inferring a repair clone. It is not a user diagnostic; it reports only when
+    /// `INCAN_PLACE_BINDING_REPORT` is set, which is how the RFC 129 migration lists the declarations to read.
     ///
     /// An annotation does not opt out. Calls, constructed values, computed properties and explicit clone results are
     /// not storage places; reassignment is handled before this new-binding hook.
     pub(super) fn warn_place_binding_migration(&mut self, assignment: &AssignmentStmt) {
+        if std::env::var_os("INCAN_PLACE_BINDING_REPORT").is_none() {
+            return;
+        }
         if assignment.binding == BindingKind::Reassign || !self.migration_place(&assignment.value) {
             return;
         }
@@ -404,6 +408,77 @@ impl TypeChecker {
                 Some(ResolvedType::Generic(name, _)) if name == "List" || name == "Dict"),
             _ => false,
         }
+    }
+
+    /// RFC 129 writable alias rules 1 and 2: decide whether `mut name = place` borrows the place with write-through
+    /// replacement. The place's owner must already permit mutation; a read-only owner is refused here, never copied
+    /// or moved, and the declaration then stays an ordinary local so the rest of the body still checks.
+    pub(super) fn inferred_writable_alias(&mut self, assignment: &AssignmentStmt) -> bool {
+        if assignment.binding != BindingKind::Mutable
+            || self.current_body_identity().is_none()
+            || !self.migration_place(&assignment.value)
+        {
+            return false;
+        }
+        let Some(owner) = place_owner_name(&assignment.value) else {
+            return false;
+        };
+        if self
+            .lookup_variable_info_in_scope_chain(owner)
+            .is_some_and(|info| info.is_mutable)
+        {
+            return true;
+        }
+        self.errors.push(
+            CompileError::type_error(
+                format!(
+                    "Writable alias '{}' needs a source that permits mutation, and '{owner}' is read-only",
+                    assignment.name
+                ),
+                assignment.value.span,
+            )
+            .with_stable_code("INCAN-T0126")
+            .with_primary_label(format!("'{}' would write through to this place", assignment.name))
+            .with_note(
+                "A 'mut' local declared from a place borrows that place; it never copies or moves a read-only source",
+            )
+            .with_hint(format!(
+                "Declare '{owner}' with 'mut' to share the place, or add '.clone()' for an independent working copy"
+            )),
+        );
+        false
+    }
+
+    /// Give an unannotated `mut name = place` the same local contract an explicit `BorrowedMut[T]` annotation
+    /// records, once the binding's checked type has settled. The source graph then owns the loan and its conflicts.
+    pub(super) fn record_inferred_writable_alias(&mut self, assignment: &AssignmentStmt, span: Span) {
+        let Some(identity) = self
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+            .filter(|identity| identity.declaration_span == assignment.name_span)
+            .cloned()
+        else {
+            return;
+        };
+        let (Some(owner), Some(value_type)) = (
+            self.current_body_identity().cloned(),
+            self.type_info.assignment_binding_type(span).cloned(),
+        ) else {
+            return;
+        };
+        self.type_info.protocols.explicit_local_modes.insert(
+            identity,
+            LocalMode {
+                owner,
+                mode: OwnershipMode::BorrowedMut,
+                value_type,
+                writable: true,
+                annotation: assignment
+                    .ty
+                    .as_ref()
+                    .map_or(assignment.value.span, |annotation| annotation.span),
+            },
+        );
     }
 
     /// Resolve a mode only when ordinary lookup selects its canonical builtin declaration.
@@ -803,3 +878,12 @@ fn lazy_source_is_place(value: &Spanned<Expr>) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The binding a storage place starts from: `cart` for `cart.items[0]`.
+fn place_owner_name(place: &Spanned<Expr>) -> Option<&str> {
+    match &place.node {
+        Expr::Ident(name) => Some(name.as_str()),
+        Expr::Field(base, _) | Expr::Index(base, _) | Expr::Paren(base) => place_owner_name(base),
+        _ => None,
+    }
+}

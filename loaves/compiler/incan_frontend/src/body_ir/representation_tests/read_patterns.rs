@@ -497,7 +497,7 @@ def make(item: Native) -> Holder:
     return create(item)
 
 def owned_local(item: Native) -> int:
-    mut current = item
+    mut current: Owned[Native] = item
     current.value = 1
     return current.value
 
