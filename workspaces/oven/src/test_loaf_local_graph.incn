@@ -258,3 +258,35 @@ pub def test_local_graph_does_not_visit_inactive_targets() -> Result[None, str]:
         for edge in facet.local:
             assert edge.alias != "absent"
     return Ok(None)
+
+
+pub def test_a_substituted_registry_edge_compiles_its_loaf_from_the_substitute_directory() -> Result[None, str]:
+    """
+    A registry edge whose Loaf the build substitutes reaches the substitute directory as a local facet, with the
+    features the edge selects. Without the substitute it stays a registry request, and a substitute of a version the
+    edge does not admit is refused.
+    """
+    app = Path("tests/fixtures/registry-substitute/app").resolve().map_err((error) => error.message())?
+    leaf = Path("tests/fixtures/registry-substitute/leaf").resolve().map_err((error) => error.message())?
+    old = Path("tests/fixtures/registry-substitute/old-leaf").resolve().map_err((error) => error.message())?
+    demand = LocalDemand(project=app.0, domain=DependencyDomain.Target, features=[], defaults=true)
+    plain = local_facets(demand, configuration())?
+    assert len(plain) == 1
+    assert len(plain[0].registry) == 1 and len(plain[0].local) == 0
+    substituted = local_facets(demand, configuration(), {"crates-io/sub-leaf": leaf.0})?
+    assert len(substituted) == 2
+    for facet in substituted:
+        if facet.project == leaf.0:
+            assert facet.domain == DependencyDomain.Target
+            assert facet.features == ["fast"], facet.key()
+            assert len(facet.registry) == 0 and len(facet.local) == 0
+        else:
+            assert facet.project == app.0
+            assert len(facet.registry) == 0 and facet.registry_aliases == []
+            assert [edge.alias for edge in facet.local] == ["sub"]
+            assert facet.local[0].project == leaf.0
+    match local_facets(demand, configuration(), {"crates-io/sub-leaf": old.0}):
+        Ok(_) => fail("a substitute of a version the registry edge does not admit was accepted")
+        Err(reason) =>
+            assert "does not satisfy" in reason, reason
+    return Ok(None)

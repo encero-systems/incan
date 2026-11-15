@@ -1,0 +1,11 @@
+[project]
+name = "crates-io/sub-leaf"
+version = "1.2.0"
+
+[project.features]
+default = ["slow"]
+slow = []
+fast = []
+
+[rust]
+type = "lib"
