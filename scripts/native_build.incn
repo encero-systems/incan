@@ -493,12 +493,17 @@ def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
     return Ok([JsonValue.string(path) for path in sorted([path for path in paths])])
 
 
+pub def runtime_root(toolchain: Path) -> Path:
+    """The directory of `toolchain` that holds one directory per installed runtime generation."""
+    return toolchain.joinpath("runtime")
+
+
 def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Path) -> Result[Path, str]:
     """Stage the complete runtime generation, bind it by content, and update the candidate manifest."""
     toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
-    runtime_root = toolchain.joinpath("runtime")
-    runtime_root.mkdir(true, true).map_err((error) => error.message())?
-    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(runtime_root)).map_err((error) => error.message())?
+    generations = runtime_root(toolchain)
+    generations.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(generations)).map_err((error) => error.message())?
     staged = temporary.path()
     artifacts = runtime_artifacts()
     for artifact in artifacts:
@@ -507,7 +512,7 @@ def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Pa
     publish(context, helper, unit, staged, false, "runtime-install-publish")?
     write_artifact_digests(staged, artifacts)?
     generation = digest(staged.joinpath("artifacts.sha256"))?
-    installed = runtime_root.joinpath(generation)
+    installed = generations.joinpath(generation)
     if installed.exists():
         require_same_generation(staged, installed, artifacts + ["artifacts.sha256"])?
         publish(context, helper, unit, installed, false, "runtime-existing-publish")?

@@ -6,7 +6,7 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from native_build import NativeContext, build_support_tool
+from native_build import NativeContext, build_support_tool, runtime_root
 from relink_driver import install_driver, prepare_compiler_home, readmit
 from release_support import TOOLCHAIN_DIRECTORY
 
@@ -301,4 +301,16 @@ def test_a_relinked_driver_ships_its_development_linker_and_retires_the_earlier_
     assert installed.read_bytes().map_err((error) => error.message())? == b"linker"
     assert not toolchain.joinpath("bin/incan-link-a").exists(), "the earlier driver's linker stayed installed"
     assert not toolchain.joinpath("bin/incan-rustc-driver-a").exists()
+    return Ok(None)
+
+
+def test_a_candidate_home_installs_its_runtime_where_an_installed_home_has_it() -> Result[None, str]:
+    """
+    A release's builder and the home its bundle installs into share one bakery during installed verification. A unit
+    the builder compiled names the runtime from the toolchain directory (`toolchain:<directory>/<generation>/…`), and
+    the installed home resolves that reference against its own toolchain directory, where a packed runtime generation
+    is a directory of `native/`. The builder therefore installs each runtime generation under `native/` too.
+    """
+    toolchain = Path("/home").joinpath(TOOLCHAIN_DIRECTORY)
+    assert runtime_root(toolchain).0 == toolchain.joinpath("native").0, runtime_root(toolchain).0
     return Ok(None)
