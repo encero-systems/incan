@@ -13,7 +13,7 @@ use serde::Serialize;
 use stable_encoding::stable_encode;
 
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
-pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 4;
+pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 5;
 
 /// Build-scoped immutable preparations shared by the fresh checkers of one collected module graph.
 ///
@@ -72,6 +72,10 @@ pub struct ModuleDependencyInterface {
     retained_nominal_carriers: Arc<std::collections::BTreeMap<CanonicalSymbolId, String>>,
     /// Original provider callable templates.
     declaration_callables: Arc<HashMap<CanonicalSymbolId, DeclarationCallableTypes>>,
+    /// Explicit ownership contracts of provider functions and methods, so a consumer projects the same call value
+    /// types and access obligations as a caller in the provider's own module.
+    input_contracts:
+        Arc<std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>>,
     /// Source re-export links published by the provider.
     member_reexports: Arc<HashMap<String, DependencyMemberReexport>>,
     /// Public-library re-export links needed only by Body IR checking.
@@ -194,6 +198,7 @@ impl TypeChecker {
             shared_map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
             map_table("retained_nominal_carriers", &self.retained_nominal_carriers),
             map_table("declaration_callables", &self.declaration_callables),
+            map_table("input_contracts", &self.dependency_input_contracts),
             nested_table("member_reexports", &self.dependency_member_reexports),
             nested_table("body_ir_pub_reexports", &self.body_ir_dependency_pub_reexports),
             map_table("module_paths", &self.dependency_module_path_segments),
@@ -371,6 +376,18 @@ impl TypeChecker {
             .cloned()
             .or_else(|| self.current_module_path.clone())
             .unwrap_or_else(|| vec![module_name.to_string()]);
+        if rebuild_provider_cache {
+            // The provider's own checker holds its contracts as checked declaration facts, not as dependency facts.
+            let provided = self
+                .type_info
+                .declarations
+                .ownership_contracts
+                .iter()
+                .filter(|(identity, _)| provider_input_contract(identity, &module_path))
+                .map(|(identity, contract)| (identity.clone(), contract.clone()))
+                .collect::<Vec<_>>();
+            self.dependency_input_contracts.extend(provided);
+        }
         let direct_member_identities = self
             .dependency_direct_member_identities
             .get(module_name)
@@ -466,6 +483,13 @@ impl TypeChecker {
                     .iter()
                     .filter(|(identity, _)| owned_identity(identity))
                     .map(|(identity, callable)| (identity.clone(), callable.clone()))
+                    .collect(),
+            ),
+            input_contracts: Arc::new(
+                self.dependency_input_contracts
+                    .iter()
+                    .filter(|(identity, _)| provider_input_contract(identity, &module_path))
+                    .map(|(identity, contract)| (identity.clone(), contract.clone()))
                     .collect(),
             ),
             member_reexports: self
@@ -600,6 +624,7 @@ impl TypeChecker {
         self.declaration_nominal_scopes.clear();
         self.retained_nominal_carriers.clear();
         self.declaration_callables.clear();
+        self.dependency_input_contracts.clear();
         self.dependency_member_reexports.clear();
         self.body_ir_dependency_pub_reexports.clear();
         self.dependency_direct_member_partial_projections.clear();
@@ -655,6 +680,12 @@ impl TypeChecker {
         self.declaration_callables.extend(
             interface
                 .declaration_callables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_input_contracts.extend(
+            interface
+                .input_contracts
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
@@ -815,6 +846,9 @@ impl TypeChecker {
             filtered_map_table("declaration_callables", &self.declaration_callables, |identity| {
                 identity_owned_by(identity, &module_path)
             }),
+            filtered_map_table("input_contracts", &self.dependency_input_contracts, |identity| {
+                provider_input_contract(identity, &module_path)
+            }),
             nested_module_table("member_reexports", module_name, &self.dependency_member_reexports),
             nested_module_table(
                 "body_ir_pub_reexports",
@@ -898,6 +932,14 @@ fn identity_owned_by(identity: &CanonicalSymbolId, module_path: &[String]) -> bo
         SymbolOrigin::Package { module_path: path, .. } => path == module_path,
         SymbolOrigin::Builtin | SymbolOrigin::RustCrate(_) => false,
     }
+}
+
+/// Whether an ownership contract belongs to a function or method the exact provider path declares.
+fn provider_input_contract(identity: &CanonicalSymbolId, module_path: &[String]) -> bool {
+    matches!(
+        identity.kind,
+        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+    ) && identity_owned_by(identity, module_path)
 }
 
 /// Whether a module-qualified metadata key belongs to the exact provider path.

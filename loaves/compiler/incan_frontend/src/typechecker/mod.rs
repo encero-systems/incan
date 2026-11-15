@@ -956,7 +956,7 @@ pub struct TypeChecker {
     dependency_semantics_pending: bool,
     /// Header-only ownership facts from imported source modules. Replayed into a fresh program check separately
     /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
-    dependency_method_input_contracts:
+    dependency_input_contracts:
         std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,

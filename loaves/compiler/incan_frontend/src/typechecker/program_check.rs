@@ -232,9 +232,9 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .ownership_contracts
-                .clone_from(&self.dependency_method_input_contracts);
+                .clone_from(&self.dependency_input_contracts);
         } else {
-            self.dependency_method_input_contracts.clear();
+            self.dependency_input_contracts.clear();
         }
         self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();

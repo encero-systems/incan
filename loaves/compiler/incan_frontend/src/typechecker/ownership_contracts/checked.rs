@@ -252,6 +252,13 @@ impl TypeChecker {
     pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
+        self.collect_free_function_ownership_headers(program, None);
+    }
+
+    /// Complete each free function's contract from its collected binding. With `origin`, only the binding this
+    /// module's own collection produced for the declaration counts: an imported module collects only its public
+    /// functions, so a private declaration's span can still select another module's binding.
+    fn collect_free_function_ownership_headers(&mut self, program: &Program, origin: Option<&SymbolOrigin>) {
         for declaration in &program.declarations {
             let Declaration::Function(function) = &declaration.node else {
                 continue;
@@ -267,6 +274,13 @@ impl TypeChecker {
             let Some(identity) = binding.identity.clone() else {
                 continue;
             };
+            if origin.is_some_and(|origin| {
+                identity.origin != *origin
+                    || identity.declaration_span != declaration.span
+                    || identity.declaration_name != function.name
+            }) {
+                continue;
+            }
             let parameters: Vec<_> = binding.params.iter().map(|parameter| parameter.ty.clone()).collect();
             let signature = Signature {
                 parameters: &function.params,
@@ -286,9 +300,10 @@ impl TypeChecker {
         }
     }
 
-    /// Collect dependency method contracts while that module's canonical names and aliases are still in scope.
-    /// The exact member identity check excludes declarations omitted from the imported public interface.
-    pub(in crate::typechecker) fn collect_imported_method_ownership_headers(&mut self, program: &Program) {
+    /// Collect dependency function and method contracts while that module's canonical names and aliases are still in
+    /// scope, so a call from another module projects the same value types as a call in the declaring module. The
+    /// exact identity check excludes declarations omitted from the imported public interface.
+    pub(in crate::typechecker) fn collect_imported_ownership_headers(&mut self, program: &Program) {
         let origin = self
             .symbols
             .member_declaration_identity("", SemanticSourceTargetKind::Method, Span::new(0, 0))
@@ -299,11 +314,17 @@ impl TypeChecker {
             .retain(|identity, _| identity.origin != origin);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
-        self.dependency_method_input_contracts
+        self.collect_free_function_ownership_headers(program, Some(&origin));
+        self.dependency_input_contracts
             .retain(|identity, _| identity.origin != origin);
         for (identity, contract) in &self.type_info.declarations.ownership_contracts {
-            if identity.origin == origin && identity.kind == SemanticSourceTargetKind::Method {
-                self.dependency_method_input_contracts
+            if identity.origin == origin
+                && matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Function
+                )
+            {
+                self.dependency_input_contracts
                     .insert(identity.clone(), contract.clone());
             }
         }
