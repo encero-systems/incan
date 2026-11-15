@@ -247,6 +247,65 @@ pub def test_a_published_function_that_builds_from_a_projected_read_borrows_its_
     return Ok(None)
 
 
+const PATH_READS: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def keep(value: Value) -> Value:
+    return value
+
+
+def each_branch(flag: bool, size: int) -> Value:
+    value = make(size)
+    mut kept = Value.Empty
+    if flag:
+        kept = keep(value)
+    else:
+        kept = Value.Many("other", [value])
+    return kept
+
+
+def leaving_loop(size: int) -> Value:
+    value = make(size)
+    mut kept = Value.Empty
+    mut round = 0
+    while true:
+        round += 1
+        if round == 3:
+            kept = keep(value)
+            break
+    return kept
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def main() -> None:
+    println(arity(each_branch(true, 4)) + arity(each_branch(false, 9)))
+    println(arity(leaving_loop(7)))
+"""
+
+
+pub def test_a_value_read_once_on_each_path_is_transferred_at_that_read() -> Result[None, str]:
+    """A value read once on each branch moves there uncopied (#1604). A read inside a loop keeps its copy."""
+    report = plan_report("paths", PATH_READS, "5\n7")?
+    for function in ["each_branch"]:
+        copies = clones(report, function)?
+        assert copies == 0, f"{function} holds {copies} clone calls"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
