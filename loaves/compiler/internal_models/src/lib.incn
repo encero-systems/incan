@@ -126,8 +126,7 @@ pub from activation_envelopes import (
     envelope_key,
     stage_name,
 )
-pub from checker_record_models import (
-    CodecFault,
+pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
@@ -136,8 +135,6 @@ pub from checker_record_models import (
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
-)
-pub from checker_records import (
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
@@ -151,9 +148,12 @@ pub from checker_records import (
     decode_graph_namespace_value,
     record_root,
 )
-pub from compiled_body_rows import (
+pub from checker_field_grammar import CodecFault
+pub from compiled_body_frames import (
     CompiledBodyOutput,
-    encode_compiled_body_rows,
-    decode_compiled_body_row,
+    encode_compiled_body_outputs,
+    compiled_body_frame_size,
+    decode_compiled_body_frame,
+    decode_compiled_body_payload,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

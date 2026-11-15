@@ -3,7 +3,7 @@
 from pub::incan_platform.store import begin
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
-from pub::internal_models import CompiledBodyOutputs, CompiledBodyValue, encode_compiled_body_rows
+from pub::internal_models import CompiledBodyOutputs, CompiledBodyValue, encode_compiled_body_outputs
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from std.fs import Path
 from compiler_body_publication import prepare_compiled_bodies
@@ -21,8 +21,11 @@ pub def test_a_selected_body_the_compiler_checked_again_counts_as_checked() -> R
     unit = program(scratch.path())?
     values = [body_value("main")?, body_value("other")?]
     output = scratch.path().joinpath("compiled-body-output")
-    publish_output_rows(output, CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?
-    selected = [SelectedBodyRecord(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir) for value in values]
+    publish_binary(output, output_bytes(CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?)?
+    selected = [
+        SelectedBodyRecord(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir)
+        for value in values
+    ]
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     prepared = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected)?
     assert prepared.checking_evaluations == 2, f"{prepared.checking_evaluations} checking evaluations, expected 2"
@@ -36,8 +39,11 @@ pub def test_a_body_the_compiler_restored_counts_as_reused() -> Result[None, str
     unit = program(scratch.path())?
     values = [body_value("main")?, body_value("other")?]
     output = scratch.path().joinpath("compiled-body-output")
-    publish_output_rows(output, CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?
-    selected = [SelectedBodyRecord(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir) for value in values]
+    publish_binary(output, output_bytes(CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?)?
+    selected = [
+        SelectedBodyRecord(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir)
+        for value in values
+    ]
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     restored = [values[1].identity]
     prepared = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected, restored)?
@@ -73,7 +79,7 @@ def program(scratch: Path) -> Result[UnitDescription, str]:
 
 
 def body_value(name: str) -> Result[CompiledBodyValue, str]:
-    """One owner's compiler output: its three checker records, empty but valid, and an opaque Body IR row."""
+    """One owner's compiler output: its three checker records, empty but valid, and an opaque Body IR frame."""
     identity = f"main|module:main|{name}|function|module|0|() -> unit"
     return Ok(
         CompiledBodyValue(
@@ -96,10 +102,11 @@ def record(identity: str, family: CheckedFamily) -> Result[bytes, str]:
     ).map_err((error) => f"{error:?}")
 
 
-def publish_output_rows(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
-    """Write one independently bounded Crumb row per sidecar page, as the compiler does."""
-    output.mkdir(true, true).map_err((error) => error.message())?
-    rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
-    for index in range(len(rows)):
-        publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
-    return Ok(None)
+def output_bytes(outputs: CompiledBodyOutputs) -> Result[bytes, str]:
+    """Join the sidecar's bounded frames exactly as the compiler's sidecar writer does."""
+    mut encoded: list[u8] = []
+    for frame in encode_compiled_body_outputs(outputs).map_err((error) => f"{error:?}")?:
+        for byte in frame:
+            octet: u8 = byte.wrapping_resize()
+            encoded.append(octet)
+    return Ok(encoded)

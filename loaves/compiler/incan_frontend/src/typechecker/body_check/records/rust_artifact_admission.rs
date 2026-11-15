@@ -1,7 +1,7 @@
 //! Structural admission for Rust interop artifacts.
 
 use super::*;
-use crate::typechecker::type_info::{RustCheckedCall, RustCheckedSignature, RustIterationHooks};
+use crate::typechecker::type_info::{RustCheckedCall, RustCheckedSignature};
 use std::collections::{BTreeMap, HashMap};
 
 /// Project checked Rust calls at their exact source call sites.
@@ -31,42 +31,6 @@ pub(super) fn restore_checked_calls(
 ) -> Result<(), NodeBindingError> {
     let value = read_rust_call(positions, values, 0)?;
     if target.insert(span, value).is_some() {
-        return Err(NodeBindingError::MissingNode);
-    }
-    Ok(())
-}
-
-/// Project both native iteration calls at the exact iterable expression that selected them.
-pub(super) fn project_iteration_hooks(
-    positions: &Positions,
-    values: &HashMap<Span, RustIterationHooks>,
-    fields: &mut Fields,
-) -> Result<(), NodeBindingError> {
-    for (span, value) in values {
-        let mut row = vec![
-            "artifact-rust".into(),
-            positions.nodes.anchor(*span)?.path,
-            "iteration_hooks".into(),
-        ];
-        rust_call_fields(positions, &value.iter, &mut row, 0)?;
-        rust_call_fields(positions, &value.next, &mut row, 0)?;
-        fields.push(row);
-    }
-    Ok(())
-}
-
-/// Restore both checked native iteration calls without repeating trait selection.
-pub(super) fn restore_iteration_hooks(
-    positions: &Positions,
-    target: &mut HashMap<Span, RustIterationHooks>,
-    span: Span,
-    values: &mut std::slice::Iter<'_, String>,
-) -> Result<(), NodeBindingError> {
-    let hooks = RustIterationHooks {
-        iter: read_rust_call(positions, values, 0)?,
-        next: read_rust_call(positions, values, 0)?,
-    };
-    if target.insert(span, hooks).is_some() {
         return Err(NodeBindingError::MissingNode);
     }
     Ok(())

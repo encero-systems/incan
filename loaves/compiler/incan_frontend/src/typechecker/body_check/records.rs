@@ -358,7 +358,41 @@ impl Positions {
         }
         // A constructor of an imported model or class names the checked field each of its arguments initializes.
         identities.extend(imported_members::field_identities(checker));
-        let type_identities = admitted_type_identities(checker);
+        let mut type_identities: BTreeMap<String, CanonicalSymbolId> = checker
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _)| checker.symbols.identity_of(index))
+            .filter(|canonical| {
+                canonical.scope_discriminant.is_none()
+                    && ((canonical.origin == checker.symbols.declaration_origin()
+                        && matches!(
+                            canonical.kind,
+                            SemanticSourceTargetKind::Model
+                                | SemanticSourceTargetKind::Class
+                                | SemanticSourceTargetKind::Newtype
+                                | SemanticSourceTargetKind::Rusttype
+                                | SemanticSourceTargetKind::Enum
+                                | SemanticSourceTargetKind::TypeAlias
+                                | SemanticSourceTargetKind::Trait
+                        ))
+                        || (canonical.kind == SemanticSourceTargetKind::RustItem
+                            && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
+            })
+            .filter_map(|canonical| {
+                StableDeclarationId::from_canonical(canonical, None, None)
+                    .map(|stable| (stable.render_compact(), canonical.clone()))
+            })
+            .collect();
+        for identity in checker.public_library_type_identities.values() {
+            let Some(canonical) = &identity.canonical else {
+                continue;
+            };
+            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+                type_identities.insert(stable.render_compact(), canonical.clone());
+            }
+        }
         let nested = checker
             .checked_body(owner)
             .into_iter()
@@ -439,18 +473,6 @@ impl Positions {
         let mut positions = Self::new(checker, program, owner, false)?;
         for (canonical, stable) in positions.nodes.binding_identities(local.nested.values())? {
             positions.identities.insert(stable.render_compact(), canonical);
-        }
-        for canonical in local
-            .expressions
-            .expression_type_identities
-            .values()
-            .flat_map(|identities| identities.values())
-        {
-            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
-                positions
-                    .type_identities
-                    .insert(stable.render_compact(), canonical.clone());
-            }
         }
         Ok(positions)
     }
@@ -588,63 +610,6 @@ fn persisted_local_name(owner: &StableDeclarationId, identity: &str) -> Result<S
         return Err(refused());
     }
     Ok(rendered.declaration_name)
-}
-
-/// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
-fn admitted_type_identities(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
-    let mut identities = checker
-        .symbols
-        .all_symbols()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, _)| checker.symbols.identity_of(index))
-        .filter(|canonical| {
-            canonical.scope_discriminant.is_none()
-                && ((canonical.origin == checker.symbols.declaration_origin()
-                    && matches!(
-                        canonical.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Newtype
-                            | SemanticSourceTargetKind::Rusttype
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::TypeAlias
-                            | SemanticSourceTargetKind::Trait
-                    ))
-                    || (canonical.kind == SemanticSourceTargetKind::RustItem
-                        && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
-        })
-        .filter_map(|canonical| {
-            StableDeclarationId::from_canonical(canonical, None, None)
-                .map(|stable| (stable.render_compact(), canonical.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let active = checker
-        .type_info
-        .declarations
-        .named_type_identities
-        .values()
-        .chain(checker.type_info.declarations.body_ir_native_type_identities.values())
-        .chain(
-            checker
-                .type_info
-                .expressions
-                .expression_type_identities
-                .values()
-                .flat_map(|identities| identities.values()),
-        )
-        .chain(
-            checker
-                .public_library_type_identities
-                .values()
-                .filter_map(|identity| identity.canonical.as_ref()),
-        );
-    for canonical in active {
-        if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
-            identities.insert(stable.render_compact(), canonical.clone());
-        }
-    }
-    identities
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
@@ -927,7 +892,101 @@ fn ordered_diagnostics(
         .collect()
 }
 
-/// Decode the exact canonical component path emitted by the expression-record projection.
+/// Select complete supported expression maps. Their native field names are schema selectors, not memory offsets.
+fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
+    let expressions = &local.expressions;
+    for (selector, values) in [
+        ("expr", &expressions.expr_types),
+        ("body-expr", &expressions.body_ir_expr_types),
+        ("assignment", &expressions.assignment_binding_types),
+        ("destination", &expressions.value_destination_types),
+    ] {
+        for (span, ty) in values {
+            let mut row = vec!["type".into(), positions.nodes.anchor(*span)?.path, selector.into()];
+            type_fields(ty, &mut row)?;
+            fields.push(row);
+        }
+    }
+    for (binding, ty) in &expressions.body_ir_binding_types {
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "body".into(),
+            positions.identity(binding)?,
+        ];
+        type_fields(ty, &mut row)?;
+        fields.push(row);
+    }
+    for (binding, requirement) in &expressions.body_ir_parameter_requirements {
+        if binding.kind != incan_semantics_core::SemanticSourceTargetKind::Parameter {
+            return Err(NodeBindingError::WrongOwner);
+        }
+        let mut row = vec![
+            "binding-type".into(),
+            positions.nodes.anchor(span_of(binding))?.path,
+            "parameter-requirement".into(),
+            positions.identity(binding)?,
+        ];
+        match requirement {
+            Some(ty) => {
+                row.push("some".into());
+                type_fields(ty, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
+        fields.push(row);
+    }
+    for (span, kind) in &expressions.ident_kinds {
+        let tag = match kind {
+            super::super::type_info::IdentKind::Value => "value",
+            super::super::type_info::IdentKind::Static => "static",
+            super::super::type_info::IdentKind::TypeName => "type-name",
+            super::super::type_info::IdentKind::Variant => "variant",
+            super::super::type_info::IdentKind::Module => "module",
+            super::super::type_info::IdentKind::RustImport => "rust-import",
+            super::super::type_info::IdentKind::RustValue => "rust-value",
+            super::super::type_info::IdentKind::Trait => "trait",
+        };
+        fields.push(vec![
+            "identifier".into(),
+            positions.nodes.anchor(*span)?.path,
+            "kind".into(),
+            tag.into(),
+        ]);
+    }
+    for (span, target) in &expressions.source_targets {
+        let mut row = vec![
+            "target".into(),
+            positions.nodes.anchor(*span)?.path,
+            "source".into(),
+            target.name.clone(),
+            target.kind.clone(),
+        ];
+        row.extend(target.module_path.iter().cloned());
+        fields.push(row);
+    }
+    for (span, identities) in &expressions.expression_type_identities {
+        for (path, identity) in identities {
+            fields.push(vec![
+                "type-identity".into(),
+                positions.nodes.anchor(*span)?.path,
+                type_identity_path(path),
+                positions.type_identity(identity)?,
+            ]);
+        }
+    }
+    Ok(())
+}
+
+/// Encode one nested type-component path as a canonical field selector; `root` names the expression type itself.
+fn type_identity_path(path: &[usize]) -> String {
+    if path.is_empty() {
+        return "root".into();
+    }
+    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
+}
+
+/// Decode the exact canonical component path emitted by [`type_identity_path`].
 fn read_type_identity_path(path: &str) -> Result<Vec<usize>, NodeBindingError> {
     if path == "root" {
         return Ok(Vec::new());

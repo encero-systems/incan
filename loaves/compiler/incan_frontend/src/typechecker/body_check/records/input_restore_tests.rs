@@ -5,39 +5,6 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
-/// A checker-authenticated expression nominal remains available to its canonical record even when no lexical symbol
-/// owns it.
-#[test]
-fn checked_expression_nominal_admits_its_record_identity() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def view() -> int:\n    return 1\n";
-    let (program, checker, owner) = fixture(source, "view")?;
-    let identity = incan_semantics_core::CanonicalSymbolId {
-        namespace: incan_semantics_core::SymbolNamespace::OrdinaryLexical,
-        origin: incan_semantics_core::SymbolOrigin::Package {
-            library: "incan_platform".into(),
-            module_path: vec!["fs".into()],
-        },
-        declaration_name: "Path".into(),
-        kind: incan_semantics_core::SemanticSourceTargetKind::Rusttype,
-        scope_discriminant: None,
-        declaration_span: crate::ast::Span::new(0, 1).into(),
-    };
-    let mut local = BodyLocal {
-        owner,
-        ..BodyLocal::default()
-    };
-    local
-        .expressions
-        .expression_type_identities
-        .insert(owner, BTreeMap::from([(Vec::new(), identity.clone())]));
-    let expected = incan_semantics_core::stable_identity::StableDeclarationId::from_canonical(&identity, None, None)
-        .ok_or("missing stable package identity")?
-        .render_compact();
-    let positions = Positions::for_local(&checker, &program, owner, &local)?;
-    assert_eq!(positions.type_identity(&identity)?, expected);
-    Ok(())
-}
-
 /// Structural checked types keep their enum shape instead of falling back to a native Debug spelling.
 #[test]
 fn structural_checked_type_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {

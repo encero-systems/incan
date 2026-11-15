@@ -71,7 +71,7 @@ const RUST_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
     ArtifactFieldSchema {
         name: "iteration_hooks",
-        codec: "rust-call-pair",
+        codec: "refused",
     },
     ArtifactFieldSchema {
         name: "value_item_paths",
@@ -147,7 +147,7 @@ const RUST_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "280cc46d70e652aed500c6a9334106ceae7acc368b8e1164963a3c5fd98d2299";
+const GENERATOR_SHA256: &str = "acc3945d17249ed84fc6fffa57fb0b00de9c3f9c2bbcc1e0e03dfab22340edce";
 
 pub(super) fn project(
     positions: &Positions,
@@ -163,7 +163,6 @@ pub(super) fn project(
         ]);
     }
     rust_artifact_admission::project_checked_calls(positions, &rust.checked_calls, fields)?;
-    rust_artifact_admission::project_iteration_hooks(positions, &rust.iteration_hooks, fields)?;
     Ok(())
 }
 
@@ -186,9 +185,6 @@ pub(super) fn restore(
         }
         "checked_calls" => {
             rust_artifact_admission::restore_checked_calls(positions, &mut rust.checked_calls, span, &mut values)?
-        }
-        "iteration_hooks" => {
-            rust_artifact_admission::restore_iteration_hooks(positions, &mut rust.iteration_hooks, span, &mut values)?
         }
         _ => return Err(NodeBindingError::MissingNode),
     }
@@ -256,21 +252,12 @@ mod generated_tests {
         assert_eq!(values.next(), None);
         let mut rust = crate::typechecker::type_info::RustInteropArtifacts::default();
         rust.checked_constants.insert(owner, "native::LIMIT".into());
-        rust.iteration_hooks.insert(
-            owner,
-            crate::typechecker::type_info::RustIterationHooks {
-                iter: call.clone(),
-                next: call,
-            },
-        );
         let mut fields = Vec::new();
         super::project(&positions, &rust, &mut fields)?;
+        let row = fields.first().ok_or("missing checked-constant row")?;
         let mut restored = crate::typechecker::type_info::RustInteropArtifacts::default();
-        for row in &fields {
-            assert!(super::restore(&positions, &mut restored, row)?);
-        }
+        assert!(super::restore(&positions, &mut restored, row)?);
         assert_eq!(restored.checked_constants, rust.checked_constants);
-        assert_eq!(restored.iteration_hooks, rust.iteration_hooks);
         Ok(())
     }
 }

@@ -26,11 +26,7 @@ from checker_records import (
     from_native_local_fields,
     native_fields,
 )
-from compiled_body_rows import (
-    CompiledBodyOutput,
-    decode_compiled_body_row,
-    encode_compiled_body_rows,
-)
+from compiled_body_frames import CompiledBodyOutput, decode_compiled_body_frame, encode_compiled_body_outputs
 from rust::incan_frontend::checker_records import (
     fixture_record,
     verify_fixture,
@@ -113,13 +109,15 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
         body_ir=b"owner-frame",
-        dependency_reads=[CompiledBodyDependencyRead(
-            package=Some("provider"),
-            module="lib",
-            name="value",
-            identity="provider|module:lib|value|function|module|0|() -> int",
-            reference_subject="expr:main#10..17",
-        )],
+        dependency_reads=[
+            CompiledBodyDependencyRead(
+                package=Some("provider"),
+                module="lib",
+                name="value",
+                identity="provider|module:lib|value|function|module|0|() -> int",
+                reference_subject="expr:main#10..17",
+            ),
+        ],
     )
     fallback = CompiledBodyFallback(
         module="src/main.incn",
@@ -140,19 +138,19 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         dependencies=["src/helper.incn", "src/provider.incn"],
         lowering_inputs=[["main#decl.0..10", "witness"]],
     )
-    encoded = encode_compiled_body_rows(
+    encoded = encode_compiled_body_outputs(
         CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
     ).map_err((_) => "compiled output encode")?
     assert len(encoded) == 4
-    for row in encoded:
-        assert row[:4] == b"CRMB"
-    match decode_compiled_body_row(encoded[0]).map_err((_) => "compiled value decode")?:
+    for frame in encoded:
+        assert frame[8:12] == b"CRMB"
+    match decode_compiled_body_frame(encoded[0]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
             assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
             assert decoded.lowering_inputs == namespace.lowering_inputs
         _ => return Err("compiled namespace decoded as another output kind")
-    match decode_compiled_body_row(encoded[1]).map_err((_) => "compiled value decode")?:
+    match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Value(decoded) =>
             assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
             assert decoded.dependency_reads[0].reference_subject == "expr:main#10..17"
@@ -164,15 +162,14 @@ def compiled_output_controls(source: str) -> Result[None, str]:
                 and decoded.body_ir == value.body_ir
             )
         _ => return Err("compiled value decoded as another output kind")
-    match decode_compiled_body_row(encoded[2]).map_err((_) => "compiled fallback decode")?:
+    match decode_compiled_body_frame(encoded[2]).map_err((_) => "compiled fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded == fallback
         _ => return Err("compiled fallback decoded as another output kind")
-    match decode_compiled_body_row(encoded[3]).map_err((_) => "identityless fallback decode")?:
+    match decode_compiled_body_frame(encoded[3]).map_err((_) => "identityless fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded == identityless
         _ => return Err("identityless fallback decoded as another output kind")
-    compiled_fallback_reason_controls()?
     compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
 
@@ -182,7 +179,7 @@ def compiled_output_size_controls(
     local: CheckedRecord,
     final: CheckedRecord,
 ) -> Result[None, str]:
-    """Many owner rows may exceed the former aggregate bound while one oversized owner remains refused."""
+    """Many owner frames may exceed the former aggregate bound while one oversized owner remains refused."""
     body_ir = "".join(["x" for _ in range(1000000)]).encode()
     mut values: list[CompiledBodyValue] = []
     for index in range(70):
@@ -199,11 +196,11 @@ def compiled_output_size_controls(
                 body_ir=body_ir,
             ),
         )
-    rows = encode_compiled_body_rows(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
+    frames = encode_compiled_body_outputs(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
         (_) => "many-owner compiled output encode",
     )?
-    assert len(rows) == 70
-    assert sum([len(row) for row in rows]) > 67108864
+    assert len(frames) == 70
+    assert sum([len(frame) for frame in frames]) > 67108864
 
     large_body_ir = "".join(["x" for _ in range(13000000)]).encode()
     large_namespace = CompiledNamespaceValue(
@@ -212,21 +209,21 @@ def compiled_output_size_controls(
         body_ir=large_body_ir,
         dependencies=[],
     )
-    large_rows = encode_compiled_body_rows(CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[])).map_err(
-        (_) => "large compiled namespace encode",
-    )?
-    match decode_compiled_body_row(large_rows[0]).map_err((_) => "large compiled namespace decode")?:
+    large_frames = encode_compiled_body_outputs(
+        CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[]),
+    ).map_err((_) => "large compiled namespace encode")?
+    match decode_compiled_body_frame(large_frames[0]).map_err((_) => "large compiled namespace decode")?:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == large_namespace.module and decoded.body_ir == large_namespace.body_ir
         _ => return Err("large compiled namespace decoded as another output kind")
 
     mut oversized_value = values[0]
     oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
-    match encode_compiled_body_rows(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
         Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
-            assert bound == "compiled-output-row-bytes"
+            assert bound == "compiled-output-frame-bytes"
             assert observed > maximum and maximum == 67108864
-        _ => return Err("compiled output accepted an owner row over its bound")
+        _ => return Err("compiled output accepted an owner frame over its bound")
 
     mut fallbacks: list[CompiledBodyFallback] = []
     for index in range(4097):
@@ -238,11 +235,11 @@ def compiled_output_size_controls(
                 reason="fixture",
             ),
         )
-    match encode_compiled_body_rows(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
         Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
-            assert bound == "compiled-output-row-count"
+            assert bound == "compiled-output-frame-count"
             assert observed == 4097 and maximum == 4096
-        _ => return Err("compiled output accepted too many owner rows")
+        _ => return Err("compiled output accepted too many owner frames")
     return Ok(None)
 
 
@@ -257,32 +254,6 @@ def owner_record(record: CheckedRecord, identity: str) -> Result[bytes, str]:
             fields=record.fields,
         ),
     ).map_err((_) => "owner record encode")
-
-
-def compiled_fallback_reason_controls() -> Result[None, str]:
-    """A fallback whose reason outgrows the metadata bound still publishes, keeping the reason's start and its size."""
-    # Oven's `dispatch` fell back with a 96,710-byte reason, and that one row refused every owner's publication.
-    long_reason = "local record output refused: " + "".join(["x" for _ in range(96681)])
-    assert len(long_reason.encode()) == 96710
-    fallback = CompiledBodyFallback(
-        module="src/main.incn",
-        name="dispatch",
-        identity=Some("function:main::dispatch|incan.source-signature/2:sha256:fixture"),
-        reason=long_reason,
-    )
-    rows = encode_compiled_body_rows(CompiledBodyOutputs(values=[], fallbacks=[fallback])).map_err(
-        (_) => "a fallback with a long reason refused the compiled output",
-    )?
-    assert len(rows) == 1
-    match decode_compiled_body_row(rows[0]).map_err((_) => "long-reason fallback decode")?:
-        CompiledBodyOutput.Fallback(decoded) =>
-            assert decoded.module == fallback.module and decoded.name == fallback.name
-            assert decoded.identity == fallback.identity
-            assert len(decoded.reason.encode()) <= 65536
-            assert decoded.reason.startswith("local record output refused: xxxx")
-            assert decoded.reason.endswith("[reason cut from 96710 bytes]")
-        _ => return Err("long-reason fallback decoded as another output kind")
-    return Ok(None)
 
 
 def projected_owner_controls() -> Result[None, str]:
@@ -349,51 +320,6 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
             assert name == "future"
         _ =>
             assert false
-    rust_artifact = CheckedRecord(
-        profile=record.profile,
-        owner=record.owner,
-        root=record.root,
-        family=record.family,
-        fields=[CanonicalField(family="artifact-rust", node="root", selector="checked_constants", values=["1"])],
-    )
-    match encode_record(rust_artifact):
-        Ok(_) => pass
-        _ => assert false
-    constructor = CheckedRecord(
-        profile=record.profile,
-        owner=record.owner,
-        root=record.root,
-        family=record.family,
-        fields=[CanonicalField(family="constructor", node="root", selector="field-binding", values=["1", "1", "0", "0"])],
-    )
-    match encode_record(constructor):
-        Ok(_) => pass
-        _ => assert false
-    for kind in ["value", "static", "type-name", "variant", "module", "rust-import", "rust-value", "trait"]:
-        identifier = CheckedRecord(
-            profile=record.profile,
-            owner=record.owner,
-            root=record.root,
-            family=record.family,
-            fields=[CanonicalField(family="identifier", node="root", selector="kind", values=[kind])],
-        )
-        match encode_record(identifier):
-            Ok(_) => pass
-            _ => assert false
-    for field in [
-        CanonicalField(family="native-value", node="root", selector="type", values=["identity", "int"]),
-        CanonicalField(family="requirement", node="root", selector="constructor-field", values=["field", "owner"]),
-    ]:
-        retained = CheckedRecord(
-            profile=record.profile,
-            owner=record.owner,
-            root=record.root,
-            family=record.family,
-            fields=[field],
-        )
-        match encode_record(retained):
-            Ok(_) => pass
-            _ => assert false
 
 
 def local_record_controls(source: str, moved: str) -> Result[None, str]:
@@ -585,7 +511,27 @@ def ownership_record_controls() -> Result[None, str]:
 
 def input_protocol_controls() -> Result[None, str]:
     """Execute the real Incan codec on checked loans, source conflicts and unsupported-flow refusals."""
-    cases = [("def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return phantom[int](value)\n", "use"), ("def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(right=2, left=value)\n", "use"), ("def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\ndef read(value: Borrowed[int]) -> int:\n    return value\n", "use"), ("def assert_width(value: Borrowed[str]) -> int:\n    assert len(value) > 0, f\"Empty input: {value}\"\n    return len(value)\n", "assert_width"), ("def observe_direct(value: Borrowed[str]) -> int:\n    return len(value)\n", "observe_direct"), ("def observe_exclusive(mut value: BorrowedMut[str]) -> int:\n    return len(value)\n", "observe_exclusive"), ("def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n", "observe"), ("def compare(value: Borrowed[str]) -> bool:\n    let view: Borrowed[str] = value\n    return view == \"yes\"\n", "compare"), ("def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n", "use"), ("def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n", "replace"), ("def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n", "use"), ("def branch(value: Borrowed[int], flag: bool) -> int:\n    if flag:\n        return value\n    return 0\n", "branch"), ("def looping(value: Borrowed[int], mut remaining: int) -> int:\n    while remaining > 0:\n        remaining -= 1\n    return value\n", "looping"), ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"), ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"), ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"), ("def invocation_key(arguments: list[str]) -> str:\n    return \" \".join(arguments[:2])\n", "invocation_key"), ("def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef use(value: Borrowed[str]) -> int:\n    retained = view(value)\n    values = [retained]\n    return len(values)\n", "use"), ("def width(value: Borrowed[str]) -> Owned[int] from value:\n    return len(value)\ndef use(value: Borrowed[str]) -> int:\n    retained = width(value)\n    return retained\n", "use")]
+    cases = [
+        ("def phantom[T](value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return phantom[int](value)\n", "use"),
+        ("def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(right=2, left=value)\n", "use"),
+        ("def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: int) -> int:\n    first = add(value, 2)\n    return read(first)\ndef read(value: Borrowed[int]) -> int:\n    return value\n", "use"),
+        ("def assert_width(value: Borrowed[str]) -> int:\n    assert len(value) > 0, f\"Empty input: {value}\"\n    return len(value)\n", "assert_width"),
+        ("def observe_direct(value: Borrowed[str]) -> int:\n    return len(value)\n", "observe_direct"),
+        ("def observe_exclusive(mut value: BorrowedMut[str]) -> int:\n    return len(value)\n", "observe_exclusive"),
+        ("def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n", "observe"),
+        ("def compare(value: Borrowed[str]) -> bool:\n    let view: Borrowed[str] = value\n    return view == \"yes\"\n", "compare"),
+        ("def read(value: Borrowed[int]) -> int:\n    return value\ndef use() -> int:\n    value = 3\n    return read(value)\n", "use"),
+        ("def replace(mut value: BorrowedMut[int]) -> int:\n    mut alias: BorrowedMut[int] = value\n    alias = 7\n    return value\n", "replace"),
+        ("def consume(value: Owned[str]) -> bool:\n    return value == \"yes\"\ndef use() -> int:\n    value = \"yes\"\n    consume(value)\n    return len(value)\n", "use"),
+        ("def branch(value: Borrowed[int], flag: bool) -> int:\n    if flag:\n        return value\n    return 0\n", "branch"),
+        ("def looping(value: Borrowed[int], mut remaining: int) -> int:\n    while remaining > 0:\n        remaining -= 1\n    return value\n", "looping"),
+        ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
+        ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
+        ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+        ("def invocation_key(arguments: list[str]) -> str:\n    return \" \".join(arguments[:2])\n", "invocation_key"),
+        ("def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef use(value: Borrowed[str]) -> int:\n    retained = view(value)\n    values = [retained]\n    return len(values)\n", "use"),
+        ("def width(value: Borrowed[str]) -> Owned[int] from value:\n    return len(value)\ndef use(value: Borrowed[str]) -> int:\n    retained = width(value)\n    return retained\n", "use"),
+    ]
     for source, owner in cases:
         moved = "# ownership anchors moved\n" + source
         rows = fixture_record(source, owner, false).map_err((error) => error.to_string())?
@@ -689,7 +635,12 @@ def parameter_requirement_grammar(record: CheckedRecord) -> Result[None, str]:
             (_) => "parameter conflict decode",
         )?
         assert decoded == changed
-        for values in [[field.values[0]], [field.values[0], "missing"], [field.values[0], "some"], [field.values[0], "none", "int"]]:
+        for values in [
+            [field.values[0]],
+            [field.values[0], "missing"],
+            [field.values[0], "some"],
+            [field.values[0], "none", "int"],
+        ]:
             broken = CanonicalField(family=field.family, node=field.node, selector=field.selector, values=values)
             malformed = CheckedRecord(
                 profile=record.profile,
@@ -762,7 +713,13 @@ def owned_initializer_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "owned initializer grammar decode",
     )?
     assert decoded == retained
-    malformed = [prefix + ["2"] + second + first + suffix, prefix + ["2"] + first + first + suffix, prefix + ["1", "a", "initializer", "none", "some", "0"] + suffix, prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "none"] + suffix, prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "some", "1"] + suffix]
+    malformed = [
+        prefix + ["2"] + second + first + suffix,
+        prefix + ["2"] + first + first + suffix,
+        prefix + ["1", "a", "initializer", "none", "some", "0"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "none"] + suffix,
+        prefix + ["1", "a", "initializer", "some", "binding", "source", "0", "some", "1"] + suffix,
+    ]
     for values in malformed:
         broken = CheckedRecord(
             profile=record.profile,
@@ -806,7 +763,13 @@ def operation_dependency_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "operation dependency grammar decode",
     )?
     assert decoded == retained
-    malformed = [prefix + ["1", "operation-anchor", "3", "1"] + operand + suffix, prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["1", "2"] + suffix, prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["0", "3"] + suffix, prefix + ["2"] + operation + operation + suffix, prefix + ["2", "z-operation", "1", "1"] + operand + ["a-operation", "1", "1"] + operand + suffix]
+    malformed = [
+        prefix + ["1", "operation-anchor", "3", "1"] + operand + suffix,
+        prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["1", "2"] + suffix,
+        prefix + ["1", "operation-anchor", "1", "1", "operand-anchor"] + place + ["0", "3"] + suffix,
+        prefix + ["2"] + operation + operation + suffix,
+        prefix + ["2", "z-operation", "1", "1"] + operand + ["a-operation", "1", "1"] + operand + suffix,
+    ]
     for values in malformed:
         broken = CheckedRecord(
             profile=record.profile,
@@ -825,7 +788,12 @@ def input_graph_refusals(record: CheckedRecord) -> Result[None, str]:
     """Checked indices are bounded; an explicitly invalid graph retains its fault instead of acquiring authority."""
     # One no-op node, no storage permissions, loans, local destinations, operations, invocations or closures.
     graph = ["owner", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "1", "nothing", "0", "node"]
-    malformed = [["1", "checked", "owner", "1"] + graph[2:], ["1", "checked"] + graph[:12] + ["borrow", "0", "0", "node"], ["1", "checked"] + graph[:13] + ["1", "1", "node"], ["1", "checked", "owner", "00"] + graph[2:]]
+    malformed = [
+        ["1", "checked", "owner", "1"] + graph[2:],
+        ["1", "checked"] + graph[:12] + ["borrow", "0", "0", "node"],
+        ["1", "checked"] + graph[:13] + ["1", "1", "node"],
+        ["1", "checked", "owner", "00"] + graph[2:],
+    ]
     for values in malformed:
         field = CanonicalField(family="input-flow", node="owner-node", selector="graph", values=values)
         broken = CheckedRecord(
@@ -890,7 +858,25 @@ def input_record(rows: list[list[str]], owner: str) -> Result[CheckedRecord, str
 def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
     """Keep exact argument evaluation, source access, completion and final loan-use indices."""
     place = ["binding", "source", "0"]
-    prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "true", "true", "true", "0", "0", "0", "0", "0", "0", "1"]
+    prefix = [
+        "1",
+        "checked",
+        "owner",
+        "0",
+        "1",
+        "binding",
+        "source",
+        "true",
+        "true",
+        "true",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1",
+    ]
     argument = ["argument", "0", "0", "owned", "none", "some"] + place
     call = ["call", "callee", "none", "false", "none", "1"] + argument
     mut nodes = ["0", "5", "nothing", "1", "1", "owner", "nothing", "1", "2", "argument", "access"]
@@ -908,7 +894,15 @@ def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "invocation evaluation grammar decode",
     )?
     assert decoded == retained
-    malformed = [prefix + call + ["5", "3", "some", "2", "none", "4", "0"] + nodes, prefix + call + ["1", "5", "some", "2", "none", "4", "0"] + nodes, prefix + call + ["1", "3", "some", "5", "none", "4", "0"] + nodes, prefix + call + ["1", "3", "some", "2", "none", "5", "0"] + nodes, prefix + call + ["1", "3", "some", "2", "none", "4", "1", "5"] + nodes, prefix + call + ["1", "3", "some", "2", "some", "5", "3", "none", "4", "0"] + nodes, prefix + call + ["1", "3", "some", "2", "none", "4", "0"] + nodes[:-1]]
+    malformed = [
+        prefix + call + ["5", "3", "some", "2", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "5", "some", "2", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "5", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "5", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "4", "1", "5"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "some", "5", "3", "none", "4", "0"] + nodes,
+        prefix + call + ["1", "3", "some", "2", "none", "4", "0"] + nodes[:-1],
+    ]
     for values in malformed:
         broken = CheckedRecord(
             profile=record.profile,
@@ -946,7 +940,24 @@ def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
     values += ["binding", "source", "false", "false", "false", "binding", "receiver", "false", "false", "false"]
     values += ["2"] + receiver + ["shared", "false", "none", "receiver"]
     values += source + ["shared", "false", "none", "argument", "0", "0", "0", "0", "0", "1"]
-    values += ["call", "callee", "some", "0", "false", "none", "1", "0", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
+    values += [
+        "call",
+        "callee",
+        "some",
+        "0",
+        "false",
+        "none",
+        "1",
+        "0",
+        "1",
+        "argument",
+        "0",
+        "0",
+        "shared",
+        "some",
+        "1",
+        "some",
+    ] + source
     values += ["4", "6", "some", "5", "some", "1", "3", "some", "2", "7", "2", "8", "9", "0", "10"]
     values += ["nothing", "1", "1", "owner", "nothing", "1", "2", "receiver", "borrow", "0", "1", "3", "receiver"]
     values += ["nothing", "1", "4", "receiver", "nothing", "1", "5", "argument", "borrow", "1", "1", "6", "argument"]
@@ -980,19 +991,26 @@ def closure_capture_grammar(record: CheckedRecord) -> Result[None, str]:
         owner=record.owner,
         root=record.root,
         family=record.family,
-        fields=[CanonicalField(
-            family="input-flow",
-            node="owner-node",
-            selector="graph",
-            values=prefix + ["1"] + closure + nodes,
-        )],
+        fields=[
+            CanonicalField(
+                family="input-flow",
+                node="owner-node",
+                selector="graph",
+                values=prefix + ["1"] + closure + nodes,
+            ),
+        ],
     )
     encoded = encode_record(retained).map_err((_) => "closure capture grammar encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, retained.owner, retained.root).map_err(
         (_) => "closure capture grammar decode",
     )?
     assert decoded == retained
-    malformed = [prefix + ["1", "closure-anchor", "add", "1", "source", "none", "1", "2"] + nodes, prefix + ["1", "closure-anchor", "add", "1", "source", "some", "0", "1", "1"] + nodes, prefix + ["2"] + closure + closure + nodes, prefix + ["2", "z-closure", "add", "0", "none", "0", "a-closure", "add", "0", "none", "0"] + nodes]
+    malformed = [
+        prefix + ["1", "closure-anchor", "add", "1", "source", "none", "1", "2"] + nodes,
+        prefix + ["1", "closure-anchor", "add", "1", "source", "some", "0", "1", "1"] + nodes,
+        prefix + ["2"] + closure + closure + nodes,
+        prefix + ["2", "z-closure", "add", "0", "none", "0", "a-closure", "add", "0", "none", "0"] + nodes,
+    ]
     for values in malformed:
         broken = CheckedRecord(
             profile=record.profile,
@@ -1022,7 +1040,15 @@ def input_copy_grammar(record: CheckedRecord) -> Result[None, str]:
         (_) => "checked Copy grammar decode",
     )?
     assert decoded == retained
-    malformed = [["1", "owner", "2", "str", "false", "int", "true"], ["1", "owner", "2", "int", "true", "int", "false"], ["1", "owner", "1", "int", "maybe"], ["1", "owner", "1", "callable", "00", "int", "false"], ["1", "", "1", "int", "true"], ["1", "owner", "2", "int", "true"], ["1", "owner", "1", "list", "int"]]
+    malformed = [
+        ["1", "owner", "2", "str", "false", "int", "true"],
+        ["1", "owner", "2", "int", "true", "int", "false"],
+        ["1", "owner", "1", "int", "maybe"],
+        ["1", "owner", "1", "callable", "00", "int", "false"],
+        ["1", "", "1", "int", "true"],
+        ["1", "owner", "2", "int", "true"],
+        ["1", "owner", "1", "list", "int"],
+    ]
     for payload in malformed:
         broken = CheckedRecord(
             profile=record.profile,

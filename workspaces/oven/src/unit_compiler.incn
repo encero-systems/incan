@@ -79,10 +79,8 @@ pub def compile_prepared_unit(
     # 1. The compiler reads the selected inputs and a generation-witnessed description.
     mut key = Key(digest="", parts=[])
     match known_key:
-        Some(value) =>
-            key = value
-        None =>
-            key = unit_key(unit, toolchain)?
+        Some(value) => key = value
+        None => key = unit_key(unit, toolchain)?
     compiled = crate_name(unit)
     trace_boundary("unit_write_begin")
     path = write_unit(unit, compiled, None, described_by(key), true)?
@@ -108,7 +106,7 @@ pub def compile_prepared_unit(
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
         output_path = Path(f"{path.0}.graph-body-output")
-        discard_graph_body_output(output_path)?
+        discard_file(output_path)
         discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
         report = Path(f"{path.0}.graph-plan-report")
@@ -125,11 +123,7 @@ pub def compile_prepared_unit(
     return Ok(code)
 
 
-pub def write_selected_records(
-    directory: Path,
-    unit: UnitDescription,
-    records: list[SelectedBodyPage],
-) -> Result[None, str]:
+pub def write_selected_records(directory: Path, unit: UnitDescription, records: list[SelectedBodyPage]) -> Result[None, str]:
     """
     Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
     compiler context they were selected under. Builds and checks read their records from this one writer.
@@ -187,9 +181,11 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
     schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
     if schema != "incan.checker-reuse/1":
         return Err("unsupported checker record report")
-    fields = value.require("artifact_refusals").map_err((error) => error.message())?.expect_object().map_err(
-        (error) => error.message(),
-    )?
+    fields = value
+        .require("artifact_refusals")
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
     mut refusals: Dict[str, int] = {}
     for name in fields.keys():
         refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
@@ -199,12 +195,16 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
         for owner in owners.expect_array().map_err((error) => error.message())?:
             restored.append(owner.expect_str().map_err((error) => error.message())?)
     counts = CheckerRecordCounts(
-        reusable_declarations=value.require("reusable_declarations").map_err((error) => error.message())?.expect_int().map_err(
-            (error) => error.message(),
-        )?,
-        all_declarations=value.require("all_declarations").map_err((error) => error.message())?.expect_int().map_err(
-            (error) => error.message(),
-        )?,
+        reusable_declarations=value
+            .require("reusable_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
+        all_declarations=value
+            .require("all_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
         summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
             (error) => error.message(),
         )?,
@@ -220,14 +220,6 @@ def checker_record_report_path(output: Path) -> Path:
     return Path(f"{output.0}.checker-report.json")
 
 
-def discard_graph_body_output(output: Path) -> Result[None, str]:
-    """Remove the prior compiler sidecar whether an old toolchain wrote one file or this toolchain wrote row files."""
-    if output.is_dir():
-        return remove_dir_all(output.0).map_err((error) => f"cannot replace graph body output {output.0}: {error}")
-    discard_file(output)
-    return Ok(None)
-
-
 pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:
     """Count only loss-checked plan products that the lowering reports as evaluated or reused for this request."""
     report = plan_record_report_path(unit, key)
@@ -237,7 +229,9 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        text = entry.read_text("utf-8", "strict").map_err((error) => f"plan record event: cannot {error.message()}")?
+        text = entry
+            .read_text("utf-8", "strict")
+            .map_err((error) => f"plan record event: cannot {error.message()}")?
         event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
         reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
             (error) => error.message(),

@@ -179,7 +179,7 @@ fn collect_rust_interop_artifacts(value: &RustInteropArtifacts, refusals: &mut V
         field_projection_paths,
         field_values,
         checked_function_values,
-        iteration_hooks: _,
+        iteration_hooks,
         value_item_paths,
         value_native_types: _,
         body_ir_diverging_import_calls,
@@ -199,7 +199,7 @@ fn collect_rust_interop_artifacts(value: &RustInteropArtifacts, refusals: &mut V
         await_conversions,
         type_aliases,
     } = value;
-    collect_nonempty!(refusals, "RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, argument_adjustments, declared_conversions, validated_rusttype_edges, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, value_item_paths, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
+    collect_nonempty!(refusals, "RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, argument_adjustments, declared_conversions, validated_rusttype_edges, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, iteration_hooks, value_item_paths, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
 }
 
 /// Refuse every unrepresented nonempty TraitArtifacts field; additions must choose a canonical capability.
