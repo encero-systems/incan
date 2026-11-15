@@ -152,7 +152,9 @@ impl TypeChecker {
             return;
         }
 
-        if explicit_mode.is_none() {
+        // RFC 129: `mut name = place` is a writable borrow of the place, with or without a value-type annotation.
+        let inferred_alias = explicit_mode.is_none() && self.inferred_writable_alias(assign);
+        if explicit_mode.is_none() && !inferred_alias {
             self.warn_place_binding_migration(assign);
         }
 
@@ -170,7 +172,11 @@ impl TypeChecker {
         let ty = self.retain_qualified_assignment_binding_owner(assign, ty);
         self.declare_assignment_binding(assign, ty, is_mutable, introduces_binding, span);
         self.retain_qualified_assignment_storage(assign, span);
-        self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+        if inferred_alias {
+            self.record_inferred_writable_alias(assign, span);
+        } else {
+            self.record_explicit_local_mode(assign, explicit_mode, is_mutable);
+        }
     }
 
     /// Check the value a new binding receives against its annotation. While an unannotated binding's value is checked,

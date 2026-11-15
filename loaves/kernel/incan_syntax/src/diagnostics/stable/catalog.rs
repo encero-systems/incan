@@ -713,11 +713,11 @@ pub(super) const RESULT_SOURCE_INVALID: DiagnosticCatalogEntry = DiagnosticCatal
 
 pub(super) const PLACE_BINDING_MIGRATION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0125",
-    title: "Local binding copies a place that a place binding borrows",
+    title: "Internal migration report: a local copies a place that a place binding borrows",
     severity: "warning",
     phase: "typecheck",
-    summary: "This local receives an independent value from a place that a read-only or writable place binding borrows.",
-    explanation: "Under place bindings, bare and let declarations from a place borrow it read-only and mut declarations borrow it with write-through replacement. This declaration receives an independent value, and the warning does not change runtime behavior. Type annotations do not request copies; an explicit clone states an independent value.",
+    summary: "Compiler-internal report, off by default: this local receives an independent value from a place that a place binding borrows.",
+    explanation: "A mut local declared from a place is a writable alias of that place, and a read-only source refuses it with INCAN-T0126. This report is not shown to users: the compiler emits it only when INCAN_PLACE_BINDING_REPORT is set, to list bare and let declarations that still receive an independent value while the RFC 129 migration is finished. It does not change runtime behavior.",
     examples: &["mut title: str = page.title", "let saved = page.title"],
     common_causes: &["Creating a local from an existing local, parameter, stored field or collection element."],
     fixes: &[
