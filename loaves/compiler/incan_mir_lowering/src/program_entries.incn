@@ -29,6 +29,7 @@ from rust::std::collections import BTreeMap
 from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
+from pub::incan_platform.heap import release_free_heap
 from scalar_store import (
     retained_scalar,
     report_scalar,
@@ -262,6 +263,7 @@ def lower_module_frames(
                 nominals,
             )?,
         )
+    release_free_heap()
     return Ok(completed)
 
 
