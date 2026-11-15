@@ -80,6 +80,8 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     if (
         "snapshot_id" not in content(replies[3])?
         or "helper" not in content(replies[4])?
+        or " author=workspace] " not in content(replies[4])?
+        or " authored_text=quoted_evidence" not in content(replies[4])?
         or "helper" not in content(replies[5])?
     ):
         return Err("MCP graph tools differ from the public graph facts")
