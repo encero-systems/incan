@@ -653,6 +653,7 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
         PlanType.Dict(key, value) => reference_type = PlanType.DictRef(key, value)
         PlanType.Enum(owner, name) => reference_type = PlanType.EnumRef(owner, name)
         PlanType.Model(owner, name) => reference_type = PlanType.ModelRef(owner, name)
+        PlanType.FrozenCollection(name, elements) => reference_type = PlanType.FrozenCollectionRef(name, elements)
         _ => return Err(f"unsupported Body IR intrinsic payload clone type {ty:?} in {builder.name} at {span.line}")
     output = borrowed_native_value(builder, "core::clone::Clone::clone", place, ty, reference_type, ty, span)
     return Ok(read_place(output, true, span))

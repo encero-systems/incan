@@ -669,6 +669,9 @@ impl TypeChecker {
             return result;
         }
 
+        if let Some(ret) = self.clone_builtin_value(&base_ty, method, type_args, args, span) {
+            return ret;
+        }
         if let Some(result) = self.check_builtin_receiver_method_call(&call, &base_ty, &arg_types) {
             return result;
         }
