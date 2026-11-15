@@ -209,6 +209,44 @@ pub def test_a_loop_that_only_reads_its_item_borrows_each_element() -> Result[No
     return Ok(None)
 
 
+const PUBLISHED_PROJECTION: str = """pub model Variant:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+pub model Stored:
+    pub variants: list[Variant]
+
+
+pub model Holder:
+    pub identity: bytes
+    pub size: int
+
+
+pub def holder_of(written: Stored, at: int) -> Holder:
+    return Holder(identity=written.variants[at].identity, size=at)
+
+
+def read_twice(written: Stored) -> int:
+    first = holder_of(written, 0)
+    second = holder_of(written, 0)
+    return first.size + second.size + len(first.identity)
+
+
+def main() -> None:
+    stored = Stored(variants=[Variant(identity=b"ab", labels=["x", "y"])])
+    println(read_twice(stored))
+"""
+
+
+pub def test_a_published_function_that_builds_from_a_projected_read_borrows_its_parameter() -> Result[None, str]:
+    """A `pub` callable that copies one field of its parameter into a new value lends that parameter (#1605)."""
+    report = plan_report("published", PUBLISHED_PROJECTION, "2")?
+    copies = clones(report, "read_twice")?
+    assert copies == 0, f"read_twice holds {copies} clone calls"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
