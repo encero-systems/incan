@@ -4,8 +4,28 @@ from std.toml import TomlValue
 from std.fs import Path
 from json_fields import field
 from intake import library_source, read_project, ManifestReader
-from toml_fields import optional_string, required_string
+from rust_target import compiler_version, host_triple
+from toml_fields import optional_flag, optional_string, optional_strings, required_string
 from toolchain_access import BINARY_SEPARATOR, read_access
+
+
+pub model RustBuildFact:
+    """
+    One `[[rust.facts]]` record (RFC 119): the exact binding it was recorded for, and what the crate's build script
+    answered for that binding.
+    """
+
+    pub toolchain: str
+    pub target: str
+    pub profile: str
+    # The complete enabled feature set of the binding, sorted.
+    pub features: list[str]
+    pub cfg: list[str]
+    # The committed generated tree the crate reads as `OUT_DIR`, relative to the Loaf; empty when it has none.
+    pub out: str = ""
+    pub environment: Dict[str, str] = {}
+    # Declared publisher-side work (`link`, `tool`) the record carries; this Oven does not run it yet.
+    pub work: list[str] = []
 
 
 pub model RustFacet:
@@ -26,6 +46,9 @@ pub model RustFacet:
     pub unstable: bool
     # Whether a binary links the toolchain's own libraries (`sysroot_dependencies`) and finds them at run time.
     pub sysroot: bool
+    # Whether the crate has a build script, whose effect only a recorded build fact may carry.
+    pub build_script: bool = false
+    pub facts: list[RustBuildFact] = []
 
 
 model RustBinaries:
@@ -84,6 +107,134 @@ pub def rust_facet(
             version=version,
             unstable=binaries.unstable,
             sysroot=binaries.sysroot,
+            build_script=optional_flag(document, "rust.build-script", false)?,
+            facts=read_facts(document)?,
+        ),
+    )
+
+
+pub def build_fact(
+    declared: RustFacet,
+    toolchain: str,
+    target: str,
+    profile: str,
+    features: list[str],
+) -> Result[Option[RustBuildFact], str]:
+    """
+    The build fact recorded for exactly this binding: toolchain, target, profile and the complete feature set. A near
+    record is never taken. A crate with no build script needs no record; one with a build script and no exact record
+    is refused, naming the unit and the binding. Declared `link` or `tool` work is refused until this Oven runs it.
+    """
+    wanted = sorted(features)
+    unit = f"{declared.package} {declared.version}"
+    for fact in declared.facts:
+        if fact.toolchain != toolchain or fact.target != target or fact.profile != profile or fact.features != wanted:
+            continue
+        if len(fact.work) > 0:
+            return Err(f"{unit}: its build fact declares {", ".join(fact.work)} work, which this Oven does not run")
+        return Ok(Some(fact))
+    if not declared.build_script:
+        return Ok(None)
+    binding = f"{toolchain}, {target}, {profile}, features [{", ".join(wanted)}]"
+    return Err(f"{unit} requires a recorded build fact for this exact binding: {binding}")
+
+
+pub def fact_arguments(fact: RustBuildFact) -> list[str]:
+    """The compiler arguments a build fact answers with: one `--cfg` per recorded flag, in recorded order."""
+    mut arguments: list[str] = []
+    for flag in fact.cfg:
+        arguments.append("--cfg")
+        arguments.append(flag)
+    return arguments
+
+
+pub def fact_environment(project: str, fact: RustBuildFact) -> Dict[str, str]:
+    """The environment a build fact gives the crate's compile: its recorded variables, and `OUT_DIR` for its tree."""
+    mut environment: Dict[str, str] = {}
+    for name in sorted([name for name in fact.environment.keys()]):
+        environment[name] = fact.environment[name]
+    if fact.out != "":
+        environment["OUT_DIR"] = Path(project).joinpath(fact.out).0
+    return environment
+
+
+def unit_build_fact(
+    declared: RustFacet,
+    rustc: str,
+    profile: str,
+    features: list[str],
+) -> Result[Option[RustBuildFact], str]:
+    """The build fact of a unit's binding: the pinned rustc's identity and host target, the profile and the features."""
+    if len(declared.facts) == 0 and not declared.build_script:
+        return Ok(None)
+    identity = compiler_version(rustc)?.split("\n")[0].strip()
+    return build_fact(declared, identity, host_triple(rustc)?, profile, features)
+
+
+pub def unit_fact_arguments(
+    declared: RustFacet,
+    rustc: str,
+    profile: str,
+    features: list[str],
+) -> Result[list[str], str]:
+    """The compiler arguments a unit's build fact adds, none when the unit has no fact for its binding."""
+    match unit_build_fact(declared, rustc, profile, features)?:
+        None => return Ok([])
+        Some(fact) => return Ok(fact_arguments(fact))
+
+
+pub def unit_environment(
+    project: str,
+    declared: RustFacet,
+    rustc: str,
+    profile: str,
+    features: list[str],
+) -> Result[Dict[str, str], str]:
+    """A unit's compile environment: its package environment, then what its build fact records for its binding."""
+    mut environment = package_environment(project, declared, declared.crate_name)
+    if let Some(fact) = unit_build_fact(declared, rustc, profile, features)?:
+        recorded = fact_environment(project, fact)
+        for name in sorted([name for name in recorded.keys()]):
+            environment[name] = recorded[name]
+    return Ok(environment)
+
+
+def read_facts(document: TomlValue) -> Result[list[RustBuildFact], str]:
+    """The `[[rust.facts]]` records of a manifest. `harvested-from` is evidence only and is not read."""
+    root = document.as_table().map_err((error) => error.message())?
+    if "rust" not in root:
+        return Ok([])
+    facet = root["rust"].as_table().map_err((error) => error.message())?
+    if "facts" not in facet:
+        return Ok([])
+    mut facts: list[RustBuildFact] = []
+    for record in facet["facts"].as_array().map_err((error) => f"rust.facts: {error.message()}")?:
+        facts.append(read_fact(record)?)
+    return Ok(facts)
+
+
+def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
+    """One build fact record: its binding, its answers and the kinds of publisher-side work it declares."""
+    table = record.as_table().map_err((error) => f"rust.facts: {error.message()}")?
+    mut environment: Dict[str, str] = {}
+    if "environment" in table:
+        values = table["environment"].as_table().map_err((error) => f"rust.facts.environment: {error.message()}")?
+        for name in sorted([name for name in values.keys()]):
+            environment[name] = required_string(record, f"environment.{name}")?
+    mut work: list[str] = []
+    for kind in ["link", "tool"]:
+        if kind in table:
+            work.append(kind)
+    return Ok(
+        RustBuildFact(
+            toolchain=required_string(record, "toolchain")?,
+            target=required_string(record, "target")?,
+            profile=required_string(record, "profile")?,
+            features=sorted(optional_strings(record, "features")?.unwrap_or([])),
+            cfg=optional_strings(record, "cfg")?.unwrap_or([]),
+            out=optional_string(record, "out")?.unwrap_or(""),
+            environment=environment,
+            work=work,
         ),
     )
 

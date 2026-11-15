@@ -130,7 +130,9 @@ An environment resolves through its overlay chain: the project, then `dev` unles
 
 ## `[rust]`
 
-Accepted fields are `name`, `type`, `edition`, `source`, `bin`, `lib`, `build-script` and `lints`. The `name` default is the project identity's final component after replacing each hyphen with an underscore. `type` accepts `lib` (the default) or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`, overrides `build.rust-edition` and defaults to `2024`. `build-script` is a boolean and defaults to `false`. Local intake refuses `true`, naming the Loaf identity and the absence of an exact recorded build fact.
+Accepted fields are `name`, `type`, `edition`, `source`, `bin`, `lib`, `build-script`, `lints` and `facts`. The `name` default is the project identity's final component after replacing each hyphen with an underscore. `type` accepts `lib` (the default) or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`, overrides `build.rust-edition` and defaults to `2024`. `build-script` is a boolean and defaults to `false`. Local intake refuses `true` when the facet has no `[[rust.facts]]` record, naming the Loaf identity and the absence of an exact recorded build fact.
+
+`[[rust.facts]]` records a build script's answers for one binding (RFC 119): `toolchain` (the rustc identity line), `target`, `profile` and `features` (the complete enabled feature set) name the binding, `cfg` lists the flags the crate is compiled with, `out` names the committed generated tree the crate reads as `OUT_DIR`, relative to the Loaf, and `environment` is a table of variables the compile sees. `harvested-from` is evidence and is not read. A compile takes only the record whose binding equals its own exactly, and refuses a unit with a build script and no such record, naming the unit and the binding. A record that declares `link` or `tool` work is refused.
 
 `[rust.source]` accepts a required string `root`, relative to the project. The library source is `src/lib.rs` under that directory, or under the project when `root` is omitted. `rust.lib` does not override this discovery.
 
