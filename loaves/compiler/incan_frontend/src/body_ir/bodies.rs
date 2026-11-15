@@ -223,7 +223,7 @@ pub(super) fn finish_static_initializer_body(
         builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
     }
     let named_type_identities =
-        builder.finish_type_identities(parameter_types::retained_type_identities(builder.type_info));
+        builder.finish_type_identities(parameter_types::shared_retained_type_identities(builder.type_info));
     let direct_call_id = CompilerNodeId::declaration_at(builder.module_identity, span);
     bir::Body {
         type_parameters: Vec::new(),
@@ -244,7 +244,7 @@ pub(super) fn finish_static_initializer_body(
             closure_holding_parameters: Vec::new(),
             closure_holding_return: false,
         }),
-        named_type_identities: std::sync::Arc::new(named_type_identities),
+        named_type_identities,
         locals: builder.locals,
         params: Vec::new(),
         param_locals: Vec::new(),
@@ -338,8 +338,9 @@ pub(super) fn lower_function_body(
         builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
     }
 
-    let named_type_identities =
-        builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let named_type_identities = builder.finish_type_identities(parameter_types::shared_retained_type_identities(
+        lowering_facts.type_info,
+    ));
     let returned_view = result_dependency(&builder);
     bir::Body {
         type_parameters: builder.type_parameters,
@@ -368,7 +369,7 @@ pub(super) fn lower_function_body(
                 .type_info
                 .is_closure_returning_type(function.return_type.span),
         }),
-        named_type_identities: std::sync::Arc::new(named_type_identities),
+        named_type_identities,
         locals: builder.locals,
         params,
         param_locals,
@@ -497,8 +498,9 @@ pub(super) fn lower_method_body(
         builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
     }
 
-    let named_type_identities =
-        builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    let named_type_identities = builder.finish_type_identities(parameter_types::shared_retained_type_identities(
+        lowering_facts.type_info,
+    ));
     let returned_view = result_dependency(&builder);
     Some(bir::Body {
         trait_default_instantiation: None,
@@ -537,7 +539,7 @@ pub(super) fn lower_method_body(
                 .type_info
                 .is_closure_returning_type(method.return_type.span),
         }),
-        named_type_identities: std::sync::Arc::new(named_type_identities),
+        named_type_identities,
         locals: builder.locals,
         params,
         param_locals,

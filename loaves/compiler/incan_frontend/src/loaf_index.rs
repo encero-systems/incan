@@ -112,24 +112,45 @@ impl LoafArtifact {
         retained::artifact(dir, name)
     }
 
+    /// Read the Loaf `name` with its checked API documentation, for readers that show documentation. Compiles use
+    /// [`Self::read`], which never opens an installed Loaf's documentation records.
+    pub fn read_documented(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        if compiler_record_set::configured()
+            && let Some((manifest, digest)) = compiler_record_set::read_documented(dir, name)?
+        {
+            return Self::from_records(dir, name, manifest, digest);
+        }
+        Self::read(dir, name)
+    }
+
+    /// An installed Loaf whose manifest came from its authenticated compiler records.
+    fn from_records(
+        dir: &Path,
+        name: &str,
+        manifest: Arc<LibraryManifest>,
+        digest: String,
+    ) -> Result<Self, LoafIndexError> {
+        let identity = LoafIdentity {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            digest,
+            feature_projection: BTreeSet::new(),
+        };
+        let (rust_abi_cache, stale_rust_paths) = Self::read_rust_abi_cache(dir, name, &manifest)?;
+        Ok(Self {
+            identity,
+            name: name.to_owned(),
+            dir: dir.to_path_buf(),
+            manifest,
+            rust_abi_cache,
+            stale_rust_paths,
+        })
+    }
+
     /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
     fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
         if let Some((manifest, digest)) = compiler_record_set::read(dir, name)? {
-            let identity = LoafIdentity {
-                name: manifest.name.clone(),
-                version: manifest.version.clone(),
-                digest,
-                feature_projection: BTreeSet::new(),
-            };
-            let (rust_abi_cache, stale_rust_paths) = Self::read_rust_abi_cache(dir, name, &manifest)?;
-            return Ok(Self {
-                identity,
-                name: name.to_owned(),
-                dir: dir.to_path_buf(),
-                manifest,
-                rust_abi_cache,
-                stale_rust_paths,
-            });
+            return Self::from_records(dir, name, manifest, digest);
         }
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)

@@ -1,0 +1,5 @@
+pub from kinds import Settings
+
+
+pub def load() -> Settings:
+    return Settings(name="base")

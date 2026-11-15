@@ -18,6 +18,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
+from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Transaction
 from bakery import (
     bakery,
@@ -36,7 +37,7 @@ from bakery import (
     has_files_under,
 )
 from bakery_records import Fact
-from bakery_roots import register_root
+from bakery_roots import lease_unit, register_root
 from compiler_body_values import SelectedBodyPage
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
@@ -111,6 +112,8 @@ pub model Made:
     pub fact: Option[Fact] = None
     pub transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
+    # The bakery identity of the executable's unit, which a run of it leases; empty when nothing was baked.
+    pub identity: str = ""
 
 
 pub def compile_unit(
@@ -245,17 +248,18 @@ pub def obtain_executable(
                 fact=Some(prepared.fact),
                 transaction=Some(prepared.transaction),
                 claim=Some(Rc.new(held)),
+                identity=identity,
             ),
         )
     fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
     launch = viewed(store, fact, output, unit.kind, shared)?.launch
-    return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1))
+    return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity))
 
 
 def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Result[Made, str]:
     """Make `output` the executable view and launch it, preserving the program's observable location."""
     view_executable(store, fact, output, kind, shared)?
-    return Ok(Made(code=0, launch=output, fact=Some(fact)))
+    return Ok(Made(code=0, launch=output, fact=Some(fact), identity=fact.identity))
 
 
 def current_executable(store: Path, identity: str) -> Result[Option[Fact], str]:
@@ -325,6 +329,7 @@ pub def run_program(
     arguments: list[str],
     argv0: Option[str] = None,
     wait: bool = false,
+    identity: str = "",
 ) -> Result[i32, str]:
     """
     Execute the compiled program with the caller's arguments, standard streams and working directory.
@@ -333,8 +338,14 @@ pub def run_program(
     interest alive until the child exits. A failed requested trace also waits, so command completion can report it
     after the program's output, retaining the shell's `128 + signal` status. A scoped execution otherwise keeps its
     existing signal-termination status one.
+
+    The program's unit, named by `identity` when it was baked, is leased first: the program holds the lease until it
+    and every program it started have exited, so collection keeps the unit while it runs.
     """
     preparing = begin_work()
+    mut lease: Option[ProcessLease] = None
+    if identity != "":
+        lease = Some(lease_unit(bakery()?, identity)?)
     program = f"{binary.0}"
     mut command = Command.new(binary.0)
     match argv0:
@@ -347,6 +358,8 @@ pub def run_program(
     trace_failed = flush_trace()
     if wait or trace_failed:
         status = command.status().map_err((error) => f"cannot run {program}: {error}")?
+        # The child inherited the lease; this process's hold ends only now.
+        lease = None
         match status.code():
             Some(code) => return Ok(code)
             None =>

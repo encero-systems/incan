@@ -352,6 +352,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "final-type",
             "native-call",
             "artifact-call",
+            "artifact-protocol",
             "target",
             "identifier",
             "effect",
@@ -759,6 +760,24 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     elif field.family == "identifier":
         if field.selector != "kind" or values != ["value"]:
             return Err(CodecFault.Unsupported("identifier"))
+        end = 1
+    # Generated protocol artifact rows retain one checked receiver identity at its source node.
+    elif field.family == "artifact-protocol":
+        if field.node == "" or len(values) != 1:
+            return Err(CodecFault.Malformed)
+        if field.selector == "body_ir_truthiness_receivers" and values[0] == "":
+            return Err(CodecFault.Malformed)
+        if field.selector in ["item_taking_iterations", "in_place_match_scrutinees"] and values != ["true"]:
+            return Err(CodecFault.Malformed)
+        if field.selector == "comprehension_source_consumption" and values[0] not in ["true", "false"]:
+            return Err(CodecFault.Malformed)
+        if field.selector not in [
+            "body_ir_truthiness_receivers",
+            "comprehension_source_consumption",
+            "item_taking_iterations",
+            "in_place_match_scrutinees",
+        ]:
+            return Err(CodecFault.Unsupported(field.selector))
         end = 1
     # A target's source: at least two values, all kept.
     elif field.family == "target":

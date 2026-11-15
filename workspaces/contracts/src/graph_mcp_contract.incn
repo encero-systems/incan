@@ -100,7 +100,10 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
 
 
 def check_preparations(directory: Path) -> Result[None, str]:
-    """Four graph requests prepare four times; the context's snapshot probe shares its request's preparation."""
+    """
+    Four graph requests prepare at most four times: one its bakery page answers prepares nothing, and the context's
+    snapshot probe shares its request's preparation.
+    """
     mut preparations = 0
     for path in directory.iterdir().map_err((error) => error.message())?:
         for line in read(path)?.split("\n"):
@@ -108,8 +111,8 @@ def check_preparations(directory: Path) -> Result[None, str]:
                 preparations += 1
         remove(path)?
     directory.rmdir().map_err((error) => error.message())?
-    if preparations != 4:
-        return Err(f"four MCP graph requests prepared {preparations} times; expected four")
+    if preparations > 4:
+        return Err(f"four MCP graph requests prepared {preparations} times; expected at most four")
     return Ok(None)
 
 

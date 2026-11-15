@@ -25,7 +25,10 @@ use crate::library_manifest::{
 
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
+use crate::api_metadata::ApiDocumentation;
 
+/// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
+const DOCUMENTATION: &str = "documentation";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -57,6 +60,8 @@ struct RecordSet {
     bytes_read: AtomicUsize,
     /// Record groups this process already read, authenticated and decoded, by package prefix and projection.
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
+    /// Inventory summaries this process already read and authenticated, by metadata key prefix.
+    summaries: Mutex<BTreeMap<String, Summary>>,
 }
 
 /// One authenticated, decoded record group and the manifest digest its metadata names.
@@ -80,17 +85,30 @@ enum Projection {
     /// public members that representation coverage must admit. Callable, alias, constant, static, vocabulary and Rust
     /// ABI values are unrelated to this demand and remain unopened.
     Execution,
+    /// The complete library manifest with its checked API documentation, for readers that show documentation.
+    Documented,
 }
 
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
         match self {
-            Self::Complete => true,
+            Self::Complete => family != DOCUMENTATION,
             Self::Execution => matches!(
                 family,
                 "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
             ),
+            Self::Documented => true,
+        }
+    }
+
+    /// The admitted projections that can answer a demand for this one, nearest first. The complete group answers an
+    /// executable demand; only a documented group answers a documented demand, and none answers a compile's.
+    fn answered_by(self) -> &'static [Projection] {
+        match self {
+            Self::Complete => &[Self::Complete],
+            Self::Execution => &[Self::Execution, Self::Complete],
+            Self::Documented => &[Self::Documented],
         }
     }
 }
@@ -104,16 +122,17 @@ impl RecordSet {
             records_read: AtomicUsize::new(0),
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
+            summaries: Mutex::new(BTreeMap::new()),
         }
     }
 
-    /// A group this process already authenticated that answers `projection`; the complete group answers both.
+    /// A group this process already authenticated that answers `projection`.
     fn admitted(&self, prefix: &str, projection: Projection) -> Option<AdmittedGroup> {
         let admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
-        let key = |projection| (prefix.to_owned(), projection);
-        admitted
-            .get(&key(projection))
-            .or_else(|| admitted.get(&key(Projection::Complete)))
+        projection
+            .answered_by()
+            .iter()
+            .find_map(|answer| admitted.get(&(prefix.to_owned(), *answer)))
             .map(|(manifest, digest)| (Arc::clone(manifest), digest.clone()))
     }
 
@@ -162,11 +181,24 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
     let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
         return Ok(None);
     };
+    read_summary(set, dir, name)
+}
+
+/// Read the inventory record of one Loaf group of `set`, once per process.
+fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
     let profile = dir
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/metadata/");
+    if let Some(summary) = set
+        .summaries
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&prefix)
+    {
+        return Ok(Some(summary.clone()));
+    }
     let entries = set
         .entries
         .iter()
@@ -206,7 +238,7 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
         ));
     }
     valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    Ok(Some(Summary {
+    let summary = Summary {
         identity: LoafIdentity {
             name: metadata.name,
             version: metadata.version,
@@ -219,7 +251,12 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
         rust_paths: metadata.rust_paths,
         rust_abi_cache_declared: metadata.rust_abi_cache_declared,
         rust_abi_cache: metadata.rust_abi_cache_declared,
-    }))
+    };
+    set.summaries
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, summary.clone());
+    Ok(Some(summary))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
@@ -230,6 +267,14 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
 /// Read only the manifest records executable-resolution admission actually consults.
 pub(super) fn read_execution(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
     read_selected(dir, name, Projection::Execution)
+}
+
+/// Read one installed Loaf with its checked API documentation, which compiles never read.
+pub(super) fn read_documented(
+    dir: &Path,
+    name: &str,
+) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
+    read_selected(dir, name, Projection::Documented)
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -463,6 +508,14 @@ fn decode_manifest(
         .map(|value| VocabExports::decode_compiler_record_value(&value))
         .transpose()
         .map_err(|error| unreadable(dir, name, format!("invalid compiler-record vocabulary: {error}")))?;
+    let mut contract_metadata =
+        decode_single::<LibraryContractMetadata>(&mut families, "contract-metadata", name, dir)?;
+    // Only a documented read selects the documentation record; a compile's projections never open it.
+    if let Some(documentation) = decode_optional::<Vec<ApiDocumentation>>(&mut families, DOCUMENTATION, name, dir)? {
+        contract_metadata
+            .restore_documentation(documentation)
+            .map_err(|reason| unreadable(dir, name, format!("invalid compiler-record documentation: {reason}")))?;
+    }
     let manifest = LibraryManifest {
         name: metadata.name,
         version: metadata.version,
@@ -486,7 +539,7 @@ fn decode_manifest(
         soft_keywords: SoftKeywordExports {
             activations: decode_values::<SoftKeywordActivation>(&mut families, "soft-keyword", name, dir)?,
         },
-        contract_metadata: decode_single::<LibraryContractMetadata>(&mut families, "contract-metadata", name, dir)?,
+        contract_metadata,
         rust_abi: decode_optional::<LibraryRustAbi>(&mut families, "rust-abi", name, dir)?,
     };
     if let Some((family, _)) = families.first_key_value() {
@@ -761,7 +814,10 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group};
+    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary};
+    use crate::api_metadata::{
+        CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+    };
     use crate::library_manifest::{LibraryContractMetadata, LibraryManifest};
 
     /// The canonical lowercase SHA-256 spelling of `bytes`.
@@ -855,6 +911,127 @@ mod tests {
         assert!(
             refusal.contains("does not match its content name"),
             "the refusal says why: {refusal}"
+        );
+        Ok(())
+    }
+
+    /// The metadata record of the probe Loaf.
+    fn probe_metadata() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(LibraryManifest::encode_compiler_record_value(&Metadata {
+            name: "probe_loaf".to_owned(),
+            version: "0.1.0".to_owned(),
+            incan_version: "0.6.0".to_owned(),
+            manifest_format: 1,
+            manifest_digest: content_name(b"probe_loaf manifest"),
+            vocabulary: false,
+            provider_operations: false,
+            native_unions: false,
+            rust_paths: BTreeSet::new(),
+            rust_abi_cache_declared: false,
+        })?)
+    }
+
+    /// Contract metadata whose checked API documents one function.
+    fn documented_contract() -> Result<LibraryContractMetadata, Box<dyn std::error::Error>> {
+        let source = "pub def price() -> int:\n    \"\"\"The list price.\"\"\"\n    return 1999\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        Ok(LibraryContractMetadata {
+            api: Some(CheckedApiMetadataPackage {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                package: None,
+                modules: vec![module],
+                public_namespaces: Vec::new(),
+            }),
+            ..LibraryContractMetadata::default()
+        })
+    }
+
+    /// The probe Loaf installed with its contract facts and their documentation as separate records, the contract
+    /// metadata it was split from, and what reading only the facts reads.
+    fn documented_set(
+        root: &Path,
+    ) -> Result<(RecordSet, LibraryContractMetadata, RecordReads), Box<dyn std::error::Error>> {
+        let original = documented_contract()?;
+        let (facts, documentation) = original.split_documentation();
+        let metadata = probe_metadata()?;
+        let contract = LibraryManifest::encode_compiler_record_value(&facts)?;
+        let documentation = LibraryManifest::encode_compiler_record_value(&documentation)?;
+        let facts_read = RecordReads {
+            records: 2,
+            bytes: metadata.len() + contract.len(),
+        };
+        let set = record_set(
+            root,
+            "probe_loaf",
+            &[
+                ("metadata", metadata),
+                ("contract-metadata", contract),
+                ("documentation", documentation),
+            ],
+        )?;
+        Ok((set, original, facts_read))
+    }
+
+    #[test]
+    fn a_compile_reads_no_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (set, _, facts_read) = documented_set(root.path())?;
+        let dir = root.path().join("debug");
+        for projection in [Projection::Complete, Projection::Execution] {
+            read_group(&set, &dir, "probe_loaf", projection)?.ok_or("the group is installed")?;
+        }
+        assert_eq!(
+            set.reads(),
+            facts_read,
+            "compiles open the metadata and contract facts, never the documentation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_documented_read_restores_the_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (set, original, _) = documented_set(root.path())?;
+        let dir = root.path().join("debug");
+        let (compiled, _) =
+            read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
+        let (documented, _) =
+            read_group(&set, &dir, "probe_loaf", Projection::Documented)?.ok_or("the group is installed")?;
+        assert_ne!(
+            compiled.contract_metadata, original,
+            "the compile's manifest carries no documentation"
+        );
+        assert_eq!(
+            documented.contract_metadata, original,
+            "a documented read gives back the checked API with its documentation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_inventory_summary_is_read_once_per_process() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let metadata = probe_metadata()?;
+        let expected = RecordReads {
+            records: 1,
+            bytes: metadata.len(),
+        };
+        let set = record_set(root.path(), "probe_loaf", &[("metadata", metadata)])?;
+        let dir = root.path().join("debug");
+        for _ in 0..2 {
+            let summary = read_summary(&set, &dir, "probe_loaf")?.ok_or("the group is installed")?;
+            assert_eq!(summary.identity.name, "probe_loaf");
+        }
+        assert_eq!(
+            set.reads(),
+            expected,
+            "a summary this process already authenticated is not read or hashed again"
         );
         Ok(())
     }

@@ -19,7 +19,8 @@ from graph_cache import (
     unchecked_warning,
 )
 from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
-from observation import file_digest, trace
+from observation import file_digest, trace, watch_inputs, watched_inputs
+from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import matches, query, query_group, text
@@ -255,33 +256,77 @@ def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) 
 
 
 pub model PreparedInspection:
-    """One request's graph selection, shared by its snapshot probe and response and dropped with that request."""
+    """
+    One request's graph selection, shared by its snapshot probe and response and dropped with that request. A warm
+    request holds the bakery page that answers it instead, and prepared nothing.
+    """
 
     pub paths: list[GraphUnit]
     pub root: str
     pub selected: GraphOptions
     pub toolchain: Toolchain
+    # The request's page identity (empty when its answers are not paged), and the page that answers it when warm.
+    pub key: str = ""
+    pub page: Option[GraphPage] = None
 
     pub def snapshot(self) -> Result[str, str]:
         """Identify the exact prepared inputs used by feedback and the answer in this request."""
+        if let Some(page) = self.page:
+            return Ok(page.snapshot)
         return snapshot_identity(self.paths, self.root, self.selected.strict)
 
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
-        """Render the admitted request over its prepared graph without reopening the dependency closure."""
-        return response(self.paths, self.root, self.selected, self.toolchain, preferences)
+        """
+        Render the admitted request over its prepared graph without reopening the dependency closure, and keep the
+        answer in the request's page. A warm page answers for the preferences it has an answer for; for others the
+        request is prepared now.
+        """
+        if let Some(page) = self.page:
+            if let Some(answer) = page.answer(preferences):
+                trace(f"graph page {self.key[:12]}: warm")
+                return Ok(answer)
+            return prepare_cold(self.selected, self.key)?.respond(preferences)
+        answer = response(self.paths, self.root, self.selected, self.toolchain, preferences)?
+        if self.key != "":
+            keep_page(self, preferences, answer)
+        return Ok(answer)
 
 
 pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
     """
-    Prepare and render a validated graph request; CLI syntax failures never enter this boundary.
+    Prepare a validated graph request, or find the bakery page that answers it; CLI syntax failures never enter this
+    boundary.
 
-    1. Resolve the path and read the installed toolchain.
+    1. Resolve the path and identify the request.
+    2. A page whose inputs all have the metadata they had answers it: nothing is prepared.
+    3. Otherwise prepare it, watching the inputs its answer will be paged with.
+    """
+    # 1. Path failures are execution errors after syntax has been admitted.
+    path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    key = page_key(selected, path)?
+    # 2. A warm request reads one bakery record and checks its inputs' metadata.
+    if key != "":
+        if let Some(page) = warm_page(key)?:
+            return Ok(
+                PreparedInspection(paths=[], root=path.0, selected=selected, toolchain=load_toolchain()?, key=key, page=Some(page)),
+            )
+    # 3. A cold request prepares, as before.
+    return prepare_cold(selected, key)
+
+
+def prepare_cold(selected: GraphOptions, key: str) -> Result[PreparedInspection, str]:
+    """
+    Prepare a validated graph request.
+
+    1. Resolve the path and read the installed toolchain; a paged request watches its inputs from here on.
     2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
-    3. Return the rendered answer through the shared inspection boundary.
+    3. Return the prepared selection to the shared inspection boundary.
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
     started = Instant.now()
     path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    if key != "":
+        watch_inputs()
     toolchain = load_toolchain()?
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
     source = entry_source(path)
@@ -300,7 +345,43 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
         )?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
-    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain))
+    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain, key=key))
+
+
+def page_key(selected: GraphOptions, path: Path) -> Result[str, str]:
+    """
+    The page identity of a request: every graph option and the resolved path. Only an Incan source's answer is paged,
+    and never a process-risk answer, which observes running processes.
+    """
+    source = entry_source(path)
+    if selected.risk or not source.is_file() or not source.name().endswith(".incn"):
+        return Ok("")
+    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query, selected.term]
+    parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
+    parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
+    parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
+    for name in sorted([name for name in selected.substitutes.keys()]):
+        parts.append(f"substitute:{name}={selected.substitutes[name]}")
+    return request_key(parts)
+
+
+def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answer: str) -> None:
+    """
+    Keep a cold answer in its bakery page, with the snapshot it was answered from and its inputs' metadata. An answer
+    with unchecked units is not paged, since its warnings belong to the request; failing to page never fails it.
+    """
+    match keep_checked_page(prepared, preferences, answer):
+        Ok(kept) => trace(f"graph page {prepared.key[:12]}: kept={kept}")
+        Err(reason) => trace(f"graph page {prepared.key[:12]}: not kept: {reason}")
+
+
+def keep_checked_page(prepared: PreparedInspection, preferences: Dict[str, int], answer: str) -> Result[bool, str]:
+    """Publish the page of a checked answer; `false` when an input is unsettled or a unit is unchecked."""
+    if len(unchecked_notes(prepared.paths)?) > 0:
+        _ = watched_inputs()
+        return Ok(false)
+    snapshot = snapshot_identity(prepared.paths, prepared.root, prepared.selected.strict)?
+    return publish_page(prepared.key, watched_inputs().stamps, snapshot, preferences, answer)
 
 
 def entry_source(path: Path) -> Path:

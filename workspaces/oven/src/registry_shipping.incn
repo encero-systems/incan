@@ -65,12 +65,22 @@ pub def packed_checkout() -> Result[Option[Path], str]:
     packages = standard_packages()?
     if len(packages) == 0:
         return Ok(None)
-    mut directory = Path(packages[0].root)
+    return enclosing_checkout(Path(packages[0].root))
+
+
+pub def enclosing_checkout(start: Path) -> Result[Option[Path], str]:
+    """
+    The nearest directory at or above `start` that holds `.git`, or none.
+
+    The walk starts from the absolute path and ends at the filesystem root: `Path.parent()` gives `.` for `/`, which
+    would continue into the working directory instead of stopping.
+    """
+    mut directory = start.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     loop:
         if directory.joinpath(".git").exists():
             return Ok(Some(directory))
         parent = directory.parent()
-        if parent.0 == directory.0:
+        if directory.0 == "/" or parent.0 == directory.0 or not parent.0.startswith("/"):
             return Ok(None)
         directory = parent
 

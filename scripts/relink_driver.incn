@@ -220,7 +220,7 @@ def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -
     return Err(f"driver build failed; log: {log.0}")
 
 
-def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tuple[Path, list[str]], str]:
+pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tuple[Path, list[str]], str]:
     """
     Install the driver under its content digest with its standard Rust ABI cache, point the manifest at both, and
     remove the driver and cache that the manifest named before when an earlier relink installed them. Returns the
@@ -239,9 +239,10 @@ def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tuple[P
     mut replaced = [manifest_text(manifest, "driver")?]
     for cache in manifest_list(manifest, "rust_abi")?:
         replaced.append(cache)
+    # Both are named from the toolchain, as an installed manifest names them, so a copied or moved home stays whole.
     mut fields = manifest.expect_object().map_err((error) => error.message())?
-    fields["driver"] = JsonValue.string(driver.0)
-    fields["rust_abi"] = JsonValue.array([JsonValue.string(abi.0)])
+    fields["driver"] = JsonValue.string(f"bin/{driver.name()}")
+    fields["rust_abi"] = JsonValue.array([JsonValue.string(f"rust-abi/{abi.name()}")])
     fields["codegraph_on_request"] = JsonValue.bool(true)
     fields["closure_anchors"] = JsonValue.bool(true)
     replace_text(

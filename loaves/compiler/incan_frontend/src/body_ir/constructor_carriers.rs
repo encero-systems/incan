@@ -166,15 +166,25 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Emit the original checked bindings and the canonical leaves actually consumed from selected field contexts.
+    /// Emit the module's checked bindings and the canonical leaves actually consumed from selected field contexts. A
+    /// body that consumed no binding the module map lacks shares the module map; only a body that adds one gets its
+    /// own extended copy.
     pub(super) fn finish_type_identities(
         &self,
-        mut identities: BTreeMap<String, CanonicalSymbolId>,
-    ) -> BTreeMap<String, CanonicalSymbolId> {
+        base: &incan_semantics_core::body_ir::SharedIdentities,
+    ) -> incan_semantics_core::body_ir::SharedIdentities {
+        if self
+            .contextual_type_identities
+            .keys()
+            .all(|name| base.contains_key(name))
+        {
+            return std::sync::Arc::clone(base);
+        }
+        let mut identities: BTreeMap<String, CanonicalSymbolId> = base.as_ref().clone();
         for (name, identity) in &self.contextual_type_identities {
             identities.entry(name.clone()).or_insert_with(|| identity.clone());
         }
-        identities
+        std::sync::Arc::new(identities)
     }
 }
 

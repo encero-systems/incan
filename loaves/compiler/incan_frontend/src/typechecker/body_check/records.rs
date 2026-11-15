@@ -9,6 +9,7 @@ mod inputs;
 mod mutation;
 mod native_types;
 mod ownership;
+mod protocol_artifacts_generated;
 mod rust_artifact_admission;
 mod rust_artifacts_generated;
 mod types;
@@ -134,6 +135,20 @@ impl TypeChecker {
     /// Clone the explicit refusal returned by this activation's direct local producer.
     pub(crate) fn local_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
         self.local_record_refusals.get(&owner).cloned()
+    }
+
+    /// Name every nonempty artifact field that prevents this checked owner from crossing the reusable-record boundary.
+    pub(crate) fn body_artifact_refusals(&self, owner: Span) -> Vec<&'static str> {
+        let mut refusals = Vec::new();
+        if let Some(view) = self.checked_declaration(owner) {
+            refusals.extend(unsupported::artifact_refusals(view));
+        }
+        if let Some(view) = self.checked_body(owner) {
+            refusals.extend(unsupported::artifact_refusals(view));
+        }
+        refusals.sort_unstable();
+        refusals.dedup();
+        refusals
     }
 
     /// Retain one selected local value for republishing without treating selection as producer execution.
@@ -962,6 +977,9 @@ fn restore_local(
         return Ok(());
     }
     if rust_artifacts_generated::restore(positions, &mut local.rust, row)? {
+        return Ok(());
+    }
+    if protocol_artifacts_generated::restore(positions, &mut local.protocols, row)? {
         return Ok(());
     }
     if matches!(

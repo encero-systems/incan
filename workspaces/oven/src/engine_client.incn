@@ -18,8 +18,7 @@ from engine_wire import Refusal
 from files import json_text
 from incan_units import run_program
 from json_fields import required_text
-from observation import file_metadata, trace
-from retained_readings import installed_digest
+from observation import observe, file_metadata, trace
 from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
@@ -99,17 +98,20 @@ pub def execute(
         _ = channel.transport.close()
         return Ok(0)
     mut binary = ""
+    mut program = ""
     match read_program(store, complete.result_handles)?:
         None => return Err("engine completed without a native descriptor")
         Some(unit) =>
             if unit.identity != complete.admission_proof:
                 return Err("engine completion and admitted native identity disagree")
             binary = unit.binary
-    # 3. Complete already holds this caller's execution lease; the engine never runs or retries user code.
+            program = unit.identity
+    # 3. Complete already holds this caller's execution lease, and the run leases the unit in the bakery until the
+    # program exits; the engine never runs or retries user code.
     executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
-        code = run_program(Path(binary), arguments, argv0, true)
+        code = run_program(Path(binary), arguments, argv0, true, program)
     record_work(Operation.EngineChild, source.0, executing)
     # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
@@ -166,7 +168,7 @@ def execute_local(
             )
             if command == "run":
                 executing = begin_work()
-                code = run_program(Path(unit.binary), arguments, argv0, true)?
+                code = run_program(Path(unit.binary), arguments, argv0, true, unit.identity)?
                 record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))
@@ -189,7 +191,7 @@ def installed_compiler() -> Result[str, str]:
 def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     """Prepare service negotiation only for a request that cannot be answered by a local record read."""
     binary = executable()?
-    generation = service_generation(binary)?
+    generation = fingerprint([binary, observe(Path(binary))?.stamp])?
     return Ok(
         Identity(
             store_id=physical_store_identity(store)?,
@@ -199,11 +201,6 @@ def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
             uid=owner_uid(store).map_err(detail)?,
         ),
     )
-
-
-pub def service_generation(binary: str) -> Result[str, str]:
-    """Name the engine service implementation by exact bytes, independent of its installed path."""
-    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])
 
 
 def physical_store_identity(store: Path) -> Result[str, str]:

@@ -7,7 +7,7 @@ from files import make_directory, read
 from home import home
 from driver_command import driver_command
 from toolchain import Toolchain
-from observation import Ledger, SETTLE_SECONDS, load_ledger, skipped_directory, trace
+from observation import Ledger, SETTLE_SECONDS, load_ledger, note_directory, skipped_directory, trace
 from publication import publish
 from unit_freshness import fingerprint
 from frozen_inputs import observation as frozen_observation
@@ -179,6 +179,8 @@ def observed_tree(root: Path, mut ledger: Ledger) -> Result[list[str], str]:
     """Preserve tree selection, ordering and read failures while reconciling file digests against observations."""
     if root.is_file():
         return Ok([root.0, ledger.digest(root)?])
+    # A watching request also needs the directory itself: an added or removed entry changes the selection.
+    note_directory(root)?
     mut by_name: Dict[str, Path] = {}
     for entry in root.iterdir().map_err((error) => f"{root.0}: {error.message()}")?:
         name = entry.name()

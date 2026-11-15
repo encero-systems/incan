@@ -342,6 +342,7 @@ pub def observe(path: Path) -> Result[Observation, str]:
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     info = described(found.map_err((error) => f"{prefix}{error}")?)
+    WATCHED.note(path.0, info.stamp())
     return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
 
 
@@ -351,11 +352,72 @@ pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     match found:
-        Ok(info) => return Ok(Some(described(info)))
+        Ok(info) =>
+            described_info = described(info)
+            WATCHED.note(path.0, described_info.stamp())
+            return Ok(Some(described_info))
         Err(error) =>
             if error.kind() == ErrorKind.NotFound:
+                WATCHED.note(path.0, "")
                 return Ok(None)
             return Err(f"{path.0}: {error}")
+
+
+model Watched:
+    """
+    The files and directories this process observed while a request watched its inputs, each with the metadata it
+    had when first observed (empty when nothing was there).
+    """
+
+    active: bool = false
+    seen: Dict[str, str] = {}
+
+    def start(mut self) -> None:
+        """Watch from now, forgetting any earlier watch."""
+        self.active = true
+        self.seen = {}
+
+    def watching(self) -> bool:
+        """Whether a request is watching its inputs."""
+        return self.active
+
+    def note(mut self, path: str, stamp: str) -> None:
+        """Remember a path's first observation while watching."""
+        if self.active and path not in self.seen:
+            self.seen[path] = stamp
+
+    def finish(mut self) -> WatchedInputs:
+        """Stop watching and return what was observed."""
+        self.active = false
+        found = WatchedInputs(stamps={path: self.seen[path] for path in self.seen.keys()})
+        self.seen = {}
+        return found
+
+
+pub model WatchedInputs:
+    """The paths a watch observed, each with its first metadata (empty when nothing was there)."""
+
+    pub stamps: Dict[str, str]
+
+
+static WATCHED: Watched = Watched()
+
+
+pub def watch_inputs() -> None:
+    """Record every file and directory observed from now on, until `watched_inputs`."""
+    WATCHED.start()
+
+
+pub def watched_inputs() -> WatchedInputs:
+    """End the watch: each path observed since `watch_inputs`, with its first metadata (empty when absent)."""
+    return WATCHED.finish()
+
+
+pub def note_directory(path: Path) -> Result[None, str]:
+    """Observe a directory whose entries a reading selected, while a watch is on; otherwise do nothing."""
+    if WATCHED.watching():
+        _ = file_metadata(path)?
+    return Ok(None)
 
 
 def described(info: Metadata) -> FileMetadata:

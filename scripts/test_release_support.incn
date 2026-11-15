@@ -597,3 +597,27 @@ def test_installed_verification_refuses_a_toolchain_without_standard_sources() -
     primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
     require_shipped_standard_sources(home)?
     return Ok(None)
+
+
+def test_relocation_audit_reads_anchored_native_references() -> Result[None, str]:
+    """An `absolute:` native-closure reference outside the installation is refused; the home anchors are portable."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    closure = native.joinpath("example.native.json")
+    foreign = "{\"externs\": [[\"example\", \"absolute:/elsewhere/libexample.rlib\"]]}\n"
+    closure.write_text(foreign, "utf-8", "strict", None).map_err((error) => error.message())?
+    match audit_relocation(home, []):
+        Ok(_) => return Err("an absolute native reference outside the installation passed the relocation audit")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+            assert message.contains("/elsewhere/libexample.rlib"), message
+    externs = "[[\"example\", \"sibling:libexample.rlib\"], [\"lang\", \"toolchain:native/lang/liblang.rlib\"]]"
+    macros = "[[\"derive\", \"bakery:carriers/derive/libderive.dylib\"]]"
+    anchored = "{\"externs\": " + externs + ", \"macro_externs\": " + macros + ", \"search\": [\"sibling:.\"]}\n"
+    closure.write_text(anchored, "utf-8", "strict", None).map_err((error) => error.message())?
+    audit_relocation(home, [])?
+    return Ok(None)

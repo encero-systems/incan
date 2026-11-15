@@ -31,6 +31,7 @@ from graph_lsp_contract import check_lsp
 from graph_process_contract import check_process
 from graph_document import GraphDocument, check_reader, document
 from graph_preparation_contract import check_registry_preparation, check_source_preparation
+from graph_page_contract import check_warm_pages
 
 
 pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list[str], str]:
@@ -67,6 +68,7 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
     if code == Some(0):
         check_registry_preparation(incan, project)?
         check_source_preparation(incan, project)?
+        check_warm_pages(incan, project)?
         for failure in check_documents(incan, project, existing)?:
             failures.append(failure)
     return Ok(failures)

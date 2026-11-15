@@ -27,6 +27,7 @@ impl BodyLocal {
             body_ir_runtime_types: _,
             body_ir_newtypes: _,
             body_ir_iterator_sum_items,
+            body_ir_identity_bases: _,
         } = &mut checker.type_info;
         Self {
             owner: Span::default(),
