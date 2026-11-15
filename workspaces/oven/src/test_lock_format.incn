@@ -33,7 +33,7 @@ from lock_format import (
 from project_lock import ensure_project_lock, local_interop, selected_mode, toolchain_entry, untested_bounds
 from registry_units import RegistryUnit, RegistryUnits
 from rust_activation import DependencyDomain
-from rust_registry import resolve_registry
+from rust_registry import registry_unit, resolve_registry
 from scratch import scratch_directory
 from trace_adapter import count_work, finish_counting
 
@@ -690,4 +690,24 @@ pub def test_a_toolchain_loaf_s_lock_entry_carries_its_source_digest() -> Result
     assert entry.checksum == digest, f"the lock entry's checksum is `{entry.checksum}`"
     bare = toolchain_entry(versioned_unit("getrandom", "0.3.4"), [], [], {}, "aarch64-apple-darwin")?
     assert bare.checksum == "", bare.checksum
+    return Ok(None)
+
+
+pub def test_a_toolchain_loaf_s_lock_entry_names_its_registry_revision_and_archive_digest() -> Result[None, str]:
+    """
+    RFC 125: a toolchain-origin entry names the registry and revision of the index line its unit came from, and its
+    checksum is that line's source archive digest (`cksum`). All three are read from the closure unit; the upstream
+    crate digest the index line also carries is provenance and never the lock's checksum.
+    """
+    archive = "sha256:8aaf6eed3d6cbe70c2c20d5b5b7ae889dedcd02ae07b00de2bb3e1d988af4181"
+    mut text = "{\"entry\": \"sha256:01\", \"loaf\": \"crates-io/hex\", \"version\": \"0.4.3\", \"domain\": \"target\", "
+    text += "\"features\": [\"alloc\", \"default\", \"std\"], \"profile\": \"release\", \"dependencies\": [], "
+    text += f"\"registry\": \"loaves.pub\", \"revision\": 2, \"checksum\": \"{archive}\"}}"
+    item = JsonValue.parse(text).map_err((error) => error.message())?
+    unit = registry_unit(item, "/store/entries", Path("/store"))?
+    assert unit.registry == "loaves.pub" and unit.revision == 2 and unit.source_digest == archive
+    entry = toolchain_entry(unit, [unit], [], {}, "aarch64-apple-darwin")?
+    assert entry.registry == "loaves.pub", entry.registry
+    assert entry.revision == 2, f"{entry.revision}"
+    assert entry.checksum == archive, entry.checksum
     return Ok(None)
