@@ -5,6 +5,11 @@ from rust::serde_json import to_string, from_str, Error as JsonError
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
+from pub::internal_models.plan_function_records import (
+    PlanFunctionRecord,
+    decode_plan_function_record,
+    encode_plan_function_record,
+)
 from pub::incan_mir_plan import (
     ExternalFunction,
     Function,
@@ -34,9 +39,9 @@ model EventPosition:
     column: int
 
 
-@derive(Serialize, Deserialize)
-model ScalarRecord:
-    """Authenticate the exact producer inputs, function and dependency requirements in a private product."""
+@derive(Serialize)
+model EventProductRecord:
+    """Project a private product into the existing request-local JSON event contract."""
 
     schema: int
     inputs: list[str]
@@ -124,11 +129,11 @@ pub def retained_scalar(
     match scalar_path(directory, inputs):
         Err(_) => return None
         Ok(path) =>
-            match path.read_text("utf-8", "strict"):
+            match path.read_bytes():
                 Err(_) => return None
-                Ok(text) =>
+                Ok(encoded) =>
                     # 2. A changed or missing named declaration is a miss, never a stale position.
-                    payload = match record_payload(text, inputs, span, positions):
+                    payload = match record_payload(encoded, inputs, span, positions):
                         Some(value) => value
                         None => return None
                     references = match product_identities(payload):
@@ -143,7 +148,7 @@ pub def retained_scalar(
                                     function, runtime = product
                                     match decode_frames(payload, resolved):
                                         Ok(frames) =>
-                                            match decode_record(text):
+                                            match decode_record(encoded):
                                                 Ok(record) =>
                                                     return Some((function, runtime, resolved, frames, record.requests))
                                                 Err(_) => return None
@@ -168,9 +173,9 @@ pub def retain_scalar(
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
-    text = encoded_record(inputs, function, runtime, nominals, positions, frames, requests)?
+    encoded = encoded_record(inputs, function, runtime, nominals, positions, frames, requests)?
     # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
-    return publish_record(directory, inputs, text)
+    return publish_record(directory, inputs, encoded)
 
 
 pub def finalize_scalar(
@@ -194,8 +199,8 @@ pub def finalize_scalar(
     """
     # 1. The event key names the product by its complete producer inputs.
     path = Path(directory).joinpath(key + ".incnfunction")
-    text = path.read_text("utf-8", "strict").map_err((error) => f"cannot read plan-function product {error.message()}")?
-    record = decode_record(text).map_err((error) => str(error))?
+    encoded = path.read_bytes().map_err((error) => f"cannot read plan-function product {error.message()}")?
+    record = decode_record(encoded)?
     placed = place_positions(record.function, positions)?
     current = relocate_product(placed, str(function.span.file), function.span.line)?
     identities = product_identities(current)?
@@ -212,13 +217,13 @@ pub def finalize_scalar(
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
     final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
-    if final == text:
-        return Ok((text, whole))
+    if final == encoded:
+        return Ok((event_product(record)?, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
     if reused:
         return Err(f"plan-function {function.name} differs from the whole-program plan")
     publish_record(directory, record.inputs, final)?
-    return Ok((final, whole))
+    return Ok((event_product(decode_record(final)?)?, whole))
 
 
 pub def report_scalar(
@@ -235,12 +240,13 @@ pub def report_scalar(
     """Publish one bounded product event for Bakery admission; records mode refuses incomplete transport."""
     if let Some(root) = directory:
         digest = fingerprint(inputs)?
-        product = scalar_path(products, inputs)?.read_text("utf-8", "strict").map_err(
+        encoded = scalar_path(products, inputs)?.read_bytes().map_err(
             (error) => f"cannot read plan-function product {error.message()}",
         )?
         # Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
-        if not valid_record(product, inputs):
+        if not valid_record(encoded, inputs):
             return Err("plan-function product failed its lowering codec round trip")
+        product = event_product(decode_record(encoded)?)?
         mut stored: list[EventReference] = []
         for reference in references:
             stored.append(EventReference(kind=reference.kind, index=reference.index, name=reference.name))
@@ -307,7 +313,7 @@ def encoded_record(
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
     requests: list[str] = [],
-) -> Result[str, str]:
+) -> Result[bytes, str]:
     """
     Authenticate the entire native payload after the codec proves an exact structural round trip.
 
@@ -327,21 +333,21 @@ def encoded_record(
         if place_positions(payload, positions)? != relative:
             return Err("plan-function position map changed native facts")
     digest = fingerprint([payload] + requests)?
-    record = ScalarRecord(schema=4, inputs=inputs, function=payload, requests=requests, digest=digest)
-    return to_string(record).map_err((error) => str(error))
+    record = PlanFunctionRecord(inputs=inputs, function=payload, requests=requests, digest=digest)
+    return encode_plan_function_record(record)
 
 
 def record_payload(
-    text: str,
+    encoded: bytes,
     inputs: list[str],
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
 ) -> Option[str]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
-    match decode_record(text):
+    match decode_record(encoded):
         Err(_) => return None
         Ok(record) =>
-            if record.schema != 4 or record.inputs != inputs:
+            if record.inputs != inputs:
                 return None
             match fingerprint([record.function] + record.requests):
                 Err(_) => return None
@@ -361,9 +367,9 @@ def record_payload(
             return Some(payload)
 
 
-def valid_record(text: str, inputs: list[str]) -> bool:
+def valid_record(encoded: bytes, inputs: list[str]) -> bool:
     """Require a record to decode completely, binding each named declaration to its own ordinal."""
-    match record_payload(text, inputs):
+    match record_payload(encoded, inputs):
         None => return false
         Some(payload) =>
             match product_identities(payload):
@@ -377,9 +383,9 @@ def valid_record(text: str, inputs: list[str]) -> bool:
                         Err(_) => return false
 
 
-def decode_record(text: str) -> Result[ScalarRecord, JsonError]:
-    """Pass the expected private record type to the native generic decoder through its result contract."""
-    return from_str(text)
+def decode_record(encoded: bytes) -> Result[PlanFunctionRecord, str]:
+    """Decode the private product through its sole Crumb route."""
+    return decode_plan_function_record(encoded)
 
 
 def decode_event(text: str) -> Result[ScalarRecordEvent, JsonError]:
@@ -398,16 +404,28 @@ def fingerprint(inputs: list[str]) -> Result[str, str]:
     return semantic_digest(inputs).map_err((error) => str(error))
 
 
-def publish_record(directory: str, inputs: list[str], text: str) -> Result[None, str]:
+def publish_record(directory: str, inputs: list[str], encoded: bytes) -> Result[None, str]:
     """Publish one complete record with a process-local temporary name under the producer's locked build."""
     path = scalar_path(directory, inputs)?
     path.parent().mkdir(true, true).map_err((error) => f"cannot create scalar cache directory {error.message()}")?
     temporary = Path(f"{path.0}.{process_id()}.pending")
     temporary
-        .write_text(text, "utf-8", "strict", None)
+        .write_bytes(encoded)
         .map_err((error) => f"cannot write scalar cache {error.message()}")?
     _ = temporary.replace(path).map_err((error) => f"cannot replace scalar cache {error.message()}")?
     return Ok(None)
+
+
+def event_product(record: PlanFunctionRecord) -> Result[str, str]:
+    """Keep the request-local event schema stable while its private retained product becomes Crumb."""
+    product = EventProductRecord(
+        schema=4,
+        inputs=record.inputs,
+        function=record.function,
+        requests=record.requests,
+        digest=record.digest,
+    )
+    return to_string(product).map_err((error) => str(error))
 
 
 def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
