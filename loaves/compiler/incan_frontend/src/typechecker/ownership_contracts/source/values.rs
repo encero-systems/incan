@@ -551,8 +551,9 @@ impl Builder<'_> {
             .is_some_and(|ty| super::call_results::plain_result(ty) || self.checker.type_holds_no_borrow(ty))
     }
 
-    /// Primitive formatting observes each interpolation in source order and creates a new string. Nominal/native
-    /// display hooks and unsupported format expressions cannot acquire ordinary read semantics through this route.
+    /// Primitive formatting observes each interpolation in source order and creates a new string: a primitive value,
+    /// or a list whose items print the same way, reaches no display hook. Nominal/native display hooks and unsupported
+    /// format expressions cannot acquire ordinary read semantics through this route.
     pub(super) fn formatted_text(
         &mut self,
         parts: &[FStringPart],
@@ -565,17 +566,11 @@ impl Builder<'_> {
                 continue;
             };
             if !matches!(format, FStringFormat::Display | FStringFormat::Debug)
-                || !matches!(
-                    self.checker.type_info.expr_type(expr.span),
-                    Some(
-                        ResolvedType::Str
-                            | ResolvedType::FrozenStr
-                            | ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Bool
-                            | ResolvedType::Unit
-                    )
-                )
+                || !self
+                    .checker
+                    .type_info
+                    .expr_type(expr.span)
+                    .is_some_and(super::call_results::primitive_display)
             {
                 return Err(Unavailable {
                     span: expr.span,
