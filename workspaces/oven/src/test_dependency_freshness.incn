@@ -1,6 +1,6 @@
 """Dependency reuse contracts: a changed dependency artifact, worker or installed interface rekeys its consumers."""
 
-from rust::std::fs import metadata, remove_dir_all
+from rust::std::fs import metadata, remove_dir_all, rename
 from rust::std::process import Command
 from rust::std::time import Instant
 from std.fs import Path
