@@ -76,6 +76,24 @@ fn ordinary_calls_accept_only_authenticated_fresh_model_arguments() -> Result<()
     Ok(())
 }
 
+/// A fresh closed byte value has no caller-owned source to retain. It can therefore feed an ordinary inferred
+/// parameter while checking an explicit owner body, without weakening the owner's transfer contract.
+#[test]
+fn ordinary_calls_accept_fresh_plain_values_in_explicit_bodies() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Row:\n    name: str\ndef encode(row: Borrowed[Row]) -> bytes:\n    return b\"row\"\ndef size(data: bytes) -> int:\n    return len(data)\ndef digest(row: Owned[Row]) -> int:\n    return size(encode(row))\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "digest" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
+
 /// Local modes keep their callable owner through settlement, and an ordinary following function does not
 /// inherit a previous body's ownership profile, including in the legacy cold-baseline comparison route.
 #[test]
