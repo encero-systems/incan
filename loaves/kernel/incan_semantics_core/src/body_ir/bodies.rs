@@ -433,7 +433,9 @@ impl Body {
         }
         if !matches!(
             profile.owner.kind,
-            crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::Method
+            crate::SemanticSourceTargetKind::Function
+                | crate::SemanticSourceTargetKind::Method
+                | crate::SemanticSourceTargetKind::Property
         ) || self.is_async
             || self.is_generator()
             || !self.native_attributes.is_empty()
