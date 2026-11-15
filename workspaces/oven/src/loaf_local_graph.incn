@@ -146,16 +146,21 @@ def child(
     """
     Resolve an explicitly declared local path, checking its version and procedural-macro domain before selection.
 
-    1. Locate the Loaf: the declared path, or the substitute for its package name.
+    1. Locate the Loaf: the declared path, or the substitute for its package name. A registry edge has no path, so it
+       reaches a local Loaf only through a substitute.
     2. Its manifest names the package the edge asked for.
     3. Its version satisfies the requirement the edge states.
     4. A procedural macro is built for the host.
     """
     # 1. The Loaf is where the edge's path says, unless the build substitutes another for its package name.
     mut relative = ""
+    mut registry = false
     match declaration.source:
         RustDependencySource.Path(path, _) => relative = path
+        RustDependencySource.Registry(_) => registry = true
         _ => return Err("local child requires a path declaration")
+    if registry and declaration.package not in substitutes:
+        return Err(f"registry dependency {declaration.alias} is a local child only through a substitute")
     mut located = Path(parent.project).joinpath(relative)
     if declaration.package in substitutes:
         located = Path(substitutes[declaration.package])
@@ -165,7 +170,7 @@ def child(
     project = read_project(path, reader).map_err((error) => error.message())?
     intent = project.intent.clone()
     # 2. The Loaf found is the package the edge asked for, so a path that now holds another Loaf is refused.
-    if declaration.identity_declared and intent.name != declaration.package:
+    if (declaration.identity_declared or registry) and intent.name != declaration.package:
         return Err(f"local dependency {declaration.alias} has a different Loaf identity")
     # 3. An edge that states a version accepts only a Loaf of that version.
     if let Some(requirement) = declaration.version_requirement:
@@ -463,8 +468,8 @@ def facet_of(
     One demand's facet, with its effective features and active edges, and the local demands its path edges make.
 
     1. Activate the facet's edges.
-    2. A path edge reaches another local facet, which becomes a demand of its own.
-    3. A registry edge becomes a request of the resolver's grammar.
+    2. A path edge, or a registry edge the build substitutes, reaches another local facet, a demand of its own.
+    3. Any other registry edge becomes a request of the resolver's grammar.
     """
     # 1. Only the edges the demanded features activate take part in the facet.
     intent, features, active = activated(demand, configuration, reader)?
@@ -485,8 +490,14 @@ def facet_of(
                 )
                 children.append(selected)
             RustDependencySource.Registry(_) =>
-                registry.append(request(edge, edge_features, defaults, edge.alias)?)
-                aliases.append(edge.alias)
+                if edge.package in substitutes:
+                    # A substituted registry Loaf compiles from the substitute directory, as a path edge's would.
+                    selected = child(demand, edge, edge_features, defaults, substitutes, reader)?
+                    local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
+                    children.append(selected)
+                else:
+                    registry.append(request(edge, edge_features, defaults, edge.alias)?)
+                    aliases.append(edge.alias)
             _ => return Err(f"unsupported native local source for {edge.alias}")
     facet = LocalFacet(
         project=demand.project,
