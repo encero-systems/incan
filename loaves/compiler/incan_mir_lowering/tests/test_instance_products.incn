@@ -43,6 +43,23 @@ pub def test_a_caller_product_returns_its_instance_requests() -> Result[None, st
     return Ok(None)
 
 
+pub def test_a_retained_product_is_a_crumb_row() -> Result[None, str]:
+    """The private plan-function record is one Crumb envelope, never a JSON document with an embedded product."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products = scratch.path().joinpath("products")
+    products.mkdir(true, true).map_err((error) => error.message())?
+    owner = source_span(file="requests.incn", line=10, column=1)
+    function = entry_function("main", owner)
+    nodes = [(0, 1), (1, 5)]
+    inputs = record_scalar_inputs("checked-meaning", function.name, owner, false, "reads", len(nodes))
+    empty_runtime: list[ExternalFunction] = []
+    empty_nominals: list[ProductNominal] = []
+    retain_scalar(products.0, inputs, function, empty_runtime, empty_nominals, nodes)?
+    encoded = only_product(products)?.read_bytes().map_err((error) => error.message())?
+    assert encoded[:4] == b"CRMB", "a retained plan-function product is not a Crumb envelope"
+    return Ok(None)
+
+
 pub def test_an_altered_instance_request_makes_the_product_a_miss() -> Result[None, str]:
     """A product's requests are authenticated with its function, so an edited request is never scheduled."""
     scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
