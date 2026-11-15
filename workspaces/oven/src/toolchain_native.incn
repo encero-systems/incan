@@ -9,12 +9,15 @@ from features import FeatureRequest
 from files import json_text, read_json, read
 from graph_incan import inspect_prepared, publish_prepared_graph
 from home import home, standard_artifact_dir, standard_packages
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets, local_facet_session, unique
+from home_paths import TOOLCHAIN
+from loaf_local_graph import LocalDemand, LocalEdge, LocalFacet, local_facets, local_facet_session, unique
 from publication import publish
 from rust_activation import DependencyDomain
 from rust_units import compile_library
 from rust_build import BuiltUnit, RustBuild, artifact_context, facet_bindings, native_artifacts, ordered, prepared_build
-from rust_registry import read_registry_units, selected_registry
+from lock_format import DEFAULT_MODE, OvenLock, recorded_bindings, write_lock
+from project_lock import resolved_lock
+from rust_registry import read_registry_units, resolve_registry, selected_registry
 from rust_manifest import rust_facet
 from registry_units import RegistryUnits
 from rust_target import target_configuration
@@ -24,8 +27,11 @@ from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
-from unit_freshness import artifact_files, record, unit_key
+from unit_freshness import artifact_files, compiler_fingerprint, record, unit_key
 from codegen import compiled_arguments
+
+# The root of the support crates' lock: the support generation, which depends on every support facet.
+const SUPPORT_ROOT: str = "incan-native-support"
 
 
 def main() -> Result[None, str]:
@@ -117,8 +123,9 @@ def publish_support(repository: Path) -> Result[None, str]:
     Publish the installed generation's source-built support closure.
 
     1. Lock the generation and select native facets from the standard packages' existing manifests.
-    2. Compile only those Rust facets, before any Incan runtime or standard provider exists.
-    3. Publish their exact artifacts and directories as the installed support generation.
+    2. Lock their registry crates as `oven lock` locks a project's, into the generation's `oven.lock`.
+    3. Compile only those Rust facets, before any Incan runtime or standard provider exists.
+    4. Publish their exact artifacts and directories as the installed support generation.
     """
     # 1. Re-read publication only after the generation lock excludes another support producer.
     generation = home()?.joinpath("native-support")
@@ -128,10 +135,15 @@ def publish_support(repository: Path) -> Result[None, str]:
     require_fresh_generation(toolchain)?
     rustc = rust_compiler(toolchain)
     facets = support_facets(rustc)?
-    registry = selected_registry(read_registry_units(Path(toolchain.registry_units))?, facets, "release")?
-    # 2. These are the runtime's Rust support crates, never compiled Incan standard facades.
+    # 2. The lock is the support crates' one registry selection; the build binds exactly what it records.
+    available = read_registry_units(Path(toolchain.registry_units))?
+    target = target_configuration(rustc)?.triple
+    lock, locked = support_lock(facets, available, repository, compiler_fingerprint(toolchain)?, target)?
+    write_lock(generation.joinpath("oven.lock"), lock)?
+    registry = selected_registry(locked, facets, "release")?
+    # 3. These are the runtime's Rust support crates, never compiled Incan standard facades.
     externs, directories = build_support(repository, rustc, registry, facets)?
-    # 3. No artifact or directory from the builder's runtime or standard packages enters this closure.
+    # 4. No artifact or directory from the builder's runtime or standard packages enters this closure.
     manifest = toolchain_file()?
     mut document = read_json(manifest)?
     document
@@ -328,6 +340,43 @@ def support_facets(rustc: str) -> Result[list[LocalFacet], str]:
                 continue
             retain_support_facet(facets, facet)?
     return ordered([facets[key] for key in sorted([key for key in facets.keys()])])
+
+
+pub def support_lock(
+    facets: list[LocalFacet],
+    registry: RegistryUnits,
+    repository: Path,
+    identity: str,
+    target: str,
+) -> Result[Tuple[OvenLock, RegistryUnits], str]:
+    """
+    The support facets' lock, and the registry bound to it.
+
+    Their registry crates resolve as `oven lock` resolves a new project's: in the default mode, at release, with the
+    support facets as path Loaves under the repository and one root, the support generation, that depends on each.
+    The support build then selects only the producers the lock records; no installation preference is left to decide.
+    """
+    mut resolving = registry
+    resolving.resolution_mode = DEFAULT_MODE
+    selected = resolve_registry(resolving, facets, "release")?
+    mut edges: list[LocalEdge] = []
+    for facet in facets:
+        edges.append(LocalEdge(alias=facet.package, project=facet.project, domain=facet.domain))
+    generation = LocalFacet(
+        project=repository.0,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=edges,
+        registry=[],
+        registry_aliases=[],
+        package=SUPPORT_ROOT,
+        version=TOOLCHAIN,
+    )
+    lock = resolved_lock(repository, DEFAULT_MODE, identity, target, [generation] + facets, selected)?
+    mut bound = resolving
+    bound.recorded_bindings = recorded_bindings(lock, registry.units)?
+    bound.installation_bindings = []
+    return Ok((lock, bound))
 
 
 pub def retain_support_facet(mut facets: Dict[str, LocalFacet], facet: LocalFacet) -> Result[None, str]:

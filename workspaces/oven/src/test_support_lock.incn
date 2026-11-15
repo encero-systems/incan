@@ -61,15 +61,21 @@ pub def test_the_support_crates_registry_selection_is_a_lock_that_binds_their_bu
     registry = RegistryUnits(units=units, search=[], installation_bindings=[("target", "hex-1.1.0")])
     lock, bound = support_lock(facets, registry, Path("/repo"), "compiler-identity", "aarch64-apple-darwin")?
     assert lock.mode == DEFAULT_MODE, lock.mode
+    mut roots: list[str] = []
     mut paths: list[str] = []
     mut registered: list[str] = []
     for entry in lock.loaves:
-        if entry.origin == "path":
+        if entry.origin == "root":
+            names = ", ".join(sorted([dependency.loaf for dependency in entry.dependencies]))
+            roots.append(f"{entry.name}: {names}")
+        elif entry.origin == "path":
             paths.append(entry.path)
         elif entry.origin == "toolchain":
             registered.append(f"{entry.name} {entry.version} {entry.registry} {entry.revision} {entry.checksum}")
         else:
             fail(f"a support lock has a {entry.origin} entry")
+    # The one root is the support generation, and it depends on every support facet.
+    assert roots == ["incan-native-support: data, incan_lang"], f"{roots}"
     assert sorted(paths) == ["loaves/kernel/incan_lang", "loaves/stdlib/data"], f"{paths}"
     # The lock's default mode takes the lowest compatible version, as `oven lock` does for a new project.
     assert registered == [f"crates-io/hex 1.0.0 loaves.pub 1 {ARCHIVE}"], f"{registered}"
