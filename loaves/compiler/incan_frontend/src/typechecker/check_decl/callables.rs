@@ -590,6 +590,17 @@ impl TypeChecker {
             && !input
                 .as_ref()
                 .is_some_and(|contract| contract.mode == incan_lang::lang::types::ownership::OwnershipMode::Borrowed);
+        // RFC 164 one type: an explicit view parameter is physically the native reference `&T` or `&mut T`, so a native
+        // generic parameter it is passed to by value instantiates with that reference and borrows it for the call.
+        let native_view = input.as_ref().and_then(|contract| match contract.mode {
+            incan_lang::lang::types::ownership::OwnershipMode::Borrowed => {
+                Some(ResolvedType::Ref(Box::new(contract.underlying.clone())))
+            }
+            incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut => {
+                Some(ResolvedType::RefMut(Box::new(contract.underlying.clone())))
+            }
+            _ => None,
+        });
         let value_type = input.map_or(resolved_ty, |contract| contract.underlying);
         let ty = local_type_for_param(param.node.kind, value_type);
         self.validate_protected_builtin_binding(&param.node.name, param.span);
@@ -611,6 +622,16 @@ impl TypeChecker {
         );
         self.record_read_only_binding(writable, param.span);
         self.record_write_target_identity(param.span, &param.node.name);
+        if let Some(native) = native_view
+            && param.node.kind == ParamKind::Normal
+            && let Some(identity) = self
+                .symbols
+                .lookup(&param.node.name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .cloned()
+        {
+            self.type_info.rust.value_native_types.insert(identity, native);
+        }
     }
 
     /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
