@@ -761,7 +761,6 @@ fn compile_unit(
             .then(|| serde_json::to_vec(&tests))
             .transpose()?,
         publication,
-        receipt,
         checked_sources: Vec::new(),
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
