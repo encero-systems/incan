@@ -418,6 +418,7 @@ def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, s
     sourced.registry = "loaves.pub"
     sourced.source_archive = "registry/sources/sha256-source.loaf"
     sourced.source_digest = "sha256:source"
+    sourced.revision = 3
     sourced_catalog = Catalog(units=[sourced], listings=[catalog.listings[0]], artifacts=[catalog.artifacts[0]])
     sourced_page = scratch.joinpath("registry-codec-source.page")
     sourced_page.write_bytes(encode_catalog(sourced_catalog)?).map_err((error) => error.message())?
@@ -426,6 +427,8 @@ def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, s
         decoded = decode_catalog(view)?.units[0]
         assert decoded.registry == sourced.registry
         assert decoded.source_archive == sourced.source_archive and decoded.source_digest == sourced.source_digest
+        # A cached closure keeps each unit's index revision, which a lock records.
+        assert decoded.revision == 3, f"{decoded.revision}"
     valid_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert source_archive_name(valid_digest)? == ("sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.loaf")
     for invalid in [
