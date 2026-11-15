@@ -72,14 +72,20 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     program = scratch.path().joinpath("program")
     program.mkdir(true, true).map_err((error) => error.message())?
-    write(program.joinpath("loaf.toml"), "[project]\nname = \"overlay-definition\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n\n[dependencies]\nchecked = { path = \"deps/checked\" }\n")?
+    write(
+        program.joinpath("loaf.toml"),
+        "[project]\nname = \"overlay-definition\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n\n[dependencies]\nchecked = { path = \"deps/checked\" }\n",
+    )?
     checked = program.joinpath("deps").joinpath("checked")
     checked.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
     write(checked.joinpath("loaf.toml"), "[project]\nname = \"checked\"\nversion = \"0.1.0\"\n")?
     write(checked.joinpath("src").joinpath("lib.incn"), "pub def checked_value() -> int:\n    return 4\n")?
     write(program.joinpath("helper.incn"), "pub def value(scale: int) -> int:\n    return scale * 2\n")?
     source = program.joinpath("main.incn")
-    write(source, "from helper import value\nfrom pub::checked import checked_value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n    println(f\"{checked_value()}\")\n")?
+    write(
+        source,
+        "from helper import value\nfrom pub::checked import checked_value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n    println(f\"{checked_value()}\")\n",
+    )?
     store = scratch.path().joinpath("store")
     ran = records_run(binary, source, store)
     imported = overlay_with(binary, source, source, store, ["--hover", "6:17"])
@@ -229,7 +235,10 @@ def keystroke_package(scratch: Path) -> Result[tuple[Path, Path, str], str]:
     manifest = "[project]\nname = \"keystroke\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
     write(package.joinpath("loaf.toml"), manifest)?
     source = package.joinpath("src").joinpath("main.incn")
-    write(source, "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n")?
+    write(
+        source,
+        "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n",
+    )?
     helper = package.joinpath("src").joinpath("helper.incn")
     original = "pub def twice(value: int) -> int:\n    return value * 2\n\n\npub def thrice(value: int) -> int:\n    return value * 3\n"
     write(helper, original)?
