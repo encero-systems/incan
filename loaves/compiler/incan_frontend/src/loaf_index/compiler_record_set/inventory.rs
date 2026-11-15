@@ -26,6 +26,9 @@ pub(super) struct Metadata {
     pub(super) native_unions: bool,
     pub(super) rust_paths: BTreeSet<String>,
     pub(super) rust_abi_cache_declared: bool,
+    /// The digest of the native ABI cache the manifest names; a set converted before it was recorded has none.
+    #[serde(default)]
+    pub(super) rust_abi_cache_digest: Option<String>,
 }
 
 /// Read only the small, authenticated inventory record used to index an installed Loaf lazily.
@@ -103,6 +106,7 @@ pub(super) fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Op
         rust_paths: metadata.rust_paths,
         rust_abi_cache_declared: metadata.rust_abi_cache_declared,
         rust_abi_cache: metadata.rust_abi_cache_declared,
+        rust_abi_cache_digest: metadata.rust_abi_cache_digest,
     };
     set.summaries
         .lock()

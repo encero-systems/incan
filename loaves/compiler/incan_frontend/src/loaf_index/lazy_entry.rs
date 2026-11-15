@@ -18,6 +18,7 @@ use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
 use crate::library_manifest::type_scope::ModuleTypeScope;
+use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
@@ -36,6 +37,10 @@ pub(super) struct Summary {
     pub rust_abi_cache_declared: bool,
     /// Whether admission validated an external indexed native ABI asset for this Loaf.
     pub rust_abi_cache: bool,
+    /// The digest of the native ABI cache the manifest names, so the cache is read and authenticated without the
+    /// manifest. A summary recorded before it carried the digest has none; the manifest then names the cache.
+    #[serde(default)]
+    pub rust_abi_cache_digest: Option<String>,
 }
 
 impl Summary {
@@ -66,6 +71,7 @@ impl Summary {
                 .and_then(|abi| abi.cache_digest.as_ref())
                 .is_some(),
             rust_abi_cache: artifact.rust_abi_cache.is_some(),
+            rust_abi_cache_digest: manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.clone()),
         }
     }
 }
@@ -81,6 +87,8 @@ pub(super) struct IndexedLoaf {
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
     surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
     bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
+    /// The shipped native ABI cache, read by the digest the summary names when the manifest is not demanded.
+    rust_abi: Arc<OnceLock<Result<Option<Arc<RustAbiCache>>, LoafIndexError>>>,
     /// The records read by family and name, kept for the rest of the compilation so each is read once; `None` where
     /// the installed set holds no such record.
     named: Arc<Mutex<NamedRecords>>,
@@ -101,6 +109,7 @@ impl IndexedLoaf {
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            rust_abi: Arc::default(),
             named: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
@@ -122,11 +131,13 @@ impl IndexedLoaf {
                 rust_paths: BTreeSet::new(),
                 rust_abi_cache_declared: false,
                 rust_abi_cache: false,
+                rust_abi_cache_digest: None,
             },
             entry: Arc::default(),
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            rust_abi: Arc::default(),
             named: Arc::default(),
         }
     }
@@ -152,6 +163,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                rust_abi: Arc::default(),
                 named: Arc::default(),
             });
         }
@@ -168,6 +180,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                rust_abi: Arc::default(),
                 named: Arc::default(),
             });
         }
@@ -205,6 +218,27 @@ impl IndexedLoaf {
             })
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    /// The Loaf's shipped native ABI cache. A demanded manifest already holds it; otherwise it is read and
+    /// authenticated by the digest the summary names, without the manifest. A summary without that digest demands
+    /// the manifest, which names the cache.
+    pub fn rust_abi_cache(&self) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+        if let Some(entry) = self.entry.get() {
+            return entry
+                .as_ref()
+                .map(|entry| entry.artifact.rust_abi_cache.clone())
+                .map_err(Clone::clone);
+        }
+        let Some(expected) = self.summary.rust_abi_cache_digest.as_deref() else {
+            return Ok(self.demand()?.artifact.rust_abi_cache.clone());
+        };
+        self.rust_abi
+            .get_or_init(|| {
+                LoafArtifact::read_digested_rust_abi_cache(&self.dir, &self.summary.identity.name, expected)
+                    .map(|(cache, _)| cache)
+            })
+            .clone()
     }
 
     /// Read the record projection needed to admit executable declarations without demanding the complete manifest.

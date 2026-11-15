@@ -287,10 +287,15 @@ impl LibraryManifest {
                 .and_then(|abi| abi.cache_digest.as_ref())
                 .is_some(),
         });
-        match value {
+        let mut fields = match value {
             Value::Object(fields) => fields,
             _ => Map::new(),
+        };
+        // The cache's digest lets a consumer read and authenticate the cache without the manifest that names it.
+        if let Some(digest) = self.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) {
+            fields.insert("rust_abi_cache_digest".to_owned(), Value::String(digest.clone()));
         }
+        fields
     }
 }
 
