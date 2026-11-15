@@ -580,9 +580,7 @@ impl Builder<'_> {
                 call.kind == super::super::InputCallKind::Ordinary,
                 matches!(
                     call.kind,
-                    super::super::InputCallKind::Explicit
-                        | super::super::InputCallKind::Native
-                        | super::super::InputCallKind::Ordinary
+                    super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
                 ) || (call.kind == super::super::InputCallKind::Ordinary
                     && self
                         .checker
