@@ -392,6 +392,32 @@ fn settle_dictionary(entries: &[Stored], kinds: &[(String, bool)], budget: &mut 
     check_dictionary(entries, budget)
 }
 
+/// Admit a writer's complete D descriptions, preserve their requested modes, and order them by exact K.
+pub(super) fn admit_written(
+    sources: Vec<(Meta, bool)>,
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Result<Vec<Stored>, Refused> {
+    let mut entries = Vec::with_capacity(sources.len());
+    for (metadata, inline) in sources {
+        budget.elements(1)?;
+        budget.bytes(16)?;
+        let entry = admit(metadata, inline, kinds, budget)?;
+        budget.elements(1)?;
+        budget.bytes(2 * entry.key.len() as u64)?;
+        if entries.iter().any(|known: &Stored| known.key == entry.key) {
+            return Err("duplicate_selector");
+        }
+        entries.push(entry);
+    }
+    entries.sort_by(|left, right| left.key.cmp(&right.key));
+    for entry in &entries {
+        charge_copy(&entry.metadata, budget)?;
+    }
+    check_dictionary(&entries, budget)?;
+    Ok(entries)
+}
+
 /// Every K and field selector must name descriptions the dictionary holds, with the same record or enum kind.
 fn check_dictionary(entries: &[Stored], budget: &mut Budget) -> Result<(), Refused> {
     for entry in entries {
