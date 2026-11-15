@@ -15,10 +15,26 @@ pub struct CheckedNamespaceInterface {
     module_path: Vec<String>,
     api: crate::api_metadata::CheckedApiMetadata,
     identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Member identities by declaration name. API metadata carries a member's identity only for a package origin, so
+    /// an editable module's variants, fields, properties and methods keep theirs here (#3154).
+    members: std::collections::BTreeMap<String, NamespaceMemberIdentities>,
+}
+
+/// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
+///
+/// A consumer checked against the installed namespace records the same member identities a cold check of both
+/// modules records, so its Body IR selects an imported enum variant, field or method by identity in a warm build too.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamespaceMemberIdentities {
+    variants: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    fields: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    properties: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    methods: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 4;
+    const SCHEMA: u32 = 5;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -62,6 +78,7 @@ impl CheckedNamespaceInterface {
             return Ok(None);
         }
         let mut identities = std::collections::BTreeMap::new();
+        let mut members = std::collections::BTreeMap::new();
         for declaration in &api.declarations {
             let Some(name) = namespace_declaration_name(declaration) else {
                 return Ok(None);
@@ -77,6 +94,12 @@ impl CheckedNamespaceInterface {
             if identities.insert(name.to_owned(), identity.clone()).is_some() {
                 return Ok(None);
             }
+            if let Some(symbol) = checker.symbols.get(symbol_id) {
+                let declared = NamespaceMemberIdentities::of(&symbol.kind);
+                if !declared.is_empty() {
+                    members.insert(name.to_owned(), declared);
+                }
+            }
         }
         Ok(Some(Self {
             schema: Self::SCHEMA,
@@ -84,6 +107,7 @@ impl CheckedNamespaceInterface {
             module_path: module_path.to_vec(),
             api,
             identities,
+            members,
         }))
     }
 
@@ -147,6 +171,9 @@ impl CheckedNamespaceInterface {
                 continue;
             };
             converter.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
+            if let Some(members) = self.members.get(name) {
+                members.restore(&mut kind);
+            }
             if let SymbolKind::Function(function_info) = &kind {
                 callables.insert(
                     identity.clone(),
@@ -232,6 +259,9 @@ impl CheckedNamespaceInterface {
         {
             return Err("checked namespace interface has mismatched authority".into());
         }
+        if self.members.keys().any(|name| !self.identities.contains_key(name)) {
+            return Err("checked namespace interface has members of an undeclared name".into());
+        }
         for declaration in &self.api.declarations {
             let Some(name) = namespace_declaration_name(declaration) else {
                 return Err("checked namespace interface contains an unsupported declaration".into());
@@ -247,6 +277,156 @@ impl CheckedNamespaceInterface {
             }
         }
         Ok(())
+    }
+}
+
+impl NamespaceMemberIdentities {
+    /// Read the member identities a checked declaration's symbol carries.
+    fn of(kind: &SymbolKind) -> Self {
+        let mut members = Self::default();
+        match kind {
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                members.variants = info
+                    .variant_identities
+                    .iter()
+                    .map(|(name, identity)| (name.clone(), identity.clone()))
+                    .collect();
+                members.methods = method_identities(&info.methods);
+            }
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                members.fields = field_identities(&info.fields);
+                members.properties = property_identities(&info.properties);
+                members.methods = method_identities(&info.methods);
+            }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                members.fields = field_identities(&info.fields);
+                members.properties = property_identities(&info.properties);
+                members.methods = method_identities(&info.methods);
+            }
+            SymbolKind::Type(TypeInfo::Newtype(info)) => members.methods = method_identities(&info.methods),
+            SymbolKind::Trait(info) => {
+                members.properties = property_identities(&info.properties);
+                members.methods = method_identities(&info.methods);
+            }
+            _ => {}
+        }
+        members
+    }
+
+    /// Whether the declaration has no member identity to keep.
+    fn is_empty(&self) -> bool {
+        self.variants.is_empty() && self.fields.is_empty() && self.properties.is_empty() && self.methods.is_empty()
+    }
+
+    /// Give an installed declaration's members the identities their API rows could not carry. A member the
+    /// installed symbol does not have, or one that already has an identity, is left as it is.
+    fn restore(&self, kind: &mut SymbolKind) {
+        match kind {
+            SymbolKind::Type(TypeInfo::Enum(info)) => {
+                for (name, identity) in &self.variants {
+                    if info.variants.contains(name) || info.variant_aliases.contains_key(name) {
+                        info.variant_identities
+                            .entry(name.clone())
+                            .or_insert_with(|| identity.clone());
+                    }
+                }
+                restore_methods(&self.methods, &mut info.methods, &mut info.method_overloads);
+            }
+            SymbolKind::Type(TypeInfo::Model(info)) => {
+                restore_fields(&self.fields, &mut info.fields);
+                restore_properties(&self.properties, &mut info.properties);
+                restore_methods(&self.methods, &mut info.methods, &mut info.method_overloads);
+            }
+            SymbolKind::Type(TypeInfo::Class(info)) => {
+                restore_fields(&self.fields, &mut info.fields);
+                restore_properties(&self.properties, &mut info.properties);
+                restore_methods(&self.methods, &mut info.methods, &mut info.method_overloads);
+            }
+            SymbolKind::Type(TypeInfo::Newtype(info)) => {
+                restore_methods(&self.methods, &mut info.methods, &mut info.method_overloads);
+            }
+            SymbolKind::Trait(info) => {
+                restore_properties(&self.properties, &mut info.properties);
+                let mut overloads = HashMap::new();
+                restore_methods(&self.methods, &mut info.methods, &mut overloads);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Each field's identity, by field name.
+fn field_identities(fields: &HashMap<String, FieldInfo>) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    fields
+        .iter()
+        .filter_map(|(name, field)| Some((name.clone(), field.identity.clone()?)))
+        .collect()
+}
+
+/// Each property's identity, by property name.
+fn property_identities(
+    properties: &HashMap<String, PropertyInfo>,
+) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    properties
+        .iter()
+        .filter_map(|(name, property)| Some((name.clone(), property.identity.clone()?)))
+        .collect()
+}
+
+/// Each method's identity, by method name.
+fn method_identities(methods: &HashMap<String, MethodInfo>) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    methods
+        .iter()
+        .filter_map(|(name, method)| Some((name.clone(), method.identity.clone()?)))
+        .collect()
+}
+
+/// Give each installed field without an identity its kept one.
+fn restore_fields(
+    identities: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    fields: &mut HashMap<String, FieldInfo>,
+) {
+    for (name, identity) in identities {
+        if let Some(field) = fields.get_mut(name)
+            && field.identity.is_none()
+        {
+            field.identity = Some(identity.clone());
+        }
+    }
+}
+
+/// Give each installed property without an identity its kept one.
+fn restore_properties(
+    identities: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    properties: &mut HashMap<String, PropertyInfo>,
+) {
+    for (name, identity) in identities {
+        if let Some(property) = properties.get_mut(name)
+            && property.identity.is_none()
+        {
+            property.identity = Some(identity.clone());
+        }
+    }
+}
+
+/// Give each installed method without an identity its kept one, and a single overload of that name the same.
+fn restore_methods(
+    identities: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+) {
+    for (name, identity) in identities {
+        if let Some(method) = methods.get_mut(name)
+            && method.identity.is_none()
+        {
+            method.identity = Some(identity.clone());
+        }
+        if let Some(group) = overloads.get_mut(name)
+            && let [method] = group.as_mut_slice()
+            && method.identity.is_none()
+        {
+            method.identity = Some(identity.clone());
+        }
     }
 }
 
