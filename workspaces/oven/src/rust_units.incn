@@ -481,7 +481,7 @@ pub def read_receipt(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltU
         name = required_text(item, "crate")?
         artifact = required_text(item, "artifact")?
         directory = required_text(item, "directory")?
-        mut key = name
+        mut key = name.clone()
         if keyed:
             key = required_text(item, "key")?
         if key in result:
@@ -583,7 +583,7 @@ def unit_outputs(
     """Compile one facet's library, and the root facet's binaries."""
     declared = rust_facet(facet.project, true, request.manifests)?
     mut library: Option[BuiltUnit] = None
-    mut local_built = built
+    mut local_built = built.clone()
     if declared.kind != "":
         unit = covered_unit(compile_library(facet, declared, output, request, built, search)?, facet, request)
         if unit.loaf != "":
@@ -704,7 +704,7 @@ def installed_rust_library(
     3. Return that same artifact to every consumer profile, or let changed inputs rebuild from available source.
     """
     # 1. Direct callers may lack the prepared request's shared name index.
-    mut artifacts = request.installed
+    mut artifacts = request.installed.clone()
     if len(artifacts) == 0:
         artifacts = native_artifacts(toolchain.externs)
     if declared.crate_name not in artifacts:
@@ -840,7 +840,7 @@ pub def rust_library_producer_key(
     toolchain: Toolchain,
 ) -> Result[Key, str]:
     """Reconcile a Rust producer with the actual compiler and exact inputs, independently of installed Incan Loaves."""
-    mut compiler = request.native_compiler
+    mut compiler = request.native_compiler.clone()
     if compiler == "":
         compiler = native_compiler_fingerprint(request.rustc)?
     compiler = native_library_compiler_fingerprint(library_kind(arguments)?, request.rustc, compiler)?

@@ -170,7 +170,7 @@ def hover_answer(
     request: OverlayRequest,
 ) -> Result[str, str]:
     """Answer a hover from the editor view's records, or from the home view's before the editor view's first request."""
-    mut view = editor
+    mut view = editor.clone()
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         view = str(HOME_VIEW)
     mut hover = JsonValue.null()
@@ -305,7 +305,7 @@ pub def execute(
     """
     absolute = source.absolute().map_err((error) => f"cannot {error.message()}")?
     # A check is a view of its own, apart from the program's builds.
-    mut view_profile = profile
+    mut view_profile = profile.clone()
     if command == "check":
         view_profile = profile + "+check"
     bound = selected_home_view()?

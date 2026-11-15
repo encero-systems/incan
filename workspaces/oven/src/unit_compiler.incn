@@ -157,7 +157,7 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     checked = value.require("checked").and_then((field) => field.expect_int()).map_err((error) => error.message())?
     reused = value.require("reused").and_then((field) => field.expect_int()).map_err((error) => error.message())?
     # A compiler that reports no decode count decoded every page it restored.
-    mut decoded = reused
+    mut decoded = reused.clone()
     if let Some(field) = value.get("decoded"):
         decoded = field.expect_int().map_err((error) => error.message())?
     discard_file(report)
@@ -295,7 +295,7 @@ pub def write_unit(
         root = selected
     directory = root.joinpath("target").joinpath("incan").joinpath("units")
     directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
-    mut name = compiled
+    mut name = compiled.clone()
     if described != "":
         name = described
     path = directory.joinpath(f"{name}.unit.json")

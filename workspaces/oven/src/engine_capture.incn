@@ -610,7 +610,7 @@ model Capture:
         mut pending = [top]
         mut index = 0
         while index < len(pending):
-            directory = pending[index]
+            directory = pending[index].clone()
             index += 1
             if self.is_frozen(directory):
                 self.counters.frozen.inputs += 1

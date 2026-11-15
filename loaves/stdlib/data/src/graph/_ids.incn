@@ -75,7 +75,7 @@ pub def insert_sorted_node(mut nodes: list[NodeId], node: NodeId) -> None:
     nodes.append(node)
     mut index = len(nodes) - 1
     while index > 0 and nodes[index].to_int() < nodes[index - 1].to_int():
-        previous = nodes[index - 1]
+        previous = nodes[index - 1].clone()
         nodes[index - 1] = nodes[index]
         nodes[index] = previous
         index -= 1

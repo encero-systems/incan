@@ -300,7 +300,7 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
     if len(clean) % 4 == 1:
         return Err(_error("invalid_length", "base64 input length cannot have remainder 1", len(clean)))
 
-    mut padded = clean
+    mut padded = clean.clone()
     if lenient:
         while len(padded) % 4 != 0:
             padded += "="

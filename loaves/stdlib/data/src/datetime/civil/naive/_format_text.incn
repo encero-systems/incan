@@ -98,7 +98,7 @@ pub def _parse_clock_number(value: str, start: int, directive: str) -> Result[_P
 
 
 pub def _parse_number(value: str, start: int, min_digits: int, max_digits: int) -> Result[_ParsedNumber, DateTimeError]:
-    mut index = start
+    mut index = start.clone()
     mut digits = 0
     while index < len(value) and digits < max_digits and _is_digit(value[index:index + 1]):
         index += 1
@@ -109,7 +109,7 @@ pub def _parse_number(value: str, start: int, min_digits: int, max_digits: int) 
 
 
 pub def _parse_fixed_digits(value: str, start: int, digits: int, detail: str) -> Result[int, DateTimeError]:
-    mut index = start
+    mut index = start.clone()
     while index < start + digits:
         if not _is_digit(value[index:index + 1]):
             return Err(DateTimeError(detail=detail))
@@ -118,7 +118,7 @@ pub def _parse_fixed_digits(value: str, start: int, digits: int, detail: str) ->
 
 
 def _parse_day_number(value: str, start: int) -> Result[_ParsedNumber, DateTimeError]:
-    mut index = start
+    mut index = start.clone()
     if value[index:index + 1] == " ":
         index += 1
     return _parse_number(value, index, 1, 2)
@@ -128,7 +128,7 @@ def _parse_fractional_number(value: str, start: int) -> Result[_ParsedNumber, Da
     number = _parse_number(value, start, 1, 9)?
     if number.next < len(value) and _is_digit(value[number.next:number.next + 1]):
         return Err(DateTimeError(detail="fractional seconds must have at most 9 digits"))
-    mut nanos = number.value
+    mut nanos = number.value.clone()
     mut digits = number.next - start
     while digits < 9:
         nanos = nanos * 10

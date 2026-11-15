@@ -744,7 +744,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     locking = begin_work()
     held = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
     record_work(Operation.StoreLock, root.value, locking)
-    mut selected_view = first.view
+    mut selected_view = first.view.clone()
     if execution_view != "":
         selected_view = execution_view
     latest = snapshot(root, selected_view)?
@@ -995,7 +995,7 @@ def publish_switch(
     sync_graph(manifest)?
     publication_boundary("objects-ordered")
     # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
-    mut returned_view = latest.view
+    mut returned_view = latest.view.clone()
     if execution_view != "":
         returned_view = execution_view
     mut selected_index = ""

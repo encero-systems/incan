@@ -144,7 +144,7 @@ def native_inputs(
         driver = toolchain.driver_observation
     else:
         driver = artifact_identity(Path(toolchain.driver))?
-    mut registry = toolchain.registry_units_identity
+    mut registry = toolchain.registry_units_identity.clone()
     if registry == "":
         registry = artifact_identity(Path(toolchain.registry_units))?
     mut inputs = [NATIVE_DOMAIN, driver, toolchain.sysroot, registry]

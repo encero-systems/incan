@@ -148,7 +148,7 @@ def target_requirements(entry: CInteropTarget) -> JsonValue:
     if let Some(sdk) = entry.sdk:
         fields["sdk"] = capability_json(sdk)
     if let Some(platform) = entry.platform:
-        mut fact = platform.deployment_target
+        mut fact = platform.deployment_target.clone()
         if platform.kind == CPlatformKind.Android:
             fact = f"api-level {platform.api_level}"
         fields["platform"] = JsonValue.object(

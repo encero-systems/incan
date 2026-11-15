@@ -281,8 +281,7 @@ def _decompress_zstd_stream(
     if isinstance(source, _BytesIO):
         mut handle = source.handle.borrow_mut()
         match ZstdReadDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle))):
-            Ok(reader) =>
-                mut adapter = reader
+            Ok(mut adapter) =>
                 while true:
                     mut chunk: bytes = b""
                     match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -295,8 +294,7 @@ def _decompress_zstd_stream(
     elif isinstance(source, File):
         mut handle = source.handle.handle.borrow_mut()
         match ZstdReadDecoder.new(Cursor.new(prefix).chain(Read.by_ref(handle))):
-            Ok(reader) =>
-                mut adapter = reader
+            Ok(mut adapter) =>
                 while true:
                     mut chunk: bytes = b""
                     match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):

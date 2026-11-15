@@ -97,7 +97,7 @@ pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -
     Where the graphs of one entry's unit are recorded: one record per project, profile, kind and resolved entry, which
     a request capture derives without the unit's description.
     """
-    mut resolved = entry
+    mut resolved = entry.clone()
     match Path(entry).resolve():
         Ok(found) => resolved = found.0
         Err(_) => pass
@@ -262,8 +262,7 @@ def cold_graph(toolchain: Toolchain, arguments: list[str], description: Path) ->
     """One compiler process's graph report when no worker serves it; a compiler that cannot report one gives `None`."""
     match driver_command(toolchain):
         Err(_) => return None
-        Ok(found) =>
-            mut command = found
+        Ok(mut command) =>
             for argument in arguments:
                 command.arg(argument)
             clock = begin()

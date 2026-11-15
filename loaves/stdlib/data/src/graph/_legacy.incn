@@ -157,7 +157,7 @@ pub model DiGraph[T]:
                         successor_index = successor.to_int()
                         indegrees[successor_index] -= 1
                         if indegrees[successor_index] == 0:
-                            mut successor_pass = pass_index
+                            mut successor_pass = pass_index.clone()
                             if successor_index <= index:
                                 successor_pass += 1
                             ready_push(ready, successor_pass * stride + successor_index)
@@ -352,7 +352,7 @@ pub model Dag[T]:
                         successor_index = successor.to_int()
                         indegrees[successor_index] -= 1
                         if indegrees[successor_index] == 0:
-                            mut successor_pass = pass_index
+                            mut successor_pass = pass_index.clone()
                             if successor_index <= index:
                                 successor_pass += 1
                             ready_push(ready, successor_pass * stride + successor_index)
@@ -522,7 +522,7 @@ pub model MultiDiGraph[T]:
                         successor_index = successor.to_int()
                         indegrees[successor_index] -= 1
                         if indegrees[successor_index] == 0:
-                            mut successor_pass = pass_index
+                            mut successor_pass = pass_index.clone()
                             if successor_index <= index:
                                 successor_pass += 1
                             ready_push(ready, successor_pass * stride + successor_index)
@@ -554,7 +554,7 @@ def ready_push(mut ready: list[int], priority: int) -> None:
 
 def ready_pop(mut ready: list[int]) -> int:
     """Remove the least encoded `(pass, node index)` priority from a non-empty heap."""
-    first = ready[0]
+    first = ready[0].clone()
     last = ready.pop()
     if len(ready) == 0:
         return first
@@ -565,7 +565,7 @@ def ready_pop(mut ready: list[int]) -> int:
         if left >= len(ready):
             return first
         right = left + 1
-        mut child = left
+        mut child = left.clone()
         if right < len(ready) and ready[right] < ready[left]:
             child = right
         if ready[index] <= ready[child]:

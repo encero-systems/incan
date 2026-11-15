@@ -341,7 +341,7 @@ pub class TomlValue:
         The explicit shared input retains the cursor's owner until native Body IR carries inferred cursor borrows
         (#2256).
         """
-        mut current = item
+        mut current = item.clone()
         mut selected_path = self._path
         for key in keys:
             if _item_kind(current) != TomlKind.Table:
@@ -443,7 +443,7 @@ pub class TomlValue:
 
     def _decode_failure_at(self, error: EditDecodeError, relative: str, item: &SpannedItem, selected: str) -> TomlError:
         """Remove the private serde slot from the error path and retain the original failing token's span."""
-        mut path = selected
+        mut path = selected.clone()
         if relative.startswith("value."):
             if selected == "":
                 path = relative[6:]

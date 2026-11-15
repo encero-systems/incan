@@ -177,7 +177,7 @@ pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = ""
 def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
     """Finish identity only when the compiler and every linked unit have admitted identities."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
-    mut base_compiler = compiler
+    mut base_compiler = compiler.clone()
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
     refuse_stale_standard(unit, toolchain)?
@@ -243,7 +243,7 @@ pub def reconciled_key(
 
 pub def ledger_name(unit: UnitDescription) -> str:
     """The name a unit's ledger is saved under: one per profile, kind and package, so units never share rows."""
-    mut name = unit.package
+    mut name = unit.package.clone()
     if name == "":
         name = Path(unit.source).stem()
     return f"{unit.profile}-{unit.kind}-{name}"
@@ -277,7 +277,7 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     #    The compiler's own answers are probed once per rustc installation and deployment selection.
     target = compiler_target(toolchain)?
     selection = inherited_deployment_selection()?
-    mut deployment = toolchain.default_deployment_target
+    mut deployment = toolchain.default_deployment_target.clone()
     if len(selection) > 0 or toolchain.rust_version == "":
         deployment = deployment_target(rust_compiler(toolchain), target, selection)?
     facts.extend([target, deployment])
@@ -337,7 +337,7 @@ pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
     """
     mut inputs: list[str] = []
     for native in externs:
-        mut identity = native.identity
+        mut identity = native.identity.clone()
         if identity == "":
             _, content = publication(Path(native.path))?
             identity = f"content {content}"

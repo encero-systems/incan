@@ -159,7 +159,7 @@ pub model Ledger:
             return Ok(self.files[path.0].code)
         trace(f"hashing {path.0}")
         content = file_digest(path)?
-        mut code = content
+        mut code = content.clone()
         match path.read_text("utf-8", "strict"):
             Ok(text) => code = hexlify(sha256.digest(positioned_code(text).encode("utf-8")))
             Err(_) => pass

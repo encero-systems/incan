@@ -46,7 +46,7 @@ pub def export_identity(name: str, key: Key) -> Result[str, str]:
 
 pub def producer_name(inputs: list[str], project: Path, arguments: list[str]) -> Result[str, str]:
     """Name a dependency-evidence hint by portable source inventory, selected entry and effective invocation facts."""
-    mut entry = arguments[0]
+    mut entry = arguments[0].clone()
     if entry.startswith(project.0 + "/"):
         entry = entry[len(project.0) + 1:]
     return Ok("graph-rust\t" + fingerprint(inputs + [entry] + invocation_facts(arguments, project, project))?)

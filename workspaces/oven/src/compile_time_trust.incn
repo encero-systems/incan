@@ -82,7 +82,7 @@ pub def decide(
         project = read_project(Path(facet.project), reader).map_err((error) => error.message())?
         if declared.kind != "proc-macro" and project.intent.vocab_entry == None:
             continue
-        loaf = project.intent.name
+        loaf = project.intent.name.clone()
         if loaf in seen:
             continue
         seen.append(loaf)

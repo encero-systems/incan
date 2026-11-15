@@ -223,7 +223,7 @@ pub def positioned_code(source: str) -> str:
     """
     mut scanner = SemanticScanner()
     scanner.scan(source)
-    mut text = scanner.layout
+    mut text = scanner.layout.clone()
     while text.endswith("\n"):
         text = text[:len(text) - 1]
     return text

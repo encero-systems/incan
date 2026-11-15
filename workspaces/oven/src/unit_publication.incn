@@ -208,7 +208,7 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
     if identity == "":
         return Err("unit identity refused: imported producer has no portable identity")
     existing = available_record(path)?
-    mut expected = expected_payload
+    mut expected = expected_payload.clone()
     mut origins: list[str] = []
     if existing.is_file():
         document = read_json(existing)?

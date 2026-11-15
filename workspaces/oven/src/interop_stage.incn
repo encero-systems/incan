@@ -244,7 +244,7 @@ def staged_files(
     staging: Path,
 ) -> Result[list[StagedFile], str]:
     """Copy each bundled artifact, by name, to its adapter path, and verify the copy's bytes."""
-    mut prefix = ANDROID_LAYOUT
+    mut prefix = ANDROID_LAYOUT.clone()
     if adapter == StageAdapter.Ios:
         prefix = IOS_LAYOUT
     bundled = [artifact for artifact in target.artifacts if artifact.kind == CArtifactKind.Bundled]

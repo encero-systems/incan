@@ -148,7 +148,7 @@ def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[FieldShape
                 Metadata.Boolean(value) => canonical = value
                 _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=name_token.position))
     renamed_from = rename_history(properties, name_token.position)?
-    mut identity_name = name
+    mut identity_name = name.clone()
     if len(renamed_from) > 0:
         identity_name = renamed_from[0]
     identity = member_identity(identity_name, budget).map_err(
@@ -186,7 +186,7 @@ def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[VariantS
                 break
             tokens.require(",")?
     renamed_from = rename_history(properties, name_token.position)?
-    mut identity_name = name
+    mut identity_name = name.clone()
     if len(renamed_from) > 0:
         identity_name = renamed_from[0]
     identity = member_identity(identity_name, budget).map_err((_) => limit_error(name_token.position))?

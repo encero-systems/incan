@@ -465,7 +465,7 @@ def staging_owners(store: Path) -> Result[list[StagingOwner], str]:
         parts = entry.name().split(".")
         if len(parts) != 2:
             continue
-        mut digest = parts[0]
+        mut digest = parts[0].clone()
         if digest.startswith("sha256:"):
             digest = digest[7:]
         if canonical_digest(digest):

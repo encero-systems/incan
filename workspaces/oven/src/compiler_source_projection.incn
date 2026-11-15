@@ -325,7 +325,7 @@ def declaration_surface(source: str) -> str:
 
 def callable_declaration(line: str) -> bool:
     """Recognize the callable declaration forms whose indented bodies do not contribute to checked signatures."""
-    mut header = line
+    mut header = line.clone()
     for prefix in ["pub ", "async "]:
         if header.startswith(prefix):
             header = header[len(prefix):]

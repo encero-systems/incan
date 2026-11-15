@@ -181,7 +181,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
     )?
     record(Operation.EngineUnit, pending.capture.revision, checking)
     captured = after_projection(pending.capture)?
-    mut snapshot = captured.snapshot.digest
+    mut snapshot = captured.snapshot.digest.clone()
     if let Some(transaction) = captured.transaction:
         snapshot = commit(transaction).map_err((error) => error.message())?.digest
     mut status = CompletionStatus.Success

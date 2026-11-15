@@ -29,7 +29,7 @@ pub def ordinal_key_signed_magnitude_i64(value: int) -> list[u8]:
     UTC offsets, without depending on host integer representation.
     """
     mut sign = 0
-    mut magnitude = value
+    mut magnitude = value.clone()
     if value < 0:
         sign = 1
         magnitude = 0 - value

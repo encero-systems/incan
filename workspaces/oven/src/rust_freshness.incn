@@ -60,7 +60,7 @@ def observed_library_key(
     paths, variables = dependency_inputs(text)?
     selected = source_paths(project, dependencies, arguments, paths)?
     mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
-    mut selected_compiler = compiler
+    mut selected_compiler = compiler.clone()
     if selected_compiler == "":
         selected_compiler = compiler_fingerprint(toolchain)?
     # 2. Reconcile the exact observed inputs through the same unit identity function for libraries and binaries.

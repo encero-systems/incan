@@ -82,7 +82,7 @@ pub def split_runner_options(arguments: list[str]) -> Result[tuple[RunnerOptions
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        mut name = argument
+        mut name = argument.clone()
         mut inline: Option[str] = None
         if argument.startswith("--") and "=" in argument:
             parts = argument.split("=")
@@ -180,7 +180,7 @@ def digit(character: str) -> int:
 pub def duration_ms(value: str) -> Result[int, str]:
     """Milliseconds of a duration such as `250ms`, `5s` or `2m`; a bare count is seconds."""
     refusal = f"invalid --timeout value `{value}`; use a duration like 250ms, 5s, or 2m"
-    mut number = value
+    mut number = value.clone()
     mut scale = 1000
     if value.endswith("ms"):
         number = value[:len(value) - 2]

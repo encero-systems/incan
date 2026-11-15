@@ -234,7 +234,7 @@ pub model Date with OrdinalKey:
             Shifted `Date`.
         """
         mut out = Date(year=self.year, month=self.month, day=self.day)
-        mut remaining = days
+        mut remaining = days.clone()
         while remaining > 0:
             out = out._next_day()
             remaining -= 1
@@ -920,7 +920,7 @@ pub def _strftime_datetime_inner(datetime: DateTime, offset: FixedOffset, has_of
 
 
 def _format_date_directive(date: Date, directive: str, padding: str) -> Result[str, DateTimeError]:
-    mut actual_padding = padding
+    mut actual_padding = padding.clone()
     match directive:
         "Y" => return Ok(_format_padded(date.year, 4, actual_padding))
         "y" => return Ok(_format_padded(date.year % 100, 2, actual_padding))
@@ -1016,9 +1016,9 @@ pub def _strptime_temporal(
 
 def _resolve_parsed_date(fields: _StrptimeFields) -> Result[Date, DateTimeError]:
     """Resolve ordinal, calendar-week and ISO-week fields in their original precedence and refusal order."""
-    mut year = fields.year
-    mut month = fields.month
-    mut day = fields.day
+    mut year = fields.year.clone()
+    mut month = fields.month.clone()
+    mut day = fields.day.clone()
     if fields.ordinal_day != 0:
         ordinal_date = _date_from_ordinal(year, fields.ordinal_day)?
         month = ordinal_date.month
@@ -1070,7 +1070,7 @@ def _week_number_monday(date: Date) -> int:
 
 
 def _date_from_ordinal(year: int, ordinal: int) -> Result[Date, DateTimeError]:
-    mut limit = _DAYS_PER_YEAR
+    mut limit = _DAYS_PER_YEAR.clone()
     if is_leap_year(year):
         limit = _DAYS_PER_LEAP_YEAR
     if ordinal < 1 or ordinal > limit:
@@ -1086,7 +1086,7 @@ def _date_from_calendar_week(
 ) -> Result[Date, DateTimeError]:
     jan1 = Date(year=year, month=1, day=1)
     mut first_day_index = jan1.weekday()
-    mut day_index = iso_weekday
+    mut day_index = iso_weekday.clone()
     if starts_monday:
         first_day_index -= 1
         day_index -= 1
@@ -1101,15 +1101,15 @@ def _date_from_calendar_week(
 
 
 def _date_from_year_ordinal_offset(year: int, ordinal: int) -> Result[Date, DateTimeError]:
-    mut target_year = year
-    mut target_ordinal = ordinal
+    mut target_year = year.clone()
+    mut target_ordinal = ordinal.clone()
     while target_ordinal < 1:
         target_year -= 1
         if is_leap_year(target_year):
             target_ordinal += _DAYS_PER_LEAP_YEAR
         else:
             target_ordinal += _DAYS_PER_YEAR
-    mut limit = _DAYS_PER_YEAR
+    mut limit = _DAYS_PER_YEAR.clone()
     if is_leap_year(target_year):
         limit = _DAYS_PER_LEAP_YEAR
     while target_ordinal > limit:

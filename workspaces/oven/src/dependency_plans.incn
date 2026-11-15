@@ -64,7 +64,7 @@ pub def plan_add(
     # 1. Oven never guesses a full name.
     loaf = full_name(name, [unit.loaf for unit in units if unit.refusal == ""], "published Loaf")?
     # 2. A new dependency starts at the newest published version.
-    mut requirement = version
+    mut requirement = version.clone()
     if requirement == "":
         match newest_published(units, loaf, "")?:
             None => return Err(f"{loaf} is not published in the toolchain's registry")
@@ -72,7 +72,7 @@ pub def plan_add(
     else:
         _ = parse_requirement(requirement).map_err((reason) => f"`--version {requirement}`: {reason}")?
     # 3. A key names one package; a collision is settled by choosing another key.
-    mut chosen = key
+    mut chosen = key.clone()
     if chosen == "":
         chosen = crate_name(loaf)
     declared = declared_keys(text, manifest)?
@@ -105,7 +105,7 @@ pub def plan_update(name: str, text: str, manifest: str, units: list[RegistryUni
         if len(selected) == 0:
             return Err(f"{loaf} is not a registry dependency in {manifest}")
     # 2. and 3. Each raise changes one quoted value.
-    mut changed = text
+    mut changed = text.clone()
     mut report: list[str] = []
     for dependency in selected:
         planned = raised(dependency, units)?
@@ -260,7 +260,7 @@ def inserted(text: str, line: str) -> str:
             header = index
             break
     if header < 0:
-        mut appended = text
+        mut appended = text.clone()
         if appended != "" and not appended.endswith("\n"):
             appended += "\n"
         if appended != "":
@@ -421,7 +421,7 @@ pub def plan_remove(name: str, text: str, manifest: str) -> Result[ManifestChang
         return Err(f"{loaf} is not a dependency in {manifest}")
     # 2. One line or one table per key.
     entries = dependency_tables(text, manifest)?
-    mut changed = text
+    mut changed = text.clone()
     mut report: list[str] = []
     for key in keys:
         changed = without_entry(changed, manifest, key)?

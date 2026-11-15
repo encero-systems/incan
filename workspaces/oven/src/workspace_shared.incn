@@ -144,7 +144,7 @@ pub def member_tables(root: Path, member: Path) -> Result[Dict[str, JsonValue], 
         entry = entry_table(entries[alias])
         mut origin = "member"
         mut base = member.clone()
-        mut source = entry
+        mut source = entry.clone()
         if flag_of(entry, "workspace", false) and alias in shared:
             origin = "workspace"
             base = root

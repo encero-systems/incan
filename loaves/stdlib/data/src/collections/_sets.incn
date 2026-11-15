@@ -243,7 +243,7 @@ pub model SortedSet[T with (Clone, Ord)]:
         return _value_index(self.items, value)
 
     pub def bubble_value_left(mut self, start: int) -> None:
-        mut index = start
+        mut index = start.clone()
         while index > 0 and self.items[index] < self.items[index - 1]:
             self.items.swap(index, index - 1)
             index -= 1

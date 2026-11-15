@@ -107,7 +107,7 @@ pub def resolve_configuration(facet: CFacet, name: str) -> Result[ResolvedConfig
         names = ", ".join(configuration_names(facet))
         return Err(f"unknown configuration `{name}`; the Clove declares {names}")
     mut chain: list[str] = []
-    mut current = name
+    mut current = name.clone()
     while true:
         chain = [current] + chain
         match facet.configurations[current].base:

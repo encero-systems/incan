@@ -76,7 +76,7 @@ def source_module_of(unit: UnitDescription, module: str) -> Result[Option[str], 
 
 def source_module(relative: str) -> str:
     """Name a source-root-relative module the same way a canonical module origin does."""
-    mut without_extension = relative
+    mut without_extension = relative.clone()
     if without_extension.endswith(".incn"):
         without_extension = without_extension[:len(without_extension) - len(".incn")]
     mut parts = without_extension.split("/")

@@ -116,8 +116,7 @@ def _compress_bytesio_stream(
     """
     mut handle = source.handle.borrow_mut()
     match ZstdReadEncoder.new(Read.by_ref(handle), compression):
-        Ok(reader) =>
-            mut adapter = reader
+        Ok(mut adapter) =>
             while true:
                 mut chunk: bytes = b""
                 match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -140,8 +139,7 @@ def _compress_file_stream(
     """
     mut handle = source.handle.handle.borrow_mut()
     match ZstdReadEncoder.new(Read.by_ref(handle), compression):
-        Ok(reader) =>
-            mut adapter = reader
+        Ok(mut adapter) =>
             while true:
                 mut chunk: bytes = b""
                 match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -163,8 +161,7 @@ def _decompress_bytesio_stream(
     """
     mut handle = source.handle.borrow_mut()
     match ZstdReadDecoder.new(Read.by_ref(handle)):
-        Ok(reader) =>
-            mut adapter = reader
+        Ok(mut adapter) =>
             while true:
                 mut chunk: bytes = b""
                 match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):
@@ -186,8 +183,7 @@ def _decompress_file_stream(
     """
     mut handle = source.handle.handle.borrow_mut()
     match ZstdReadDecoder.new(Read.by_ref(handle)):
-        Ok(reader) =>
-            mut adapter = reader
+        Ok(mut adapter) =>
             while true:
                 mut chunk: bytes = b""
                 match adapter.by_ref().take(chunk_size.saturating_resize[u64]()).read_to_end(chunk):

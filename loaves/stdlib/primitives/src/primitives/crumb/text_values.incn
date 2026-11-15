@@ -557,9 +557,7 @@ def insert_ordered(mut items: list[Value], candidate: Value) -> None:
     items.append(candidate)
     mut current = len(items) - 1
     while current > index:
-        previous = items[current - 1]
-        items[current - 1] = items[current]
-        items[current] = previous
+        items.swap(current - 1, current)
         current -= 1
 
 
@@ -571,9 +569,7 @@ def insert_entry(mut entries: list[MapEntry], candidate: MapEntry) -> None:
     entries.append(candidate)
     mut current = len(entries) - 1
     while current > index:
-        previous = entries[current - 1]
-        entries[current - 1] = entries[current]
-        entries[current] = previous
+        entries.swap(current - 1, current)
         current -= 1
 
 

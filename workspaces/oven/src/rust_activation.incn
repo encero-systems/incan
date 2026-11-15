@@ -201,7 +201,7 @@ def feature_symbol(value: str, manifest: str, field: list[str]) -> Result[Featur
         return Ok(FeatureSymbol.Local(value))
     if len(parts) != 2 or parts[0] == "" or parts[1] == "":
         return Err(refusal(manifest, field, IntakeErrorKind.Invalid, "malformed dependency feature forwarding"))
-    mut alias = parts[0]
+    mut alias = parts[0].clone()
     weak = alias.endswith("?")
     if weak:
         alias = alias[:-1]

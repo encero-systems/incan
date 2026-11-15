@@ -180,7 +180,7 @@ pub def staging(store: Path, identity: str, estimate: int = 0, claimed: str = ""
     directory = staging_root(store).joinpath(name)
     if directory.is_dir():
         directory.remove_tree().map_err((error) => f"{directory.0}: {error.message()}")?
-    mut owner = claimed
+    mut owner = claimed.clone()
     if owner == "":
         owner = identity
     mut basis = "unknown"
@@ -383,7 +383,7 @@ def view_file(store: Path, file: FactFile, destination: Path) -> Result[None, st
 def clone(source: Path, destination: Path, program: bool) -> Result[None, str]:
     """Clone one payload and give the copy its owner's write bit and the unit's execute bit."""
     copy_file(source.0, destination.0).map_err((error) => f"{destination.0}: {error}")?
-    mut mode = OPEN_FILE
+    mut mode = OPEN_FILE.clone()
     if program:
         mode = OPEN_PROGRAM
     set_permissions(destination.0, Permissions.from_mode(mode)).map_err((error) => f"{destination.0}: {error}")?

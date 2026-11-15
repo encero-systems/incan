@@ -187,7 +187,7 @@ pub def shuffled(count: int, seed: int) -> list[int]:
     while index > 0:
         state = (state * MULTIPLIER + INCREMENT) % MODULUS
         other = state % (index + 1)
-        held = order[index]
+        held = order[index].clone()
         order[index] = order[other]
         order[other] = held
         index -= 1

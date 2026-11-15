@@ -56,7 +56,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
             None =>
                 if loaf.name not in ready.not_prepared_loaves:
                     ready.not_prepared_loaves.append(loaf.name)
-                mut project = loaf.dir
+                mut project = loaf.dir.clone()
                 if let Some(root) = loaf.source_root:
                     project = root
                 stop = missing_stop(loaf.name, project)

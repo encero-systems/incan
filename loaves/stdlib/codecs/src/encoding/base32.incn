@@ -257,7 +257,7 @@ def _decode_base32(text: str, alphabet: str, lower_alphabet: str, lenient: bool)
         return Ok(b"")
     if not lenient and len(clean) % 8 != 0:
         return Err(_error("invalid_length", "base32 input length must be a multiple of 8", len(clean)))
-    mut padded = clean
+    mut padded = clean.clone()
     if lenient:
         while len(padded) % 8 != 0:
             padded += "="
