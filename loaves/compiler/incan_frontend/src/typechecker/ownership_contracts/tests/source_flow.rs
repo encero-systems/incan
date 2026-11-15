@@ -3,26 +3,30 @@
 use super::*;
 
 /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
-/// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
+/// retains its selected header but still needs non-Copy argument facts. A helper's nominal result that holds no
+/// borrow retains no dependency, so a body transferring it on one branch is proved.
 #[test]
 fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(), Box<dyn std::error::Error>> {
-    for (source, call, reason) in [
-        (
-            "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
-            "\"join\"",
-            "ordinary argument requires inferred access or mutable binding facts",
-        ),
-        (
-            "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
-            "make(1)",
-            "call result needs retained dependency facts",
-        ),
-        (
-            "class Holder:\n    pub value: int\ndef make(value: Owned[int]) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
-            "make(1)",
-            "call result needs retained dependency facts",
-        ),
+    for source in [
+        "class Holder:\n    pub value: int\ndef make(value: int) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
+        "class Holder:\n    pub value: int\ndef make(value: Owned[int]) -> Holder:\n    return Holder(value=value)\ndef consume(value: Owned[Holder]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = make(1)\n    if flag:\n        consume(value)\n",
     ] {
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        assert!(
+            checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .any(|(owner, flow)| owner.declaration_name == "main" && matches!(flow, InputFlow::Checked { .. }))
+        );
+    }
+    for (source, call, reason) in [(
+        "def observe(label: str) -> None:\n    print(label)\ndef consume(value: Owned[str]) -> None:\n    pass\ndef main(flag: bool) -> None:\n    value = \"initial\"\n    if flag:\n        consume(value)\n    observe(\"join\")\n",
+        "\"join\"",
+        "ordinary argument requires inferred access or mutable binding facts",
+    )] {
         let checker = checked(source)?;
         let state = checker
             .type_info
@@ -572,7 +576,8 @@ fn call_results_that_hold_no_borrow_are_fresh_values() -> Result<(), Box<dyn std
         .ok_or("missing explicit body flow")?;
     if let InputFlow::Unavailable(unavailable) = state {
         assert_ne!(
-            unavailable.reason, "call result needs retained dependency facts",
+            unavailable.reason,
+            "call result needs retained dependency facts",
             "{:?}",
             source_text(accepted, unavailable.span)
         );
