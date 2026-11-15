@@ -2,6 +2,8 @@
 //!
 //! Incan's generated code is slower than this codec needs; the Incan twin measures the gap.
 
+#[path = "crumb/encoders.rs"]
+mod encoders;
 #[path = "crumb/layout.rs"]
 mod layout;
 #[path = "crumb/scalar_records.rs"]
@@ -9,6 +11,7 @@ mod scalar_records;
 #[path = "crumb/semantic.rs"]
 mod semantic;
 
+pub use encoders::{Encoded, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
 pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
 pub use scalar_records::{ScalarRecordBatch, encode_scalar_records};
 pub use semantic::{RowAdmission, RowRead, RowRequest, SemanticCase, evaluate_semantic_case};
@@ -23,13 +26,6 @@ pub fn count_twin_row_read() {
 /// The envelopes the retained Incan twin's row reader has admitted in this process.
 pub fn twin_row_reads() -> u64 {
     TWIN_ROW_READS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Encoded bytes and the exact logical work charged by the Incan codec contract.
-pub struct Encoded {
-    pub data: Vec<u8>,
-    pub byte_charge: u64,
-    pub element_charge: u64,
 }
 
 /// One completed indexed-cell layout and the exact logical work charged by its Incan contract.
@@ -433,44 +429,6 @@ impl Scan {
     }
 }
 
-/// Encode one native unsigned value with shortest little-endian base-128 groups.
-pub fn encode_native_unsigned(value: u128) -> Encoded {
-    let data = encode_base128(value, false);
-    let groups = data.len() as u64;
-    Encoded {
-        data,
-        byte_charge: groups,
-        element_charge: top_bits(value) + groups,
-    }
-}
-
-/// Zigzag and encode one native signed value without overflowing at either endpoint.
-pub fn encode_native_signed(value: i128) -> Encoded {
-    let negative = value < 0;
-    let magnitude = value.unsigned_abs();
-    encode_zigzag(magnitude, negative)
-}
-
-/// Zigzag and encode one logical unsigned value, whose physical form may require 129 bits.
-pub fn encode_integer_unsigned(value: u128) -> Encoded {
-    encode_zigzag(value, false)
-}
-
-/// Prefix owned bytes with their shortest native length.
-pub fn frame(data: Vec<u8>) -> Encoded {
-    let prefix = encode_native_unsigned(data.len() as u128);
-    let data_len = data.len() as u64;
-    let prefix_len = prefix.data.len() as u64;
-    let mut output = Vec::with_capacity(prefix.data.len() + data.len());
-    output.extend_from_slice(&prefix.data);
-    output.extend(data);
-    Encoded {
-        data: output,
-        byte_charge: prefix.byte_charge + prefix_len + data_len,
-        element_charge: prefix.element_charge,
-    }
-}
-
 /// Lay out all cell offsets and payloads in one native call across the Incan boundary.
 pub fn indexed(cells: Vec<Vec<u8>>, width: u8) -> IndexedLayout {
     let total = cells.iter().map(Vec::len).sum::<usize>();
@@ -704,117 +662,6 @@ fn push_offset(output: &mut Vec<u8>, mut value: usize, width: u8) {
     for _ in 0..width {
         output.push((value & 0xff) as u8);
         value >>= 8;
-    }
-}
-
-fn encode_zigzag(magnitude: u128, negative: bool) -> Encoded {
-    let magnitude_len = magnitude_bytes(magnitude);
-    let mut groups = zigzag_groups(magnitude, negative);
-    if groups.is_empty() {
-        groups.push(0);
-    } else {
-        let last = groups.len() - 1;
-        for byte in &mut groups[..last] {
-            *byte |= 0x80;
-        }
-    }
-    let doubled_len = zigzag_bytes(magnitude, negative);
-    let group_count = groups.len() as u64;
-    let bit_charge = zigzag_top_bits(magnitude, negative);
-    let negative_bytes = if negative { doubled_len } else { 0 };
-    Encoded {
-        data: groups,
-        byte_charge: magnitude_len + 1 + negative_bytes + group_count,
-        element_charge: magnitude_len + negative_bytes + bit_charge + group_count,
-    }
-}
-
-fn encode_base128(mut value: u128, continued: bool) -> Vec<u8> {
-    let mut result = Vec::new();
-    loop {
-        let mut group = (value & 0x7f) as u8;
-        value >>= 7;
-        if value != 0 || continued {
-            group |= 0x80;
-        }
-        result.push(group);
-        if value == 0 {
-            return result;
-        }
-    }
-}
-
-fn zigzag_groups(magnitude: u128, negative: bool) -> Vec<u8> {
-    let doubled = magnitude.wrapping_mul(2);
-    let low = if negative { doubled.wrapping_sub(1) } else { doubled };
-    let high = zigzag_high(magnitude, doubled, negative);
-    let mut groups = Vec::with_capacity(19);
-    for index in 0..19 {
-        let group = if index < 18 {
-            ((low >> (index * 7)) & 0x7f) as u8
-        } else {
-            ((low >> 126) as u8 & 0x03) | ((high as u8) << 2)
-        };
-        groups.push(group);
-    }
-    while groups.len() > 1 && groups.last() == Some(&0) {
-        groups.pop();
-    }
-    let last = groups.len() - 1;
-    for byte in &mut groups[..last] {
-        *byte |= 0x80;
-    }
-    groups
-}
-
-fn magnitude_bytes(value: u128) -> u64 {
-    if value == 0 {
-        0
-    } else {
-        u64::from(value.ilog2() / 8 + 1)
-    }
-}
-
-fn zigzag_bytes(magnitude: u128, negative: bool) -> u64 {
-    let bits = zigzag_bit_length(magnitude, negative);
-    if bits == 0 { 0 } else { bits.div_ceil(8) }
-}
-
-fn zigzag_bit_length(magnitude: u128, negative: bool) -> u64 {
-    if magnitude == 0 {
-        return 0;
-    }
-    let doubled = if negative {
-        magnitude.wrapping_mul(2).wrapping_sub(1)
-    } else {
-        magnitude.wrapping_mul(2)
-    };
-    if zigzag_high(magnitude, magnitude.wrapping_mul(2), negative) != 0 {
-        129
-    } else {
-        u64::from(128 - doubled.leading_zeros())
-    }
-}
-
-fn zigzag_high(magnitude: u128, doubled: u128, negative: bool) -> u128 {
-    let high = magnitude >> 127;
-    if negative && doubled == 0 && high != 0 {
-        high - 1
-    } else {
-        high
-    }
-}
-
-fn zigzag_top_bits(magnitude: u128, negative: bool) -> u64 {
-    let bits = zigzag_bit_length(magnitude, negative);
-    if bits == 0 { 0 } else { (bits - 1) % 8 + 1 }
-}
-
-fn top_bits(value: u128) -> u64 {
-    if value == 0 {
-        0
-    } else {
-        u64::from(128 - value.leading_zeros() - (value.ilog2() / 8) * 8)
     }
 }
 
