@@ -1,0 +1,22 @@
+# behavior: An ordinary body that calls an explicit input and then constructs a value from its own parameter (RFC 164).
+# pending: INCAN-T0123 refuses the ordinary body: "non-Copy constructor field needs checked ownership transfer materialization".
+# expect-stdout:
+#   abc
+
+model Label:
+    text: str
+
+
+def bounded(value: Borrowed[str]) -> bool:
+    return len(value) < 10
+
+
+def label(text: str) -> Result[Label, str]:
+    """An ordinary body that calls an explicit input and then constructs from its own parameter."""
+    if not bounded(text):
+        return Err("long")
+    return Ok(Label(text=text))
+
+
+def main() -> None:
+    println(label("abc").unwrap().text)

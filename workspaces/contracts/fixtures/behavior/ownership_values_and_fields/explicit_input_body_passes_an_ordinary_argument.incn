@@ -1,0 +1,22 @@
+# behavior: An exclusive input body passes an ordinary parameter to an ordinary function and writes through its input (RFC 164).
+# pending: INCAN-T0123 refuses the body: "ordinary argument requires inferred access or mutable binding facts".
+# expect-stdout:
+#   2
+
+model State:
+    count: int
+
+
+def counted(data: bytes) -> int:
+    return len(data)
+
+
+def place(data: bytes, mut state: BorrowedMut[State]) -> int:
+    """An exclusive input body that passes an ordinary parameter to an ordinary function."""
+    state.count += counted(data)
+    return state.count
+
+
+def main() -> None:
+    mut state = State(count=0)
+    println(place(b"ab", state))

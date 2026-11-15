@@ -1,0 +1,15 @@
+# behavior: A shared text input compared with a module constant reads the constant and the input without a copy (RFC 164).
+# pending: INCAN-T0123 refuses the body: source analysis stops at the constant, "place is not a prepared parameter or checked local".
+# expect-stdout:
+#   true
+
+const LIMIT: int = 4
+
+
+def bounded(value: Borrowed[str]) -> bool:
+    """A shared text input compared with a module constant."""
+    return len(value) <= LIMIT
+
+
+def main() -> None:
+    println(bounded("abc"))
