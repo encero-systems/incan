@@ -16,7 +16,7 @@ target = "aarch64-apple-darwin"
 profile = "release"
 features = ["default", "std"]
 cfg = ["fast_arithmetic=\"64\"", "has_neon"]
-out = "out"
+out = [{ name = "table.rs", path = "out/table.rs", digest = "sha256:ff0adc19232b0da24c8f6497962f28339804fc38c1080c513a69f9829fbae74c" }]
 environment = { SCRIPTED_TABLE = "crc32" }
 harvested-from = "evidence only"
 
