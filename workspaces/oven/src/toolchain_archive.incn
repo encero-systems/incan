@@ -11,7 +11,7 @@ from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
 from files import json_text, make_directory, read, read_json, remove, write
-from home import TOOLCHAIN, standard_packages
+from home import TOOLCHAIN, home, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
     NativeCrate,
@@ -43,6 +43,7 @@ from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
+from release_trust import CARRIED_TRUST, admit_release, adopt
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -767,12 +768,20 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     """
     Verify a staged archive before replacing the installed toolchain; a refused archive preserves the old one.
 
+    0. A home that carries a release signer verifies the archive's signature before anything is unpacked (DD-0016).
     1. Unpack the archive into a staging directory beside the installation.
     2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
        whatever happened.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
+    4. The home carries the release trust the installed archive ships.
     """
     target = toolchain_directory()?
+    # 0. An unsigned or altered archive is refused here, by name, before it costs or changes anything.
+    carrier = home()?
+    match admit_release(archive, carrier)?:
+        Some(verified) =>
+            println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
+        None => pass
     make_directory(target.parent())?
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
@@ -788,6 +797,9 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
     println(f"entry points: oven and incan in {directory.0}")
+    # 4. Later installs into this home verify against what this release ships.
+    if adopt(target, carrier)?:
+        println(f"this home now installs only releases signed as {carrier.joinpath(CARRIED_TRUST).0} states")
     return Ok(None)
 
 

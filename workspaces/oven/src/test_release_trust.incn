@@ -1,0 +1,154 @@
+"""A home that carries a release signer admits only archives signed by it (DD-0016)."""
+
+from std.encoding.base64 import b64decode
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from release_signature_fixtures import (
+    IDENTITY,
+    ISSUER,
+    WORKFLOW,
+    archive,
+    bundle,
+    other_trusted_root,
+    trusted_root,
+)
+from release_trust import BUNDLE_SUFFIX, CARRIED_TRUST, admit_release, adopt, carried, ship
+
+
+def raw(encoded: str) -> Result[bytes, str]:
+    """Decode one fixture."""
+    return b64decode(encoded).map_err((error) => error.message())
+
+
+def text(encoded: str) -> Result[str, str]:
+    """Decode one fixture document."""
+    return raw(encoded)?.decode("utf-8", "strict").map_err((_) => "fixture is not UTF-8")
+
+
+def trust_text(root: str) -> Result[str, str]:
+    """A `release-signer.json` for the release workflow's identity and one trusted root."""
+    signer = "{\"workflow\":\"" + WORKFLOW + "\",\"issuer\":\"" + ISSUER + "\"}"
+    return Ok("{\"signer\":" + signer + ",\"trusted_root\":" + text(root)? + "}")
+
+
+def put(path: Path, content: str) -> Result[None, str]:
+    """Write one text file."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def signed_home(root: Path) -> Result[Path, str]:
+    """A home that carries the fixture signer, and a directory with the signed archive and its bundle."""
+    home = root.joinpath("home")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    put(home.joinpath(CARRIED_TRUST), trust_text(trusted_root())?)?
+    return Ok(home)
+
+
+pub def test_a_home_that_carries_a_signer_refuses_an_unsigned_archive() -> Result[None, str]:
+    """An archive with no signature bundle beside it is refused by name, with the signer the home requires."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = signed_home(scratch.path())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    match admit_release(asset, home):
+        Ok(_) => return Err("an unsigned archive was admitted")
+        Err(reason) =>
+            assert reason == (
+                f"{asset.0} is not signed: there is no signature bundle {asset.0}{BUNDLE_SUFFIX}, and this home " +
+                f"installs only releases signed by {WORKFLOW} at a tag"
+            ), reason
+    return Ok(None)
+
+
+pub def test_a_home_that_carries_a_signer_refuses_a_tampered_archive() -> Result[None, str]:
+    """An archive changed after it was signed is refused by its digest, though its bundle is beside it."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = signed_home(scratch.path())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())? + "one more member\n")?
+    put(Path(asset.0 + BUNDLE_SUFFIX), text(bundle())?)?
+    match admit_release(asset, home):
+        Ok(_) => return Err("a tampered archive was admitted")
+        Err(reason) =>
+            assert reason.startswith(f"{asset.0} is refused: the signature bundle signs another file"), reason
+    return Ok(None)
+
+
+pub def test_a_signed_archive_is_admitted_and_the_trust_it_ships_is_adopted() -> Result[None, str]:
+    """
+    A release signed by the carried signer installs, and the home then carries the trust that release ships.
+
+    1. The signed archive is admitted, and the verification names the signer.
+    2. The trust the archive ships replaces the home's.
+    3. Under the new trust, which holds another authority, the same archive is refused.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = signed_home(scratch.path())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    put(Path(asset.0 + BUNDLE_SUFFIX), text(bundle())?)?
+    # 1. Verified against what the home carries.
+    match admit_release(asset, home)?:
+        None => return Err("a signed home verified nothing")
+        Some(verified) => assert verified.identity == IDENTITY
+    # 2. The archive's own trust file becomes the home's.
+    stage = scratch.path().joinpath("stage")
+    stage.mkdir(true, true).map_err((error) => error.message())?
+    put(stage.joinpath(CARRIED_TRUST), trust_text(other_trusted_root())?)?
+    assert adopt(stage, home)?
+    # 3. The home verifies with the adopted trust from then on.
+    match admit_release(asset, home):
+        Ok(_) => return Err("the adopted trust was not used")
+        Err(reason) => assert reason.endswith("does not chain to a trusted certificate authority"), reason
+    return Ok(None)
+
+
+pub def test_a_home_that_carries_no_signer_verifies_nothing_and_a_damaged_file_refuses() -> Result[None, str]:
+    """
+    Only a missing trust file means a development home.
+
+    1. A home without one admits an archive without verifying it, and an archive that ships no trust leaves it so.
+    2. A trust file that cannot be read as one refuses, rather than counting as none.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = scratch.path().joinpath("home")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    asset = scratch.path().joinpath("toolchain.tar.zst")
+    put(asset, text(archive())?)?
+    # 1. Nothing carried, nothing verified, nothing adopted.
+    assert admit_release(asset, home)?.is_none()
+    assert not adopt(scratch.path(), home)?
+    assert carried(home)?.is_none()
+    # 2. Damage is never read as absence.
+    put(home.joinpath(CARRIED_TRUST), "{\"signer\":{}}")?
+    assert admit_release(asset, home).is_err()
+    return Ok(None)
+
+
+pub def test_a_packed_archive_ships_the_signer_its_toolchain_carries() -> Result[None, str]:
+    """
+    The signer travels inside the archive, from one installation to the next.
+
+    1. Packing an installation that carries a signer stages it; packing one that carries none stages nothing.
+    2. A home that installs the staged archive carries the same signer.
+    3. An installation whose signer file is damaged does not pack.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = scratch.path().joinpath("installed")
+    stage = scratch.path().joinpath("stage")
+    home = scratch.path().joinpath("home")
+    for directory in [installed, stage, home]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    # 1. Only what the installation carries is shipped.
+    assert not ship(installed, stage)?
+    put(installed.joinpath(CARRIED_TRUST), trust_text(trusted_root())?)?
+    assert ship(installed, stage)?
+    # 2. The next home adopts it unchanged.
+    assert adopt(stage, home)?
+    match carried(home)?:
+        None => return Err("the shipped signer was not adopted")
+        Some(facts) => assert facts.signer.workflow == WORKFLOW
+    # 3. A signer that cannot be read is never shipped.
+    put(installed.joinpath(CARRIED_TRUST), "{}")?
+    assert ship(installed, stage).is_err()
+    return Ok(None)

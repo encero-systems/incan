@@ -1,0 +1,152 @@
+"""Release signature verification (DD-0016) against a release signed the way the release workflow signs."""
+
+from std.encoding.base64 import b64decode
+from std.hash import sha256
+from std.testing import fail
+from release_signature import Signer, TrustRoot, trust_root, verify_bundle
+from release_signature_fixtures import (
+    IDENTITY,
+    ISSUER,
+    WORKFLOW,
+    archive,
+    branch_bundle,
+    bundle,
+    forged_log_bundle,
+    late_bundle,
+    other_trusted_root,
+    trusted_root,
+)
+
+
+def raw(encoded: str) -> Result[bytes, str]:
+    """Decode one fixture."""
+    return b64decode(encoded).map_err((error) => error.message())
+
+
+def text(encoded: str) -> Result[str, str]:
+    """Decode one fixture document."""
+    return raw(encoded)?.decode("utf-8", "strict").map_err((_) => "fixture is not UTF-8")
+
+
+def trusted() -> Result[TrustRoot, str]:
+    """The trust root that trusts the fixture's authority and log."""
+    return trust_root(text(trusted_root())?)
+
+
+def signer() -> Signer:
+    """The release workflow's identity."""
+    return Signer(workflow=WORKFLOW, issuer=ISSUER)
+
+
+def refusal(candidate: str, asset: bytes, root: TrustRoot, expected: Signer) -> Result[str, str]:
+    """The reason a bundle is refused for an archive; a verified bundle fails the test."""
+    match verify_bundle(candidate, sha256.digest(asset), root, expected):
+        Ok(_) => return Err("a bundle that must be refused verified")
+        Err(reason) => return Ok(reason)
+
+
+pub def test_a_signed_release_verifies_against_its_signer_and_trust_root() -> Result[None, str]:
+    """The fixture release verifies, and reports the signer and the log's record of it."""
+    verified = verify_bundle(text(bundle())?, sha256.digest(raw(archive())?), trusted()?, signer())?
+    assert verified.identity == IDENTITY
+    assert verified.tag == "v0.6.0"
+    assert verified.issuer == ISSUER
+    assert verified.integrated_time == 1794657900
+    assert verified.log_index == 3
+    return Ok(None)
+
+
+pub def test_a_tampered_archive_is_refused_by_its_digest() -> Result[None, str]:
+    """An archive that is not the signed one is refused, and the refusal names its digest."""
+    tampered = b"fixture toolchain archive for release signature tests, with one more line\n"
+    reason = refusal(text(bundle())?, tampered, trusted()?, signer())?
+    assert reason.startswith("the signature bundle signs another file: this one's SHA-256 is ")
+    return Ok(None)
+
+
+pub def test_a_release_by_another_signer_issuer_or_authority_is_refused() -> Result[None, str]:
+    """
+    A valid signature by anyone but the carried signer is refused.
+
+    1. Another workflow, even one whose name the signing workflow's name begins with, and the same workflow run for a
+       branch instead of a tag.
+    2. Another token issuer.
+    3. A certificate authority the trust root does not hold.
+    """
+    signed = text(bundle())?
+    asset = raw(archive())?
+    # 1. The workflow is compared whole, and only a tag ref is a release.
+    shorter = Signer(workflow=WORKFLOW[0:len(WORKFLOW) - 1], issuer=ISSUER)
+    assert (
+        refusal(signed, asset, trusted()?, shorter)? ==
+        f"the release is signed by {IDENTITY}, not by {shorter.workflow} at a tag"
+    )
+    assert (
+        refusal(text(branch_bundle())?, asset, trusted()?, signer())? ==
+        f"the release is signed by {WORKFLOW}@refs/heads/main, not by {WORKFLOW} at a tag"
+    )
+    # 2. The issuer too.
+    other_issuer = Signer(workflow=WORKFLOW, issuer="https://issuer.example")
+    assert refusal(signed, asset, trusted()?, other_issuer)?.startswith("the signer's token came from ")
+    # 3. The chain must end at an authority this toolchain carries.
+    untrusted = trust_root(text(other_trusted_root())?)?
+    assert (
+        refusal(signed, asset, untrusted, signer())? ==
+        "the signing certificate does not chain to a trusted certificate authority"
+    )
+    return Ok(None)
+
+
+pub def test_a_changed_signature_or_log_record_is_refused() -> Result[None, str]:
+    """
+    Every part of the bundle is bound to the rest.
+
+    1. Another signature of the right shape does not verify under the certificate.
+    2. A changed entry timestamp, a changed proof hash and a checkpoint for another tree size are each refused.
+    3. A log record signed by a key that is not the trusted log's is refused.
+    4. A signature the log recorded after the certificate expired is refused.
+    """
+    asset = raw(archive())?
+    signed = text(bundle())?
+    document = signed.split("\"messageSignature\"")
+    assert len(document) == 2
+    # 1. The entry timestamp is a P-256 signature too, so it parses as the message signature and fails to verify.
+    promise = signed.split("\"signedEntryTimestamp\":\"")[1].split("\"")[0]
+    original = document[1].split("\"signature\":\"")[1].split("\"")[0]
+    swapped = document[0] + "\"messageSignature\"" + document[1].replace(original, promise)
+    assert refusal(swapped, asset, trusted()?, signer())? == "the signature does not verify under the signing certificate"
+    # 2. The log's own material.
+    moved = signed.replace("\"integratedTime\":\"1794657900\"", "\"integratedTime\":\"1794657901\"")
+    assert refusal(moved, asset, trusted()?, signer())? == "the transparency log's signed entry timestamp does not verify"
+    first_hash = signed.split("\"hashes\":[\"")[1].split("\"")[0]
+    root_hash = signed.split("\"rootHash\":\"")[1].split("\"")[0]
+    rerouted = signed.replace(f"[\"{first_hash}\"", f"[\"{root_hash}\"")
+    assert refusal(rerouted, asset, trusted()?, signer())? == "the inclusion proof does not lead to its root"
+    resized = signed.replace("\\n5\\n", "\\n6\\n")
+    assert (
+        refusal(resized, asset, trusted()?, signer())? ==
+        "the transparency-log checkpoint is for another tree than the inclusion proof"
+    )
+    # 3. Only the trusted log's key counts.
+    assert (
+        refusal(text(forged_log_bundle())?, asset, trusted()?, signer())? ==
+        "the transparency log's signed entry timestamp does not verify"
+    )
+    # 4. The log's time decides whether the short-lived certificate was valid.
+    assert (
+        refusal(text(late_bundle())?, asset, trusted()?, signer())? ==
+        "the transparency log recorded the signature outside its certificates' validity"
+    )
+    return Ok(None)
+
+
+pub def test_a_trust_root_whose_chain_does_not_verify_is_refused() -> Result[None, str]:
+    """A trust root that pairs one authority's intermediate with another's root is refused before any release."""
+    first = text(trusted_root())?
+    second = text(other_trusted_root())?
+    own_root = first.split("{\"rawBytes\":\"")[3].split("\"")[0]
+    other_root = second.split("{\"rawBytes\":\"")[3].split("\"")[0]
+    match trust_root(first.replace(own_root, other_root)):
+        Ok(_) => fail("a broken chain was trusted")
+        Err(reason) => assert reason == "a trusted certificate authority's chain does not verify"
+    return Ok(None)

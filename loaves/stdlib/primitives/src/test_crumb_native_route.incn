@@ -1,0 +1,193 @@
+"""The public Crumb row API runs the Rust codec; the Incan codec is its measured twin, never a second route."""
+
+from rust::incan_std_primitives::crumb import RowRequest, twin_row_reads
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.descriptions import Description, DescriptionMode
+from crate.primitives.crumb.metadata_values import encode
+from crate.primitives.crumb.records import RowRecord
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.encoding_errors import BinaryFailure
+from crate.primitives.crumb.row_reader import read_prefix, read_rows
+from crate.primitives.crumb.row_writer import write_rows
+from crate.primitives.crumb.types import AbsentPolicy
+from crate.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from crate.primitives.views import MappedFile
+
+
+def stored() -> Description:
+    """One record description with a single required `i8` field."""
+    member = Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(b"field1")),
+            MetadataEntry(key="name", value=Metadata.Text("stored")),
+            MetadataEntry(key="type", value=Metadata.Text("i8")),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+    return Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Record")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(b"record\x00")),
+                MetadataEntry(key="path", value=Metadata.Text("example.Stored")),
+                MetadataEntry(key="fields", value=Metadata.List([member])),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+            ],
+        ),
+        mode=DescriptionMode.Inline,
+    )
+
+
+def test_the_public_read_path_does_not_run_the_incan_twin() -> Result[None, str]:
+    """Reading an envelope and one of its records through the public API admits nothing in the Incan twin."""
+    values = [
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
+    ]
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    records = [RowRecord(key=b"record\x00", value=Value.Record(values))]
+    envelope = write_rows([stored()], records, registry, true, budget).map_err((e) => e.message())?
+    owner = MappedFile.owned(envelope)?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            before = twin_row_reads()
+            rows = read_rows(view, [], registry, true, budget).map_err((e) => e.message())?
+            record = rows.read_record(0, budget).map_err((e) => e.message())?
+            assert record.key == b"record\x00"
+            assert rows.is_sealed()
+            ran = twin_row_reads() - before
+            assert ran == 0u64, f"the public read path admitted {ran} envelope(s) in the Incan twin"
+    return Ok(None)
+
+
+def one_record() -> list[RowRecord]:
+    """One `stored` record whose only field holds 7."""
+    values = [
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
+    ]
+    return [RowRecord(key=b"record\x00", value=Value.Record(values))]
+
+
+def other_last(envelope: bytes, index: int) -> int:
+    """The position of each byte of the envelope, except that the last takes the first byte that differs from it."""
+    last = len(envelope) - 1
+    if index != last:
+        return index
+    for candidate in range(last):
+        if envelope[candidate] != envelope[last]:
+            return candidate
+    return index
+
+
+def admission(envelope: bytes, exact: bool, bytes_left: int, elements_left: int) -> RowRequest:
+    """A native request for one envelope with this allowance and no supplied description."""
+    mut request = RowRequest.new(envelope, false, exact)
+    request.allow(bytes_left, elements_left, 64)
+    return request
+
+
+def test_the_native_entry_admits_from_the_public_api_inputs() -> Result[None, str]:
+    """The entry reports the count, seal and length of an envelope, and positions trailing bytes and a bad seal."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, true, budget).map_err((e) => e.message())?
+    admitted = admission(envelope, true, 1048576, 1048576).admit()
+    assert admitted.admitted(), f"the native entry refused a written envelope: {admitted.category}"
+    assert admitted.records == 1
+    assert admitted.sealed
+    assert admitted.consumed == len(envelope)
+    # The envelope again with its first byte after it.
+    trailing: bytes = [envelope[index % len(envelope)] for index in range(len(envelope) + 1)]
+    exact = admission(trailing, true, 1048576, 1048576).admit()
+    assert exact.category == "trailing_bytes"
+    assert exact.offset == len(envelope)
+    prefix = admission(trailing, false, 1048576, 1048576).admit()
+    assert prefix.admitted()
+    assert prefix.consumed == len(envelope)
+    corrupt: bytes = [envelope[other_last(envelope, index)] for index in range(len(envelope))]
+    sealed = admission(corrupt, true, 1048576, 1048576).admit()
+    assert sealed.category == "seal_mismatch"
+    assert sealed.offset == len(envelope) - 33
+    return Ok(None)
+
+
+def test_the_native_entry_charges_exactly_the_allowance_it_reports() -> Result[None, str]:
+    """An allowance of exactly the reported charges admits the envelope again; one element less refuses it."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, false, budget).map_err((e) => e.message())?
+    first = admission(envelope, true, 1048576, 1048576).admit()
+    assert first.admitted()
+    again = admission(envelope, true, first.bytes_charged, first.elements_charged).admit()
+    assert again.admitted(), f"the reported allowance did not suffice: {again.category}"
+    short = admission(envelope, true, first.bytes_charged, first.elements_charged - 1).admit()
+    assert short.category == "limit_exceeded"
+    return Ok(None)
+
+
+def test_the_native_entry_admits_a_supplied_description_by_its_d_encoding() -> Result[None, str]:
+    """A reference envelope refuses without its description and admits it supplied in its D encoding."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    reference = Description(metadata=stored().metadata, mode=DescriptionMode.Reference)
+    envelope = write_rows([reference], one_record(), registry, false, budget).map_err((e) => e.message())?
+    missing = admission(envelope, true, 1048576, 1048576).admit()
+    assert missing.category == "missing_description"
+    mut supplied = admission(envelope, true, 1048576, 1048576)
+    supplied.supply(encode(stored().metadata, budget).map_err((e) => e.message())?)
+    admitted = supplied.admit()
+    assert admitted.admitted(), f"the supplied description was not admitted: {admitted.category}"
+    assert admitted.records == 1
+    return Ok(None)
+
+
+def test_the_public_row_set_reads_fields_and_descriptions_natively() -> Result[None, str]:
+    """A field's cell, its value and the written description come from the native set, with the reader's refusals."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, false, budget).map_err((e) => e.message())?
+    owner = MappedFile.owned(envelope)?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            before = twin_row_reads()
+            rows, consumed = read_prefix(view, [], registry, false, budget).map_err((e) => e.message())?
+            assert consumed == len(envelope)
+            assert rows.len() == 1
+            match rows.field_view(0, b"field1", budget).map_err((e) => e.message())?:
+                None => return Err("a required field had no cell")
+                Some(cell) =>
+                    assert cell.len() == 1
+                    assert cell.read_u8(0) == Some(7u8)
+            match rows.read_field(0, b"field1", budget).map_err((e) => e.message())?:
+                Value.Integer(number) =>
+                    assert number == IntegerValue.Signed(7i128)
+                _ => return Err("the selected field's value changed")
+            match rows.read_field(0, b"absent", budget):
+                Ok(_) => return Err("an unknown field was read")
+                Err(error) =>
+                    assert error.kind == BinaryFailure.MissingField
+            match rows.read_record(1, budget):
+                Ok(_) => return Err("a record past the set was read")
+                Err(error) =>
+                    assert error.kind == BinaryFailure.RecordIndex
+            written = rows.descriptions(budget).map_err((e) => e.message())?
+            assert len(written) == 1
+            assert written[0].mode == DescriptionMode.Inline
+            read_back = encode(written[0].metadata, budget).map_err((e) => e.message())?
+            assert read_back == encode(stored().metadata, budget).map_err((e) => e.message())?
+            assert twin_row_reads() == before, "the public row set ran the Incan twin"
+    return Ok(None)

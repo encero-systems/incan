@@ -56,19 +56,48 @@ pub(super) struct Stored {
     pub(super) digest: Vec<u8>,
     pub(super) fields: Vec<StoredField>,
     pub(super) variants: Vec<StoredVariant>,
+    /// For a reference entry, the position of the supplied description it resolved to.
+    pub(super) supplied: Option<usize>,
 }
 
 /// One decoded record: its description slot and logical value.
+#[derive(Clone)]
 pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
+    /// The row frame's envelope offset and length, for reading it again on request.
+    pub(super) origin: usize,
+    pub(super) length: usize,
 }
 
-/// A decoded envelope: the K-ordered dictionary, records and seal status.
+/// A decoded envelope: the K-ordered dictionary, records, seal status and the input bytes it occupies.
+#[derive(Clone)]
 pub(super) struct Rows {
     pub(super) dictionary: Vec<Stored>,
     pub(super) records: Vec<Record>,
     pub(super) sealed: bool,
+    pub(super) consumed: usize,
+}
+
+/// What a row read admits besides its bytes: supplied reference descriptions, registered profile kinds with their
+/// record (true) or enum (false) shapes, whether the envelope must be sealed, and whether it must end the input.
+pub(super) struct ReadInputs<'a> {
+    pub(super) supplied: &'a [Meta],
+    pub(super) kinds: &'a [(String, bool)],
+    pub(super) require_sealed: bool,
+    pub(super) exact: bool,
+}
+
+impl<'a> ReadInputs<'a> {
+    /// A corpus case's inputs: its supplied descriptions, no profile kinds, and one exact envelope.
+    fn case(supplied: &'a [Meta], document: &Json) -> Self {
+        Self {
+            supplied,
+            kinds: &[],
+            require_sealed: require_sealed(document),
+            exact: true,
+        }
+    }
 }
 
 /// Decode a row case: one status and records, or a positioned refusal, per decoder execution.
@@ -82,7 +111,7 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     for length in lengths {
         let mut budget = row_budget(document)?;
-        match read_rows(&data[..length], &supplied, require_sealed(document), &mut budget) {
+        match read_rows(&data[..length], &ReadInputs::case(&supplied, document), &mut budget) {
             Ok(rows) => {
                 output.push(0);
                 output.push(u8::from(rows.sealed));
@@ -120,7 +149,7 @@ fn refusal_bytes(refusal: &Refusal, output: &mut Vec<u8>) {
 pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
     let (data, supplied) = row_inputs(document)?;
     let mut budget = row_budget(document)?;
-    match read_rows(&data, &supplied, require_sealed(document), &mut budget) {
+    match read_rows(&data, &ReadInputs::case(&supplied, document), &mut budget) {
         Ok(rows) => super::row_write::write_rows(&rows),
         Err(_) => Some(Vec::new()),
     }
@@ -189,8 +218,9 @@ pub(super) fn notation(value: &Json) -> Option<Meta> {
     })
 }
 
-/// Check the header and frame, then admit the dictionary, every row and any seal.
-fn read_rows(data: &[u8], supplied: &[Meta], require_sealed: bool, budget: &mut Budget) -> Positioned<Rows> {
+/// Check the header and frame, then admit the dictionary, every row and any seal; an exact read refuses any bytes
+/// after the envelope, and a prefix read reports how many it occupies.
+pub(super) fn read_rows(data: &[u8], inputs: &ReadInputs, budget: &mut Budget) -> Positioned<Rows> {
     let mut cursor = Span::new(data, 0);
     let magic = cursor.take(4, budget)?;
     budget.bytes(4).place(0)?;
@@ -207,19 +237,22 @@ fn read_rows(data: &[u8], supplied: &[Meta], require_sealed: bool, budget: &mut 
     }
     let payload = cursor.frame(budget)?;
     let payload_origin = cursor.absolute() - payload.len();
-    cursor.finished()?;
+    if inputs.exact {
+        cursor.finished()?;
+    }
     let sealed = flags == 1;
-    if require_sealed && !sealed {
+    if inputs.require_sealed && !sealed {
         return Err(at("seal_required", 6));
     }
     let mut body = Span::new(payload, payload_origin);
-    let dictionary = read_entries(&mut body, supplied, budget)?;
+    let dictionary = read_entries(&mut body, inputs.supplied, inputs.kinds, budget)?;
     let records = read_records(&mut body, &dictionary, sealed, budget)?;
     body.finished()?;
     Ok(Rows {
         dictionary,
         records,
         sealed,
+        consumed: cursor.consumed(),
     })
 }
 
@@ -254,7 +287,12 @@ fn read_records(
             hash::frame(&mut seal, &contribution);
         }
         budget.bytes(64).place(origin)?;
-        records.push(Record { slot, value });
+        records.push(Record {
+            slot,
+            value,
+            origin,
+            length: raw.len(),
+        });
     }
     if sealed {
         let offset = cursor.absolute();
@@ -276,21 +314,30 @@ pub(super) fn read_dictionary(
     budget: &mut Budget,
 ) -> Result<Vec<Stored>, Refused> {
     let mut body = Span::new(cursor.unread(), 0);
-    let entries = read_entries(&mut body, supplied, budget).map_err(|refusal| refusal.category)?;
+    let entries = read_entries(&mut body, supplied, &[], budget).map_err(|refusal| refusal.category)?;
     cursor.skip(body.consumed());
     Ok(entries)
 }
 
 /// Read the dictionary in strict K order, admitting inline and supplied reference descriptions.
-fn read_entries(cursor: &mut Span, supplied: &[Meta], budget: &mut Budget) -> Positioned<Vec<Stored>> {
+fn read_entries(
+    cursor: &mut Span,
+    supplied: &[Meta],
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Positioned<Vec<Stored>> {
     let count = bounded_count(cursor, budget)?;
     let mut entries: Vec<Stored> = Vec::with_capacity(count);
     for index in 0..count {
         let offset = cursor.absolute();
+        let mut resolved = None;
         let (source, inline) = match cursor.byte(budget)? {
             0 => {
                 let view = cursor.frame(budget)?;
-                (inline_description(view, cursor.absolute() - view.len(), budget)?, true)
+                (
+                    inline_description(view, cursor.absolute() - view.len(), kinds, budget)?,
+                    true,
+                )
             }
             1 => {
                 let key = cursor.frame(budget)?.to_vec();
@@ -298,14 +345,17 @@ fn read_entries(cursor: &mut Span, supplied: &[Meta], budget: &mut Budget) -> Po
                     .map_err(|kind| invalid_as(kind, "invalid_selector"))
                     .place(offset)?;
                 let digest = cursor.take(32, budget)?.to_vec();
-                (referenced(&key, &digest, supplied, budget).place(offset)?, false)
+                let (position, source) = referenced(&key, &digest, supplied, kinds, budget).place(offset)?;
+                resolved = Some(position);
+                (source, false)
             }
             _ => return Err(at("unsupported_profile", offset)),
         };
-        validate_selectors(&source, budget).place(offset)?;
-        let checked = admit(source, inline, budget)
+        validate_selectors(&source, kinds, budget).place(offset)?;
+        let mut checked = admit(source, inline, kinds, budget)
             .map_err(|kind| invalid_as(kind, "invalid_description"))
             .place(offset)?;
+        checked.supplied = resolved;
         if entries.iter().any(|entry| entry.key == checked.key) {
             return Err(at("duplicate_selector", offset));
         }
@@ -371,9 +421,15 @@ fn check_references(node: &Node, entries: &[Stored], budget: &mut Budget) -> Res
 }
 
 /// Resolve the exact supplied K and complete D digest.
-fn referenced(key: &[u8], digest: &[u8], supplied: &[Meta], budget: &mut Budget) -> Result<Meta, Refused> {
+fn referenced(
+    key: &[u8],
+    digest: &[u8],
+    supplied: &[Meta],
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Result<(usize, Meta), Refused> {
     let mut found_key = false;
-    for candidate in supplied {
+    for (position, candidate) in supplied.iter().enumerate() {
         budget.elements(1)?;
         let Some(Meta::Binary(raw_key)) = get(candidate, "nominal") else {
             return Err("invalid_description");
@@ -382,10 +438,11 @@ fn referenced(key: &[u8], digest: &[u8], supplied: &[Meta], budget: &mut Budget)
             continue;
         }
         found_key = true;
-        validate_selectors(candidate, budget)?;
-        let parsed = admit(candidate.clone(), false, budget).map_err(|kind| invalid_as(kind, "invalid_description"))?;
+        validate_selectors(candidate, kinds, budget)?;
+        let parsed =
+            admit(candidate.clone(), false, kinds, budget).map_err(|kind| invalid_as(kind, "invalid_description"))?;
         if parsed.digest == digest {
-            return Ok(candidate.clone());
+            return Ok((position, candidate.clone()));
         }
     }
     Err(if found_key {
@@ -396,15 +453,11 @@ fn referenced(key: &[u8], digest: &[u8], supplied: &[Meta], budget: &mut Budget)
 }
 
 /// Recover an inline description: its framed header plus the identity-ordered member tables.
-fn inline_description(view: &[u8], origin: usize, budget: &mut Budget) -> Positioned<Meta> {
+fn inline_description(view: &[u8], origin: usize, kinds: &[(String, bool)], budget: &mut Budget) -> Positioned<Meta> {
     let mut cursor = Span::new(view, origin);
     let header_view = cursor.frame(budget)?;
     let header = read_metadata(header_view, cursor.absolute() - header_view.len(), budget)?;
-    let record = match get(&header, "kind") {
-        Some(Meta::Text(kind)) if kind == "Record" => true,
-        Some(Meta::Text(kind)) if kind == "Enum" => false,
-        _ => return Err(at("invalid_description", origin)),
-    };
+    let record = record_kind(&header, kinds).ok_or_else(|| at("invalid_description", origin))?;
     let members = read_members(&mut cursor, !record, budget)?;
     cursor.finished()?;
     with_members(header, if record { "fields" } else { "variants" }, members).place(origin)
@@ -474,12 +527,8 @@ fn with_members(header: Meta, name: &str, members: Vec<Meta>) -> Result<Meta, Re
 }
 
 /// Check K and every field N before admission, keeping malformed selectors distinguishable.
-fn validate_selectors(source: &Meta, budget: &mut Budget) -> Result<(), Refused> {
-    let record = match get(source, "kind") {
-        Some(Meta::Text(kind)) if kind == "Record" => true,
-        Some(Meta::Text(kind)) if kind == "Enum" => false,
-        _ => return Err("invalid_description"),
-    };
+fn validate_selectors(source: &Meta, kinds: &[(String, bool)], budget: &mut Budget) -> Result<(), Refused> {
+    let record = record_kind(source, kinds).ok_or("invalid_description")?;
     let Some(Meta::Binary(key)) = get(source, "nominal") else {
         return Err("invalid_description");
     };
@@ -512,16 +561,25 @@ fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
     entries.iter().find(|(key, _)| key == name).map(|(_, value)| value)
 }
 
+/// Whether a description's kind has the record (true) or enum (false) shape: Record and Enum are built in, a
+/// registered profile kind has its registered shape, and any other kind has none.
+fn record_kind(metadata: &Meta, kinds: &[(String, bool)]) -> Option<bool> {
+    let Some(Meta::Text(kind)) = get(metadata, "kind") else {
+        return None;
+    };
+    match kind.as_str() {
+        "Record" => Some(true),
+        "Enum" => Some(false),
+        _ => kinds.iter().find(|(name, _)| name == kind).map(|(_, record)| *record),
+    }
+}
+
 /// Admit one complete description: its D digest, kind, K, path, properties and member tables.
-fn admit(metadata: Meta, inline: bool, budget: &mut Budget) -> Result<Stored, Refused> {
+fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Budget) -> Result<Stored, Refused> {
     let mut encoded = b"crumb1\x00\x05".to_vec();
     encode_metadata(&metadata, &mut encoded, budget)?;
     let digest = Sha256::digest(&encoded).to_vec();
-    let record = match get(&metadata, "kind") {
-        Some(Meta::Text(kind)) if kind == "Record" => true,
-        Some(Meta::Text(kind)) if kind == "Enum" => false,
-        _ => return Err("invalid_description"),
-    };
+    let record = record_kind(&metadata, kinds).ok_or("invalid_description")?;
     let Some(Meta::Binary(key)) = get(&metadata, "nominal") else {
         return Err("invalid_description");
     };
@@ -552,6 +610,7 @@ fn admit(metadata: Meta, inline: bool, budget: &mut Budget) -> Result<Stored, Re
         digest,
         fields,
         variants,
+        supplied: None,
     })
 }
 
@@ -746,6 +805,12 @@ fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Re
         _ if arguments.is_empty() && hash::SCALARS.contains(&name.as_str()) => Ok(Node::Scalar(name)),
         _ => Err("invalid_cell"),
     }
+}
+
+/// Decode one complete D-encoded description a caller supplies, outside any request's allowance.
+pub(super) fn read_description(encoded: &[u8]) -> Option<Meta> {
+    let mut unlimited = Budget::new(u64::MAX, u64::MAX, u64::MAX);
+    read_metadata(encoded, 0, &mut unlimited).ok()
 }
 
 /// Read one complete D frame, which begins `origin` bytes into the envelope, with no trailing bytes.

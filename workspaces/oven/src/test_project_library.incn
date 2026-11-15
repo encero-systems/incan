@@ -2,7 +2,14 @@
 
 from std.fs import Path
 from files import make_directory, write
-from project_library import LIBRARY_SUFFIX, library_loaf, library_output, shared_library, with_project_library
+from project_library import (
+    LIBRARY_SUFFIX,
+    library_loaf,
+    library_output,
+    shared_library,
+    source_modules,
+    with_project_library,
+)
 from scratch import scratch_directory
 from unit import UnitDescription
 from unit_freshness import description_digest
@@ -91,4 +98,27 @@ pub def test_two_test_sources_share_one_shared_library() -> Result[None, str]:
     assert description_digest(reading)? == description_digest(shaping)?
     assert library_output(first, key, key).0 == library_output(second, key, key).0
     assert library_loaf(first, key, library_output(first, key, key)).key == key
+    return Ok(None)
+
+
+pub def test_a_nested_project_keeps_its_modules_out_of_the_enclosing_shared_library() -> Result[None, str]:
+    """
+    A directory under a source root that holds its own `loaf.toml` is another project: its modules and tests are its
+    own, compiled against its own dependencies, so the enclosing project's shared library and test list stop there.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    tool = root.joinpath("src/tool")
+    make_directory(tool.joinpath("src"))?
+    write(tool.joinpath("loaf.toml"), "[project]\nname = \"tool\"\nversion = \"1\"\n")?
+    write(tool.joinpath("src/main.incn"), "\"\"\"Another project's entry.\"\"\"\n")?
+    write(tool.joinpath("src/test_tool.incn"), "\"\"\"Another project's test.\"\"\"\n")?
+    tests, provided = source_modules(root.joinpath("src"))?
+    for path in tests + provided:
+        assert not path.startswith(tool.0 + "/"), path
+    # The source root itself is a project root and is still read.
+    own_tests, own = source_modules(tool)?
+    assert own_tests == [tool.joinpath("src/test_tool.incn").0]
+    assert own == [tool.joinpath("src/main.incn").0]
     return Ok(None)
