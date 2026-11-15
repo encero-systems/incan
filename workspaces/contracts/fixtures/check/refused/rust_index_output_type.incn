@@ -1,0 +1,8 @@
+# behavior: indexing a Rust container types the element as its `Index` impl's `Output`, so returning a `VecDeque[int]` element as `str` is a type mismatch rather than an unknown type (#2977)
+# expect-diagnostic: INCAN-T0001
+
+from rust::std::collections import VecDeque
+
+
+def selected(value: VecDeque[int], index: usize) -> str:
+    return value[index]
