@@ -349,6 +349,51 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
             assert name == "future"
         _ =>
             assert false
+    rust_artifact = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="artifact-rust", node="root", selector="checked_constants", values=["1"])],
+    )
+    match encode_record(rust_artifact):
+        Ok(_) => pass
+        _ => assert false
+    constructor = CheckedRecord(
+        profile=record.profile,
+        owner=record.owner,
+        root=record.root,
+        family=record.family,
+        fields=[CanonicalField(family="constructor", node="root", selector="field-binding", values=["1", "1", "0", "0"])],
+    )
+    match encode_record(constructor):
+        Ok(_) => pass
+        _ => assert false
+    for kind in ["value", "static", "type-name", "variant", "module", "rust-import", "rust-value", "trait"]:
+        identifier = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[CanonicalField(family="identifier", node="root", selector="kind", values=[kind])],
+        )
+        match encode_record(identifier):
+            Ok(_) => pass
+            _ => assert false
+    for field in [
+        CanonicalField(family="native-value", node="root", selector="type", values=["identity", "int"]),
+        CanonicalField(family="requirement", node="root", selector="constructor-field", values=["field", "owner"]),
+    ]:
+        retained = CheckedRecord(
+            profile=record.profile,
+            owner=record.owner,
+            root=record.root,
+            family=record.family,
+            fields=[field],
+        )
+        match encode_record(retained):
+            Ok(_) => pass
+            _ => assert false
 
 
 def local_record_controls(source: str, moved: str) -> Result[None, str]:
