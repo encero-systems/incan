@@ -6,9 +6,9 @@
 from std.fs import DirEntry, DiskUsage, File, FileLock, IoError, MappedFile, MappedView, OpenFileMode, OpenOptions, Path, PathStat
 ```
 
-The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, and a human-readable `message()`.
+The public surface is path-centric. Construct a `Path`, then call path or file-handle methods from there. Host failures return `Result[..., IoError]`; the error includes the affected `path`, a normalized `kind`, the `operation` that failed, such as `open`, `read`, `write`, `create` or `remove tree`, and a human-readable `message()`, which reads `OPERATION PATH: DETAIL`.
 
-Current `std.fs` support follows the repository's Unix-like host target: macOS, Linux, and Windows through WSL. Native Windows filesystem semantics are not yet part of this reference contract.
+`std.fs` supports Unix-like hosts: macOS, Linux, and Windows through WSL. Native Windows filesystem semantics are not part of this contract.
 
 ## Path
 

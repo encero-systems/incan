@@ -160,8 +160,7 @@ Each new `/review` invocation starts a fresh report for the current run. Do not 
 
 These fail CI or panic at runtime. Flag every occurrence.
 
-- [ ] **No `.unwrap()` or `.expect()`** — anywhere, including tests and examples.
-  Use `?`, `.map_err(|e| miette!(...))`, or explicit `match`.
+- [ ] **No `.unwrap()` or `.expect()`** — anywhere, including tests and examples. Use `?`, `.map_err(|e| miette!(...))`, or explicit `match`.
 - [ ] **Test functions that do fallible work return `Result`** — `fn my_test() -> Result<(), Box<dyn std::error::Error>>` + `?`, never `.unwrap()`.
 - [ ] **Rust quality checked** — flag anti-patterns from the diff and run the applicable Makefile gates. There is no Cargo project; never run Cargo or claim an unrun lint check passed.
 
@@ -350,8 +349,7 @@ If any item is unchecked, do not claim the review is clean. Report the remaining
 
 A failed broad verification command does **not** invalidate the review.
 
-If `make fmt`, `make pre-commit`, `make docs`, or another broad check fails for reasons unrelated to the
-current local findings, you must still:
+If `make fmt`, `make pre-commit`, `make docs`, or another broad check fails for reasons unrelated to the current local findings, you must still:
 
 1. keep reviewing the worktree,
 2. run the narrow relevant verification you still can,

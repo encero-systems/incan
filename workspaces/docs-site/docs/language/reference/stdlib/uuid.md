@@ -95,9 +95,8 @@ Known `kind` values include `invalid_length`, `invalid_format`, `invalid_charact
 
 ## Generation Helpers
 
-`std.uuid` generates RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8. Version 2 remains parseable and inspectable but has no generator because RFC 9562 leaves DCE Security UUID generation outside the core specification.
+`std.uuid` generates RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8. Version 2 remains parseable and inspectable but has no generator.
 
 ## See Also
 
 - [Working with UUIDs](../../how-to/working_with_uuids.md)
-- [RFC 060: std.uuid](../../../RFCs/closed/implemented/060_std_uuid.md)

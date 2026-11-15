@@ -5,7 +5,7 @@ This page specifies `incan inspect codegraph` retrieval, context packing and sna
 ## CLI signatures
 
 ```text
-incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict | --allow-errors] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
@@ -23,6 +23,7 @@ incan mcp PATH [--profile NAME]
 | `--budget N` | Integer, default `8000`, range `128..1000000` | Conservative token upper bound: the complete UTF-8 response, including its final newline, must fit in this many bytes. The MCP JSON-RPC envelope is outside this bound. |
 | `--stale SNAPSHOT` | String beginning `snapshot:` | Returns a JSON object with `record: "snapshot_status"`, `expected`, the current `snapshot_id` and Boolean `stale`. A stale snapshot is a successful status response. It takes precedence over a simultaneous query. |
 | `--strict` | Boolean, default `false` | Refuses the export if any selected unit fails checking; reports its diagnostics. The default exports available facts and warns about unchecked units on stderr. |
+| `--allow-errors` | Boolean, default `false` | 0.5.1's spelling of the default export, which keeps the facts of units that fail checking. Combined with `--strict` it exits `1` with `--allow-errors cannot be combined with --strict`. |
 | `--risk` | Boolean, default `false` | Adds optional local git observations. Missing git history contributes no risk records. |
 | `--substitute NAME=DIR` | Repeatable dependency mapping | Replaces the local dependency of package `NAME` with the project at `DIR` wherever the dependency graph reaches it. |
 | `--features A,B`, `--no-default-features`, `--all-features` | Root-package feature selection, as for [unit commands](cli_reference.md#unit-options); default features | The inspected unit and its dependencies are checked with this selection. A source outside any project refuses it. Each selection has its own export. |

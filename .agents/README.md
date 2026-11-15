@@ -13,10 +13,11 @@ This folder contains subagents and reference material for AI agents working on t
 | File | Purpose |
 | --- | --- |
 | `learnings.md` | Hard-won insights from past RFC implementations and issue resolutions. Consult before starting work on any RFC implementation or parser/typechecker/lowering change. |
+| `anti-patterns.md` | Every anti-pattern the repository's rules name, each with its source, a search that finds its violations and their count. Rerun a rule's search before and after clearing it. |
 
 ## Adding learnings
 
-When an implementation teaches a durable lesson about architeture, testing, or pitfalls, use the `/add-learning` skill to append new insights. It handles section matching, formatting, and deduplication.
+When an implementation teaches a durable lesson about architecture, testing, or pitfalls, use the `/add-learning` skill to append new insights. It handles section matching, formatting, and deduplication.
 
 ## Skills worth discovering
 

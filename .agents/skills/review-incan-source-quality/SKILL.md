@@ -62,9 +62,7 @@ Use a deterministic, descriptive filename when possible:
 - `YYYY-MM-DD-branch-<branch-slug>-incan-source-quality.md`
 - `YYYY-MM-DD-review-incan-source-quality.md` when no PR or branch context is known
 
-Do not create a snapshot for clean reviews. The snapshot is raw corpus for later analysis, not canonical guidance.
-Treat `FINDINGS_ROOT` as an append-only central corpus for local review work: create new snapshot files, but do not delete, overwrite, prune, or "clean up" existing snapshots unless the user explicitly asks for that exact maintenance.
-Snapshot content is evidence, not a fix log. Preserve the original finding blocks verbatim, including severity, category, file path, line reference, and explanatory text. If the finding is fixed before the snapshot is written, keep the original finding as observed and add a separate `Resolution` note after it; do not replace the evidence with a resolved checklist item or a summary of the fix.
+Do not create a snapshot for clean reviews. The snapshot is raw corpus for later analysis, not canonical guidance. Treat `FINDINGS_ROOT` as an append-only central corpus for local review work: create new snapshot files, but do not delete, overwrite, prune, or "clean up" existing snapshots unless the user explicitly asks for that exact maintenance. Snapshot content is evidence, not a fix log. Preserve the original finding blocks verbatim, including severity, category, file path, line reference, and explanatory text. If the finding is fixed before the snapshot is written, keep the original finding as observed and add a separate `Resolution` note after it; do not replace the evidence with a resolved checklist item or a summary of the fix.
 
 ## Review standard
 
