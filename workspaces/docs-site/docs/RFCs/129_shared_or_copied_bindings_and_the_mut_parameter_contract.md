@@ -340,7 +340,7 @@ The same responsibility applies to loop targets, destructuring, element projecti
 
 ### Duckborrowing
 
-The compiler may infer a borrow, move, or copy only when it preserves the source contract. An owned local's unobservable copy may be optimized away. A writable alias's observable sharing must not be optimized away. In particular, the compiler must not turn an alias into a copy to permit owner replacement, overlapping access, suspension, escape, or an unsupported expression shape. When the source requests conflicting access, the result must be a diagnostic.
+The compiler may infer a borrow, move, or copy only when it preserves the source contract. An owned local's unobservable copy may be optimized away. The same holds for an explicit clone of a plain parameter: when `name.clone()` is the last use of a plain parameter `name` and the copy is unobservable, duckborrowing may take that parameter owned and move it instead of cloning. A caller whose argument is still needed then supplies the copy, and a caller whose argument is not moves it. Without the clone, a read-only parameter is never moved to make `mut local = name` legal. A writable alias's observable sharing must not be optimized away. In particular, the compiler must not turn an alias into a copy to permit owner replacement, overlapping access, suspension, escape, or an unsupported expression shape. When the source requests conflicting access, the result must be a diagnostic.
 
 ### The `mut` parameter contract
 
