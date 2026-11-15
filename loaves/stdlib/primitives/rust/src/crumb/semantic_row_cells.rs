@@ -167,7 +167,18 @@ fn cell_inner(
         Node::Decimal(precision, scale) => decimal(*precision, *scale, view, origin, budget),
         Node::Reference(_) => scalar("reference", view, origin, budget),
         Node::Nominal(..) => {
-            let key = hash::closed_selector(node).ok_or_else(|| at("invalid_selector", origin))?;
+            let key = hash::closed_selector_charged(node, budget).map_err(|kind| {
+                at(
+                    if kind == "limit_exceeded" {
+                        kind
+                    } else {
+                        "invalid_selector"
+                    },
+                    origin,
+                )
+            })?;
+            budget.elements(1).place(origin)?;
+            budget.bytes(2 * key.len() as u64).place(origin)?;
             let entry = dictionary
                 .iter()
                 .find(|entry| entry.key == key)

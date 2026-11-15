@@ -53,6 +53,7 @@ pub(super) struct Stored {
     pub(super) inline: bool,
     pub(super) record: bool,
     pub(super) key: Vec<u8>,
+    pub(super) selector: Node,
     pub(super) digest: Vec<u8>,
     pub(super) fields: Vec<StoredField>,
     pub(super) variants: Vec<StoredVariant>,
@@ -394,9 +395,7 @@ fn settle_dictionary(entries: &[Stored], kinds: &[(String, bool)], budget: &mut 
 /// Every K and field selector must name descriptions the dictionary holds, with the same record or enum kind.
 fn check_dictionary(entries: &[Stored], budget: &mut Budget) -> Result<(), Refused> {
     for entry in entries {
-        let selector =
-            parse_key(&entry.key, entry.record, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
-        check_references(&selector, entries, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+        check_references(&entry.selector, entries, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
         for field in entry
             .fields
             .iter()
@@ -668,7 +667,7 @@ fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Bu
         return Err("invalid_description");
     };
     let key = key.clone();
-    parse_key(&key, record, budget)?;
+    let selector = parse_key(&key, record, budget)?;
     if !matches!(get_charged(&metadata, "path", budget)?, Some(Meta::Text(_)))
         || !matches!(get_charged(&metadata, "properties", budget)?, Some(Meta::Map(_)))
     {
@@ -692,6 +691,7 @@ fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Bu
         inline,
         record,
         key,
+        selector,
         digest,
         fields,
         variants,
