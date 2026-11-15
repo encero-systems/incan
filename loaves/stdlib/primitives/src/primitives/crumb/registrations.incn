@@ -100,6 +100,13 @@ pub class KindRegistry:
             entries[registration.kind] = registration
         return Ok(KindRegistry(entries=entries, admission=Rc.new(RefCell.new(None))))
 
+    pub def registered(self) -> list[KindRegistration]:
+        """The explicitly registered profile kinds, for a native codec that resolves kinds itself."""
+        mut result: list[KindRegistration] = []
+        for kind in self.entries:
+            result.append(self.entries[kind])
+        return result
+
     pub def take_admission(self) -> Option[CachedAdmission]:
         """Move the private core-admission cache out for one checked access."""
         return self.admission.replace(None)

@@ -11,6 +11,7 @@ use super::row_cursor::{Refusal, at};
 use super::rows::{self, Meta, ReadInputs, Rows};
 
 /// One native row-envelope admission: a positioned refusal or the admitted envelope's facts, and the allowance used.
+#[derive(Clone)]
 pub struct RowAdmission {
     /// Empty when the envelope is admitted; otherwise the refusal category as `BinaryFailure` spells it.
     pub category: String,
@@ -30,6 +31,21 @@ pub struct RowAdmission {
     pub bytes_charged: i64,
     /// Elements of the allowance this admission used, admitted or refused.
     pub elements_charged: i64,
+    /// The admitted envelope's bytes and decoded rows, which `semantic_row_set.rs` reads on request.
+    pub(super) data: Vec<u8>,
+    pub(super) rows: Option<Rows>,
+}
+
+impl std::fmt::Debug for RowAdmission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RowAdmission")
+            .field("category", &self.category)
+            .field("offset", &self.offset)
+            .field("consumed", &self.consumed)
+            .field("records", &self.records)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RowAdmission {
@@ -40,6 +56,7 @@ impl RowAdmission {
 }
 
 /// The inputs of one public row read, gathered by the Incan caller before it asks for the admission.
+#[derive(Clone, Debug)]
 pub struct RowRequest {
     data: Vec<u8>,
     supplied: Vec<Vec<u8>>,
@@ -96,7 +113,7 @@ impl RowRequest {
             None => Err(at("invalid_description", 0)),
         };
         let (bytes_left, elements_left) = budget.left();
-        admission(result, bytes - bytes_left, elements - elements_left)
+        admission(result, &self.data, bytes - bytes_left, elements - elements_left)
     }
 
     /// Decode each supplied description outside the caller's allowance; the caller already holds them as values.
@@ -109,7 +126,7 @@ impl RowRequest {
 }
 
 /// The admission's facts from a read result and the allowance it used.
-fn admission(result: Result<Rows, Refusal>, bytes: u64, elements: u64) -> RowAdmission {
+fn admission(result: Result<Rows, Refusal>, data: &[u8], bytes: u64, elements: u64) -> RowAdmission {
     let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
     let charged = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
     let mut admission = RowAdmission {
@@ -122,12 +139,16 @@ fn admission(result: Result<Rows, Refusal>, bytes: u64, elements: u64) -> RowAdm
         records: 0,
         bytes_charged: charged(bytes),
         elements_charged: charged(elements),
+        data: Vec::new(),
+        rows: None,
     };
     match result {
         Ok(rows) => {
             admission.consumed = count(rows.consumed);
             admission.sealed = rows.sealed;
             admission.records = count(rows.records.len());
+            admission.data = data[..rows.consumed].to_vec();
+            admission.rows = Some(rows);
         }
         Err(refusal) => {
             admission.category = refusal.category.to_string();

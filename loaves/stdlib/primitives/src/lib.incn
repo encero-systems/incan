@@ -52,7 +52,9 @@ import primitives.crumb.typed_rows
 import primitives.crumb.typed_columns
 import primitives.crumb.cell_read
 import primitives.crumb.row_projection
+import primitives.crumb.row_values
 import primitives.crumb.row_reader
+import primitives.crumb.row_twin
 import primitives.crumb.column_bits
 import primitives.crumb.column_numbers
 import primitives.crumb.column_types
