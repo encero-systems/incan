@@ -79,15 +79,19 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     ran = records_run(binary, source, store)
     imported = overlay_with(binary, source, source, store, ["--hover", "5:17"])
     own = overlay_with(binary, source, source, store, ["--hover", "4:5"])
+    definition = overlay_with(binary, source, source, store, ["--definition", "5:17"])
     if store.exists():
         stop_engine(binary, store)?
     _ = ran?
     imported_answer = imported?
     own_answer = own?
+    definition_answer = definition?
     imported_text = imported_answer.to_json().map_err((error) => error.message())?
     own_text = own_answer.to_json().map_err((error) => error.message())?
+    definition_text = definition_answer.to_json().map_err((error) => error.message())?
     assert imported_text.contains("def value(scale: int) -> int"), imported_text
     assert own_text.contains("def main() -> None"), own_text
+    assert definition_text.contains("helper.incn") and definition_text.contains("\"line\":1"), definition_text
     return Ok(None)
 
 
