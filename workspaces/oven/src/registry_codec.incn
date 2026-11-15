@@ -5,6 +5,9 @@ from std.fs import MappedView
 from std.io import BytesIO, Endian, _BytesIO
 from registry_units import RegistryUnit
 
+# The row layout's version. It keys the page cache, so a page written with another layout is never read.
+pub const PAGE_VERSION: str = "incan.registry-page/3"
+
 
 pub model Catalog:
     """The completed closure and the directory and artifact observations that justify its reuse."""
@@ -68,9 +71,10 @@ model Reader:
         recorded = self.number()?
         if recorded > 1:
             return Err("registry page recorded flag is not a boolean")
+        revision = self.number()?
         return Ok(RegistryUnit(
             loaf=loaf, version=version, registry=registry, domain=domain, directory=directory, features=features, entry=entry,
-            dependencies=dependencies, profile=profile, recorded=recorded == 1,
+            dependencies=dependencies, profile=profile, recorded=recorded == 1, revision=revision,
             name=self.text()?, crate_hash=self.text()?, refusal=self.text()?, artifact=self.text()?, kind=self.text()?,
             source_archive=self.text()?, source_digest=self.text()?,
         ))
@@ -79,7 +83,7 @@ model Reader:
 pub def decode(view: MappedView) -> Result[Catalog, str]:
     """Read a versioned table, refusing unknown versions, truncated rows, duplicate entries and trailing bytes."""
     mut reader = Reader(view=view)
-    if reader.text()? != "incan.registry-page/2":
+    if reader.text()? != PAGE_VERSION:
         return Err("unsupported registry page version")
     count = reader.number()?
     if count > (view.len() - reader.offset) // 128:
@@ -106,7 +110,7 @@ pub def encode(catalog: Catalog) -> Result[bytes, str]:
     if len(catalog.units) != len(catalog.listings) or len(catalog.units) != len(catalog.artifacts):
         return Err("registry page observation rows differ from its units")
     buffer = BytesIO(b"")
-    put_text(buffer, "incan.registry-page/2")?
+    put_text(buffer, PAGE_VERSION)?
     put_number(buffer, len(catalog.units))?
     for index in range(len(catalog.units)):
         put_unit(buffer, catalog.units[index])?
@@ -127,6 +131,7 @@ def put_unit(buffer: _BytesIO, unit: RegistryUnit) -> Result[None, str]:
     if unit.recorded:
         recorded = 1
     put_number(buffer, recorded)?
+    put_number(buffer, unit.revision)?
     for value in [
         unit.name, unit.crate_hash, unit.refusal, unit.artifact, unit.kind, unit.source_archive, unit.source_digest,
     ]:
