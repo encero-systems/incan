@@ -327,7 +327,7 @@ pub def test_retained_namespace_warm_edits_match_cold_builds() -> Result[None, s
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    typed = "examples/advanced/typed_data_processor"
+    typed = "../../examples/advanced/typed_data_processor"
     verify_retained_namespace_edit(
         binary,
         root.joinpath("typed-body"),
@@ -355,7 +355,7 @@ pub def test_retained_namespace_warm_edits_match_cold_builds() -> Result[None, s
         "Read typed orders, validate them, and write a JSON report.",
         "order_report",
     )?
-    importer = "examples/pro/codegraph_importer"
+    importer = "../../examples/pro/codegraph_importer"
     verify_retained_namespace_edit(
         binary,
         root.joinpath("importer-body"),
