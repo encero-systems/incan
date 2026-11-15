@@ -89,6 +89,9 @@ pub model RegistryUnits:
         1. Index exact entries and canonicalize the requests.
         2. Search compatible roots while each producer pins its complete dependency closure.
         3. Refuse missing or ambiguous graphs, otherwise retain exact root bindings.
+
+        A consumer that names a profile takes every unit of its closure at that profile, procedural macros and the units
+        the installation anchors included. A crate held only at another profile is refused by name, never substituted.
         """
         # 1. Entry identity is authoritative; directory spelling is only a legacy synthetic-test fallback.
         mut entries: Dict[str, RegistryUnit] = {}
@@ -107,7 +110,7 @@ pub model RegistryUnits:
         for domain, entry in self.anchors:
             if entry not in entries:
                 return Err(f"installed registry producer entry is absent: {entry}")
-            pinned = extend(entries[entry], entries, pinned, domain)?
+            pinned = extend(entries[entry], entries, pinned, domain, profile)?
         names = ", ".join(sorted([request.selection.loaf for request in roots]))
         solutions = resolve(
             roots,
@@ -182,7 +185,7 @@ def resolve(
     for candidates in groups:
         mut solutions: list[Tuple[Dict[str, str], Dict[str, str]]] = []
         for unit in candidates:
-            match extend(unit, entries, chosen, demand.domain):
+            match extend(unit, entries, chosen, demand.domain, profile):
                 Err(reason) => refusals.append(reason)
                 Ok(next) =>
                     mut linked = bindings
@@ -215,8 +218,12 @@ def extend(
     entries: Dict[str, RegistryUnit],
     selected: Dict[str, str],
     domain: str,
+    profile: str,
 ) -> Result[Dict[str, str], str]:
-    """Pin the producer and every transitive entry, refusing missing evidence and conflicting identities."""
+    """
+    Pin the producer and every transitive entry, refusing missing evidence, conflicting identities and, for a consumer
+    that names a profile, an entry of any other profile.
+    """
     mut chosen = selected
     mut root_domain = domain
     if root.kind == "proc-macro":
@@ -229,6 +236,8 @@ def extend(
         unit = entries[entry]
         if unit.refusal != "":
             return Err(unit.refusal)
+        if profile != "" and unit.profile != profile:
+            return Err(pinned_profile_refusal(root, unit, profile))
         key = slot(unit, role)
         if key in chosen:
             if chosen[key] != entry:
@@ -262,11 +271,8 @@ def candidate_groups(
     if len(locked) > 0:
         compatible = [unit for unit in locked if qualifies(unit, demand.selection)?]
         if len(compatible) > 0:
-            # Prefer the consumer's profile without overriding exact native producer anchors.
-            matching = [unit for unit in compatible if unit.profile == profile]
-            if profile != "" and len(matching) > 0:
-                return Ok([matching, compatible])
-            return Ok([compatible])
+            # The lock's exact producer still has to be one of the consumer's profile.
+            return Ok([profile_units(compatible, profile, "the project lock records")?])
         # RFC 125: versions coexist, so a requirement no recorded version admits takes a version of its own, as in a
         # fresh lock. Another producer of a recorded version is refused: the lock's producer of it is exact.
         versions = [unit.version for unit in locked]
@@ -288,11 +294,12 @@ def candidate_groups(
             f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}\n{UNPUBLISHED_HINT}",
         )
     candidates = mode_candidates(candidates, demand_mode(mode, demand.direct))?
+    candidates = profile_units(candidates, profile, "the registry holds")?
+    # The installation's selection is a preference among the consumer's own profile, tried first.
     preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]
-    mut groups: list[list[RegistryUnit]] = []
     if len(preferred) > 0:
-        groups = profile_groups(preferred, profile)
-    return Ok(groups + profile_groups(candidates, profile))
+        return Ok([preferred, candidates])
+    return Ok([candidates])
 
 
 def demand_mode(mode: str, direct: bool) -> str:
@@ -316,12 +323,37 @@ def mode_candidates(candidates: list[RegistryUnit], mode: str) -> Result[list[Re
     return Ok([candidate for candidate in candidates if candidate.version == selected])
 
 
-def profile_groups(candidates: list[RegistryUnit], profile: str) -> list[list[RegistryUnit]]:
-    """Prefer the consumer profile while preserving coherent native anchors and ambiguity within each group."""
+def profile_units(candidates: list[RegistryUnit], profile: str, holder: str) -> Result[list[RegistryUnit], str]:
+    """
+    The candidates of the consumer's profile, all of them when the consumer names none. A crate `holder` has only at
+    other profiles is refused by name with every profile it has, never substituted.
+    """
+    if profile == "":
+        return Ok(candidates)
     matching = [unit for unit in candidates if unit.profile == profile]
-    if profile != "" and len(matching) > 0:
-        return [matching, candidates]
-    return [candidates]
+    if len(matching) > 0:
+        return Ok(matching)
+    mut held: list[str] = []
+    for unit in candidates:
+        if held_profile(unit) not in held:
+            held.append(held_profile(unit))
+    loaf = candidates[0].loaf
+    return Err(f"{loaf} has no compiled registry entry at {profile}; {holder} it only at {", ".join(sorted(held))}")
+
+
+def pinned_profile_refusal(root: RegistryUnit, unit: RegistryUnit, profile: str) -> str:
+    """Name the producer, the crate it pins and both profiles when a pinned entry is of another profile."""
+    pinned = f"{unit.loaf} {unit.version} only at {held_profile(unit)}"
+    if identity(unit) == identity(root):
+        return f"the installation anchors {pinned}; a {profile} closure takes every crate at {profile}"
+    return f"{root.loaf} {root.version} pins {pinned}; a {profile} closure takes every crate at {profile}"
+
+
+def held_profile(unit: RegistryUnit) -> str:
+    """The profile a compiled unit records, spelled for a refusal when it records none."""
+    if unit.profile == "":
+        return "no recorded profile"
+    return unit.profile
 
 
 def qualifies(unit: RegistryUnit, selection: RegistrySelection) -> Result[bool, str]:
