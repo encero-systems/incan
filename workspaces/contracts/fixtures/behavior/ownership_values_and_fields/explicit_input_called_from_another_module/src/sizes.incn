@@ -1,0 +1,3 @@
+pub def text_size(content: Borrowed[str]) -> int:
+    """Count the characters of a shared text input."""
+    return len(content)
