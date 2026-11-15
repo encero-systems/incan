@@ -376,6 +376,37 @@ pub def test_retained_namespace_warm_edits_match_cold_builds() -> Result[None, s
     )
 
 
+pub def test_parameter_rename_rechecks_only_signature_readers() -> Result[None, str]:
+    """A parameter rename checks its owner and direct signature reader, without checking indirect callers."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("importer")
+    Path("examples/pro/codegraph_importer").copy(root, false, false).map_err((error) => error.message())?
+    lock = root.joinpath("oven.lock")
+    if lock.exists():
+        lock.unlink().map_err((error) => error.message())?
+    store = root.joinpath("store")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    _ = retained_namespace_build(binary, root, store)?
+    source = root.joinpath("src/importer.incn")
+    original = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    edited = original
+        .replace("def supported_schema(version: int) -> bool:", "def supported_schema(schema_version: int) -> bool:")
+        .replace("return version >= 1 and version <= 9", "return schema_version >= 1 and schema_version <= 9")
+    if edited == original:
+        return Err("parameter-rename fixture edit matched no source")
+    write(source, edited)?
+    warm = retained_namespace_build(binary, root, store)?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    bodies = proof_count(warm, "body_evaluations")?
+    body_ir = proof_count(warm, "body_ir_evaluations")?
+    plans = proof_count(warm, "plan_function_evaluations")?
+    stop_example_engine(binary, store)?
+    assert bodies == 2, f"expected edited owner and one direct signature reader, found {bodies}: {diagnostic}"
+    assert body_ir == 2, f"expected Body IR for exactly two checked owners, found {body_ir}: {diagnostic}"
+    assert plans == 2, f"expected two changed plan readers, found {plans}: {diagnostic}"
+    return Ok(None)
+
+
 def verify_retained_namespace_edit(
     binary: str,
     root: Path,
@@ -616,13 +647,19 @@ def finished_run(succeeded: bool, stdout: bytes, stderr: bytes) -> Result[JsonVa
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
-    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
+    """A signature edit through a symlink must recheck its direct caller, not that caller's caller."""
     root.mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("hello.incn")
     store = root.joinpath("store")
-    write(source, "def value() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(
+        source,
+        "def value() -> int:\n    return 1\n\n\ndef display() -> str:\n    return str(value())\n\n\ndef main() -> None:\n    println(display())\n",
+    )?
     _ = lowering_example_run(binary, source, store, "1")?
-    write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
+    write(
+        source,
+        "def value() -> str:\n    return \"one\"\n\n\ndef display() -> str:\n    return str(value())\n\n\ndef main() -> None:\n    println(display())\n",
+    )?
     warm = lowering_example_run(binary, source, store, "one")?
     diagnostic = warm.to_json().map_err((error) => error.message())?
     assert proof_count(warm, "body_evaluations")? == 2, diagnostic

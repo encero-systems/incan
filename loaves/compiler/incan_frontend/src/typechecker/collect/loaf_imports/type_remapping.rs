@@ -378,23 +378,7 @@ impl TypeChecker {
         let owner_route = entry.key.as_str();
         let mut preserving_type_keys = HashSet::new();
         for export in &artifact.manifest.contract_metadata.identity_graph.exports {
-            // A top-level export is described by the manifest's own nominal info; a nested one has to be read back
-            // from its declaration, because only the declaration records the members.
-            let info = if export.public_path.len() == 2 {
-                self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
-            } else {
-                Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
-                    .and_then(|declaration| {
-                        self.symbol_kind_from_api_declaration(
-                            artifact.manifest.contract_metadata.api.as_ref(),
-                            declaration,
-                        )
-                    })
-                    .and_then(|kind| match kind {
-                        SymbolKind::Type(info) => Some(info),
-                        _ => None,
-                    })
-            };
+            let info = self.manifest_export_nominal_type_info(&artifact.manifest, export);
             let Some(info) = info else {
                 continue;
             };
@@ -423,6 +407,28 @@ impl TypeChecker {
             }
         }
         preserving_type_keys
+    }
+
+    /// Resolve one identity-graph export to its complete nominal layout.
+    ///
+    /// Root exports have a first-class manifest row. Nested public paths do not: their member layout remains in the
+    /// checked API declaration, so retained-interface replay must use the same source as ordinary artifact rebuilds.
+    pub(in crate::typechecker) fn manifest_export_nominal_type_info(
+        &self,
+        manifest: &LibraryManifest,
+        export: &crate::library_manifest::ExportIdentity,
+    ) -> Option<TypeInfo> {
+        if export.public_path.len() == 2 {
+            return self.manifest_nominal_type_info(manifest, &export.public_name);
+        }
+        Self::api_declaration_for_target_path(manifest, &export.source_path)
+            .and_then(|declaration| {
+                self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+            })
+            .and_then(|kind| match kind {
+                SymbolKind::Type(info) => Some(info),
+                _ => None,
+            })
     }
 
     /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.

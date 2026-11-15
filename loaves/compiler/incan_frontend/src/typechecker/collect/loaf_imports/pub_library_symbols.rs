@@ -272,10 +272,10 @@ impl TypeChecker {
             .exports
             .iter()
             .filter_map(|identity| {
-                let info = self.manifest_nominal_type_info(manifest, &identity.public_name)?;
+                let info = self.manifest_export_nominal_type_info(manifest, identity)?;
                 Some((
                     canonical_public_library_type_name(library, &identity.public_name),
-                    identity_graph.canonical_for_public_name(&identity.public_name),
+                    identity.canonical.as_ref().and_then(|canonical| canonical.hydrate()),
                     info,
                 ))
             })

@@ -164,6 +164,63 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
 
 
+pub def compile_body_frontier_owner(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    key: Key,
+    owner: str,
+    records: list[SelectedBodyPage],
+) -> Result[Path, str]:
+    """Check one missing owner through the native driver's exact-body census, stopping before lowering and rustc."""
+    if owner == "":
+        return Err("rank frontier requires a compiler-authenticated owner name")
+    compiled = crate_name(unit)
+    path = write_unit(unit, compiled, None, described_by(key), true)?
+    records_path = Path(f"{path.0}.graph-body-records")
+    if records_path.exists():
+        remove_dir_all(records_path.0).map_err((error) => f"cannot replace selected frontier inputs: {error}")?
+    records_path.mkdir(true, true).map_err((error) => f"{records_path.0}: {error.message()}")?
+    generation = match unit.checked_context:
+        Some(value) => value
+        None => return Err("rank frontier requires the complete compiler context")
+    publish_binary(records_path.joinpath("producer-profile"), generation.encode("utf-8"))?
+    for page in records:
+        publish_binary(records_path.joinpath(page.key), page.value)?
+    output = Path(f"{path.0}.graph-body-output")
+    discard_file(output)
+    discard_file(checker_record_report_path(output))
+    refusal = Path(f"{path.0}.frontier-refusals")
+    discard_file(refusal)
+    staged = Path(f"{path.0}.frontier-output")
+    discard_file(staged)
+    arguments = [
+        "--unit",
+        path.0,
+        compiled,
+        staged.0,
+        toolchain.sysroot,
+        "--no-codegraph",
+        "--graph-body-records",
+        records_path.0,
+        "--graph-body-output",
+        output.0,
+    ]
+    mut command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    command.env("INCAN_DIRECT_REFUSAL_REPORT", refusal.0)
+    command.env("INCAN_DIRECT_CENSUS_BODY", owner)
+    if toolchain.console != "":
+        command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
+        command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))
+    code = status_of(command, toolchain.driver)?
+    if code != 0:
+        return Err(f"rank frontier owner {owner} failed with compiler status {code}")
+    if not output.is_file():
+        return Err("rank frontier owner produced no checker sidecar")
+    return Ok(output)
+
+
 pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")

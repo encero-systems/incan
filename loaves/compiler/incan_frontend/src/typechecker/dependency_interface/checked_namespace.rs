@@ -15,10 +15,12 @@ pub struct CheckedNamespaceInterface {
     module_path: Vec<String>,
     api: crate::api_metadata::CheckedApiMetadata,
     identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    compiled_libraries: Vec<String>,
+    public_library_type_identities: std::collections::BTreeMap<String, PublicLibraryTypeIdentity>,
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 4;
+    const SCHEMA: u32 = 5;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -78,12 +80,36 @@ impl CheckedNamespaceInterface {
                 return Ok(None);
             }
         }
+        let (_, foreign_carriers, foreign_libraries) = checked_namespace_foreign_nominal_projection(&api);
+        let mut compiled_libraries = checker.cached_pub_libraries.iter().cloned().collect::<Vec<_>>();
+        compiled_libraries.extend(foreign_libraries);
+        compiled_libraries.sort();
+        compiled_libraries.dedup();
+        let mut public_library_type_identities = checker
+            .public_library_type_identities
+            .iter()
+            .map(|(name, identity)| (name.clone(), identity.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for identity in checker.public_library_type_identities.values() {
+            let Some(canonical) = identity.canonical.as_ref() else {
+                continue;
+            };
+            let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(canonical) else {
+                continue;
+            };
+            public_library_type_identities
+                .entry(carrier)
+                .or_insert_with(|| identity.clone());
+        }
+        public_library_type_identities.extend(foreign_carriers);
         Ok(Some(Self {
             schema: Self::SCHEMA,
             module_name: module_name.to_owned(),
             module_path: module_path.to_vec(),
             api,
             identities,
+            compiled_libraries,
+            public_library_type_identities,
         }))
     }
 
@@ -115,7 +141,7 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
+        let (remapping, _, _) = checked_namespace_foreign_nominal_projection(&self.api);
         let mut symbols = HashMap::new();
         let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
@@ -217,8 +243,13 @@ impl CheckedNamespaceInterface {
             trait_rust_derive_paths: Arc::default(),
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
-            compiled_libraries: Arc::from([]),
-            public_library_type_identities: Arc::default(),
+            compiled_libraries: Arc::from(self.compiled_libraries.clone()),
+            public_library_type_identities: Arc::new(
+                self.public_library_type_identities
+                    .iter()
+                    .map(|(name, identity)| (name.clone(), identity.clone()))
+                    .collect(),
+            ),
             symbol_rows: Arc::from(symbol_rows),
             snapshot: ModuleDependencyInterfaceSnapshot {
                 version: MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION,
@@ -241,6 +272,9 @@ impl CheckedNamespaceInterface {
             || self.api.module_path != self.module_path
             || self.api.schema_version != crate::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION
             || self.api.declarations.len() != self.identities.len()
+            || self.compiled_libraries.iter().any(String::is_empty)
+            || self.compiled_libraries.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.public_library_type_identities.keys().any(String::is_empty)
         {
             return Err("checked namespace interface has mismatched authority".into());
         }
@@ -263,13 +297,19 @@ impl CheckedNamespaceInterface {
 }
 
 /// Convert artifact-qualified API leaves to the canonical carrier spellings used by editable dependency interfaces.
-fn checked_namespace_foreign_nominal_remapping(
+fn checked_namespace_foreign_nominal_projection(
     api: &crate::api_metadata::CheckedApiMetadata,
-) -> HashMap<String, String> {
+) -> (
+    HashMap<String, String>,
+    std::collections::BTreeMap<String, PublicLibraryTypeIdentity>,
+    std::collections::BTreeSet<String>,
+) {
     use crate::library_manifest::{TypeRef, VisitTypeRefs};
 
     let mut projection = api.clone();
     let mut remapping = HashMap::new();
+    let mut identities = std::collections::BTreeMap::new();
+    let mut libraries = std::collections::BTreeSet::new();
     projection.visit_type_refs(&mut |ty| {
         let origin = match ty {
             TypeRef::Named { origin, .. } | TypeRef::Applied { origin, .. } => origin.as_ref(),
@@ -282,9 +322,19 @@ fn checked_namespace_foreign_nominal_remapping(
         let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
             return;
         };
+        libraries.insert(origin.provider.name.clone());
+        identities.insert(
+            carrier.clone(),
+            PublicLibraryTypeIdentity {
+                dependency_key: origin.provider.name.clone(),
+                source_path: Vec::new(),
+                canonical: Some(identity),
+                selected_provider: Some(origin.provider.clone()),
+            },
+        );
         remapping.insert(origin.binding_key(), carrier);
     });
-    remapping
+    (remapping, identities, libraries)
 }
 
 /// Return the declaration spelling shared by the frozen API row, symbol table and stable identity map.
@@ -359,8 +409,30 @@ mod tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
+        checker
+            .cached_pub_libraries
+            .insert("incan_stdlib_primitives".to_string());
+        let io_error = CanonicalSymbolId {
+            origin: SymbolOrigin::Package {
+                library: "incan_stdlib_primitives".to_string(),
+                module_path: vec!["primitives".to_string(), "io".to_string()],
+            },
+            declaration_name: "IoError".to_string(),
+            kind: SemanticSourceTargetKind::Model,
+            ..checker
+                .symbols
+                .identity_of(checker.symbols.lookup("Order").ok_or("missing Order symbol")?)
+                .ok_or("missing Order identity")?
+                .clone()
+        };
+        checker.public_library_type_identities.insert(
+            "IoError".to_string(),
+            PublicLibraryTypeIdentity::new("incan_stdlib_primitives", &["IoError".to_string()])
+                .with_canonical(Some(io_error.clone())),
+        );
         let retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
             .ok_or("model namespace was not retained")?;
+        let retained = CheckedNamespaceInterface::from_bytes(&retained.to_bytes()?)?;
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed
@@ -373,6 +445,17 @@ mod tests {
         assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));
         assert!(installed.transitive_public_types.contains_key("Order"));
         assert!(installed.transitive_public_types.contains_key(&carrier));
+        assert_eq!(installed.compiled_libraries.as_ref(), ["incan_stdlib_primitives"]);
+        assert_eq!(
+            installed.public_library_type_identities.get("IoError"),
+            retained.public_library_type_identities.get("IoError")
+        );
+        let io_error_carrier =
+            incan_semantics_core::body_ir::nominal_carrier_key(&io_error).ok_or("missing IoError carrier")?;
+        assert_eq!(
+            installed.public_library_type_identities.get(&io_error_carrier),
+            retained.public_library_type_identities.get("IoError")
+        );
         let SymbolKind::Type(TypeInfo::Model(model)) = installed
             .direct_member_symbols
             .get("Order")

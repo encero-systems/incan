@@ -702,15 +702,52 @@ impl TypeChecker {
                 .or_default()
                 .extend(values.iter().cloned());
         }
-        for library in interface.compiled_libraries.iter() {
-            self.install_compiled_library_semantics(library);
-        }
         self.public_library_type_identities.extend(
             interface
                 .public_library_type_identities
                 .iter()
                 .map(|(name, identity)| (name.clone(), identity.clone())),
         );
+        for identity in interface.public_library_type_identities.values() {
+            self.install_compiled_library_identity_semantics(identity);
+        }
+        for library in interface.compiled_libraries.iter() {
+            self.install_compiled_library_semantics(library);
+        }
+    }
+
+    /// Rebuild a retained foreign nominal's complete provider semantics through its exact admitted artifact identity.
+    ///
+    /// A package name is not necessarily the key by which the importing unit indexes that Loaf. The retained selected
+    /// identity locates the artifact independently of consumer aliases; its identity graph must then attest the
+    /// canonical declaration before any layout is installed.
+    fn install_compiled_library_identity_semantics(&mut self, identity: &PublicLibraryTypeIdentity) {
+        let (Some(canonical), Some(selected_provider)) = (&identity.canonical, &identity.selected_provider) else {
+            return;
+        };
+        let loaves = Arc::clone(&self.loaves);
+        let Some(entry) = loaves.selected_loaf(selected_provider) else {
+            return;
+        };
+        if !entry
+            .artifact
+            .manifest
+            .contract_metadata
+            .identity_graph
+            .exports
+            .iter()
+            .any(|export| {
+                export
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|candidate| candidate.represents(canonical))
+            })
+        {
+            return;
+        }
+        let key = entry.key.clone();
+        let manifest = Arc::clone(&entry.artifact.manifest);
+        self.cache_transitive_pub_export_semantics(&key, &manifest);
     }
 
     /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.
