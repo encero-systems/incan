@@ -45,6 +45,7 @@ from testing import (
 )
 from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_options
 from test_batches import batch_groups, batch_of, module_of
+from project_library import with_testing_features
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
@@ -858,9 +859,7 @@ def batch_cases(
     mut unit = describe(members[0], options.profile, options.request, options.manifests, purpose=ActivationPurpose.Test)?
     unit.kind = "test"
     unit.test_batch = [member.0 for member in members[1:]]
-    for feature in runner.features:
-        if feature not in unit.active_features:
-            unit.active_features.append(feature)
+    unit = with_testing_features(unit, runner.features)
     code, binary = compile_tests(unit, toolchain_for(unit)?)?
     if code != 0:
         return Ok((code, []))
@@ -905,9 +904,7 @@ def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32,
     )?
     unit = with_c_abi_target(unit, options.interop_target)?
     unit.kind = "test"
-    for feature in runner.features:
-        if feature not in unit.active_features:
-            unit.active_features.append(feature)
+    unit = with_testing_features(unit, runner.features)
     return compile_tests(unit, toolchain_for(unit)?)
 
 
