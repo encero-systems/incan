@@ -161,12 +161,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Hand a copied read of a nominal that derives `Copy` to a `mut` parameter as a borrow, so it keeps the
+    /// write-through passing every other nominal takes ([`Self::borrow_for_mut_parameter`]); only a scalar argument
+    /// stays a copy. `ty` is the parameter's checked type when the caller has it; otherwise a whole local's declared
+    /// type decides.
+    fn copy_nominal_mut_argument(&self, operand: bir::Operand, ty: Option<&IncanType>) -> bir::Operand {
+        let bir::Operand::Place(mut read) = operand else {
+            return operand;
+        };
+        let declared = read
+            .place
+            .projection
+            .is_empty()
+            .then(|| read.place.local_id())
+            .flatten()
+            .and_then(|local| self.locals.get(local.index()))
+            .map(|declaration| &declaration.ty);
+        if read.fact == bir::OwnershipFact::Copy
+            && ty
+                .or(declared)
+                .is_some_and(|ty| !ty.abi_v0_facts().ownership.is_trivially_copy() && self.reads_as_copy(ty))
+        {
+            read.fact = bir::OwnershipFact::Borrow;
+        }
+        bir::Operand::Place(read)
+    }
+
     /// Rewrite an argument bound to a `mut` parameter (#2022). A `mut` parameter of non-`Copy` type writes through to
     /// the caller, as the emitted route's `&mut T` does, so the argument is borrowed mutably instead of copied or
     /// moved: the caller keeps owning it (an operand that had selected a move is un-moved, so the caller still
-    /// drops it) and sees the callee's changes. A `Copy` argument stays a copy, matching the emitted route's
+    /// drops it) and sees the callee's changes. A scalar `Copy` argument stays a copy, matching the emitted route's
     /// by-value `mut` scalar, and a compiler temporary keeps its move, since no caller can observe writes to it.
     pub(in crate::body_ir) fn borrow_for_mut_parameter(&mut self, operand: bir::Operand) -> bir::Operand {
+        let operand = self.copy_nominal_mut_argument(operand, None);
         let bir::Operand::Place(mut source) = operand else {
             return operand;
         };
@@ -316,6 +343,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     self.retain_argument_borrow(read, mutable);
                 }
             } else if mut_slots.get(*slot).copied().unwrap_or(false) {
+                operand = self.copy_nominal_mut_argument(operand, slot_types.get(*slot));
                 operand = self.borrow_for_mut_parameter(operand);
             } else {
                 operand = self.owned_parameter_operand(expr, operand);

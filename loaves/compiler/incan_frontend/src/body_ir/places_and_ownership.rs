@@ -211,9 +211,36 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         matches!(owner.origin, bir::LocalOrigin::UserBinding)
             && declared(&owner.ty, &[SemanticSourceTargetKind::Model])
             && declared(ty, &[SemanticSourceTargetKind::Model, SemanticSourceTargetKind::Enum])
+            && !self.reads_as_copy(ty)
             && self.input_aliases.is_empty()
             && !self.pending_argument_reads.contains(&local)
             && !self.loop_reuses_local(local)
+    }
+
+    /// Whether reading a value of `ty` copies it: a scalar, or a model, class, newtype or enum whose checked derives
+    /// include `Copy`.
+    ///
+    /// The declaration is selected by the type's retained identity, never by its spelling, from the declarations this
+    /// module lowers and the enum layouts it links; the checker accepts the derive only when every field copies, and
+    /// the plan validator admits a copy operand of exactly such a nominal. A generic instance and a type whose
+    /// declaration is not retained here keep the scalar rule.
+    pub(super) fn reads_as_copy(&self, ty: &IncanType) -> bool {
+        if ty.abi_v0_facts().ownership.is_trivially_copy() {
+            return true;
+        }
+        let IncanType::Named(name) = ty else {
+            return false;
+        };
+        let Some(identity) = parameter_types::retained_nominal_identity(name, self.type_info) else {
+            return false;
+        };
+        self.local_nominal_declarations
+            .values()
+            .any(|declaration| declaration.canonical == *identity && derives_copy(&declaration.derives))
+            || self
+                .local_enum_declarations
+                .get(identity)
+                .is_some_and(|declaration| derives_copy(&declaration.derives))
     }
 
     /// Consume one seeded read through its canonical owner, returning the remaining source occurrences.
@@ -306,7 +333,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         place: &bir::Place,
         ty: &IncanType,
     ) -> (bir::OwnershipFact, bool) {
-        let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
+        let is_copy = matches!(ty, IncanType::Ref(_)) || self.reads_as_copy(ty);
         if !place.projection.is_empty() {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
@@ -465,7 +492,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     bir::LocalOrigin::UserBinding | bir::LocalOrigin::Parameter | bir::LocalOrigin::Temporary
                 )
             })
-            .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+            .filter(|local| !self.reads_as_copy(&local.ty))
             .map(|local| local.id)
             .collect();
         for id in candidates {
@@ -589,4 +616,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     // ---- Statements ----
+}
+
+/// Whether a checked derive selection includes `Copy`.
+pub(super) fn derives_copy(selected: &[String]) -> bool {
+    selected
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
 }
