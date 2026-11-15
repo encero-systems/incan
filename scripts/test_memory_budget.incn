@@ -2,6 +2,7 @@
 
 from std.json import JsonValue
 from pub::incan_platform.probes import ProcessResource, parse_process_table
+from check_support import repository_root
 from memory_budget import (
     MIB,
     RELEASE_MARGIN_BYTES,
@@ -104,6 +105,17 @@ def test_a_traced_run_returns_the_heap_it_frees() -> Result[None, str]:
     tsv = measurements_tsv([kept], 2048 * MIB)
     assert f"oven\t2\t{MIB}\tincan-rustc-driver\t{MIB}\t{MIB}\t{RELEASE_MARGIN_BYTES + 1}\t{6144 * MIB}\n" in tsv
     assert "oven\t2\t1\tincan-rustc-driver\t1\t1\t512\t300\tunder" in measurements_report([kept], 2048 * MIB)
+    return Ok(None)
+
+
+def test_lowering_releases_attempt_heap_before_preserving_a_continuation() -> Result[None, str]:
+    """Attempt-only lowering state is released before the retained continuation and static cells are materialized."""
+    source = repository_root()?.joinpath("loaves/compiler/incan_mir_lowering/src/lowering.incn").read_text(
+        "utf-8", "strict",
+    ).map_err((error) => error.message())?
+    assert "from pub::incan_platform.heap import release_free_heap" in source
+    boundary = ")?\n    release_free_heap()\n    mut statics = lower_computed_statics("
+    assert boundary in source, "lowering keeps attempt-only heap until after it starts preserving the continuation"
     return Ok(None)
 
 
