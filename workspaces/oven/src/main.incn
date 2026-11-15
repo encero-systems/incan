@@ -17,10 +17,10 @@ from intake import read_project, source_root_of, entry_source
 from files import read
 from manifest_tolerance import tolerated_warnings
 from unit import describe, project_root_of, retired_refusal, with_c_abi_target
-from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
-from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
+from unit_rust import compile_incan_library, describe_native, toolchain_for
+from incan_units import make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
-from rust_units import build_rust, scheduled_unit
+from rust_units import scheduled_unit
 from rust_lint import lint_rust
 from rust_build import RustBuild
 from rust_registry import read_registry_units
@@ -45,18 +45,14 @@ from runner_options import RUNNER_VALUE_OPTIONS, RunnerOptions, split_runner_opt
 from test_batches import batch_groups, batch_of, module_of
 from project_library import with_testing_features
 from inline_source import inline, inline_arguments
-from owner_client import owned, status_code
-from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
 from home_views import selected_home_view
-from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
 from interop_stage import stage_interop, stage_options
 from binding_inspection import binding_options, inspect_bindings
-from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
@@ -263,31 +259,13 @@ def dispatch(command: str, rest: list[str]) -> None:
     if records_route(command, rest):
         records_command(command, rest)
         return
-    if command == "run":
-        run(rest)
-        return
-    if command == "check":
-        check(rest)
-        return
     if command == "lint":
         lint(rest)
-        return
-    if command == "test":
-        test(rest)
-        return
-    if command == "build":
-        build(rest)
-        return
-    if command == "describe-unit":
-        describe_unit(rest)
         return
     if command == "fmt":
         match format_options(rest):
             Err(reason) => argument_error("fmt", reason)
             Ok(options) => finish("fmt", format_paths(options))
-        return
-    if command == "--internal-owner":
-        finish("owner", serve_owner(rest))
         return
     if command == "interop":
         if len(rest) > 0 and rest[0] == "bake":
@@ -297,9 +275,6 @@ def dispatch(command: str, rest: list[str]) -> None:
         match stage_options(rest[1:]):
             Err(reason) => syntax_error("interop", reason)
             Ok(options) => finish("interop", stage_interop(options))
-        return
-    if command == "owner":
-        owner(rest)
         return
     if command == "inspect" and len(rest) > 0 and rest[0] == "registry":
         match parse_registry(rest[1:]):
@@ -489,7 +464,7 @@ def fail(message: str, code: i32) -> None:
 
 
 def records_command(command: str, arguments: list[str]) -> None:
-    """Dispatch only connected records capabilities; unsupported commands never enter the legacy path."""
+    """Dispatch only connected records capabilities; unsupported commands are refused at this boundary."""
     if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
         match bakery().and_then((store) => proof_report(store, arguments[1])):
             Ok(text) => println(text)
@@ -535,7 +510,7 @@ def records_command(command: str, arguments: list[str]) -> None:
                 Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
                 Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
                 Ok(Some(selected)) => source = selected
-            # Check observes one source reach like the legacy checker; it does not mutate a project lock.
+            # Check observes one source reach without mutating a project lock.
             if command != "check":
                 prepared_lock(command, options)
             finish(
@@ -675,26 +650,13 @@ def warn_tolerated_entries(command: str, path: Path) -> None:
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     """
-    Make the unit's executable, through its owner or in this process, and become it; direct source execution always
-    stays in process and a refused compile is the run's result.
+    Make a direct source unit's executable in this process and become it; a refused compile is the run's result.
 
-    1. The project's owner makes the executable when it serves a project unit.
-    2. Otherwise describe the unit, compile it here and keep the stored executable while its inputs are unchanged.
-    3. Become the program.
+    1. Describe the unit, compile it and keep the stored executable while its inputs are unchanged.
+    2. Become the program.
     """
-    # 1. When the project's owner serves the unit, it made the executable, and a refused compile is the run's result.
-    if not options.direct:
-        requesting = begin_work()
-        owned = via_owner("run", options, Path(options.path))
-        record_work(Operation.LegacyRequest, options.path, requesting)
-        match owned:
-            Some(reply) =>
-                if reply.exit != 0:
-                    return Ok(status_code(reply.exit))
-                return run_program(Path(reply.binary), passed, options.argv0, false, reply.identity)
-            None => pass
-    # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
-    preparing = begin_work()
+    # 1. Direct source execution describes and compiles in this process, keeping the stored executable while its inputs
+    # hold. Routed project runs use the records engine before this function can be reached.
     mut unit = describe(
         Path(options.path),
         options.profile,
@@ -709,25 +671,13 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     made = make_unit(unit, toolchain, binary, true)?
-    record_work(Operation.LegacyPrepare, options.path, preparing)
     if made.code != 0:
         return Ok(made.code)
-    # 3. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
+    # 2. The process becomes the program, so its exit status is the run's; it keeps the view's name as its own.
     mut argv0 = binary.0
     if let Some(selected) = options.argv0:
         argv0 = selected
     return run_program(made.launch, passed, Some(argv0), false, made.identity)
-
-
-def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
-    """The reply of the project's resident owner, which has made the executable; `None` when this process should."""
-    # A unit verified against a declared interop target is described and compiled in this process.
-    if len(options.substitutes) > 0 or len(options.program_entries) > 0 or options.interop_target != "":
-        return None
-    request = options.request
-    return owned(command, entry, options.profile, request.features, request.default_features, request.all_features)
-
-
 def test(arguments: list[str]) -> None:
     """
     Compile the collected test units of a file, a directory or, with no PATH, the current one, then select, run and
@@ -880,14 +830,7 @@ def relative_name(source: Path, root: Path) -> str:
 
 
 def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32, Path], str]:
-    """
-    Make a test unit's executable through its owner or in this process. Testing features change what is collected,
-    so a unit with any is compiled here, with each feature active.
-    """
-    if len(runner.features) == 0:
-        match via_owner("test", options, Path(options.path)):
-            Some(reply) => return Ok((status_code(reply.exit), Path(reply.binary)))
-            None => pass
+    """Make a test unit's executable in this process, with each selected testing feature active."""
     mut unit = describe(
         Path(options.path),
         options.profile,
@@ -899,45 +842,6 @@ def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32,
     unit.kind = "test"
     unit = with_testing_features(unit, runner.features)
     return compile_tests(unit, toolchain_for(unit)?)
-
-
-def check(arguments: list[str]) -> None:
-    """Check the unit whose entry source is PATH; the report is text, or JSON with `--format json`."""
-    mut format = "text"
-    mut own: list[str] = []
-    mut index = 0
-    while index < len(arguments):
-        if arguments[index] == "--format" and index + 1 < len(arguments):
-            format = arguments[index + 1]
-            index += 2
-            continue
-        own.append(arguments[index])
-        index += 1
-    if format != "text" and format != "json":
-        fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
-    match parse_options(own, "."):
-        Err(reason) => syntax_error("check", reason)
-        Ok(options) =>
-            selected = validated("check", located("check", options))
-            warn_tolerated_entries("check", Path(selected.path))
-            finish("check", checked(selected, format), format)
-
-
-def checked(options: Options, format: str) -> Result[i32, str]:
-    """
-    Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once. A directory,
-    or no PATH, checks the entry `build` selects for the Loaf at or above it.
-    """
-    mut source = Path(options.path)
-    if source.is_dir():
-        match entry_source(source, options.manifests)?:
-            Some(entry) => source = entry
-            None => return Err(f"{source.0}: the Loaf has no Incan entry to check; name a source file")
-    described = describe(source, options.profile, options.request, options.manifests)?
-    unit = with_c_abi_target(described, options.interop_target)?
-    return check_unit(unit, toolchain_for(unit)?, format)
-
-
 def inspected_dependencies(options: Options) -> Result[i32, str]:
     """
     Describe the unit a build of PATH compiles, then let the compiler settle and print the dependency closure that
@@ -1089,43 +993,6 @@ def lint(arguments: list[str]) -> None:
             selected = validated("lint", located("lint", options))
             prepared_lock("lint", selected)
             finish("lint", rust_request(selected).and_then((request) => lint_rust(request)))
-
-
-def build(arguments: list[str]) -> None:
-    """
-    Compile an Incan source unit or a Rust project against the installed toolchain's registry units. Without PATH, or
-    with a directory, the unit is the enclosing Loaf's.
-    """
-    match parse_options(arguments, ".", true):
-        Err(reason) => syntax_error("build", reason)
-        Ok(options) =>
-            selected = validated("build", located("build", options))
-            prepared_lock("build", selected)
-            build_selected(selected)
-
-
-def build_selected(options: Options) -> None:
-    """Build an Incan source if the path names one, else the Rust project it names, printing its binaries."""
-    match entry_source(Path(options.path), options.manifests):
-        Err(reason) => fail(f"{invoked()} build: {reason}", 1)
-        Ok(Some(source)) =>
-            finish("build", built(options, source))
-            return
-        Ok(None) => pass
-    if options.output != "":
-        fail(f"{invoked()} build: OUTPUT_DIR requires an Incan program build", 1)
-    match build_project(options):
-        Err(reason) => fail(f"{invoked()} build: {reason}", 1)
-        Ok(binaries) =>
-            for binary in binaries:
-                println(f"binary: {binary}")
-
-
-def build_project(options: Options) -> Result[list[str], str]:
-    """Compile a Rust project against the registry units of its installed toolchain."""
-    return build_rust(rust_request(options)?)
-
-
 def rust_request(options: Options) -> Result[RustBuild, str]:
     """Select one installed toolchain and its registry for either a Rust production build or its tests."""
     toolchain = load_toolchain()?
@@ -1147,76 +1014,6 @@ def rust_request(options: Options) -> Result[RustBuild, str]:
         manifests=options.manifests,
     )
     return Ok(request)
-
-
-def built(options: Options, source: Path) -> Result[i32, str]:
-    """
-    Build a source file or a project's conventional library or main program, preparing its path dependencies.
-
-    1. A library takes no program entries, and no build takes `--argv0`.
-    2. A program is built by the project's owner when it serves the unit.
-    3. Otherwise describe the unit and build it here: a library into its artifact directory, a program into `bin`.
-    """
-    # 1. A library takes no program entries, and no build takes `--argv0`.
-    library = source.name() == "lib.incn"
-    if options.argv0 != None or (library and len(options.program_entries) > 0):
-        return Err("--argv0 requires run; program entries require a program unit")
-    # 2. A program the project's owner serves is built there, and this process only reports the owner's status.
-    if not library:
-        match via_owner("build", options, source):
-            Some(reply) => return delivered(options, status_code(reply.exit), Path(reply.binary))
-            None => pass
-    # 3. Anything else is described and built here: a library into its artifact directory, a program into `bin`.
-    mut unit = describe(source, options.profile, options.request, options.manifests)?
-    unit = with_c_abi_target(unit, options.interop_target)?
-    unit.program_entries = options.program_entries
-    mut output = program_binary(unit)
-    if library:
-        if options.output != "":
-            return Err("OUTPUT_DIR requires an Incan program build")
-        unit.kind = "library"
-        directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
-        output = directory.joinpath(f"lib{crate_name(unit)}.rlib")
-        toolchain = toolchain_for(unit)?
-        ready = prepare_native(unit, toolchain)?
-        status = compile_library_unit(ready, toolchain, output)?
-        if status != 0 or not options.codegraph:
-            return Ok(status)
-        graph = inspect_prepared(ready, toolchain)?
-        if not publish_prepared_graph(ready, toolchain, directory, graph)?:
-            return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
-        return Ok(0)
-    return delivered(options, compile_unit(unit, toolchain_for(unit)?, output)?, output)
-
-
-def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
-    """After a successful program build, place a fresh copy of the executable in OUTPUT_DIR, as 0.5.1's build did."""
-    if code != 0 or options.output == "":
-        return Ok(code)
-    directory = Path(options.output)
-    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    destination = directory.joinpath(binary.name())
-    # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
-    if destination.exists():
-        destination.unlink().map_err((error) => f"cannot {error.message()}")?
-    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
-    return Ok(0)
-
-
-def owner(arguments: list[str]) -> None:
-    """`oven owner stop`: stop the resident owners of this home."""
-    match unknown_option(arguments):
-        Some(reason) => syntax_error("owner", reason)
-        None => pass
-    if len(arguments) > 0 and arguments[0] != "stop":
-        syntax_error("owner", f"unknown command `{arguments[0]}`")
-    if arguments != ["stop"]:
-        syntax_error("owner", "expected `stop`")
-    match stop_owners():
-        Err(reason) => fail(f"oven owner: {reason}", 1)
-        Ok(stopped) => println(f"stopped {stopped} owners")
-
-
 def expected_artifacts(arguments: list[str]) -> list[str]:
     """
     The artifacts a build of an Incan source writes, for its report: a library's `.rlib` or a program's executable.
