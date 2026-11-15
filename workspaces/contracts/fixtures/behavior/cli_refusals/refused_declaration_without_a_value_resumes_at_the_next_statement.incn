@@ -1,0 +1,23 @@
+# behavior: a binding declared with a type and no value is refused by name, and parsing resumes at the next statement, so a later method's own error is reported where it is instead of every later member failing as a top-level declaration (#2949)
+# expect-stderr-contains:
+#   `cell` is declared without a value
+#   `other` is declared without a value
+# expect-exit: 1
+
+class Source[P]:
+    pub plan: P
+
+    def first(self) -> int:
+        mut cell: int
+        return 1
+
+    def second(self) -> int:
+        mut other: int
+        return 2
+
+    def third(self) -> int:
+        return 3
+
+
+def main() -> None:
+    println(Source[int](plan=1).third())
