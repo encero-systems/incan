@@ -176,6 +176,11 @@ pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
     return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
 
 
+pub def unit_sidecar_directory(project: Path, store: Path) -> Path:
+    """Name the transient compiler-sidecar directory used by one physical Bakery's engine."""
+    return project.joinpath("target").joinpath("incan").joinpath("units")
+
+
 pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[CheckerRecordCounts, str]:
     """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
     report = checker_record_report_path(graph_body_output_path(unit, key))

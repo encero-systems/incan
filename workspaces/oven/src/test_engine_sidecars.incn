@@ -1,0 +1,20 @@
+"""Engine-local compiler sidecars under a project shared by more than one physical Bakery."""
+
+from std.fs import Path
+from scratch import scratch_directory
+from unit_compiler import unit_sidecar_directory
+
+
+pub def test_two_engines_keep_interleaved_unit_sidecars_apart() -> Result[None, str]:
+    """Two engines over one source path retain their own selected sidecar bytes when their writes interleave."""
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("project")
+    first = unit_sidecar_directory(project, scratch.path().joinpath("store-a")).joinpath("selected-record")
+    second = unit_sidecar_directory(project, scratch.path().joinpath("store-b")).joinpath("selected-record")
+    first.parent().mkdir(true, true).map_err((error) => error.message())?
+    first.write_text("engine-a", "utf-8", "strict", None).map_err((error) => error.message())?
+    second.parent().mkdir(true, true).map_err((error) => error.message())?
+    second.write_text("engine-b", "utf-8", "strict", None).map_err((error) => error.message())?
+    retained = first.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert retained == "engine-a", f"engine A read another engine's interleaved sidecar: {retained}"
+    return Ok(None)
