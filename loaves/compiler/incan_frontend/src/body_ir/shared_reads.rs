@@ -13,6 +13,7 @@ mod closure_reads;
 mod consumed_reads;
 mod cursor_reads;
 mod derived_reads;
+mod loop_reads;
 mod match_reads;
 mod published_reads;
 mod string_parameter_reads;
@@ -194,6 +195,7 @@ pub(super) fn retain_modules_with_selected(
                 continue;
             }
             match_reads::retain_borrowed_payload_bindings(body, &final_signatures, &field_types, &no_candidates);
+            loop_reads::retain_borrowed_loop_items(body, &final_signatures, &field_types, &no_candidates);
             retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
         }
     }

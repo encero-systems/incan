@@ -33,7 +33,7 @@ from owned_lists import is_owned_list_iterator, owned_list_next
 from generators import generator_shape, generator_collect, generator_next
 from table_views import borrowed_at
 from element_places import is_element_place
-from element_borrows import mutable_element_place, shared_element_place
+from element_borrows import mutable_element_place, shared_element_place, shared_list_element
 from models import field_step_type
 from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from builtins import list_call
@@ -469,6 +469,8 @@ pub def list_next(
     target = list_root_place(builder, destination, span)?
     if is_list(place_type(builder.locals, receiver)) and is_mutable_list_reference(place_type(builder.locals, receiver)):
         in_place_item(builder, receiver, target, element, position, span)?
+    elif is_shared_item(place_type(builder.locals, target), element):
+        shared_item(builder, receiver, target, position, span)?
     else:
         item_reference = list_borrow(builder, receiver, false, span)?
         drop_owned(builder, target.local, span)
@@ -496,6 +498,34 @@ pub def list_next(
     builder.emit(plan_assign(pair, RvalueKind.Binary(BinaryOp.Add, position, one), span))
     result = Place(local=pair.local, projection=Projection.Value, span=span)
     builder.emit(plan_assign(plan_place(cursor, span), RvalueKind.Use(read_place(result, false, span)), span))
+    return Ok(None)
+
+
+def is_shared_item(item: PlanType, element: PlanType) -> bool:
+    """Report whether a loop item is a shared reference to its model, source enum or text element."""
+    match (item, element):
+        (PlanType.ModelRef(owner, _name), PlanType.Model(source, _source_name)) => return owner == source
+        (PlanType.EnumRef(owner, _name), PlanType.Enum(source, _source_name)) => return owner == source
+        (PlanType.StringRef, PlanType.String) => return true
+        _ => return false
+
+
+def shared_item(
+    mut builder: Builder,
+    iterator: Place,
+    item: Place,
+    position: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Bind a loop item that its body only reads as a shared reference to its element (#1605).
+
+    The element is lent through the runtime's checked `list_get` at the cursor position, so no element is copied and
+    the item owns nothing.
+    """
+    element = shared_list_element(builder, iterator, position, span)?
+    reference = Place(local=element.local, projection=Projection.Whole, span=span)
+    builder.emit(plan_assign(item, RvalueKind.Use(read_place(reference, false, span)), span))
     return Ok(None)
 
 
