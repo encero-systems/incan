@@ -1,0 +1,70 @@
+"""Signed RFC 125 registry checkpoints with online freshness and persistent-observation rollback checks."""
+
+from registry_trust import Signature, StatementKind, Trust, verify_statement
+
+pub const DEFAULT_MAX_AGE_SECONDS: int = 7 * 24 * 60 * 60
+
+
+pub model Checkpoint:
+    """A registry event-log head, length and publication time in Unix seconds."""
+
+    pub head: str
+    pub length: int
+    pub timestamp: int
+
+
+pub def verify_checkpoint(
+    trust: Trust,
+    checkpoint: Checkpoint,
+    signature: Signature,
+    observed: Option[Checkpoint],
+    now: int,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+    online: bool = true,
+) -> Result[Checkpoint, str]:
+    """
+    Verify the delegated signature, then refuse rollback, a same-length fork, stale time and an expired online head.
+
+    The caller persists the returned checkpoint as the newest observation for this registry. Offline use deliberately
+    skips only the age bound; its signature and every previously observed monotonicity fact still apply.
+    """
+    if not digest(checkpoint.head) or checkpoint.length < 0 or checkpoint.timestamp < 0:
+        return Err("the registry checkpoint is malformed")
+    if now < 0 or max_age_seconds < 0:
+        return Err("the registry checkpoint freshness policy is malformed")
+    payload = checkpoint_payload(checkpoint)
+    _ = verify_statement(trust, StatementKind.Checkpoint, checkpoint.length, payload, signature)?
+    if let Some(previous) = observed:
+        if checkpoint.length < previous.length:
+            return Err("the registry checkpoint rolls back the observed log length")
+        if checkpoint.length == previous.length and checkpoint.head != previous.head:
+            return Err("the registry checkpoint conflicts with the observed log head")
+        if checkpoint.timestamp < previous.timestamp:
+            return Err("the registry checkpoint is older than the observed checkpoint")
+    if checkpoint.timestamp > now:
+        return Err("the registry checkpoint is dated in the future")
+    if online and now - checkpoint.timestamp > max_age_seconds:
+        return Err("the registry checkpoint is older than the configured freshness bound")
+    return Ok(checkpoint)
+
+
+def checkpoint_payload(checkpoint: Checkpoint) -> bytes:
+    """Canonical checkpoint payload covered by the delegated registry signature."""
+    text = (
+        "incan-registry-checkpoint-v1\n" +
+        f"head={checkpoint.head}\n" +
+        f"length={checkpoint.length}\n" +
+        f"timestamp={checkpoint.timestamp}\n"
+    )
+    return text.encode("utf-8")
+
+
+def digest(text: str) -> bool:
+    """Return whether text is one lowercase SHA-256 spelling."""
+    if len(text) != 64:
+        return false
+    for octet in text.encode("utf-8"):
+        number = int(octet)
+        if not (number >= 48 and number <= 57) and not (number >= 97 and number <= 102):
+            return false
+    return true
