@@ -1,17 +1,29 @@
 """RFC 125 registry roots, delegated signing keys and signed statements."""
 
 from std.encoding.hex import unhexlify
-from registry_advisory import Advisory, AdvisoryAction, audit_advisories, verify_advisory
-from registry_checkpoint import Checkpoint, verify_checkpoint
-from registry_revocation import (
+from rust_registry import (
+    Advisory,
+    AdvisoryAction,
+    Checkpoint,
+    Key,
+    KeyKind,
     Revocation,
     RevocationKind,
+    Root,
+    Signature,
+    StatementKind,
+    Trust,
+    audit_advisories,
+    delegate,
+    pin,
     require_active_trust,
     require_not_revoked,
+    verify_advisory,
+    verify_checkpoint,
     verify_key_revocation,
     verify_revocation,
+    verify_statement,
 )
-from registry_trust import Key, KeyKind, Root, Signature, StatementKind, Trust, delegate, pin, verify_statement
 
 const REGISTRY: str = "0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"
 const ROOT_KEY: str = "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85"
