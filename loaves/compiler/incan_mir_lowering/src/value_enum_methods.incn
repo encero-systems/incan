@@ -72,6 +72,17 @@ pub def lower_value_enum_method(
     if len(arguments) != 1:
         return Err("unsupported Body IR value enum getter arguments")
     source = value_enum_receiver_place(builder, arguments[0], span)?
+    return lower_value_enum_getter_from(builder, owner, source, destination, span)
+
+
+pub def lower_value_enum_getter_from(
+    mut builder: Builder,
+    owner: int,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Write the raw value of the value enum `source` holds into the call's destination."""
     result_type = value_enum_raw_type(builder, owner)
     output = call_destination(builder, destination, result_type, span)?
     if place_type(builder.locals, output) != result_type or output.local in builder.owned:

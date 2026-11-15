@@ -42,8 +42,9 @@ from traits import (
 from decls import library_item
 from iterator_methods import standard_protocol as standard_iterator_protocol
 from element_borrows import element_method_owner, element_method_receiver
+from list_methods import materialized_receiver
 from reflection import lower_reflection
-from value_enums import value_method_owner, enum_message_layout
+from value_enums import value_getter_owner, value_method_owner, enum_message_layout
 from frame import place_type, Builder, temporary, drop_all_owned, terminate_call, read_place
 from async_ import construct_future
 from defaults import method_default_arguments
@@ -52,7 +53,7 @@ from generic_callables import owned_callable_slots
 from lowering import BodyIrModule
 from checked_values import scalar_place
 from closure_lifting import lifted_frame, synthesize
-from value_enum_methods import lower_enum_message, lower_value_enum_method
+from value_enum_methods import lower_enum_message, lower_value_enum_getter_from, lower_value_enum_method
 from static_methods import lower_static_method_body, lower_static_sdk_method
 from library_methods import lower_library_method, lower_standard_slot
 from callable_calls import checked_type_arguments, emit_selected_body_call
@@ -140,6 +141,8 @@ def lower_checked_method_call(
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>
+            if lower_element_value_getter(module, builder, target, owner, arguments, destination, span)?:
+                return Ok(None)
             index = owner_method_index(module, target, owner, builder)?
             reference = element_method_receiver(module, builder, index, arguments[0], span)?
             return call_method_body(module, builder, target, index, reference, arguments, destination, span)
@@ -681,3 +684,36 @@ def lower_global_method(
                     return Ok(true)
                 None => return Ok(false)
         _ => return Ok(false)
+
+
+def lower_element_value_getter(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    owner: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Answer a value enum's generated `value()` on a list or dictionary element's enum, `items[index].phase.value()`,
+    from one read of that element: the getter has no body to call (#2995). Declared methods keep the element route.
+    """
+    mut layout = -1
+    match owner:
+        PlanType.Enum(index, _name) => layout = index
+        _ => return Ok(false)
+    match target.canonical:
+        Some(identity) =>
+            if identity.declaration_name != "value" or identity.kind != SemanticSourceTargetKind.Method:
+                return Ok(false)
+        None => return Ok(false)
+    match value_getter_owner(module, target, layout)?:
+        Some(getter) =>
+            match arguments[0].as_one():
+                Some(RustOperand.Place(read)) =>
+                    source = materialized_receiver(builder, read.place, span)?
+                    lower_value_enum_getter_from(builder, getter, source, destination, span)?
+                    return Ok(true)
+                _ => return Ok(false)
+        None => return Ok(false)
