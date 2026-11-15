@@ -1,0 +1,24 @@
+# behavior: An owned input passed on to a shared input whose result feeds native hashing (RFC 164).
+# pending: INCAN-T0123 refuses both bodies: "call has no selected explicit input access facts" (shared input) and "ordinary argument requires inferred access or mutable binding facts" (owned input).
+# expect-stdout:
+#   64
+
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+
+
+model Row:
+    name: str
+
+
+def encode(row: Borrowed[Row]) -> bytes:
+    return row.name.encode()
+
+
+def digest(row: Owned[Row]) -> str:
+    """An owned input passed on to a shared input whose result feeds native hashing."""
+    return hexlify(sha256.digest(encode(row)))
+
+
+def main() -> None:
+    println(len(digest(Row(name="ab"))))

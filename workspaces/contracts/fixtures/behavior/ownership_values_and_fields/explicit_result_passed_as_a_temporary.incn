@@ -1,0 +1,24 @@
+# behavior: The result of one explicit call passed straight into another explicit call (RFC 164).
+# pending: INCAN-T0123 refuses the body: "temporary argument needs retained dependency facts", and its producer: "non-Copy constructor field needs checked ownership transfer materialization".
+# expect-stdout:
+#   3
+
+model Row:
+    name: str
+
+
+def row_of(name: Borrowed[str]) -> Result[Row, str]:
+    return Ok(Row(name=name.upper()))
+
+
+def size(row: Borrowed[Row]) -> int:
+    return len(row.name)
+
+
+def measure(name: Borrowed[str]) -> Result[int, str]:
+    """A temporary result of one explicit call passed to another explicit call."""
+    return Ok(size(row_of(name)?))
+
+
+def main() -> None:
+    println(measure("abc").unwrap())
