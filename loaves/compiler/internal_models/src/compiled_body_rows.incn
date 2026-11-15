@@ -20,6 +20,8 @@ from crumb_rows import ModelField, decode_rows, encode_rows, model_description, 
 const MAX_ROW_BYTES: int = 67108864
 const MAX_FIELDS: int = 4096
 const MAX_METADATA_BYTES: int = 65536
+# An over-long fallback reason keeps this many leading characters, at most four bytes each, under the metadata bound.
+const MAX_REASON_CHARACTERS: int = 16000
 const NAMESPACE_SELECTOR: bytes = b"cmpnsp\x00"
 const VALUE_SELECTOR: bytes = b"cmpval\x00"
 const FALLBACK_SELECTOR: bytes = b"cmpfbk\x00"
@@ -186,12 +188,7 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
 
 def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
     """Encode one explicit full-source decision as a Crumb row independently of eligible owner payloads."""
-    if (
-        fallback.module == ""
-        or fallback.name == ""
-        or fallback.reason == ""
-        or len(fallback.reason.encode()) > MAX_METADATA_BYTES
-    ):
+    if fallback.module == "" or fallback.name == "" or fallback.reason == "":
         return Err(CodecFault.Malformed)
     identity = encoded_optional_identity(fallback.identity)?
 
@@ -201,10 +198,23 @@ def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[byte
             [required_value(b"ident_", identity), required_value(b"module", Value.Text(fallback.module)), required_value(
                 b"name__",
                 Value.Text(fallback.name),
-            ), required_value(b"reason", Value.Text(fallback.reason))],
+            ), required_value(b"reason", Value.Text(bounded_reason(fallback.reason)))],
         ),
     )
     return encoded_row(fallback_description(), row)
+
+
+def bounded_reason(reason: str) -> str:
+    """
+    Keep one fallback reason inside the metadata bound.
+
+    A reason is diagnostic text the compiler renders from a refusal, so its length follows the refused owner. One
+    over-long reason keeps its start and states its full size; it never refuses the other owners' rows.
+    """
+    size = len(reason.encode())
+    if size <= MAX_METADATA_BYTES:
+        return reason
+    return reason[:MAX_REASON_CHARACTERS] + f" [reason cut from {size} bytes]"
 
 
 def decode_compiled_body_value(value: Value) -> Result[CompiledBodyValue, CodecFault]:
