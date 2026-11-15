@@ -6,7 +6,7 @@ from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
 from request_directory import serve_from, served
-from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
+from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection, view_sealed
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
 from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
@@ -140,6 +140,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(begin_selection(selection.snapshot))
             published = commit_pinned(group, pending.view).map_err((error) => error.message())?
             selected = published.snapshot
+            # The commit flushed the baked unit's payloads; only now may the executable be viewed.
+            view_sealed(store, produced.sealed)?
             if produced.native_bakes > 0:
                 trace(
                     f"bakery {unit.identity[:12]}: baked program {Path(unit.binary).name()} (generation {selected.generation})",

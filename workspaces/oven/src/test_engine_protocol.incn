@@ -9,7 +9,15 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from files import write, json_text
 from bakery_roots import Collected, collect
-from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
+from engine_programs import (
+    read_program,
+    select_program,
+    program_handle,
+    NativeUnit,
+    obtain,
+    selected_program,
+    view_sealed,
+)
 from engine_epochs import prepare_submit
 from engine_client import service_generation, service_identity
 from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
@@ -778,6 +786,7 @@ def check_collection_before_selection() -> Result[None, str]:
         if let Some(transaction) = produced.transaction:
             group.append(transaction)
         committed = commit_group(group).map_err((error) => error.message())?
+        view_sealed(store, produced.sealed)?
         # The publication handle pins the result while no caller view has selected it.
         collect(store, -1)?
         match produced.unit:
