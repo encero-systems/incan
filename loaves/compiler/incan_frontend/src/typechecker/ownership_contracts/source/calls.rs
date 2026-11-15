@@ -565,7 +565,13 @@ impl Builder<'_> {
                         .iter()
                         .find(|mode| mode.component.parameter == Some(slot))
                 })
-                .map(|mode| mode.mode);
+                .map(|mode| mode.mode)
+                // A caller-visible `mut` parameter writes through to its argument (RFC 129), so the call takes the
+                // argument's place exclusively, as a BorrowedMut[T] slot does.
+                .or_else(|| {
+                    (call.parameters[slot].is_mut && self.checker.mutation.shows_changes_to_caller(&call.callee, slot))
+                        .then_some(OwnershipMode::BorrowedMut)
+                });
             // A closure local passed on is read where it is passed, through the borrow it holds.
             if let Some(closure) = self.closure_local(expression) {
                 let (outgoing, argument) =
@@ -581,16 +587,7 @@ impl Builder<'_> {
                 expression,
                 &call.parameters[slot],
                 mode,
-                call.kind == super::super::InputCallKind::Ordinary,
-                matches!(
-                    call.kind,
-                    super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
-                ) || (call.kind == super::super::InputCallKind::Ordinary
-                    && self
-                        .checker
-                        .type_info
-                        .constructor_field_binding(expression.span)
-                        .is_some()),
+                call.kind == super::super::InputCallKind::Indirect,
                 span,
                 incoming,
             )?;
@@ -659,15 +656,17 @@ impl Builder<'_> {
     }
 
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
-    /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. Unresolved
-    /// duckborrow or ordinary mutable adapters refuse rather than cloning or guessing an access mode.
+    /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. An ordinary inferred
+    /// slot receives a value (RFC 129): a fresh value that can hold no borrow is evaluated into it, and an ordinary
+    /// place is read at the call. A place reached through an explicit view stays refused: whether the callee's inferred
+    /// realization shares it or would need a clone is not known here. A callable value's inferred slots still take
+    /// only Copy values.
     fn call_argument(
         &mut self,
         expression: &Spanned<Expr>,
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
-        ordinary_callee: bool,
-        accepts_fresh_inferred: bool,
+        indirect: bool,
         invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
@@ -692,39 +691,18 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
-            // A fresh closed value has no caller-owned source to conflict with. Explicit boundaries and an ordinary
-            // model constructor argument retain that checked independence without inventing a copy or loan.
-            None if accepts_fresh_inferred
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_none()
-                && (self
-                    .checker
-                    .type_info
-                    .expr_type(expression.span)
-                    .is_some_and(plain_result)
-                    || (ordinary_callee
-                        && self
-                            .checker
-                            .type_info
-                            .constructor_field_binding(expression.span)
-                            .is_some())) =>
-            {
-                self.expression(expression, incoming, true)
-                    .map(|outgoing| (outgoing, None))
-            }
-            // A whole local may be observed by an ordinary helper while its body retains later storage. Parameters,
-            // projections and borrowed aliases still need an explicit access fact rather than inferred widening.
-            None if ordinary_callee
-                && !parameter.is_mut
-                && self.optional_place(expression)?.is_some_and(|path| {
-                    path.through.is_none()
-                        && path.place.projection.is_empty()
-                        && matches!(
-                            path.place.root,
-                            Root::Binding(ref identity)
-                                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
-                        )
-                }) =>
+            None if indirect => Err(Unavailable {
+                span: expression.span,
+                reason: "ordinary argument requires inferred access or mutable binding facts".into(),
+            }),
+            // A fresh value that can hold no borrow has no caller-owned source to conflict with.
+            None if self.optional_place(expression)?.is_none() && self.fresh_argument(expression)? => self
+                .expression(expression, incoming, true)
+                .map(|outgoing| (outgoing, None)),
+            // An ordinary parameter receives a value, so the call reads an ordinary argument place as it is passed.
+            None if self
+                .optional_place(expression)?
+                .is_some_and(|path| path.through.is_none() && !self.borrowed_inputs.contains(&path.place.root)) =>
             {
                 self.expression(expression, incoming, false)
                     .map(|outgoing| (outgoing, None))
@@ -734,6 +712,22 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
+    }
+
+    /// Whether a temporary argument is a fresh value: no returned or native view, and a type that can hold no borrow.
+    fn fresh_argument(&mut self, expression: &Spanned<Expr>) -> Result<bool, Unavailable> {
+        if self.view_source(expression)?.is_some()
+            || self
+                .native_result_relation(expression)?
+                .is_some_and(|relation| !relation.sources.is_empty())
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .checker
+            .type_info
+            .expr_type(expression.span)
+            .is_some_and(|ty| plain_result(ty) || self.checker.type_holds_no_borrow(ty)))
     }
 
     /// A fresh scalar or owned byte-string expression, or a list literal of Copy scalars, may be borrowed for this

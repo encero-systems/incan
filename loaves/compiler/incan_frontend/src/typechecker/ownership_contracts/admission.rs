@@ -7,7 +7,7 @@ use crate::ast::{
 };
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
-use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess};
 
 /// Source functions with statically bound parameters are executable under explicit ownership. Generic binders and
 /// ordinary defaults retain the same frame and declaration-owned contract; decorators remain outside this boundary
@@ -314,19 +314,6 @@ impl CheckedInputBody<'_> {
                 } else {
                     false
                 };
-                if argument.access == IncanInputAccess::Inferred
-                    && !copy
-                    && argument.source.as_ref().is_some_and(|source| {
-                        matches!(
-                            &source.root,
-                            super::flow::Root::Binding(identity)
-                                if identity.kind == SemanticSourceTargetKind::Parameter
-                        )
-                    })
-                    && !super::projection::closure_argument(self.graph, argument)
-                {
-                    return Err("ordinary non-Copy input requires its inferred access proof");
-                }
                 if argument.access == IncanInputAccess::Owned
                     && !copy
                     && argument

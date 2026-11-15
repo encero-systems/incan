@@ -283,6 +283,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.lower_planned_args_with_declaration_order(planned, slot_count, mut_slots, slot_types, scope, out, false)
     }
 
+    /// Lower one argument of an ordinary value parameter: the value is evaluated at the boundary, and the callee's
+    /// inferred shared-read or owned realization later decides its final operand. A checked explicit call's inferred
+    /// slot takes its argument this way too.
+    pub(in crate::body_ir) fn lower_value_argument(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        slot_type: Option<&IncanType>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let operand = if let Some(adjusted) = self.lower_adjusted_argument(expr, scope, out) {
+            adjusted?
+        } else {
+            self.lower_boundary_value(expr, slot_type, scope, out)
+        };
+        let operand = self.owned_parameter_operand(expr, operand);
+        let operand = self.retain_owned_native_argument(expr, operand, scope, out);
+        Ok(self.retain_evaluated_value_read(expr, operand, scope, out))
+    }
+
     /// Evaluate a checked binding in its recorded order, preserving source coordinates separately from ownership.
     ///
     /// Ordinary fixed named free calls and authenticated imported SDK factories retain the frozen emitter's
@@ -328,28 +348,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Some(IncanType::RefMut(_)) => Some(true),
                 _ => None,
             };
-            let mut operand = if let Some(adjusted) = self.lower_adjusted_argument(expr, scope, out) {
-                adjusted?
-            } else if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
-                self.lower_expr_to_operand(expr, scope, out)
+            let operand = if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
+                let mut operand = if let Some(adjusted) = self.lower_adjusted_argument(expr, scope, out) {
+                    adjusted?
+                } else {
+                    self.lower_expr_to_operand(expr, scope, out)
+                };
+                if let Some(mutable) = reference {
+                    if let Some(IncanType::Ref(referent) | IncanType::RefMut(referent)) = slot_types.get(*slot) {
+                        operand = self.materialize_argument_loans(expr, operand, referent, scope, out);
+                    }
+                    if let bir::Operand::Place(read) = &mut operand {
+                        self.retain_argument_borrow(read, mutable);
+                    }
+                } else {
+                    operand = self.copy_nominal_mut_argument(operand, slot_types.get(*slot));
+                    operand = self.borrow_for_mut_parameter(operand);
+                }
+                operand
             } else {
-                self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)
+                self.lower_value_argument(expr, slot_types.get(*slot), scope, out)?
             };
-            if let Some(mutable) = reference {
-                if let Some(IncanType::Ref(referent) | IncanType::RefMut(referent)) = slot_types.get(*slot) {
-                    operand = self.materialize_argument_loans(expr, operand, referent, scope, out);
-                }
-                if let bir::Operand::Place(read) = &mut operand {
-                    self.retain_argument_borrow(read, mutable);
-                }
-            } else if mut_slots.get(*slot).copied().unwrap_or(false) {
-                operand = self.copy_nominal_mut_argument(operand, slot_types.get(*slot));
-                operand = self.borrow_for_mut_parameter(operand);
-            } else {
-                operand = self.owned_parameter_operand(expr, operand);
-                operand = self.retain_owned_native_argument(expr, operand, scope, out);
-                operand = self.retain_evaluated_value_read(expr, operand, scope, out);
-            }
             self.retain_pending_operand_read(&operand);
             if let Some(entry) = lowered.get_mut(*slot) {
                 *entry = Some((operand, written_position));

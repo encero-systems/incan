@@ -526,6 +526,15 @@ impl TypeChecker {
 }
 
 impl MutationFacts {
+    /// Whether the declaration `callee`'s parameter in `slot` (receiver excluded) shows its changes to the caller: an
+    /// argument passed there is written through, so the call needs exclusive access to the argument's place.
+    pub(in crate::typechecker) fn shows_changes_to_caller(&self, callee: &CanonicalSymbolId, slot: usize) -> bool {
+        self.declared
+            .get(callee)
+            .and_then(|slots| slots.get(slot))
+            .is_some_and(|parameter| parameter.shows_changes_to_caller)
+    }
+
     /// Return whether the active callable contributes caller-visible mutation facts or argument obligations.
     /// Ordinary bodies with none of these facts do not activate ownership-graph construction.
     pub(in crate::typechecker) fn activates_graph(&self, owner: &CanonicalSymbolId) -> bool {
