@@ -10,7 +10,7 @@ impl TypeChecker {
         let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.symbols) else {
             return;
         };
-        let Some(semantics) = self.testing_marker_semantics.clone() else {
+        let Some(semantics) = self.testing_marker_semantics_on_demand(span) else {
             self.errors.push(errors::invalid_std_testing_marker_metadata(
                 "the active std.testing provider did not supply checked marker metadata",
                 span,
@@ -54,14 +54,14 @@ impl TypeChecker {
             return None;
         }
 
-        let Some(semantics) = self.testing_marker_semantics.as_ref() else {
+        let Some(semantics) = self.testing_marker_semantics_on_demand(span) else {
             self.errors.push(errors::invalid_std_testing_marker_metadata(
                 "the active std.testing provider did not supply checked marker metadata",
                 span,
             ));
             return None;
         };
-        resolve_testing_fixture_marker_args(decorators, &self.symbols, semantics)
+        resolve_testing_fixture_marker_args(decorators, &self.symbols, &semantics)
     }
 
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.

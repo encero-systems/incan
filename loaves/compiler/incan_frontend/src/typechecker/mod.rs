@@ -995,6 +995,9 @@ pub struct TypeChecker {
     /// This is populated while imports are collected. Keeping it with the checker prevents declaration checking from
     /// reopening provider source after the compiled manifest has become the semantic authority.
     pub testing_marker_semantics: Option<crate::testing_markers::TestingMarkerSemantics>,
+    /// The `std.testing` module an import of a function that is no decorator named, whose marker contract is read
+    /// when a fixture or test module first needs it rather than at that import.
+    pub testing_marker_module: Option<Vec<String>>,
     /// Unified import-driven activation and strategy context for soft-keyword/decorator semantics.
     pub surface_context: SurfaceContext,
     /// RFC 042: transitive supertrait closure for each trait, keyed by trait name.

@@ -253,6 +253,7 @@ impl TypeChecker {
         self.module_declared_type_names = Self::collect_module_declared_type_names(program);
         self.testing_fixture_names.clear();
         self.testing_marker_semantics = None;
+        self.testing_marker_module = None;
         self.local_rust_derive_paths.clear();
         self.local_derive_facts.clear();
         self.hash_key_inference.local_requirements.clear();

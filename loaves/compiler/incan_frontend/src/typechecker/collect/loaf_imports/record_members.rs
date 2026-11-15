@@ -81,18 +81,22 @@ impl TypeChecker {
             else {
                 return false;
             };
-            members.push(PublicModuleMember {
-                kind: resolved.kind,
-                canonical: resolved.canonical,
-                source_module_path: source_module_path.to_vec(),
-                source_name: resolved.source_name,
-                type_alias: None,
-                partial_projection: None,
-            });
+            let marker_free = self.record_proves_no_testing_marker(library, source_module_path, &resolved.source_name);
+            members.push((
+                PublicModuleMember {
+                    kind: resolved.kind,
+                    canonical: resolved.canonical,
+                    source_module_path: source_module_path.to_vec(),
+                    source_name: resolved.source_name,
+                    type_alias: None,
+                    partial_projection: None,
+                },
+                marker_free,
+            ));
         }
         let mut source_module = admitted.binding_root.clone();
         source_module.extend(import.module.iter().cloned());
-        for (item, member) in items.iter().zip(members) {
+        for (item, (member, marker_free)) in items.iter().zip(members) {
             let local_name = Self::import_item_local_name(item);
             if self.validate_protected_builtin_binding(&local_name, span) {
                 continue;
@@ -104,9 +108,46 @@ impl TypeChecker {
             let mut binding_path = source_module.clone();
             binding_path.push(item.name.clone());
             self.define_pub_module_import_symbol(library, local_name.clone(), binding_path, member, span);
-            self.record_standard_surface_import(&admitted.binding_root, &import.module, item, &local_name, span);
+            self.record_standard_surface_import(
+                &admitted.binding_root,
+                &import.module,
+                item,
+                &local_name,
+                span,
+                marker_free,
+            );
         }
         true
+    }
+
+    /// Whether the signature records of `name`, declared in the module `module` of `library`, prove it is no
+    /// `std.testing` marker: none of its declarations carries the marker decorator. `false` when no record says.
+    fn record_proves_no_testing_marker(&self, library: &str, module: &[String], name: &str) -> bool {
+        let qualified = module
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(name))
+            .collect::<Vec<_>>()
+            .join("::");
+        let Ok(Some(signatures)) = self
+            .loaves
+            .declaration_facts(library, DeclarationFacet::Signature, &qualified)
+        else {
+            return false;
+        };
+        signatures.iter().all(|signature| {
+            signature
+                .get("decorators")
+                .and_then(Value::as_array)
+                .is_some_and(|decorators| {
+                    decorators.iter().all(|decorator| {
+                        decorator.get("path").and_then(Value::as_array).is_none_or(|path| {
+                            path.len() != 1
+                                || path[0].as_str() != Some(crate::testing_markers::TESTING_MARKER_DECORATOR)
+                        })
+                    })
+                })
+        })
     }
 
     /// Whether the records prove `item`, imported from the namespace `module` of `library`, is one of its public

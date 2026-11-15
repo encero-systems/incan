@@ -171,6 +171,7 @@ impl TypeChecker {
             module_declared_type_names: HashSet::new(),
             testing_fixture_names: HashSet::new(),
             testing_marker_semantics: None,
+            testing_marker_module: None,
             surface_context: SurfaceContext::default(),
             supertrait_closure: HashMap::new(),
             pending_trait_supertraits: Vec::new(),
