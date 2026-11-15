@@ -5,7 +5,7 @@ from rust::std::fs import File
 from rust::std::io import Read, Seek, SeekFrom
 from rust::std::string import String as RustString
 from std.fs import Path
-from std.json import parse
+from std.json import JsonValue, parse
 from bakery import bakery, claim
 from files import make_directory, read
 from home import home
@@ -23,6 +23,31 @@ const RELATIONSHIP_DOMAIN: str = "incan.codegraph.relationships/1"
 const HEX_DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
 
 
+@derive(Eq)
+pub enum AuthorKind(str):
+    """Who wrote a piece of authored text: the toolchain, the requesting workspace, or one of its dependencies."""
+
+    # The text the toolchain ships. Oven builds with the released seed, which resolves a variant named `Toolchain`
+    # here in place of the `Toolchain` model.
+    Shipped = "toolchain"
+    Workspace = "workspace"
+    Dependency = "dependency"
+
+
+pub model Author:
+    """The author of the text a record carries; a dependency is named by its identity."""
+
+    pub kind: AuthorKind
+    pub identity: str = ""
+
+    pub def json(self) -> JsonValue:
+        """The author as records and context items carry it."""
+        mut fields = {"kind": JsonValue.string(self.kind.value())}
+        if self.identity != "":
+            fields["identity"] = JsonValue.string(self.identity)
+        return JsonValue.object(fields)
+
+
 pub model GraphUnit:
     """One portable graph and the source root under which this consumer presents its Loaf-relative anchors."""
 
@@ -32,6 +57,31 @@ pub model GraphUnit:
     pub version: str = ""
     # Only source-backed exports observe current authored bytes; published Loaves remain bound to their artifact.
     pub source_root: str = ""
+
+    pub def author(self, workspace: str) -> Author:
+        """
+        Who wrote the text this graph's records carry, as the project under `workspace` sees it (RFC 106).
+
+        1. A standard package's text is the toolchain's.
+        2. A registry Loaf's text is a dependency's, named by the Loaf.
+        3. A local Loaf under the requesting workspace is the workspace's own; any other is a dependency, named by
+           its package and version.
+        """
+        # 1. The toolchain ships the standard packages.
+        if self.root.0.startswith("@std/"):
+            return Author(kind=AuthorKind.Shipped)
+        # 2. A virtual root other than the standard one is a registry Loaf's.
+        if self.root.0.startswith("@"):
+            return Author(kind=AuthorKind.Dependency, identity=self.root.0[1:])
+        # 3. Only what lies in the workspace was written by it.
+        if self.root.0 == workspace or self.root.0.startswith(f"{workspace}/"):
+            return Author(kind=AuthorKind.Workspace)
+        mut identity = self.package
+        if identity == "":
+            identity = self.root.name()
+        if self.version != "":
+            identity = f"{identity}@{self.version}"
+        return Author(kind=AuthorKind.Dependency, identity=identity)
 
 
 pub def unchecked_marker(graph: Path) -> Path:

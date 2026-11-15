@@ -31,7 +31,7 @@ from element_borrows import shared_element_place
 from validation_errors import validation_error_reference
 from text_plan import owned_literal
 from numerics import numeric_carrier
-from frame import place_type, Builder, temporary, read_place, literal
+from frame import place_type, Builder, temporary, read_place, literal, forget_moved_arguments, lend_invocation_storage
 from collections import is_collection
 from lists import is_list, exclusive_reference, is_mutable_list_reference
 from closures import packed_input, function_assignment, parameter_representation
@@ -261,9 +261,6 @@ pub def call_argument_operand(
         # The checked ABI distinguishes owned packs and SDK values from ordinary collection references.
         return value_operand(builder, value, span)
     if is_list(ty) or is_collection(ty):
-        match stored_element_list(builder, value, ty, span)?:
-            Some(lent) => return Ok(lent)
-            None => pass
         if is_mutable_list_reference(ty):
             match loop_variable_copy(builder, value, span)?:
                 Some(copy) => return list_borrow(builder, copy, true, span)
@@ -396,39 +393,6 @@ def exact_shared_storage(
             return Ok(None)
 
 
-def stored_element_list(
-    mut builder: Builder,
-    value: &RustOperand,
-    ty: PlanType,
-    span: SourceSpan,
-) -> Result[Option[Operand], str]:
-    """
-    Lend a list stored inside a list element, such as `stored.variants[position].labels`, to a shared list parameter
-    through the element's own loan, so the call copies nothing.
-
-    Only a shared parameter of exactly the stored list's type qualifies. A slice, a moved projection, a mutable
-    parameter and a list of another shape keep the copy `checked_list_argument` makes for them.
-    """
-    match value:
-        RustOperand.Place(read) =>
-            if read.fact != OwnershipFact.Borrow or not is_element_place(builder, read.place)?:
-                return Ok(None)
-            match reference_contract(ty):
-                Ok((referent, writable)) =>
-                    if writable or not is_list(referent):
-                        return Ok(None)
-                    match element_place_type(builder, read.place):
-                        Ok(element) =>
-                            if element != referent:
-                                return Ok(None)
-                        Err(_reason) => return Ok(None)
-                Err(_reason) => return Ok(None)
-            match shared_element_place(builder, read.place, span)?:
-                Some(stored) => return Ok(Some(list_borrow(builder, stored, false, span)?))
-                None => return Ok(None)
-        _ => return Ok(None)
-
-
 def has_ordinary_lending_route(ty: PlanType) -> bool:
     """Whether `call_argument_operand` lends this reference carrier itself, including its call-site conversions."""
     if is_list(ty) or is_collection(ty):
@@ -447,20 +411,28 @@ def materialized_shared_argument(
     referent: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation."""
+    """
+    Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation.
+
+    The frame owns that storage only for the call: it is dropped when the call returns, and by the call's unwind
+    cleanup. An inferred-shared input is never the source of a returned view, so nothing reads it afterward.
+    """
     materialized = call_argument_operand(builder, value, referent, span)?
     if operand_type(builder, materialized)? != referent:
         return Err("unsupported Body IR inferred shared materialization mismatch")
     storage = temporary(builder, referent, span)
+    forget_moved_arguments(builder, [materialized])
     builder.emit(plan_assign(storage, RvalueKind.Use(materialized), span))
-    return explicit_place_argument(
+    lent = explicit_place_argument(
         builder,
         storage,
         OwnershipFact.Borrow,
         expected,
         IncanInputAccess.InferredShared,
         span,
-    )
+    )?
+    lend_invocation_storage(builder, storage, lent)
+    return Ok(lent)
 
 
 def explicit_constant_argument(

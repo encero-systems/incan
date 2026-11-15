@@ -3,11 +3,13 @@
 from rust::incan_std_primitives::crumb import RowRequest, twin_row_reads
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.descriptions import Description, DescriptionMode
+from crate.primitives.crumb.errors import CrumbFailure
 from crate.primitives.crumb.metadata_values import encode
 from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.registrations import KindRegistry
 from crate.primitives.crumb.encoding_errors import BinaryFailure
 from crate.primitives.crumb.row_reader import read_prefix, read_rows
+from crate.primitives.crumb.row_twin import read_twin_rows
 from crate.primitives.crumb.row_writer import write_rows
 from crate.primitives.crumb.types import AbsentPolicy
 from crate.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
@@ -135,6 +137,44 @@ def test_the_native_entry_charges_exactly_the_allowance_it_reports() -> Result[N
     assert again.admitted(), f"the reported allowance did not suffice: {again.category}"
     short = admission(envelope, true, first.bytes_charged, first.elements_charged - 1).admit()
     assert short.category == "limit_exceeded"
+    return Ok(None)
+
+
+def test_native_budget_refusals_preserve_the_twins_primitive_cause() -> Result[None, str]:
+    """The public native route retains the same typed exhausted-resource cause as the Incan twin."""
+    mut setup = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, false, setup).map_err((e) => e.message())?
+    measured = admission(envelope, true, 1048576, 1048576).admit()
+    assert measured.admitted()
+    owner = MappedFile.owned(envelope)?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            mut native_budget = Budget
+                .create(bytes=measured.bytes_charged, elements=measured.elements_charged - 1, depth=64)
+                .map_err((e) => e.message())?
+            mut twin_budget = Budget
+                .create(bytes=measured.bytes_charged, elements=measured.elements_charged - 1, depth=64)
+                .map_err((e) => e.message())?
+            native = match read_rows(view, [], registry, false, native_budget):
+                Ok(_) => return Err("the short native allowance was admitted")
+                Err(error) => error
+            twin = match read_twin_rows(view, [], registry, false, twin_budget):
+                Ok(_) => return Err("the short twin allowance was admitted")
+                Err(error) => error
+            assert native.kind == twin.kind
+            assert native.offset == twin.offset
+            match twin.cause:
+                None => return Err("the twin refusal lost its primitive cause")
+                Some(expected) =>
+                    assert expected.kind == CrumbFailure.Limit
+                    assert expected.detail == "elements"
+                    match native.cause:
+                        None => return Err("the native refusal lost its primitive cause")
+                        Some(actual) =>
+                            assert actual.kind == expected.kind
+                            assert actual.detail == expected.detail
     return Ok(None)
 
 

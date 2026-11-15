@@ -11,9 +11,11 @@ from release_signature_fixtures import (
     archive,
     branch_bundle,
     bundle,
+    forged_checkpoint_bundle,
     forged_log_bundle,
     late_bundle,
     other_trusted_root,
+    sigstore_trusted_root,
     trusted_root,
 )
 
@@ -103,7 +105,7 @@ pub def test_a_changed_signature_or_log_record_is_refused() -> Result[None, str]
 
     1. Another signature of the right shape does not verify under the certificate.
     2. A changed entry timestamp, a changed proof hash and a checkpoint for another tree size are each refused.
-    3. A log record signed by a key that is not the trusted log's is refused.
+    3. A log record signed by a key that is not the trusted log's is refused, and so is a checkpoint alone signed by it.
     4. A signature the log recorded after the certificate expired is refused.
     """
     asset = raw(archive())?
@@ -132,6 +134,10 @@ pub def test_a_changed_signature_or_log_record_is_refused() -> Result[None, str]
         refusal(text(forged_log_bundle())?, asset, trusted()?, signer())? ==
         "the transparency log's signed entry timestamp does not verify"
     )
+    assert (
+        refusal(text(forged_checkpoint_bundle())?, asset, trusted()?, signer())? ==
+        "the transparency-log checkpoint is not signed by its log"
+    )
     # 4. The log's time decides whether the short-lived certificate was valid.
     assert (
         refusal(text(late_bundle())?, asset, trusted()?, signer())? ==
@@ -149,4 +155,23 @@ pub def test_a_trust_root_whose_chain_does_not_verify_is_refused() -> Result[Non
     match trust_root(first.replace(own_root, other_root)):
         Ok(_) => fail("a broken chain was trusted")
         Err(reason) => assert reason == "a trusted certificate authority's chain does not verify"
+    return Ok(None)
+
+
+pub def test_the_sigstore_trusted_root_reads_and_trusts_only_logs_whose_keys_it_can_check() -> Result[None, str]:
+    """
+    The trusted root of Sigstore's public instance reads as it is published.
+
+    1. Both of its certificate authorities' chains verify.
+    2. Its ECDSA log is trusted. Its Ed25519 log, whose signatures this verifier cannot check, is left out, so a
+       release recorded only there is refused as recorded by a log this toolchain does not trust.
+    """
+    root = trust_root(text(sigstore_trusted_root())?)?
+    # 1. The retired authority and the current one.
+    assert len(root.authorities) == 2
+    assert len(root.authorities[0]) == 1
+    assert len(root.authorities[1]) == 2
+    # 2. rekor.sigstore.dev, by the identifier bundles name.
+    assert len(root.logs) == 1
+    assert root.logs[0].identifier == raw("wNI9atQGlz+VWfO6LRygH4QUfY/8W4RFwiT5i5WRgB0=")?
     return Ok(None)

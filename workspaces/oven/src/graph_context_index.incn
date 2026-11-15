@@ -6,7 +6,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from files import json_text, read
-from graph_cache import GraphUnit, cache_file, read_graph, stamp_file
+from graph_cache import Author, AuthorKind, GraphUnit, cache_file, read_graph, stamp_file
 from graph_identity import keyed
 from graph_queries import display, nested, text
 from graph_context_items import anchor_root, minimum_sizes, tokens
@@ -15,7 +15,7 @@ from publication import publish
 from unit_freshness import artifact_identity, fingerprint
 from toolchain import Toolchain
 
-const INDEX_DOMAIN: str = "incan.context.index/5"
+const INDEX_DOMAIN: str = "incan.context.index/6"
 
 
 pub model RecordRange:
@@ -65,12 +65,15 @@ pub class ContextIndex:
     pub parsed: int = 0
     pub read_bytes: int = 0
     extra: Dict[str, JsonValue] = {}
+    # The author of each prepared payload file's records, as this request's workspace sees its unit.
+    authors: Dict[str, JsonValue] = {}
 
     pub def add(mut self, unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[None, str]:
         """Load one identity-bound package index; only its header needs JSON decoding."""
         path = prepare(unit, toolchain, owner)?
         data = f"{path.0}.records"
         self.searches.append((f"{path.0}.terms", data))
+        self.authors[data] = unit.author(anchor_root(owner).0).json()
         for line in read(path)?.split("\n"):
             if line == "":
                 continue
@@ -140,11 +143,16 @@ pub class ContextIndex:
             return row.key
         return row.original_identity
 
-    pub def add_process(mut self, records: list[JsonValue], root: str) -> Result[None, str]:
-        """Attach current process observations after graph joins, just as ordinary context append did."""
-        for record in records:
-            if not eligible(record):
+    pub def add_process(mut self, observed: list[JsonValue], root: str) -> Result[None, str]:
+        """
+        Attach current process observations after graph joins, just as ordinary context append did. They quote the
+        workspace's own history, so the workspace is their author.
+        """
+        author = Author(kind=AuthorKind.Workspace).json()
+        for observation in observed:
+            if not eligible(observation):
                 continue
+            record = with_author(observation, author)?
             identifier = text(record, "id")
             row = [unescape(field) for field in index_row(record, 0, 0, root)?.split("\t")]
             self.nodes[identifier] = context_node(row, "")
@@ -274,6 +282,10 @@ pub class ContextIndex:
             records.append(self.payload(row)?)
         return Ok(records)
 
+    def authored(self, record: JsonValue, data: str) -> Result[JsonValue, str]:
+        """Carry the author of a payload file's unit on a record read from it (RFC 106)."""
+        return with_author(record, self.authors[data])
+
     def payload(mut self, position: RecordRange) -> Result[JsonValue, str]:
         """Read one exact UTF-8 record range; a short or malformed cache refuses rather than changing ranking."""
         mut file = File.open(position.path).map_err((error) => str(error))?
@@ -288,8 +300,15 @@ pub class ContextIndex:
         self.parsed += 1
         self.read_bytes += size
         match RustString.from_utf8(buffer):
-            Ok(value) => return decode(str(value))
+            Ok(value) => return self.authored(decode(str(value))?, position.path)
             Err(_) => return Err("context index record is not UTF-8")
+
+
+def with_author(record: JsonValue, author: JsonValue) -> Result[JsonValue, str]:
+    """One record with the author of the text it carries."""
+    mut fields = record.expect_object().map_err((error) => error.message())?
+    fields["author"] = author
+    return Ok(JsonValue.object(fields))
 
 
 def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, str]:
@@ -302,6 +321,7 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     """
     # 1. A changed export, package or anchor selects another immutable index.
     anchors = anchor_root(owner).0
+    author = unit.author(anchors).json()
     mut projection_root = anchors
     # Virtual package anchors are independent of the project requesting their records.
     if unit.root.0.startswith("@"):
@@ -336,7 +356,7 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
             package = text(nested(record, "package"), "name")
             rows.append(f"header\t{escape(line)}")
         else:
-            fact = keyed(record, package)?
+            fact = with_author(keyed(record, package)?, author)?
             rows.append(index_row(fact, offset, length, anchors)?)
             if eligible(fact):
                 for word in keywords(searchable(fact)):

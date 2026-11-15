@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from files import make_directory, write
+from observation import children
 from project_library import (
     LIBRARY_SUFFIX,
     library_loaf,
@@ -121,4 +122,25 @@ pub def test_a_nested_project_keeps_its_modules_out_of_the_enclosing_shared_libr
     own_tests, own = source_modules(tool)?
     assert own_tests == [tool.joinpath("src/test_tool.incn").0]
     assert own == [tool.joinpath("src/main.incn").0]
+    return Ok(None)
+
+
+pub def test_a_change_inside_a_nested_project_leaves_the_enclosing_observation_unchanged() -> Result[None, str]:
+    """
+    The walk that records a project's source membership stops where its compilation stops: a nested project's
+    directory is not entered, so a file added inside it changes nothing the enclosing project observes.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    tool = root.joinpath("src/tool")
+    make_directory(tool.joinpath("src"))?
+    write(tool.joinpath("loaf.toml"), "[project]\nname = \"tool\"\nversion = \"1\"\n")?
+    before = children(root.joinpath("src"), ".incn")?
+    assert "nested" in before.directories
+    assert "tool" not in before.directories, "a nested project's directory is observed as the enclosing project's"
+    write(tool.joinpath("src/added.incn"), "\"\"\"Another project's new module.\"\"\"\n")?
+    after = children(root.joinpath("src"), ".incn")?
+    assert after.files == before.files
+    assert after.directories == before.directories
     return Ok(None)

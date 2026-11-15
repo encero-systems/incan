@@ -68,6 +68,7 @@ from release_support import (
     write_json,
 )
 from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_signer import adopt_signed_bundle, stamp_release_signer
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
 
@@ -159,14 +160,20 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     5. Join the seed census that defines the integration inventory and passing outcomes.
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+
+    The release workflow signs between phases 4 and 6, in a job that runs nothing built here, so it invokes this twice:
+    `--stamp-signer` stamps and leaves out phase 6; `--verify-installed BUNDLE` runs phases 1, 5 and 6 on the bundle
+    it signed. A local qualification runs all seven, unstamped.
     """
     mut run = prepare_release(options)?
+    signed = run.options.signed_bundle != ""
 
     # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
     phase(run, "checkout")?
     materialize_source(run)?
-    phase(run, "seed-home")?
-    prepare_candidate_home(run)?
+    if not signed:
+        phase(run, "seed-home")?
+        prepare_candidate_home(run)?
 
     # 2. The seed census starts once its only inputs exist, yielding workers while candidate production proceeds.
     reference = match start_reference_census(run):
@@ -175,59 +182,35 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
             phase(run, "reference-verification")?
             return Err(message)
 
-    match phase(run, "source-closure"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    mut candidate = match build_source_closure(run):
+    # 3. The candidate is built here, or is the bundle the workflow signed; a refusal stops the overlapping census.
+    candidate = match produce_candidate(run):
         Ok(built) => built
         Err(message) =>
             _ = cancel_background_step(reference)
             return Err(message)
-
-    # 3. Candidate compiler selection precedes runtime and standard production through that compiler.
-    match phase(run, "candidate-compiler"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    candidate = match build_candidate_compiler(run, candidate):
-        Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-
-    # 4. Shipped tools and archive are all built from the selected source and candidate home.
-    match phase(run, "bundle"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    candidate = match build_bundle(run, candidate):
-        Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-
-    if not run.options.prove_fixed_point:
+    if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
     reference_log = finish_reference_census(run, reference)?
     reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
-    if not run.options.prove_fixed_point:
+    if not run.options.prove_fixed_point and not signed:
         reclaim(run, "source-targets", generated_source_targets(run))?
 
-    # 6. The fresh installation owns the candidate census and the release's one memory measurement.
-    phase(run, "installed-verification")?
-    installed = installed_verification(run, candidate)?
-    candidate_report = candidate_census(run, installed)?
-    compare_reference(run, reference_log, candidate_report)?
+    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out.
+    mut counts: Option[Counts] = None
+    if not run.options.stamp_signer:
+        phase(run, "installed-verification")?
+        installed = installed_verification(run, candidate)?
+        candidate_report = candidate_census(run, installed)?
+        compare_reference(run, reference_log, candidate_report)?
+        counts = Some(candidate_report.counts)
 
     # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
-    if run.options.prove_fixed_point:
+    if signed:
+        reclaim(run, "verified-source", [run.paths.source])?
+    elif run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
         reclaim(
@@ -237,8 +220,25 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         )?
     else:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
-    complete_receipt(run, candidate_report.counts)?
+    complete_receipt(run, counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:
+    """Phases 2 to 4: build and pack the candidate, or take the bundle the workflow signed without building anything."""
+    if run.options.signed_bundle != "":
+        phase(run, "bundle")?
+        _ = adopt_signed_bundle(Path(run.options.signed_bundle), run.paths.bundle)?
+        oven = run.paths.bundle.joinpath("incan")
+        lsp = run.paths.bundle.joinpath("incan-lsp")
+        return Ok(Candidate(context=native_context(run, oven, run.paths.home), oven=oven, lsp=lsp, pending_lsp=None))
+    # 2. Source closure, then 3. the compiler that produces the runtime and standard Loaves, then 4. the shipped tools.
+    phase(run, "source-closure")?
+    mut candidate = build_source_closure(run)?
+    phase(run, "candidate-compiler")?
+    candidate = build_candidate_compiler(run, candidate)?
+    phase(run, "bundle")?
+    return build_bundle(run, candidate)
 
 
 def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
@@ -604,7 +604,8 @@ def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
-    """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
+    """Build the shipped tools, stamped for the workflow, copy the bundle tools, and pack the candidate toolchain."""
+    _ = stamp_release_signer(run.paths.source, run.paths.toolchain, run.options.stamp_signer)?
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     overlap = candidate.pending_lsp.is_some()
     oven = match build_oven_with_standard_profile(
@@ -1090,7 +1091,7 @@ def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]
     return Ok(None)
 
 
-def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
+def complete_receipt(run: ReleaseRun, counts: Option[Counts]) -> Result[None, str]:
     """Measure the full run, remove passing-only work trees unless retained, and publish final evidence."""
     mut oven_tests = JsonValue.null()
     runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
@@ -1108,7 +1109,10 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
     retained = measure_release_tree_bytes(run)?
     record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
     run.trace.complete()?
-    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(retained))
+    mut reached = "complete"
+    if counts.is_none():
+        reached = "packed"
+    return write_receipt(run, reached, "passed", 0, counts, oven_tests, release_tree_bytes_json(retained))
 
 
 def remove_passing_work_trees(run: ReleaseRun) -> Result[None, str]:

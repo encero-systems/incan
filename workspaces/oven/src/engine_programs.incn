@@ -189,7 +189,7 @@ pub def check_program(
         or len(described.c_headers) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepare_native(described, toolchain)?
+    ready = prepared_for(view, described, toolchain)?
     # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
     reading = body_reading(store, view, ready, epoch.inputs)?
     directory = check_page_directory(store, view, ready)
@@ -205,6 +205,17 @@ pub def check_program(
             body_page_decodes=checked.bodies.decoded,
         ),
     )
+
+
+def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
+    stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
+    """
+    ready = prepare_native(described, toolchain, is_editor_view(view))?
+    if ready.trust_stop != "":
+        return Err(ready.trust_stop)
+    return Ok(ready)
 
 
 def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
@@ -305,7 +316,7 @@ pub def obtain(
         or len(described.cloves) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepare_native(described, toolchain)?
+    ready = prepared_for(program_view(handle)?, described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)

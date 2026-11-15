@@ -1,0 +1,6 @@
+"""A path Loaf whose ordinary interface does not need its compile-time registration."""
+
+
+pub def marker() -> int:
+    """Return an ordinary value used only to retain the dependency edge."""
+    return 7

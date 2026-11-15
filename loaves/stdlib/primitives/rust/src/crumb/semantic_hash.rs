@@ -747,6 +747,98 @@ pub(super) fn closed_selector(node: &Node) -> Option<Vec<u8>> {
     Some(output)
 }
 
+/// Frame a closed selector while settling the same owned-output work as the public implementation.
+pub(super) fn closed_selector_charged(
+    node: &Node,
+    budget: &mut super::columns::Budget,
+) -> Result<Vec<u8>, super::columns::Refused> {
+    charged_selector_spelling(node, budget)?;
+    let Node::Nominal(_, identity, arguments) = node else {
+        return Err("invalid_cell");
+    };
+    let mut output = Vec::new();
+    append_charged(&mut output, identity, budget)?;
+    let count = crate::crumb::encode_native_unsigned(arguments.len() as u128);
+    budget.bytes(count.byte_charge)?;
+    budget.elements(count.element_charge)?;
+    append_charged(&mut output, &count.data, budget)?;
+    for argument in arguments {
+        let spelling = charged_selector_spelling(argument, budget)?;
+        let framed = crate::crumb::frame(spelling.into_bytes());
+        budget.bytes(framed.byte_charge)?;
+        budget.elements(framed.element_charge)?;
+        append_charged(&mut output, &framed.data, budget)?;
+    }
+    Ok(output)
+}
+
+/// Spell one selector while charging every recursive node and composed output fragment.
+pub(super) fn charged_selector_spelling(
+    node: &Node,
+    budget: &mut super::columns::Budget,
+) -> Result<String, super::columns::Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = charged_spelling_inner(node, budget);
+    budget.leave();
+    result
+}
+
+fn charged_spelling_inner(node: &Node, budget: &mut super::columns::Budget) -> Result<String, super::columns::Refused> {
+    match node {
+        Node::Scalar(kind) => {
+            budget.bytes(kind.len() as u64)?;
+            Ok(kind.clone())
+        }
+        Node::Decimal(..) => charged_composed(node, budget),
+        Node::Container(kind, items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                parts.push(charged_selector_spelling(item, budget)?);
+            }
+            if kind == "union" {
+                for part in &parts {
+                    budget.bytes(part.len() as u64)?;
+                    budget.elements(1)?;
+                }
+            }
+            charged_composed(node, budget)
+        }
+        Node::Nominal(kind, identity, arguments) => {
+            budget.bytes((kind.len() + 1 + 2 * identity.len()) as u64)?;
+            for argument in arguments {
+                charged_selector_spelling(argument, budget)?;
+            }
+            if arguments.is_empty() {
+                selector_spelling(node).ok_or("invalid_cell")
+            } else {
+                charged_composed(node, budget)
+            }
+        }
+        Node::Reference(item) => {
+            charged_selector_spelling(item, budget)?;
+            charged_composed(node, budget)
+        }
+        Node::Record(..) | Node::Enum(..) | Node::Recursive(..) => Err("invalid_cell"),
+    }
+}
+
+fn charged_composed(node: &Node, budget: &mut super::columns::Budget) -> Result<String, super::columns::Refused> {
+    let spelling = selector_spelling(node).ok_or("invalid_cell")?;
+    budget.bytes(spelling.len() as u64)?;
+    Ok(spelling)
+}
+
+fn append_charged(
+    output: &mut Vec<u8>,
+    value: &[u8],
+    budget: &mut super::columns::Budget,
+) -> Result<(), super::columns::Refused> {
+    budget.bytes(value.len() as u64)?;
+    output.extend_from_slice(value);
+    Ok(())
+}
+
 /// Transform normalized IEEE bits into bytewise numeric order, including negative zero and NaN.
 fn float_key(bits: &[u8]) -> Vec<u8> {
     let negative = bits[0] >= 128;
@@ -1052,4 +1144,89 @@ pub(super) fn hex_string(data: &[u8]) -> String {
 /// Append one value's object contribution without validating it again.
 pub(super) fn emit_object(value: &Value, output: &mut Vec<u8>) -> Option<()> {
     emit(value, Projection::Object, output)
+}
+
+/// Append one object contribution while replaying `append_seal`'s count and hash traversals on the caller's budget.
+pub(super) fn emit_object_charged(
+    value: &Value,
+    output: &mut Vec<u8>,
+    budget: &mut super::columns::Budget,
+) -> Result<(), super::columns::Refused> {
+    let start = output.len();
+    emit_object(value, output).ok_or("invalid_cell")?;
+    let length = output.len() - start;
+    charge_emit(value, budget)?;
+    budget.bytes(length as u64)?;
+    charge_unsigned(length, budget)?;
+    charge_emit(value, budget)?;
+    budget.bytes(length as u64)
+}
+
+/// Charge the seal domain and record count written by `start_seal`.
+pub(super) fn charge_seal_start(
+    count: usize,
+    budget: &mut super::columns::Budget,
+) -> Result<(), super::columns::Refused> {
+    budget.bytes(8)?;
+    charge_unsigned(count, budget)
+}
+
+/// Charge the independent digest returned by `HashOutput.digest`.
+pub(super) fn charge_seal_digest(budget: &mut super::columns::Budget) -> Result<(), super::columns::Refused> {
+    budget.bytes(32)
+}
+
+/// Charge a shortest unsigned value once to encode it and once to write it.
+fn charge_unsigned(value: usize, budget: &mut super::columns::Budget) -> Result<(), super::columns::Refused> {
+    let encoded = crate::crumb::encode_native_unsigned(value as u128);
+    budget.elements(encoded.element_charge)?;
+    budget.bytes(encoded.byte_charge + encoded.data.len() as u64)
+}
+
+/// Replay one value traversal's depth, work and retained ordering keys without rebuilding its bytes.
+fn charge_emit(value: &Value, budget: &mut super::columns::Budget) -> Result<(), super::columns::Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = match value {
+        Value::Some(item) | Value::Union(_, item) => charge_emit(item, budget),
+        Value::List(items) | Value::Tuple(items) | Value::Set(items) => {
+            items.iter().try_for_each(|item| charge_emit(item, budget))
+        }
+        Value::Map(entries) => entries.iter().try_for_each(|(key, value)| {
+            charge_emit(key, budget)?;
+            charge_emit(value, budget)
+        }),
+        Value::Integer(negative, magnitude) => {
+            let encoded = if *negative {
+                let signed = if *magnitude == 1u128 << 127 {
+                    i128::MIN
+                } else {
+                    -i128::try_from(*magnitude).map_err(|_| "invalid_cell")?
+                };
+                crate::crumb::encode_native_signed(signed)
+            } else {
+                crate::crumb::encode_integer_unsigned(*magnitude)
+            };
+            charge_encoded(encoded, budget)
+        }
+        Value::Record(fields) | Value::Enum(_, fields) => {
+            charge_encoded(crate::crumb::encode_native_unsigned(fields.len() as u128), budget)?;
+            fields.iter().try_for_each(|field| {
+                budget.elements(1)?;
+                budget.bytes(28)?;
+                charge_emit(&field.value, budget)
+            })
+        }
+        _ => Ok(()),
+    };
+    budget.leave();
+    result
+}
+
+fn charge_encoded(
+    encoded: crate::crumb::Encoded,
+    budget: &mut super::columns::Budget,
+) -> Result<(), super::columns::Refused> {
+    budget.bytes(encoded.byte_charge)?;
+    budget.elements(encoded.element_charge)
 }

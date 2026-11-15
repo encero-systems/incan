@@ -3,6 +3,7 @@
 from rust::incan_std_primitives::crumb import RowRead
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
 from crate.primitives.crumb.values import IntegerValue, MapEntry, Metadata, MetadataEntry, Value, ValueField
 
@@ -13,16 +14,25 @@ pub def settle(read: &RowRead, mut budget: Budget) -> Result[None, BinaryError]:
     budget.charge_elements(read.elements_charged).map_err((e) => primitive(e, read.offset))?
     if read.succeeded():
         return Ok(None)
-    return Err(refusal(read.category, read.offset, read.field, read.variant))
+    return Err(refusal(read.category, read.offset, read.field, read.variant, read.cause))
 
 
-pub def refusal(category: str, offset: int, field: Option[bytes], variant: Option[bytes]) -> BinaryError:
+pub def refusal(
+    category: str,
+    offset: int,
+    field: Option[bytes],
+    variant: Option[bytes],
+    cause: str,
+) -> BinaryError:
     """A native refusal as the binary error the Incan reader reports, category for category."""
     kind = match BinaryFailure.from_value(category):
         Some(known) => known
         None => BinaryFailure.InvalidCell
 
-    return BinaryError(kind=kind, offset=offset, field=field, variant=variant)
+    mut original: Option[CrumbError] = None
+    if kind == BinaryFailure.LimitExceeded and len(cause) > 0:
+        original = Some(CrumbError.limit(cause))
+    return BinaryError(kind=kind, offset=offset, field=field, variant=variant, cause=original)
 
 
 pub class Nodes:

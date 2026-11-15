@@ -7,7 +7,7 @@ from corpus import load
 from native_twin import twin_decode, twin_encode, with_input
 
 
-def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str]:
+def test_native_semantic_codec_covers_all_447_corpus_cases() -> Result[None, str]:
     """Every corpus operation must encode and decode natively; the binary subset remains separately counted."""
     corpus = load(Path("specs/comic/corpus/manifest.json"))?
     mut completed = 0
@@ -30,7 +30,7 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
             None =>
                 if outcome.kind == 0u8:
                     return Err(f"native operation has no independent twin assertion: {item.operation.value()}")
-    assert len(corpus.cases) == 444
-    assert binary == 188
-    assert completed == 444, f"native semantic corpus completed {completed}/444; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
+    assert len(corpus.cases) == 447
+    assert binary == 191
+    assert completed == 447, f"native semantic corpus completed {completed}/447; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
     return Ok(None)

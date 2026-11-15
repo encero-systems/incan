@@ -112,6 +112,8 @@ pub struct RowRead {
     pub field: Option<Vec<u8>>,
     /// The enum variant identity a refusal is in, when known.
     pub variant: Option<Vec<u8>>,
+    /// The exhausted caller-owned resource when a budget charge caused the refusal.
+    pub cause: String,
     /// Bytes of the allowance this read used.
     pub bytes_charged: i64,
     /// Elements of the allowance this read used.
@@ -280,6 +282,9 @@ fn finish(result: Positioned<RowRead>, allowance: (u64, u64), budget: &Budget) -
     let mut read = result.unwrap_or_else(refused);
     read.bytes_charged = charged(allowance.0 - bytes_left);
     read.elements_charged = charged(allowance.1 - elements_left);
+    if read.category == "limit_exceeded" {
+        read.cause = budget.cause().unwrap_or_default().to_string();
+    }
     read
 }
 
@@ -290,6 +295,7 @@ fn items(items: Vec<Item>) -> RowRead {
         offset: 0,
         field: None,
         variant: None,
+        cause: String::new(),
         bytes_charged: 0,
         elements_charged: 0,
         present: false,
@@ -719,7 +725,9 @@ mod tests {
         assert_eq!((unknown.category.as_str(), unknown.offset), ("missing_field", 53));
         let short = rows.field_cell(0, b"short".to_vec(), 64, 64, 16);
         assert_eq!(short.category, "missing_field");
-        assert_eq!(rows.read_record(0, 0, 64, 16).category, "limit_exceeded");
+        let short = rows.read_record(0, 0, 64, 16);
+        assert_eq!(short.category, "limit_exceeded");
+        assert_eq!(short.cause, "bytes");
         assert_eq!(rows.read_record(1, 64, 64, 16).category, "record_index");
         let description = rows.description(0, 65_536, 65_536, 64);
         assert!(description.succeeded() && !description.inline);

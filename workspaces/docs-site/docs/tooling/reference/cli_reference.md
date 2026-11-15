@@ -49,6 +49,7 @@ incan tools doctor [--format text|json]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
+incan toolchain verify ASSET
 ```
 
 There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` either states its default in its section or requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``, and `incan new`, `incan init`, `incan version BUMP`, `incan workspace` and `incan env` report ``incan: `incan COMMAND` is an Oven command: run `oven COMMAND` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
@@ -547,11 +548,15 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | `native_interface_evaluations` | Integer | `1` when the lowering produced the unit's native interface for this request, otherwise `0`. |
 | `index_pages`, `keys_listed` | Integers | Bakery index pages read and keys listed while producing the unit, before the request commits. |
 
-## `incan toolchain pack` and `install`
+## `incan toolchain pack`, `install` and `verify`
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
 
 `install ARCHIVE` first requires Rust `1.98.0` with `rustc-dev`; without either it fails naming the `rustup` command that installs it. It stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.9/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
+
+A release build of `incan` carries a release signer, stamped into the program by the release that built it: the workflow that signs releases, its token issuer and the Sigstore trust root. With such a program, in a fresh home as in any other, `install ARCHIVE` first requires the signature bundle `ARCHIVE.sigstore.json` beside the archive and verifies it before unpacking anything: the bundle signs the archive's SHA-256 digest, its certificate chains to a certificate authority in the trust root and names the stamped workflow at a tag and the stamped issuer, and a transparency log in the trust root recorded the signature while the certificate was valid. An archive without a bundle, or whose bundle fails any of these, is refused with the reason and exit status `1`, and the existing installation is preserved. After a verified installation the home records the `release-signer.json` the archive ships, as `INCAN_HOME/release-signer.json`, and later installations and `verify` by a release build in that home verify against that record instead of the stamp, so the signer changes only through a signed release that states the new one. A program built any other way carries no signer: it installs without verifying a signature, prints `installing ARCHIVE unverified: this incan is a local build and carries no release signer`, and records nothing. `pack OUT` includes the installed toolchain's `release-signer.json` in the archive.
+
+`verify ASSET` verifies `ASSET.sigstore.json` for any release asset the same way and prints the signer and the transparency log entry. It exits `1` with the reason when verification fails, and when the program carries no release signer.
 
 ## Environment variables
 

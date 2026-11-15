@@ -22,17 +22,27 @@ pub(super) struct Budget {
     bytes: u64,
     elements: u64,
     depth: u64,
+    cause: Option<&'static str>,
 }
 
 impl Budget {
     /// A budget of exactly these bytes, elements and nesting depth.
     pub(super) fn new(bytes: u64, elements: u64, depth: u64) -> Self {
-        Self { bytes, elements, depth }
+        Self {
+            bytes,
+            elements,
+            depth,
+            cause: None,
+        }
     }
 
     /// Enter one nested level; exhausting the depth allowance is `limit_exceeded`.
     pub(super) fn enter(&mut self) -> Result<(), Refused> {
-        self.depth = self.depth.checked_sub(1).ok_or("limit_exceeded")?;
+        let Some(depth) = self.depth.checked_sub(1) else {
+            self.cause = Some("depth");
+            return Err("limit_exceeded");
+        };
+        self.depth = depth;
         Ok(())
     }
 
@@ -42,18 +52,31 @@ impl Budget {
     }
 
     pub(super) fn bytes(&mut self, count: u64) -> Result<(), Refused> {
-        self.bytes = self.bytes.checked_sub(count).ok_or("limit_exceeded")?;
+        let Some(bytes) = self.bytes.checked_sub(count) else {
+            self.cause = Some("bytes");
+            return Err("limit_exceeded");
+        };
+        self.bytes = bytes;
         Ok(())
     }
 
     pub(super) fn elements(&mut self, count: u64) -> Result<(), Refused> {
-        self.elements = self.elements.checked_sub(count).ok_or("limit_exceeded")?;
+        let Some(elements) = self.elements.checked_sub(count) else {
+            self.cause = Some("elements");
+            return Err("limit_exceeded");
+        };
+        self.elements = elements;
         Ok(())
     }
 
     /// The bytes and elements still allowed.
     pub(super) fn left(&self) -> (u64, u64) {
         (self.bytes, self.elements)
+    }
+
+    /// The caller-owned resource whose charge failed, when this budget produced the refusal.
+    pub(super) fn cause(&self) -> Option<&'static str> {
+        self.cause
     }
 }
 
@@ -235,6 +258,7 @@ pub(super) fn case_budget(document: &Json) -> Option<Budget> {
         bytes: DEFAULT_BYTES,
         elements: DEFAULT_ELEMENTS,
         depth: 128,
+        cause: None,
     };
     if let Some(limits) = document.get("limits") {
         for key in ["elements", "records", "dictionary_entries", "bits"] {

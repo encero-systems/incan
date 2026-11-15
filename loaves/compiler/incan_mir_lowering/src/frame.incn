@@ -153,6 +153,8 @@ pub model Builder:
     pub returned_view: IncanInputAccess = IncanInputAccess.Inferred
     # Whether the result carries a view in its success payload, so a borrowed reference payload is that view's loan.
     pub carries_view: bool = false
+    # Storage materialized only to lend it to one call, each paired with the reference that call receives.
+    pub invocation_storage: list[tuple[int, int]] = []
 
     property nominals -> &list[RustNominalDeclaration]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""
@@ -394,6 +396,44 @@ pub def terminate_call(
     builder.current = continuation
     if place_type(builder.locals, destination) == PlanType.Never:
         builder.finish(TerminatorKind.Unreachable, span)
+        return
+    release_invocation_storage(builder, arguments, span)
+
+
+pub def lend_invocation_storage(mut builder: Builder, storage: Place, lent: Operand) -> None:
+    """
+    Own storage materialized for one call, and pair it with the reference that call receives.
+
+    The owner joins the call's unwind cleanup, and `terminate_call` drops it when the call returns.
+    """
+    builder.owned.append(storage.local)
+    match lent.kind:
+        OperandKind.Copy(reference) => builder.invocation_storage.append((reference.local, storage.local))
+        OperandKind.Move(reference) => builder.invocation_storage.append((reference.local, storage.local))
+        _ => pass
+
+
+def release_invocation_storage(mut builder: Builder, arguments: list[Operand], span: SourceSpan) -> None:
+    """Drop the storage materialized for the call that just returned, once its loan has ended."""
+    if len(builder.invocation_storage) == 0:
+        return
+    mut lent: list[int] = []
+    for argument in arguments:
+        match argument.kind:
+            OperandKind.Copy(reference) => lent.append(reference.local)
+            OperandKind.Move(reference) => lent.append(reference.local)
+            _ => pass
+    mut kept: list[tuple[int, int]] = []
+    mut released: list[int] = []
+    for position in range(len(builder.invocation_storage)):
+        reference, storage = builder.invocation_storage[position]
+        if reference in lent:
+            released.append(storage)
+        else:
+            kept.append((reference, storage))
+    builder.invocation_storage = kept
+    for index in range(len(released)):
+        drop_owned(builder, released[len(released) - 1 - index], span)
 
 
 pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
