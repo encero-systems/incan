@@ -148,7 +148,7 @@ pub def reconciled_rust_key(
     command = fingerprint(invocation_facts(arguments, project, directory))?
     authored = fingerprint(sorted(sources))?
     native = fingerprint(sorted(artifacts))?
-    ambient = fingerprint(environment_inputs(variables, environment)?)?
+    ambient = fingerprint(environment_inputs(variables, environment, project)?)?
     digest = "sha256:" + fingerprint(["incan.oven.rust-unit/1", compiler, command, authored, native, ambient])?
     codegen = "sha256:" + fingerprint([CODEGEN_DOMAIN, command, authored, ambient])?
     # 3. Provenance is recorded but deliberately absent from the digest above.
@@ -374,16 +374,24 @@ pub def extern_paths(arguments: list[str]) -> list[str]:
     return paths
 
 
-def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[list[str], str]:
+def environment_inputs(names: list[str], environment: Dict[str, str], project: Path) -> Result[list[str], str]:
     """
     Observe tracked variables with package overrides, distinguishing unset from empty Unicode values. A watching request
     also records each variable it read from the process environment, by `environment_observation`.
+
+    The `OUT_DIR` a build fact gives the compile is spelled by its place in the Loaf, so the unit keeps one identity
+    wherever the Loaf lies; the generated files it holds enter the identity as sources. Any other location stays refused.
     """
+    prefix = project.0 + "/"
     mut inputs: list[str] = []
     for name in sorted(names):
         inputs.append(name)
         if name in environment:
-            inputs.extend(observed_environment_value(name, environment[name])?)
+            value = environment[name]
+            if name == "OUT_DIR" and value.startswith(prefix):
+                inputs.extend(["loaf-relative", value[len(prefix):]])
+                continue
+            inputs.extend(observed_environment_value(name, value)?)
             continue
         note_variable(name, environment_observation(name)?)
         match env_var(name):
