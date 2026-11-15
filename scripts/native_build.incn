@@ -82,6 +82,8 @@ model PreparedStandardPackage:
     requested_graph: bool
     temporary: TemporaryDirectory
     child: Step
+    # The installed Loaf of this profile was built from these same inputs: it stays, and nothing compiles or publishes.
+    kept: bool = false
 
 
 pub enum StandardProfile(str):
@@ -629,7 +631,8 @@ def build_standard_package(
 ) -> Result[None, str]:
     """Describe, compile, publish, and atomically select one standard package profile."""
     prepared = prepare_standard_package(context, helper, package, profile, admitted, phase_prefix)?
-    require_native_step(context, prepared.child)?
+    if not prepared.kept:
+        require_native_step(context, prepared.child)?
     return complete_standard_package(context, helper, prepared, admitted)
 
 
@@ -666,6 +669,10 @@ def prepare_standard_package(
     )?
     write_json(unit, prepared)?
     identify(context, helper, unit, false, f"std-{package}-{profile}-identify")?
+    mut kept = false
+    if context.reuse_standard:
+        question = f"std-{package}-{profile}-reusable"
+        kept = built_from_same_inputs(context, helper, unit, parent.joinpath(profile), question)?
     phase = f"{phase_prefix}std-{package}-{profile}"
     return Ok(
         PreparedStandardPackage(
@@ -678,6 +685,7 @@ def prepare_standard_package(
             requested_graph=requested_graph,
             temporary=temporary,
             child=compile_library_step(context, driver, sysroot, unit, name, staged, phase)?,
+            kept=kept,
         ),
     )
 
@@ -688,7 +696,12 @@ def complete_standard_package(
     package: PreparedStandardPackage,
     admitted: Path,
 ) -> Result[None, str]:
-    """Publish and select one fully compiled standard unit, prove its requested graph, and admit it to consumers."""
+    """
+    Publish and select one fully compiled standard unit, prove its requested graph, and admit it to consumers. A kept
+    unit is only admitted: its installed directory is the one consumers already read, and its staged one is dropped.
+    """
+    if package.kept:
+        return append_line(admitted, package.name)
     publish(context, helper, package.unit, package.staged, false, f"std-{package.package}-{package.profile}-publish")?
     require_requested_codegraph(package.requested_graph, package.staged, package.name)?
     output = package.parent.joinpath(package.profile)
@@ -720,7 +733,8 @@ def build_standard_wave(
 
 def run_standard_compiles(context: NativeContext, packages: list[PreparedStandardPackage]) -> Result[None, str]:
     """Compile independent standard units together under the release's count and memory reservations."""
-    planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
+    compiling = [package for package in packages if not package.kept]
+    planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in compiling]
     return require_reserved_success(context, planned)
 
 
@@ -808,6 +822,22 @@ def publish(
             context.evidence.joinpath(f"{phase}.log"),
         ),
     )
+
+
+def built_from_same_inputs(
+    context: NativeContext,
+    helper: Path,
+    unit: Path,
+    installed: Path,
+    phase: str,
+) -> Result[bool, str]:
+    """
+    Whether the unit installed in `installed` was published under the identity `unit` was just identified with, and
+    is still the very files that publication recorded. The helper compares Oven's own stamp, so a changed compiler,
+    source, description or linked artifact, or a replaced output, each answer no.
+    """
+    answer = helper_json(context, helper, [context.repo.0, "reusable", unit.0, installed.0], {}, phase)?
+    return answer.require("reusable").and_then((found) => found.expect_bool()).map_err((error) => error.message())
 
 
 def require_requested_codegraph(requested: bool, directory: Path, name: str) -> Result[None, str]:

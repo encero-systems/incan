@@ -156,6 +156,7 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
     """
     The native context of a standard relink: the relinked home and its builder, the lane's helper and evidence beside
     the relink log, and a release's default jobs. A lane machine is shared, so each step may take up to an hour.
+    A relink keeps each installed standard Loaf that was built from the same inputs.
     """
     evidence = relink.log.parent().joinpath("relink-standard")
     evidence.mkdir(true, true).map_err((error) => error.message())?
@@ -171,6 +172,7 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
             jobs=4,
             memory=shared_memory(host_memory()),
             timeout_seconds=3600,
+            reuse_standard=true,
         ),
     )
 

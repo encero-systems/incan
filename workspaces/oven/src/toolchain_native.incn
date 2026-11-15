@@ -24,7 +24,7 @@ from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
-from unit_freshness import artifact_files, record, unit_key
+from unit_freshness import artifact_files, record, staleness, unit_key
 from codegen import compiled_arguments
 from native_references import anchor_arguments
 
@@ -42,7 +42,7 @@ def main() -> Result[None, str]:
     if len(arguments) == 2 and arguments[1] == "--readmit":
         _ = readmit_selected_installation()?
         return Ok(None)
-    if len(arguments) >= 4 and arguments[2] in ["identify", "publish", "codegraph"]:
+    if len(arguments) >= 4 and arguments[2] in ["identify", "publish", "codegraph", "reusable"]:
         return publish_prepared(arguments)
     if len(arguments) != 2 and len(arguments) != 4:
         return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
@@ -60,7 +60,7 @@ def main() -> Result[None, str]:
 def publish_prepared(arguments: list[str]) -> Result[None, str]:
     """
     Identify a prepared native build before compilation, then publish its native or requested graph outputs under
-    that same identity.
+    that same identity, or say whether a directory published earlier still holds that identity's outputs.
 
     1. Read the exact compiler unit and select its metadata-only emission mode when requested.
     2. Retain its identity before compilation or refuse input changes after compilation.
@@ -69,11 +69,10 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
     # 1. The script supplies the same unit JSON the compiler consumes, including checked source interfaces.
     if (
         (arguments[2] == "identify" and len(arguments) != 4)
-        or (arguments[2] in ["publish", "codegraph"] and len(arguments) != 5)
+        or (arguments[2] in ["publish", "codegraph", "reusable"] and len(arguments) != 5)
     ):
-        return Err(
-            "usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY | codegraph UNIT DIRECTORY",
-        )
+        usage = "usage: toolchain_native REPOSITORY identify UNIT | publish UNIT DIRECTORY | codegraph UNIT DIRECTORY"
+        return Err(f"{usage} | reusable UNIT DIRECTORY")
     path = Path(arguments[3])
     mut unit = read_unit(read_json(path)?)?
     if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
@@ -104,6 +103,13 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
         graph = inspect_prepared(unit, toolchain)?
         if not publish_prepared_graph(unit, toolchain, directory, graph)?:
             return Err("native publication changed while exporting its graph")
+        return Ok(None)
+    # A directory published earlier is kept when its stamp vouches for this identity and for its very outputs.
+    if arguments[2] == "reusable":
+        stored = [artifact for artifact in artifact_files(directory, unit.package)? if artifact.is_file()]
+        reason = staleness(stored, directory.joinpath(".oven-inputs.sha256"), key)?
+        answer = {"reusable": JsonValue.bool(reason == ""), "reason": JsonValue.string(reason)}
+        println(json_text(JsonValue.object(answer))?)
         return Ok(None)
     # Checking-only interfaces have no native library; their emission mode already distinguishes their identity.
     outputs = [artifact for artifact in artifact_files(directory, unit.package)? if artifact.is_file()]
