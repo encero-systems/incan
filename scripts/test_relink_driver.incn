@@ -7,7 +7,7 @@ from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
-from relink_driver import install_driver, prepare_compiler_home, readmit
+from relink_driver import install_driver, prepare_compiler_home, readmit, withdraw_installed_providers
 from release_support import TOOLCHAIN_DIRECTORY
 
 # The fields of an installed manifest every compiler home needs, before its registry fields.
@@ -219,6 +219,44 @@ def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
     text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
     manifest = JsonValue.parse(text).map_err((error) => error.message())?
     assert manifest.get("compiler_records") == None, text
+    return Ok(None)
+
+
+def test_a_standard_relink_withdraws_the_installed_providers_before_it_builds_support() -> Result[None, str]:
+    """
+    A standard relink builds the support crates as a release does, in a home whose manifest names no support,
+    runtime or standard provider and which holds no standard Loaf: an edited support crate's dependents are then
+    built against it, never left naming the installed one. Every other manifest field stays.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    library = toolchain.joinpath("loaves/incan_stdlib_primitives/release")
+    library.mkdir(true, true).map_err((error) => error.message())?
+    library.joinpath("libincan_stdlib_primitives.rlib").write_bytes(b"rlib").map_err((error) => error.message())?
+    home.joinpath("native-support/earlier").mkdir(true, true).map_err((error) => error.message())?
+    installed = "{\"name\":\"incan_std_primitives\",\"path\":\"native/a/libincan_std_primitives-0.rlib\"}"
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(
+            MANIFEST_HEAD.replace("\"externs\":[]", f"\"externs\":[{installed}]")
+            + "\"search\":[\"native/a\"],\"registry_units\":\"registry/units.json\"}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    withdraw_installed_providers(home)?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    externs = manifest.require("externs").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    search = manifest.require("search").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    units = manifest.require("registry_units").and_then((value) => value.expect_str()).map_err((e) => e.message())?
+    assert len(externs) == 0, text
+    assert len(search) == 0, text
+    assert units == "registry/units.json", text
+    assert not toolchain.joinpath("loaves").exists()
+    assert not home.joinpath("native-support").exists()
     return Ok(None)
 
 
