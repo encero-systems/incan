@@ -554,3 +554,48 @@ def main() -> Result[None, str]:
     }
     Ok(())
 }
+
+/// A call whose result type can hold no borrow retains no dependency on its inputs (RFC 164, types that hold borrows):
+/// a model, a list of models, a `Result` of one and a tuple are fresh values in an explicit body, from an ordinary or
+/// an explicit callee. A callable result may capture a borrow, so it stays refused.
+#[test]
+fn call_results_that_hold_no_borrow_are_fresh_values() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = "model Entry:\n    name: str\n\ndef make(name: str) -> Entry:\n    return Entry(name=name)\n\ndef entries(count: int) -> list[Entry]:\n    return [Entry(name=\"a\")]\n\ndef parsed(text: Borrowed[str]) -> Result[Entry, str]:\n    return Ok(Entry(name=\"b\"))\n\ndef pair(count: int) -> tuple[Entry, int]:\n    return (Entry(name=\"c\"), count)\n\ndef total(values: Borrowed[list[Entry]], text: Borrowed[str]) -> int:\n    first = make(\"a\")\n    items = entries(len(values))\n    match parsed(text):\n        Ok(entry) => println(entry.name)\n        Err(message) => println(message)\n    paired = pair(1)\n    println(paired)\n    return len(items) + len(first.name)\n";
+    let checker = checked(accepted)?;
+    let state = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "total")
+        .map(|(_, state)| state)
+        .ok_or("missing explicit body flow")?;
+    if let InputFlow::Unavailable(unavailable) = state {
+        assert_ne!(
+            unavailable.reason, "call result needs retained dependency facts",
+            "{:?}",
+            source_text(accepted, unavailable.span)
+        );
+    }
+    let open = "def adder(step: int) -> (int) -> int:\n    return (value) => value + step\n\ndef count(values: Borrowed[list[int]]) -> int:\n    add = adder(len(values))\n    return add(1)\n";
+    let checker = checked(open)?;
+    let state = checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "count")
+        .map(|(_, state)| state)
+        .ok_or("missing explicit body flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("an open result was admitted: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, "call result needs retained dependency facts");
+    assert_eq!(source_text(open, unavailable.span), Some("adder(len(values))"));
+    Ok(())
+}
+
+/// The source text a checked span covers.
+fn source_text(source: &str, span: crate::ast::Span) -> Option<&str> {
+    source.get(span.start..span.end)
+}
