@@ -25,6 +25,19 @@ pub fn twin_row_reads() -> u64 {
     TWIN_ROW_READS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// How many envelopes the retained Incan twin's row writer has encoded in this process.
+static TWIN_ROW_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count one envelope encoded by the retained Incan twin, so a test can prove which writer a path ran.
+pub fn count_twin_row_write() {
+    TWIN_ROW_WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The envelopes the retained Incan twin's row writer has encoded in this process.
+pub fn twin_row_writes() -> u64 {
+    TWIN_ROW_WRITES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Encoded bytes and the exact logical work charged by the Incan codec contract.
 pub struct Encoded {
     pub data: Vec<u8>,
