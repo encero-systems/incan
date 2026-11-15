@@ -1,10 +1,14 @@
 """
-The release's signer file, and the stamp that carries it into the shipped `incan` (DD-0016).
+The release's signer file, the stamp that carries it into the shipped `incan`, and the signed bundle's way back into
+the release (DD-0016).
 
-`scripts/release-signer.json` names the workflow that signs releases and its token issuer, and holds the Sigstore
-trusted root in its `trusted_root` slot. While the slot is `null` the release has no signer: its `incan` is built
-unstamped, verifies nothing, and says so when it installs. Once the slot holds a trusted root, the release stamps the
-whole file into the program it ships and carries the same file in the toolchain it packs.
+`scripts/release-signer.json` names the workflow that signs releases and its token issuer, and holds Sigstore's
+trusted root in its `trusted_root` slot. Signing is keyless from the release workflow's identity, in a job that runs
+nothing the release built, so the release script runs twice there. The first invocation stamps the whole file into
+the program it ships, carries the same file in the toolchain it packs, and stops before installed verification. The
+workflow signs each asset. The second invocation takes the signed bundle and verifies the installation with the
+stamped program, which admits only what that signer signed. Every other run of the release script builds an unstamped
+`incan`, which verifies nothing and says so when it installs.
 """
 
 from std.encoding.base64 import b64encode
@@ -14,6 +18,9 @@ from std.json import JsonValue
 pub const RELEASE_SIGNER: str = "scripts/release-signer.json"
 pub const STAMP_MODULE: str = "workspaces/oven/src/release_stamp.incn"
 pub const CARRIED_TRUST: str = "release-signer.json"
+pub const BUNDLE_SUFFIX: str = ".sigstore.json"
+# The assets a release publishes, each signed on its own.
+pub const SIGNED_ASSETS: FrozenList[str] = ["toolchain.tar.zst", "incan", "incan-lsp"]
 
 
 pub def release_signer(source: Path) -> Result[Option[str], str]:
@@ -51,30 +58,53 @@ pub def stamp_module(signer: str) -> str:
     )
 
 
-pub def stamp_release_signer(source: Path, toolchain: Path) -> Result[bool, str]:
+pub def stamp_release_signer(source: Path, toolchain: Path, stamping: bool) -> Result[bool, str]:
     """
-    Stamp the release's signer into the checkout its `incan` is about to be built from, and report whether it has one.
+    Stamp the release's signer into the checkout its `incan` is about to be built from, and report whether it did.
 
-    1. A release whose signer file has an empty trusted-root slot stamps and ships nothing.
-    2. Otherwise the Oven's stamp module carries the file, so the program verifies what it installs.
-    3. The candidate toolchain carries the same file, which `toolchain pack` ships.
+    1. Only the release workflow's packing invocation stamps. A stamped `incan` installs nothing unsigned, and
+       signing is keyless from the release workflow's identity, so a local qualification never stamps and says so.
+    2. A stamped release needs the trusted root: an empty slot stops it.
+    3. The Oven's stamp module carries the file, so the program verifies what it installs.
+    4. The candidate toolchain carries the same file, which `toolchain pack` ships.
     """
     # 1. No signer is a stated outcome, never a silent one.
+    if not stamping:
+        println("release signer: not stamped, only the release workflow signs; this incan installs unverified")
+        return Ok(false)
+    # 2. The slot is read before anything is written.
     match release_signer(source)?:
-        None =>
-            println(f"release signer: none, {RELEASE_SIGNER} has no trusted root; this incan installs unverified")
-            return Ok(false)
+        None => return Err(f"cannot stamp the release: {RELEASE_SIGNER} has no trusted root")
         Some(signer) =>
-            # 2. The program's own source carries the signer; no archive supplies it.
+            # 3. The program's own source carries the signer; no archive supplies it.
             module = source.joinpath(STAMP_MODULE)
             if not module.is_file():
                 return Err(f"cannot stamp the release signer: {module.0} is missing")
             module.write_text(stamp_module(signer), "utf-8", "strict", None).map_err(
                 (error) => f"cannot {error.message()}",
             )?
-            # 3. Homes record this file from the archive once the archive has verified.
+            # 4. Homes record this file from the archive once the archive has verified.
             toolchain.joinpath(CARRIED_TRUST).write_text(signer, "utf-8", "strict", None).map_err(
                 (error) => f"cannot {error.message()}",
             )?
             println(f"release signer: stamped from {RELEASE_SIGNER}")
             return Ok(true)
+
+
+pub def adopt_signed_bundle(signed: Path, bundle: Path) -> Result[int, str]:
+    """
+    Take the bundle the workflow signed into the release's own bundle directory, and report how many assets it holds.
+
+    Each asset must come with `ASSET.sigstore.json`: the stamped `incan` looks for it beside the asset it installs, so
+    a missing signature is named here, before anything is installed.
+    """
+    mut adopted = 0
+    for asset in SIGNED_ASSETS:
+        for name in [asset, asset + BUNDLE_SUFFIX]:
+            source = signed.joinpath(name)
+            if not source.is_file():
+                return Err(f"the signed bundle {signed.0} has no {name}")
+            _ = source.copy(bundle.joinpath(name), true, true).map_err((error) => f"cannot {error.message()}")?
+        adopted += 1
+    println(f"signed bundle: {adopted} assets with their signatures from {signed.0}")
+    return Ok(adopted)
