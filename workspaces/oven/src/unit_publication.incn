@@ -11,31 +11,46 @@ from publication import publish
 from home_paths import home
 from payload_types import PayloadAdmission
 from frozen_inputs import payload as frozen_payload
-from frozen_inputs import admit_registry_stores, cached_registry_store, registry_selection
-from registry_pages import question as registry_question, recall_catalog
+from frozen_inputs import admit_registry_stores, cached_registry_store, read as frozen_document, registry_selection
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
 
 
 def registry_store_admitted(entries: str) -> Result[bool, str]:
-    """Derive the selected closure's stores once from its sealed catalog, without reopening a frozen input."""
+    """Derive the selected closure's stores once from its frozen document, without reopening an installed input."""
     path, identity, compiler = registry_selection()
     if path == "":
         return Ok(false)
-    key = registry_question(Path(path), Observation(stamp=identity, newest=0), compiler)?
+    key = f"{path}\n{identity}\n{compiler}"
     if let Some(admitted) = cached_registry_store(key, entries):
         return Ok(admitted)
-    catalog = match recall_catalog(key)?:
-        None => return Err("unit identity refused: selected toolchain registry closure has no admitted catalog")
+    document = match frozen_document(Path(path))?:
+        None => return Err("unit identity refused: selected toolchain registry closure is absent from its installation page")
         Some(found) => found
+    externs = document.require("externs").map_err((error) => error.message())?
     mut stores: list[str] = []
-    for unit in catalog.units:
-        if unit.entry != "":
-            store = Path(unit.directory).parent().parent().0
-            if store not in stores:
-                stores.append(store)
+    for name in externs.keys():
+        native = externs.require(name).map_err((error) => error.message())?
+        artifact = located(Path(path).parent(), required_text(native, "path")?)
+        store = Path(artifact).parent().parent().parent().0
+        if store not in stores:
+            stores.append(store)
     admit_registry_stores(key, stores)
     return Ok(entries in stores)
+
+
+def located(directory: Path, path: str) -> str:
+    """Locate one closure artifact lexically, so deriving registry authority performs no filesystem observation."""
+    if path.startswith("/"):
+        return path
+    mut parts = directory.0.split("/")
+    for part in path.split("/"):
+        if part == "..":
+            if len(parts) > 1:
+                parts = parts[:len(parts) - 1]
+        elif part != "." and part != "":
+            parts.append(part)
+    return "/".join(parts)
 
 
 pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
