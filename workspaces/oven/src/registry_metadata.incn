@@ -118,7 +118,7 @@ pub def bound_entries(units: list[RegistryUnit], paths: list[str]) -> Result[lis
     return Ok(result)
 
 
-def metadata(artifact: str, rustc: str) -> Result[str, str]:
+pub def metadata(artifact: str, rustc: str) -> Result[str, str]:
     """Read one artifact generation once with its pinned compiler; native dependencies are immutable metadata."""
     path = Path(artifact)
     observed = observe(path)?
@@ -141,7 +141,7 @@ def metadata(artifact: str, rustc: str) -> Result[str, str]:
     return Ok(printed)
 
 
-def crate_identity(printed: str) -> Result[Tuple[str, str], str]:
+pub def crate_identity(printed: str) -> Result[Tuple[str, str], str]:
     """Read pinned rustc's root name and crate hash, refusing an unfamiliar metadata format."""
     mut name = ""
     mut digest = ""

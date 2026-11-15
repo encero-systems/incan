@@ -16,6 +16,7 @@ const TARGET: str = "aarch64-apple-darwin"
 def archived(name: str, sources: Path) -> Result[str, str]:
     """Archive one fixture Loaf's source into `sources/blobs/sha256/<hex>.tar` and return its `sha256:` digest."""
     fixture = Path(f"tests/fixtures/compile-closure/{name}").resolve().map_err((error) => error.message())?
+    make_directory(sources)?
     staging = sources.joinpath(f"{name}.tar")
     output = Command.new("tar").arg("-cf").arg(staging.0).arg("-C").arg(fixture.0).arg(".").output().map_err(
         (error) => error.to_string(),
@@ -31,9 +32,13 @@ def archived(name: str, sources: Path) -> Result[str, str]:
 def indexed(index: Path, name: str, checksum: str) -> Result[None, str]:
     """Publish one fixture Loaf's index line and manifest at revision 1."""
     manifest = Path(f"tests/fixtures/compile-closure/{name}/loaf.toml").resolve().map_err((error) => error.message())?
-    write(index.joinpath(f"crates-io/{name}/1.0.0/loaf.toml"), read(manifest)?)?
+    published = index.joinpath(f"crates-io/{name}/1.0.0/loaf.toml")
+    make_directory(published.parent())?
+    write(published, read(manifest)?)?
     line = "{\"adopted\": {\"revision\": 1}, \"cksum\": \"" + checksum + "\", \"vers\": \"1.0.0\"}\n"
-    return write(index.joinpath(f"index/crates-io/{name}"), line)
+    lines = index.joinpath(f"index/crates-io/{name}")
+    make_directory(lines.parent())?
+    return write(lines, line)
 
 
 def registry_entry(name: str, checksum: str, enabled: list[str], dependencies: list[LockDependency]) -> LockLoaf:
@@ -94,7 +99,7 @@ pub def test_a_lock_s_registry_loaves_compile_from_their_archives_into_a_closure
     _ = compile_closure(options)?
     document = JsonValue.parse(read(result.joinpath("closure.json"))?).map_err((error) => error.message())?
     assert text(document, "schema")? == "incan.oven.closure/1"
-    units = document.require("units").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    units = items(document, "units")?
     assert len(units) == 2, f"{len(units)} units"
     mut entries: Dict[str, str] = {}
     for unit in units:
@@ -108,17 +113,16 @@ pub def test_a_lock_s_registry_loaves_compile_from_their_archives_into_a_closure
         assert stored.is_file(), stored.0
         assert f"sha256:{file_digest(stored)?}" == text(unit, "payload_digest")?, loaf
         assert result.joinpath(f"entries/sha256-{entry[7:]}/artifact.json").is_file(), loaf
-        dependencies = unit.require("dependencies").and_then((value) => value.expect_array()).map_err(
-            (error) => error.message(),
-        )?
-        linked = [text(dependency, "entry")? for dependency in dependencies]
+        mut linked: list[str] = []
+        for dependency in items(unit, "dependencies")?:
+            linked.append(text(dependency, "entry")?)
         if loaf == "crates-io/tiny-b":
             assert text(unit, "checksum")? == second
             assert linked == [entries["crates-io/tiny-a"]], f"{linked}"
         else:
             assert text(unit, "checksum")? == first
             assert linked == [], f"{linked}"
-    refused = document.require("refused").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    refused = items(document, "refused")?
     assert len(refused) == 0, f"{len(refused)} refused"
     # A lock entry whose archive the sources do not hold refuses the command, naming the Loaf.
     absent = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -131,3 +135,8 @@ pub def test_a_lock_s_registry_loaves_compile_from_their_archives_into_a_closure
         Err(reason) =>
             assert "crates-io/tiny-a 1.0.0" in reason and "no source archive" in reason, reason
     return Ok(None)
+
+
+def items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """One required JSON array."""
+    return value.require(key).and_then((field) => field.expect_array()).map_err((error) => f"{key}: {error.message()}")

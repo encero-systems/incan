@@ -169,10 +169,11 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     if len(reports) > 0:
         body = "\n\n".join(reports)
         return Err(f"{len(reports)} of {len(facets)} Rust units did not compile:\n\n{body}")
-    # 4. The libraries that were built are recorded, so a later code graph finds them without scanning directories. A
-    #    graph whose every unit was installed compiled nothing here, so nothing has created the directory yet.
+    # 4. The libraries that were built are recorded by unit key, so a code graph or a closure compile finds each one
+    #    without scanning directories. A graph whose every unit was installed compiled nothing, so nothing made the
+    #    directory yet.
     output.mkdir(true, true).map_err((error) => error.message())?
-    publish(output.joinpath("units.json"), json_text(receipt_document(built, false))?)?
+    publish(output.joinpath("units.json"), json_text(receipt_document(built, true))?)?
     return Ok(binaries)
 
 

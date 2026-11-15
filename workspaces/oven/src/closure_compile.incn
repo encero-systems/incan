@@ -1,0 +1,374 @@
+"""
+`oven compile-closure LOCK... --profile debug|release --sources DIR --index DIR --out RESULT` (RFC 124, RFC 125).
+
+Compile the registry Loaves one or more locks select into units carrying the identities this Oven computes, and write
+them as the `incan.oven.closure/1` document and `entries/` store a toolchain installs.
+
+1. Read each lock's registry Loaves, each with its registry, index revision and archive digest.
+2. Stage every Loaf version's source from its admitted archive and the index's manifest (`closure_sources`).
+3. Refuse, before compiling, each Loaf whose build fact this Oven cannot apply, and every Loaf that links one.
+4. Compile each lock as its own graph: a carrier depends on the lock's target Loaves with their locked features, and
+   every Loaf version is substituted by its staged source, so the lock's feature unification is kept.
+5. Write each unit's entry, named by its identity, and the closure document.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from closure_sources import LockedLoaf, locked_loaf, replace_file, stage_source
+from files import json_text, make_directory, parse_json, read, write
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from lock_format import OvenLock, read_lock
+from observation import file_digest
+from registry_metadata import crate_identity, metadata
+from rust_activation import DependencyDomain
+from rust_build import BuiltUnit, RustBuild, rust_output
+from rust_manifest import build_fact, rust_facet
+from rust_registry import read_registry_units
+from rust_target import compiler_version, target_configuration
+from rust_units import build_rust, read_receipt
+from toolchain import Toolchain, load_toolchain, rust_compiler
+from unit_freshness import compiler_fingerprint
+
+pub const CLOSURE_DOCUMENT: str = "incan.oven.closure/1"
+
+
+pub model ClosureOptions:
+    """The locks to compile, the profile, and the sources, index and result directories."""
+
+    pub locks: list[str]
+    pub profile: str
+    pub sources: str
+    pub index: str
+    pub out: str
+
+
+pub def closure_options(arguments: list[str]) -> Result[ClosureOptions, str]:
+    """Read `LOCK... --profile P --sources DIR --index DIR --out RESULT`; every option is required."""
+    mut locks: list[str] = []
+    mut values: Dict[str, str] = {}
+    mut pending = ""
+    for argument in arguments:
+        if pending != "":
+            values[pending] = argument
+            pending = ""
+        elif argument in ["--profile", "--sources", "--index", "--out"]:
+            pending = argument
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            locks.append(argument)
+    if pending != "":
+        return Err(f"`{pending}` needs a value")
+    if len(locks) == 0:
+        return Err("name at least one LOCK")
+    for name in ["--profile", "--sources", "--index", "--out"]:
+        if name not in values:
+            return Err(f"`{name}` is required")
+    if values["--profile"] not in ["debug", "release"]:
+        return Err(f"`--profile` takes debug or release, got `{values["--profile"]}`")
+    return Ok(
+        ClosureOptions(
+            locks=locks,
+            profile=values["--profile"],
+            sources=values["--sources"],
+            index=values["--index"],
+            out=values["--out"],
+        ),
+    )
+
+
+model ClosureRun:
+    """What one compile-closure run shares: its toolchain, its binding and its result."""
+
+    toolchain: Toolchain
+    rustc: str
+    identity: str
+    target: str
+    profile: str
+    out: Path
+
+
+pub def compile_closure(options: ClosureOptions) -> Result[str, str]:
+    """
+    Compile the locks' registry Loaves into RESULT, returning a one-line report.
+
+    1. Read each lock's registry Loaves and stage each version's source once.
+    2. Refuse the Loaves whose build fact this Oven cannot apply, with every Loaf that links one.
+    3. Compile each lock as its own graph and collect its units, each once.
+    4. Write the closure document.
+    """
+    out = Path(options.out)
+    if out.exists():
+        return Err(f"{out.0} exists; compile-closure writes a new directory")
+    toolchain = load_toolchain()?
+    rustc = rust_compiler(toolchain)
+    run = ClosureRun(
+        toolchain=toolchain,
+        rustc=rustc,
+        identity=compiler_version(rustc)?.split("\n")[0].strip(),
+        target=target_configuration(rustc)?.triple,
+        profile=options.profile,
+        out=out,
+    )
+    # 1. One staged source per Loaf version, whichever locks name it.
+    mut locks: list[OvenLock] = []
+    mut loaves: Dict[str, LockedLoaf] = {}
+    for path in options.locks:
+        lock = read_lock(Path(path))?
+        for entry in lock.loaves:
+            if entry.origin == "toolchain":
+                locked = locked_loaf(entry)?
+                loaves[locked.key()] = locked
+        locks.append(lock)
+    staging = out.joinpath(".work").joinpath("sources")
+    make_directory(staging)?
+    mut substitutes: Dict[str, str] = {}
+    for key in sorted([key for key in loaves.keys()]):
+        substitutes[key] = stage_source(loaves[key], Path(options.sources), Path(options.index), staging)?.0
+    # 2. A refused Loaf is never compiled, and neither is one that links it.
+    refused = refusals(locks, substitutes, run)?
+    # 3. Each lock keeps its own feature unification; a unit two locks share is written once.
+    mut units: Dict[str, JsonValue] = {}
+    for position in range(len(locks)):
+        carrier = out.joinpath(".work").joinpath(f"carrier-{position}")
+        if write_carrier(carrier, locks[position], refused)?:
+            units = collect_units(build_carrier(carrier, substitutes, run)?, loaves, run, units)?
+    # 4. The document names every unit by its identity and every refusal with its reason.
+    write_closure(run, options.locks, units, refused)?
+    return Ok(f"compiled {len(units)} units into {out.0}; refused {len(refused)}")
+
+
+def refusals(locks: list[OvenLock], substitutes: Dict[str, str], run: ClosureRun) -> Result[Dict[str, str], str]:
+    """
+    The Loaf versions this run refuses, each with its reason.
+
+    1. A Loaf whose build script has no exact fact for one of its locked bindings, or whose fact declares work this Oven
+       does not run, is refused with `build_fact`'s reason.
+    2. A Loaf that links a refused one is refused too, until no lock entry changes.
+    """
+    # 1. Every locked binding of a version is its own question.
+    mut refused: Dict[str, str] = {}
+    for lock in locks:
+        for entry in lock.loaves:
+            key = f"{entry.name}@{entry.version}"
+            if entry.origin != "toolchain" or key in refused:
+                continue
+            declared = rust_facet(substitutes[key], false)?
+            for binding in entry.features:
+                match build_fact(declared, run.identity, run.target, run.profile, binding.enabled):
+                    Err(reason) => refused[key] = reason
+                    Ok(_) => pass
+    # 2. The links recorded in each lock decide what a refusal blocks.
+    mut changed = true
+    while changed:
+        changed = false
+        for lock in locks:
+            for entry in lock.loaves:
+                key = f"{entry.name}@{entry.version}"
+                if entry.origin != "toolchain" or key in refused:
+                    continue
+                for dependency in entry.dependencies:
+                    if f"{dependency.loaf}@{dependency.version}" in refused:
+                        linked = f"{dependency.loaf} {dependency.version}"
+                        refused[key] = f"{entry.name} {entry.version} links {linked}, which is refused"
+                        changed = true
+                        break
+    return Ok(refused)
+
+
+def write_carrier(carrier: Path, lock: OvenLock, refused: Dict[str, str]) -> Result[bool, str]:
+    """
+    Write the carrier of one lock: a library that depends on each of the lock's target Loaves, by exact version, with
+    exactly its locked features. Returns whether any Loaf is left to compile.
+    """
+    mut dependencies: list[str] = []
+    for entry in lock.loaves:
+        if entry.origin != "toolchain" or f"{entry.name}@{entry.version}" in refused:
+            continue
+        for binding in entry.features:
+            if binding.domain != "target":
+                continue
+            features = ", ".join([f"\"{feature}\"" for feature in sorted(binding.enabled)])
+            requirement = f"loaf = \"{entry.name}\", version = \"={entry.version}\""
+            key = carrier_key(entry.name, entry.version)
+            dependencies.append(f"{key} = {{ {requirement}, features = [{features}], default-features = false }}")
+    if len(dependencies) == 0:
+        return Ok(false)
+    mut manifest = "[project]\nname = \"compile-closure/carrier\"\nversion = \"0.0.0\"\n\n"
+    manifest += "[rust]\ntype = \"lib\"\nedition = \"2021\"\n\n[dependencies]\n" + "\n".join(dependencies) + "\n"
+    make_directory(carrier.joinpath("src"))?
+    write(carrier.joinpath("loaf.toml"), manifest)?
+    write(carrier.joinpath("src/lib.rs"), "// The carrier of one lock's registry Loaves.\n")?
+    return Ok(true)
+
+
+def carrier_key(loaf: str, version: str) -> str:
+    """A dependency key, and so a crate name, unique to one Loaf version."""
+    mut key = "locked_"
+    for character in f"{loaf.split("/")[-1]}_{version}":
+        if character in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+            key += character
+        else:
+            key += "_"
+    return key
+
+
+def build_carrier(
+    carrier: Path,
+    substitutes: Dict[str, str],
+    run: ClosureRun,
+) -> Result[Tuple[list[LocalFacet], Dict[str, BuiltUnit]], str]:
+    """Build one carrier with every Loaf version substituted, and return its graph and the units it built."""
+    root = carrier.resolve().map_err((error) => f"{carrier.0}: {error.message()}")?
+    request = RustBuild(
+        project=root.0,
+        profile=run.profile,
+        rustc=run.rustc,
+        registry=read_registry_units(Path(run.toolchain.registry_units))?,
+        substitutes=substitutes,
+        rust_facet_dependencies=true,
+        toolchain_search=run.toolchain.search,
+        toolchain=Some(run.toolchain),
+    )
+    _ = build_rust(request)?
+    demand = LocalDemand(project=root.0, domain=DependencyDomain.Target, features=[], defaults=true)
+    facets = local_facets(demand, target_configuration(run.rustc)?, substitutes)?
+    built = read_receipt(rust_output(root, run.profile).joinpath("units.json"), true)?
+    return Ok((facets, built))
+
+
+def collect_units(
+    graph: Tuple[list[LocalFacet], Dict[str, BuiltUnit]],
+    loaves: Dict[str, LockedLoaf],
+    run: ClosureRun,
+    known: Dict[str, JsonValue],
+) -> Result[Dict[str, JsonValue], str]:
+    """
+    Write each registry unit the carrier built into RESULT once, named by the identity this Oven computed for it.
+
+    1. Read every unit's identity from its publication record; a unit with no portable identity refuses the run.
+    2. Write each unit's entry and keep its record beside those `known` from earlier locks.
+    """
+    facets, built = graph
+    mut units = known
+    # 1. A unit's dependencies are named by the identities of the units it linked.
+    mut identities: Dict[str, str] = {}
+    for facet in facets:
+        if f"{facet.package}@{facet.version}" not in loaves or facet.key() not in built:
+            continue
+        record = Path(built[facet.key()].artifact + ".oven-unit")
+        if not record.is_file():
+            return Err(f"{facet.package} {facet.version}: compiled with no portable unit identity")
+        identities[facet.key()] = text(parse_json(read(record)?)?, "unit")?
+    # 2. A unit another lock already wrote is the same unit.
+    for facet in facets:
+        if facet.key() not in identities or identities[facet.key()] in units:
+            continue
+        entry = identities[facet.key()]
+        loaf = loaves[f"{facet.package}@{facet.version}"]
+        units[entry] = unit_entry(facet, built[facet.key()], entry, loaf, identities, run)?
+    return Ok(units)
+
+
+def unit_entry(
+    facet: LocalFacet,
+    unit: BuiltUnit,
+    entry: str,
+    loaf: LockedLoaf,
+    identities: Dict[str, str],
+    run: ClosureRun,
+) -> Result[JsonValue, str]:
+    """
+    Write one unit's entry, `entries/sha256-<hex>/` with `artifact.json` and `artifacts/`, and return its record.
+
+    The entry holds the library, its checked graph and its portable identity inputs; machine-local records stay behind.
+    """
+    library = Path(unit.artifact)
+    directory = Path(unit.directory)
+    relative = f"entries/sha256-{entry[7:]}/artifacts/{library.name()}"
+    stored = run.out.joinpath(relative)
+    make_directory(stored.parent())?
+    replace_file(library, stored)?
+    for companion in [f"{library.name().split("-")[0][3:]}.incngraph", "library.portable-inputs"]:
+        if directory.joinpath(companion).is_file():
+            replace_file(directory.joinpath(companion), stored.parent().joinpath(companion))?
+    name, crate_hash = crate_identity(metadata(stored.0, run.rustc)?)?
+    declared = rust_facet(facet.project, false)?
+    mut fields: Dict[str, JsonValue] = {}
+    for key, value in [
+        ("entry", entry),
+        ("unit", entry),
+        ("payload_digest", "sha256:" + file_digest(stored)?),
+        ("loaf", loaf.loaf),
+        ("version", loaf.version),
+        ("registry", loaf.registry),
+        ("checksum", loaf.checksum),
+        ("domain", facet.domain.value()),
+        ("kind", declared.kind),
+        ("profile", run.profile),
+        ("target", run.target),
+        ("name", name),
+        ("crate_hash", crate_hash),
+        ("artifact", relative),
+        ("refusal", ""),
+    ]:
+        fields[key] = JsonValue.string(value)
+    fields["revision"] = JsonValue.int(loaf.revision)
+    fields["features"] = JsonValue.array([JsonValue.string(feature) for feature in sorted(facet.features)])
+    linked = [identities[edge.key()] for edge in facet.local if edge.key() in identities]
+    fields["dependencies"] = JsonValue.array([JsonValue.object({"entry": JsonValue.string(item)}) for item in linked])
+    record = JsonValue.object(fields)
+    write(stored.parent().parent().joinpath("artifact.json"), json_text(record)?)?
+    return Ok(record)
+
+
+def write_closure(
+    run: ClosureRun,
+    locks: list[str],
+    units: Dict[str, JsonValue],
+    refused: Dict[str, str],
+) -> Result[None, str]:
+    """Write `closure.json`: its toolchain binding, the locks it compiled, its units, their externs and its refusals."""
+    mut externs: Dict[str, JsonValue] = {}
+    mut listed: list[JsonValue] = []
+    for entry in sorted([entry for entry in units.keys()]):
+        unit = units[entry]
+        digest = text(unit, "payload_digest")?[7:]
+        externs[entry] = JsonValue.object(
+            {"path": JsonValue.string(text(unit, "artifact")?), "payload_digest": JsonValue.string(digest)},
+        )
+        listed.append(unit)
+    mut refusals: list[JsonValue] = []
+    for key in sorted([key for key in refused.keys()]):
+        parts = key.split("@")
+        mut refusal: Dict[str, JsonValue] = {"loaf": JsonValue.string(parts[0]), "version": JsonValue.string(parts[1])}
+        refusal["reason"] = JsonValue.string(refused[key])
+        refusals.append(JsonValue.object(refusal))
+    mut digests: list[JsonValue] = []
+    for lock in locks:
+        digests.append(JsonValue.string("sha256:" + file_digest(Path(lock))?))
+    mut binding: Dict[str, JsonValue] = {"rustc": JsonValue.string(run.identity)}
+    binding["target"] = JsonValue.string(run.target)
+    binding["compiler"] = JsonValue.string(compiler_fingerprint(run.toolchain)?)
+    mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(CLOSURE_DOCUMENT)}
+    document["profile"] = JsonValue.string(run.profile)
+    document["toolchain"] = JsonValue.object(binding)
+    document["locks"] = JsonValue.array(digests)
+    document["units"] = JsonValue.array(listed)
+    document["externs"] = JsonValue.object(externs)
+    document["refused"] = JsonValue.array(refusals)
+    write(run.out.joinpath("closure.json"), json_text(JsonValue.object(document))?)?
+    # The staged sources and carriers are this run's scratch; the result is the document and its entries.
+    work = run.out.joinpath(".work")
+    return work.remove_tree().map_err((error) => f"cannot remove {work.0}: {error.message()}")
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """One required JSON string."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+pub def compile_closure_command(options: ClosureOptions) -> Result[i32, str]:
+    """Run `oven compile-closure` and print its report."""
+    println(compile_closure(options)?)
+    return Ok(0)
