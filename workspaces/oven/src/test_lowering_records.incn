@@ -134,6 +134,80 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     return verify_rust_source_edit_rebuild(binary, scratch.path())
 
 
+pub def test_one_module_edit_lowers_only_that_module() -> Result[None, str]:
+    """
+    A body edit in one module of a four-module unit lowers that module alone: lowering visits no body of the three
+    unchanged modules, which are admitted whole, and evaluates one plan function.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("trace")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for name in ["lone_alpha", "lone_beta", "lone_gamma"]:
+        write(root.joinpath(name + ".incn"), lone_module(name, "1"))?
+    imports = "from lone_alpha import lone_alpha_one, lone_alpha_two\nfrom lone_beta import lone_beta_one, lone_beta_two\nfrom lone_gamma import lone_gamma_one, lone_gamma_two\n"
+    calls = "lone_alpha_one(1) + lone_alpha_two(1) + lone_beta_one(1) + lone_beta_two(1) + lone_gamma_one(1) + lone_gamma_two(1)"
+    write(source, imports + "\n\ndef main() -> None:\n    println(" + calls + ")\n")?
+    _ = traced_example_run(binary, source, store, observations, "12")?
+    cold = lowered_bodies(observations)?
+    for name in ["lone_alpha", "lone_beta", "lone_gamma", "main"]:
+        assert cold.get(name, 0) > 0, f"the cold build traced no lowered body of {name}"
+    write(root.joinpath("lone_beta.incn"), lone_module("lone_beta", "5"))?
+    edited = traced_example_run(binary, source, store, observations, "16")?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    warm = lowered_bodies(observations)?
+    mut lowered: list[str] = []
+    for name in sorted([module for module in warm.keys()]):
+        if warm[name] > cold.get(name, 0):
+            lowered.append(name)
+    assert lowered == ["lone_beta"], f"an edit to lone_beta lowered bodies of {len(lowered)} modules: {", ".join(lowered)}"
+    return stop_example_engine(binary, store)
+
+
+def lone_module(name: str, addend: str) -> str:
+    """One module of two functions; `addend` is the text a body edit changes."""
+    one = f"pub def {name}_one(value: int) -> int:\n    return value + {addend}\n\n\n"
+    return one + f"pub def {name}_two(value: int) -> int:\n    return value * 2\n"
+
+
+def traced_example_run(binary: str, source: Path, store: Path, trace: Path, expected: str) -> Result[JsonValue, str]:
+    """Run one records request whose engine and compiler worker write their trace records into `trace`."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"traced example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def lowered_bodies(trace: Path) -> Result[Dict[str, int], str]:
+    """Count the bodies lowering visited so far, by module, from the compiler workers' `lowering: body` records."""
+    mut counts: Dict[str, int] = {}
+    for entry in trace.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        for line in entry.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            parts = line.split("\"key\":\"lowering: body ")
+            if len(parts) < 2:
+                continue
+            module = parts[1].split(" ")[0]
+            counts[module] = counts.get(module, 0) + 1
+    return Ok(counts)
+
+
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
     """
     Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
