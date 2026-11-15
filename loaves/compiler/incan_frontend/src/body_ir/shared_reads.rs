@@ -193,6 +193,7 @@ pub(super) fn retain_modules_with_selected(
             if super::body_is_selected(body, selected) {
                 continue;
             }
+            match_reads::retain_borrowed_payload_bindings(body, &final_signatures, &field_types, &no_candidates);
             retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
         }
     }
