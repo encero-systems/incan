@@ -27,6 +27,7 @@
 #   5
 #   5
 #   5
+#   5
 
 from rust::demo import (
     Builder,
@@ -62,6 +63,8 @@ from rust::demo_derive import Component as ComponentMacro
 from rust::client_probe import Client
 import native_macros
 from native_macros import Component as NativeComponent, facade_value
+
+facade_alias = native_macros.facade_value
 
 
 def identity(value: int) -> int:
@@ -276,3 +279,4 @@ def main() -> None:
     println(native_macros.facade_value(right=3, left=2))
     facade_function = native_macros.facade_value
     println(facade_function(2, 3))
+    println(facade_alias(2, 3))
