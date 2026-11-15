@@ -24,7 +24,7 @@ pub model FinalActivationInputs:
     pub receipt: ReadReceipt
 
 
-pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[FinalActivationInputs, str]:
+pub def read_final_activation(activation: &ResolvedCheckingActivation) -> Result[FinalActivationInputs, str]:
     """
     Construct the prepared reader and decode only one source and its matching local value.
 
