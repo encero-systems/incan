@@ -75,6 +75,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scope,
             hir_span: hir_span(span),
         };
+        if self.is_scalar_copy_clone(recv, name, type_args, args) {
+            return self.lower_expr_to_operand(recv, scope, out);
+        }
         if let Some(value) = self.lower_initial_method_forms(recv, name, &call, out) {
             return value;
         }
@@ -83,6 +86,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.lower_bound_method_call(recv, name, &call, out)
+    }
+
+    /// Whether a method call is `.clone()` on a value of a builtin scalar type: `int`, `float`, a sized number or
+    /// `bool`. Such a value has no storage of its own to duplicate, so its clone is the value read once more: the
+    /// call lowers as that read, wherever the receiver is stored -- a local, a field, a collection element or a
+    /// constant -- instead of a native `Clone::clone` call that would need a reference to the receiver.
+    fn is_scalar_copy_clone(
+        &self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+    ) -> bool {
+        name == "clone"
+            && type_args.is_empty()
+            && args.is_empty()
+            && matches!(
+                self.type_info.expr_type(recv.span),
+                Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Numeric(_) | ResolvedType::Bool)
+            )
     }
 
     /// Lower checked foreign, bridge, enum and isinstance forms before open arguments are settled.
