@@ -86,7 +86,12 @@ pub def value_method_owner(
     if target.loaf_trait != None:
         return Ok(None)
     index = receiver_layout(constructors, module, locals, offset, argument, span, unions, intrinsics)?
-    if index < 0 or index >= len(module.enum_declarations):
+    return value_getter_owner(module, target, index)
+
+
+pub def value_getter_owner(module: &BodyIrModule, target: &MethodTarget, index: int) -> Result[Option[int], str]:
+    """The value enum whose generated `value()` getter `target` names, for a receiver whose enum layout is `index`."""
+    if target.loaf_trait != None or index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
     for owner in range(len(module.value_enum_declarations)):
         declaration = module.value_enum_declarations[owner]
