@@ -193,6 +193,16 @@ impl LoafArtifact {
         let Some(expected) = manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) else {
             return Ok((None, BTreeSet::new()));
         };
+        Self::read_digested_rust_abi_cache(dir, name, expected)
+    }
+
+    /// Read the native ABI cache of the Loaf `name` in `dir`, refusing bytes whose digest is not `expected`, the
+    /// digest its manifest names: the manifest itself or the summary that carries it.
+    fn read_digested_rust_abi_cache(
+        dir: &Path,
+        name: &str,
+        expected: &str,
+    ) -> Result<(Option<Arc<RustAbiCache>>, BTreeSet<String>), LoafIndexError> {
         let path = dir.join(format!("{}.rustabi", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
@@ -874,14 +884,18 @@ impl LoafIndex {
                 return Some(project_item(item));
             }
         }
+        // A path no summary names may still be in any shipped cache; each is read by its summary's digest, so the
+        // lookup demands no manifest. An unreadable cache is retained like an unreadable fact.
         for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
-            let Ok(entry) = entry.demand() else {
-                continue;
+            let cache = match entry.rust_abi_cache() {
+                Ok(Some(cache)) => cache,
+                Ok(None) => continue,
+                Err(error) => {
+                    let _ = self.rust_abi_failure.set(error);
+                    continue;
+                }
             };
-            let Some(cache) = entry.artifact.rust_abi_cache.as_ref() else {
-                continue;
-            };
-            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || entry.artifact.dir.clone()) {
+            if let Some(item) = self.cache_fact(read_cache(&cache, canonical_path), || entry.dir.clone()) {
                 return Some(item);
             }
         }

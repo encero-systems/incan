@@ -908,6 +908,7 @@ mod tests {
             native_unions: false,
             rust_paths: BTreeSet::new(),
             rust_abi_cache_declared: false,
+            rust_abi_cache_digest: None,
         })?;
         let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
         let expected = RecordReads {
@@ -974,6 +975,7 @@ mod tests {
             native_unions: false,
             rust_paths: BTreeSet::new(),
             rust_abi_cache_declared: false,
+            rust_abi_cache_digest: None,
         })?)
     }
 
