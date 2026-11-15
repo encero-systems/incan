@@ -16,6 +16,8 @@ from x509 import Certificate, PublicKey, SignatureHash, certificate, public_key,
 
 const BUNDLE_MEDIA_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
 const TRUST_ROOT_MEDIA_TYPE: str = "application/vnd.dev.sigstore.trustedroot+json;version=0.1"
+# The transparency-log key kinds whose signatures this verifier checks.
+const CHECKED_LOG_KEYS: FrozenList[str] = ["PKIX_ECDSA_P256_SHA_256", "PKIX_ECDSA_P384_SHA_384"]
 # The ref a release is signed for follows the workflow in its certificate identity.
 const TAG_REF: str = "@refs/tags/"
 const PEM_BEGIN: str = "-----BEGIN CERTIFICATE-----"
@@ -82,7 +84,9 @@ pub def trust_root(text: str) -> Result[TrustRoot, str]:
 
     1. Each certificate authority's chain is read, issuer first.
     2. Every certificate in a chain is an authority signed by the next one, and the last signs itself.
-    3. Each transparency log's key and identifier are read; the identifier is the SHA-256 of the key.
+    3. Each transparency log whose key kind this verifier checks is read: its key, and its identifier, which is the
+       SHA-256 of the key. A log of another key kind, such as Ed25519, is not trusted, so nothing it recorded is
+       admitted.
     """
     document = parsed(text, "trust root")?
     if member_text(document, "mediaType")? != TRUST_ROOT_MEDIA_TYPE:
@@ -106,7 +110,10 @@ pub def trust_root(text: str) -> Result[TrustRoot, str]:
     mut logs: list[Log] = []
     for log in member_items(document, "tlogs")?:
         # 3. A log is found by the identifier a bundle names, so the identifier must be the key's own digest.
-        raw = octets(member_text(member(log, "publicKey")?, "rawBytes")?)?
+        key = member(log, "publicKey")?
+        if member_text(key, "keyDetails")? not in CHECKED_LOG_KEYS:
+            continue
+        raw = octets(member_text(key, "rawBytes")?)?
         identifier = octets(member_text(member(log, "logId")?, "keyId")?)?
         if sha256.digest(raw) != identifier:
             return Err("a trusted transparency log's identifier is not its key's digest")
