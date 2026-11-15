@@ -208,8 +208,12 @@ impl TypeChecker {
         declarations
             .iter()
             .filter_map(|declaration| match declaration {
-                ApiDeclaration::Alias(alias) => self
-                    .symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                ApiDeclaration::Alias(alias) => projected_canonical
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                    .and_then(|identity| self.symbol_kind_from_canonical_identity(identity))
+                    .or_else(|| {
+                        self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                    })
                     .or_else(|| {
                         self.symbol_kind_from_api_target_path(
                             manifest,

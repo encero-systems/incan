@@ -18,6 +18,7 @@ use super::super::diagnostic_values::DiagnosticPositions;
 use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
+use incan_semantics_core::stable_identity::StableDeclarationContext;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 use incan_semantics_core::{CanonicalSymbolId, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace};
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
@@ -56,6 +57,12 @@ fn produce_local(
 }
 
 impl TypeChecker {
+    /// Return how many physical callable owners entered the body-check scope in the current test activation.
+    #[cfg(test)]
+    pub(crate) fn body_check_trace_count(&self) -> usize {
+        self.body_check_traces.len()
+    }
+
     /// Complete one owner trace with the checker-record outcome decided after all producer boundaries settle.
     pub(crate) fn record_body_check_outcome(&self, owner: Span, outcome: &'static str) {
         if let Some(span) = self.body_check_traces.get(&owner) {
@@ -501,6 +508,15 @@ impl Positions {
         Err(NodeBindingError::Unsupported("unadmitted expression type identity"))
     }
 
+    /// Project one checked member through its exact declaring nominal instead of guessing from the member spelling.
+    fn contextual_identity(
+        &self,
+        canonical: &CanonicalSymbolId,
+        context: &incan_semantics_core::CanonicalStableDeclarationContext,
+    ) -> Result<String, NodeBindingError> {
+        stable_member_identity(canonical, &context.owner, context.binding_ordinal)
+    }
+
     /// Current scope indices and spans are supplied by this activation's binding map, never parsed from a key.
     fn canonical(&self, identity: &str) -> Result<CanonicalSymbolId, NodeBindingError> {
         self.identities
@@ -855,7 +871,13 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
     for (span, kind) in &expressions.ident_kinds {
         let tag = match kind {
             super::super::type_info::IdentKind::Value => "value",
-            _ => return Err(NodeBindingError::Unsupported("identifier kind")),
+            super::super::type_info::IdentKind::Static => "static",
+            super::super::type_info::IdentKind::TypeName => "type-name",
+            super::super::type_info::IdentKind::Variant => "variant",
+            super::super::type_info::IdentKind::Module => "module",
+            super::super::type_info::IdentKind::RustImport => "rust-import",
+            super::super::type_info::IdentKind::RustValue => "rust-value",
+            super::super::type_info::IdentKind::Trait => "trait",
         };
         fields.push(vec![
             "identifier".into(),
@@ -982,6 +1004,31 @@ fn restore_local(
                 .resolved_write_types
                 .insert((span, row[2].clone()), read_type(&mut values)?);
         }
+        "native-value" if row[2] == "type" => {
+            let identity = positions.canonical(next(&mut values)?)?;
+            if span_of(&identity) != span
+                || local
+                    .rust
+                    .value_native_types
+                    .insert(identity, read_type(&mut values)?)
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "native-call" if matches!(row[2].as_str(), "argument-type" | "result-type") => {
+            let map = if row[2] == "argument-type" {
+                &mut local.calls.body_ir_native_argument_types
+            } else {
+                &mut local.calls.body_ir_call_result_types
+            };
+            if map.insert(span, read_type(&mut values)?).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "identity-context" if row[2] == "reference" => {
+            restore_identity_context(positions, local, record_identities, span, &mut values)?;
+        }
         "reference" if row[2] == "read" => {
             let identity = next(&mut values)?;
             let canonical = restored_identity(positions, record_identities, identity)?;
@@ -996,11 +1043,21 @@ fn restore_local(
         "binding" if row[2] == "declaration" => {
             local.nested.insert(span, positions.canonical(next(&mut values)?)?);
         }
-        "identifier" if row[2] == "kind" && next(&mut values)? == "value" => {
-            local
-                .expressions
-                .ident_kinds
-                .insert(span, super::super::type_info::IdentKind::Value);
+        "identifier" if row[2] == "kind" => {
+            let kind = match next(&mut values)? {
+                "value" => super::super::type_info::IdentKind::Value,
+                "static" => super::super::type_info::IdentKind::Static,
+                "type-name" => super::super::type_info::IdentKind::TypeName,
+                "variant" => super::super::type_info::IdentKind::Variant,
+                "module" => super::super::type_info::IdentKind::Module,
+                "rust-import" => super::super::type_info::IdentKind::RustImport,
+                "rust-value" => super::super::type_info::IdentKind::RustValue,
+                "trait" => super::super::type_info::IdentKind::Trait,
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            if local.expressions.ident_kinds.insert(span, kind).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
         }
         "type-identity" if row.len() == 4 => {
             let path = read_type_identity_path(&row[2])?;
@@ -1013,6 +1070,65 @@ fn restore_local(
                 .insert(path, identity)
                 .is_some()
             {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "constructor" if row[2] == "field-binding" => {
+            let field_count = read_number(&mut values)?;
+            let argument_count = read_number(&mut values)?;
+            if field_count > row.len() || argument_count > values.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let argument_slots = (0..argument_count)
+                .map(|_| read_number(&mut values))
+                .collect::<Result<Vec<_>, _>>()?;
+            let default_count = read_number(&mut values)?;
+            if default_count > values.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let defaulted_slots = (0..default_count)
+                .map(|_| read_number(&mut values))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut occupied = argument_slots.clone();
+            occupied.extend(defaulted_slots.iter().copied());
+            occupied.sort_unstable();
+            if occupied != (0..field_count).collect::<Vec<_>>()
+                || !defaulted_slots.windows(2).all(|pair| pair[0] < pair[1])
+                || local
+                    .calls
+                    .constructor_field_bindings
+                    .insert(
+                        span,
+                        super::super::type_info::ConstructorFieldBinding {
+                            argument_slots,
+                            defaulted_slots,
+                            field_count,
+                        },
+                    )
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "requirement" if row[2] == "constructor-field" => {
+            let field = positions.canonical(next(&mut values)?)?;
+            let owner = positions.canonical_type(next(&mut values)?)?;
+            if field.kind != SemanticSourceTargetKind::Field
+                || !matches!(
+                    owner.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                )
+                || local
+                    .calls
+                    .body_ir_constructor_field_requirements
+                    .insert(span, (field, owner))
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "protocol" if row[2] == "loan-free-scrutinee" => {
+            if next(&mut values)? != "true" || !local.protocols.loan_free_scrutinees.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
@@ -1072,6 +1188,74 @@ fn restore_local(
         return Err(NodeBindingError::MissingNode);
     }
     Ok(())
+}
+
+/// Decode one canonical nonnegative integer without accepting padded or signed spellings.
+fn read_number(values: &mut std::slice::Iter<'_, String>) -> Result<usize, NodeBindingError> {
+    let text = next(values)?;
+    let number = text.parse::<usize>().map_err(|_| NodeBindingError::MissingNode)?;
+    if number.to_string() != text {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(number)
+}
+
+/// Restore one member reference's exact declaring nominal before its later reference row consumes the identity.
+fn restore_identity_context(
+    positions: &Positions,
+    local: &mut BodyLocal,
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    span: Span,
+    values: &mut std::slice::Iter<'_, String>,
+) -> Result<(), NodeBindingError> {
+    let identity = next(values)?.to_owned();
+    let owner = positions.canonical_type(next(values)?)?;
+    let binding_ordinal = u32::try_from(read_number(values)?).map_err(|_| NodeBindingError::MissingNode)?;
+    let kind_text = next(values)?;
+    let kind = SemanticSourceTargetKind::from_kind_str(kind_text);
+    if kind.as_str() != kind_text
+        || !matches!(
+            kind,
+            SemanticSourceTargetKind::Field
+                | SemanticSourceTargetKind::Method
+                | SemanticSourceTargetKind::Property
+                | SemanticSourceTargetKind::Variant
+        )
+    {
+        return Err(NodeBindingError::MissingNode);
+    }
+    let name = next(values)?;
+    let canonical = positions
+        .canonical(&identity)
+        .unwrap_or_else(|_| owner.generated_member(name, kind.clone()));
+    if canonical.declaration_name != name
+        || canonical.kind != kind
+        || stable_member_identity(&canonical, &owner, binding_ordinal)? != identity
+        || record_identities.insert(identity, canonical).is_some()
+        || local
+            .references
+            .stable_declaration_contexts
+            .insert(
+                span,
+                incan_semantics_core::CanonicalStableDeclarationContext { owner, binding_ordinal },
+            )
+            .is_some()
+    {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(())
+}
+
+/// Bind one member to its checked enclosing declaration and collision-local ordinal.
+fn stable_member_identity(
+    member: &CanonicalSymbolId,
+    owner: &CanonicalSymbolId,
+    binding_ordinal: u32,
+) -> Result<String, NodeBindingError> {
+    let owner = StableDeclarationId::from_canonical(owner, None, None).ok_or(NodeBindingError::MissingOwner)?;
+    StableDeclarationId::from_canonical(member, None, Some(StableDeclarationContext { owner, binding_ordinal }))
+        .map(|identity| identity.render_compact())
+        .ok_or(NodeBindingError::MissingOwner)
 }
 
 /// Resolve an ordinary activation identity or one admitted by an earlier builtin method field in the same record.

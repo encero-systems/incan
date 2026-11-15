@@ -26,11 +26,13 @@ pub def prepare_report(
     editable = capture.in_reach
     frozen = capture.frozen
     document = JsonValue.object(
-        {"schema": JsonValue.string("incan.engine.proofs/2"), "run": JsonValue.string(run), "granularity": JsonValue.string(
+        {"schema": JsonValue.string("incan.engine.proofs/3"), "run": JsonValue.string(run), "granularity": JsonValue.string(
             "unit-record",
         ), "unit_evaluations": JsonValue.int(produced.evaluations), "body_evaluations": JsonValue.int(
             produced.body_evaluations,
-        ), "native_bakes": JsonValue.int(produced.native_bakes), "source_stats": JsonValue.int(editable.stats), "source_reads": JsonValue.int(
+        ), "body_ir_evaluations": JsonValue.int(produced.body_ir_evaluations), "native_bakes": JsonValue.int(
+            produced.native_bakes,
+        ), "source_stats": JsonValue.int(editable.stats), "source_reads": JsonValue.int(
             editable.reads,
         ), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(editable.listings), "epoch_reads": JsonValue.int(
             produced.epoch_reads,

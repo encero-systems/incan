@@ -91,6 +91,7 @@ fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std
         WorkerCommand::Check => crate::check(arguments),
         WorkerCommand::Format => crate::format(arguments),
         WorkerCommand::SourceFiles => crate::source_files(arguments),
+        WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0),
     }
 }
 

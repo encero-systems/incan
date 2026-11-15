@@ -106,11 +106,28 @@ pub(super) fn project_references(
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
     for (span, canonical) in &local.references.resolved_identities {
+        let identity = match local.references.stable_declaration_contexts.get(span) {
+            Some(context) => {
+                let identity = positions.contextual_identity(canonical, context)?;
+                fields.push(vec![
+                    "identity-context".into(),
+                    positions.nodes.anchor(*span)?.path,
+                    "reference".into(),
+                    identity.clone(),
+                    positions.type_identity(&context.owner)?,
+                    context.binding_ordinal.to_string(),
+                    canonical.kind.as_str().into(),
+                    canonical.declaration_name.clone(),
+                ]);
+                identity
+            }
+            None => positions.identity(canonical)?,
+        };
         fields.push(vec![
             "reference".into(),
             positions.nodes.anchor(*span)?.path,
             "read".into(),
-            positions.identity(canonical)?,
+            identity,
         ]);
     }
     for ((span, name), canonical) in &local.references.resolved_write_identities {
@@ -135,6 +152,28 @@ pub(super) fn project_calls(
     local: &BodyLocal,
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
+    for (span, binding) in &local.calls.constructor_field_bindings {
+        let mut row = vec![
+            "constructor".into(),
+            positions.nodes.anchor(*span)?.path,
+            "field-binding".into(),
+            binding.field_count.to_string(),
+            binding.argument_slots.len().to_string(),
+        ];
+        row.extend(binding.argument_slots.iter().map(usize::to_string));
+        row.push(binding.defaulted_slots.len().to_string());
+        row.extend(binding.defaulted_slots.iter().map(usize::to_string));
+        fields.push(row);
+    }
+    for (span, (field, owner)) in &local.calls.body_ir_constructor_field_requirements {
+        fields.push(vec![
+            "requirement".into(),
+            positions.nodes.anchor(*span)?.path,
+            "constructor-field".into(),
+            positions.identity(field)?,
+            positions.type_identity(owner)?,
+        ]);
+    }
     for (span, builtin) in &local.calls.resolved_builtin_calls {
         fields.push(vec![
             "builtin".into(),
@@ -179,8 +218,19 @@ pub(super) fn project_calls(
             fields.push(row);
         }
     }
-    if !local.calls.body_ir_call_result_types.is_empty() || !local.calls.body_ir_native_argument_types.is_empty() {
-        return Err(NodeBindingError::Unsupported("native call refinements"));
+    for (selector, values) in [
+        ("argument-type", &local.calls.body_ir_native_argument_types),
+        ("result-type", &local.calls.body_ir_call_result_types),
+    ] {
+        for (span, ty) in values {
+            let mut row = vec![
+                "native-call".into(),
+                positions.nodes.anchor(*span)?.path,
+                selector.into(),
+            ];
+            type_fields(ty, &mut row)?;
+            fields.push(row);
+        }
     }
     Ok(())
 }

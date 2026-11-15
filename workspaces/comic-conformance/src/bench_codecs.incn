@@ -1,0 +1,204 @@
+"""Stage-separated public codec measurements; timed scans include the stated scalar checksum."""
+
+from rust::std::time import Instant
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_reader import read_columns
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.text_printer import print_comic
+from std.primitives.crumb.text_reader import read_comic
+from std.primitives.crumb.text_types import TextContext
+from std.primitives.crumb.values import IntegerValue, Value
+from std.primitives.text import encode_utf8
+from std.primitives.views import MappedFile, MappedView
+from bench_data import descriptions, fields, json_rows, row_value, rows, text_rows, value_sum
+
+
+pub def budget() -> Result[Budget, str]:
+    """A declared cumulative-work allowance, independent of the sampler's physical-memory ceiling."""
+    return Budget.create(bytes=8_589_934_592, elements=1_000_000_000, depth=64).map_err((e) => e.message())
+
+
+pub def report(stage: str, elapsed: float, count: int, size: int, checksum: int) -> None:
+    """TSV carries raw durations and bytes; rates are derived only from successful measured stages."""
+    println(f"{stage}\t{elapsed}\t{count}\t{size}\t{checksum}")
+
+
+pub def encoding(name: str) -> Result[BlockEncoding, str]:
+    """Reject unknown choices instead of silently timing the default indexed encoding."""
+    match name:
+        "indexed" => return Ok(BlockEncoding.Indexed)
+        "for" => return Ok(BlockEncoding.FrameOfReference)
+        "delta" => return Ok(BlockEncoding.ZigzagDelta)
+        "runs" => return Ok(BlockEncoding.Runs)
+        "dictionary" => return Ok(BlockEncoding.DictionaryPacked)
+        "dictionary-runs" => return Ok(BlockEncoding.DictionaryRuns)
+        _ => return Err("unknown column encoding")
+
+
+pub def choices(workload: str, count: int, name: str) -> Result[list[GroupChoice], str]:
+    """One nominal run, with one explicit choice for every256-position column block."""
+    chosen = encoding(name)?
+    mut columns: list[ColumnChoice] = []
+    for _ in fields(workload):
+        mut blocks: list[BlockEncoding] = []
+        for _ in range((count + 255) // 256):
+            blocks.append(chosen)
+        columns.append(ColumnChoice(blocks=blocks))
+    return Ok([GroupChoice(columns=columns)])
+
+
+pub def backing(data: bytes) -> Result[MappedView, str]:
+    """Time this ownership boundary separately; the retained view outlives the local owner."""
+    owner = MappedFile.owned(data)?
+    match owner.view(0, owner.len()):
+        Some(view) => return Ok(view)
+        None => return Err("benchmark backing range is unavailable")
+
+
+pub def binary(codec: str, workload: str, count: int, sealed: bool, choice: str) -> Result[int, str]:
+    """Measure owned input, encoding, backing, full envelope admission and record-by-record materialization."""
+    started = Instant.now()
+    declared = descriptions(workload)
+    input = rows(workload, count)
+    report("materialize", started.elapsed().as_secs_f64(), count, 0, 0)
+    mut setup = budget()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    selected = choices(workload, count, choice)?
+    mut write_budget = budget()?
+    encoded_at = Instant.now()
+    mut data: bytes = b""
+    if codec == "row":
+        data = write_rows(declared, input, registry, sealed, write_budget).map_err((e) => e.message())?
+    else:
+        data = write_columns(declared, input, registry, sealed, selected, write_budget).map_err((e) => e.message())?
+    size = len(data)
+    report("encode", encoded_at.elapsed().as_secs_f64(), count, size, 0)
+    backed_at = Instant.now()
+    view = backing(data)?
+    report("backing", backed_at.elapsed().as_secs_f64(), count, size, 0)
+    mut read_budget = budget()?
+    admitted_at = Instant.now()
+    mut checksum = 0
+    if codec == "row":
+        decoded = read_rows(view, [], registry, sealed, read_budget).map_err((e) => e.message())?
+        report("admit", admitted_at.elapsed().as_secs_f64(), count, size, 0)
+        if decoded.len() != count or decoded.is_sealed() != sealed:
+            return Err("row admission changed count or seal")
+        mut scan_budget = budget()?
+        scanned_at = Instant.now()
+        for index in range(count):
+            record = decoded.read_record(index, scan_budget).map_err((e) => e.message())?
+            checksum += value_sum(record.value)?
+        report("decode_scan_checksum", scanned_at.elapsed().as_secs_f64(), count, size, checksum)
+    else:
+        decoded = read_columns(view, [], registry, sealed, read_budget).map_err((e) => e.message())?
+        report("admit", admitted_at.elapsed().as_secs_f64(), count, size, 0)
+        if decoded.len() != count or decoded.is_sealed() != sealed:
+            return Err("column admission changed count or seal")
+        mut scan_budget = budget()?
+        scanned_at = Instant.now()
+        for index in range(count):
+            record = decoded.read_record(index, scan_budget).map_err((e) => e.message())?
+            checksum += value_sum(record.value)?
+        report("decode_scan_checksum", scanned_at.elapsed().as_secs_f64(), count, size, checksum)
+    return Ok(checksum)
+
+
+pub def text_sum(value: Value) -> Result[int, str]:
+    """Consume every decoded scalar without converting the whole text document to another tree."""
+    match value:
+        Value.Integer(IntegerValue.Signed(number)) => return Ok(number.saturating_resize[int]())
+        Value.Integer(IntegerValue.Unsigned(number)) => return Ok(number.saturating_resize[int]())
+        Value.Text(text) => return Ok(len(text))
+        Value.NoneValue => return Ok(0)
+        Value.Some(children) => return text_sum(children[0])
+        Value.List(children) =>
+            mut result = 0
+            for child in children:
+                result += text_sum(child)?
+            return Ok(result)
+        Value.Record(members) =>
+            mut result = 0
+            for member in members:
+                result += text_sum(member.value)?
+            return Ok(result)
+        _ => return Err("unexpected text checksum value")
+
+
+pub def text(workload: str, count: int) -> Result[int, str]:
+    """Text parsing already materializes a complete document, unlike binary set admission."""
+    started = Instant.now()
+    document = text_rows(workload, count)?
+    report("materialize", started.elapsed().as_secs_f64(), count, 0, 0)
+    mut setup = budget()?
+    context = TextContext.create([], [], setup).map_err((e) => e.message())?
+    mut write_budget = budget()?
+    encoded_at = Instant.now()
+    data = print_comic(document, context, write_budget).map_err((e) => e.message())?
+    size = len(data)
+    report("encode", encoded_at.elapsed().as_secs_f64(), count, size, 0)
+    mut read_budget = budget()?
+    decoded_at = Instant.now()
+    decoded = read_comic(data, context, read_budget).map_err((e) => e.message())?
+    report("decode_materialize", decoded_at.elapsed().as_secs_f64(), count, size, 0)
+    if len(decoded.values) != count:
+        return Err("text record count changed")
+    scanned_at = Instant.now()
+    mut checksum = 0
+    for value in decoded.values:
+        checksum += text_sum(value.value)?
+    report("scan_checksum", scanned_at.elapsed().as_secs_f64(), count, size, checksum)
+    return Ok(checksum)
+
+
+pub def json_sum(value: JsonValue) -> Result[int, str]:
+    """Use public JSON accessors; their copying cost is part of the measured baseline scan."""
+    if value.is_int():
+        return value.expect_int().map_err((e) => e.message())
+    if value.is_str():
+        return Ok(len(value.expect_str().map_err((e) => e.message())?))
+    if value.is_null():
+        return Ok(0)
+    mut result = 0
+    if value.is_array():
+        for child in value.expect_array().map_err((e) => e.message())?:
+            result += json_sum(child)?
+        return Ok(result)
+    if value.is_object():
+        for _, child in value.items():
+            result += json_sum(child)?
+        return Ok(result)
+    return Err("unexpected JSON checksum value")
+
+
+pub def json(workload: str, count: int) -> Result[int, str]:
+    """Time public std.json construction, compact encoding, parsing and accessor scanning separately."""
+    started = Instant.now()
+    input = json_rows(workload, count)?
+    report("materialize", started.elapsed().as_secs_f64(), count, 0, 0)
+    encoded_at = Instant.now()
+    data = input.to_json().map_err((e) => e.message())?
+    report("encode", encoded_at.elapsed().as_secs_f64(), count, len(data), 0)
+    decoded_at = Instant.now()
+    decoded = JsonValue.parse(data).map_err((e) => e.message())?
+    report("decode_materialize", decoded_at.elapsed().as_secs_f64(), count, len(data), 0)
+    if decoded.len() != count:
+        return Err("JSON record count changed")
+    scanned_at = Instant.now()
+    checksum = json_sum(decoded)?
+    report("scan_checksum", scanned_at.elapsed().as_secs_f64(), count, len(data), checksum)
+    return Ok(checksum)
+
+
+pub def expected_sum(workload: str, count: int) -> Result[int, str]:
+    """Independent regeneration verifies all records outside codec timings, without a second retained tree."""
+    specs = fields(workload)
+    mut result = 0
+    for index in range(count):
+        result += value_sum(row_value(workload, index, specs))?
+    return Ok(result)

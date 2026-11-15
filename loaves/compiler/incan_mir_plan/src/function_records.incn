@@ -139,7 +139,7 @@ enum StoredTarget:
 
 @derive(Serialize, Deserialize)
 enum StoredType:
-    """The closed native carriers admitted by this product schema, including formatting array lengths."""
+    """Incan-facing scalar and text shapes; native carrier spelling stays behind this adapter."""
 
     Int
     Float
@@ -147,15 +147,15 @@ enum StoredType:
     Unit
     CheckedInt
     Never
-    String
-    StrRef
-    StringRef
-    StringArray(int)
-    StrArray(int)
-    StringArrayRef(int)
-    StrArrayRef(int)
-    StringSlice
-    StrSlice
+    Text
+    LiteralTextView
+    TextView
+    TextValues(int)
+    LiteralTextValues(int)
+    TextValuesView(int)
+    LiteralTextValuesView(int)
+    TextSequence
+    LiteralTextSequence
 
 
 @derive(Serialize, Deserialize)
@@ -229,7 +229,7 @@ pub def encode_product(function: &Function, runtime: &list[ExternalFunction]) ->
     """
     # 1. Unsupported carriers still refuse capture rather than omit dependency facts.
     stored = StoredProduct(
-        schema=2,
+        schema=3,
         function=encode_scalar(function)?,
         runtime=[store_external(value)? for value in runtime],
     )
@@ -250,7 +250,7 @@ pub def decode_product(text: str) -> Result[tuple[Function, list[ExternalFunctio
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 2:
+    if stored.schema != 3:
         return Err("unknown native product schema")
     # 2. Both parts cross the private product boundary explicitly.
     return Ok((decode_scalar(stored.function)?, [restore_external(value)? for value in stored.runtime]))
@@ -274,7 +274,7 @@ pub def encode_scalar(function: &Function) -> Result[str, str]:
     slots = [store_slot(value.ty, value.span)? for value in function.locals]
     blocks = [store_block(value)? for value in function.blocks]
     stored = StoredFunction(
-        schema=2,
+        schema=3,
         name=function.name,
         parameters=parameters,
         result=store_type(function.return_type)?,
@@ -301,7 +301,7 @@ pub def decode_scalar(text: str) -> Result[Function, str]:
     """
     # 1. Malformed or unfamiliar records are cache misses at the caller.
     stored = decode_record(text).map_err((error) => str(error))?
-    if stored.schema != 2:
+    if stored.schema != 3:
         return Err("unknown scalar function product schema")
     # 2. Native attributes, coroutine fields and generic loans were refused by the producer.
     parameters = [restore_parameter(value)? for value in stored.parameters]
@@ -362,10 +362,10 @@ def same_external(left: &ExternalFunction, right: &ExternalFunction) -> bool:
 
 
 def store_external(value: ExternalFunction) -> Result[StoredExternal, str]:
-    """Retain every dependency signature field; owner-dependent carrier layouts refuse capture."""
+    """Retain the Incan binding identity; the native adapter keeps its implementation path private."""
     return Ok(
         StoredExternal(
-            path=value.path,
+            path=store_binding(value.path)?,
             arguments=[store_type(ty)? for ty in value.type_arguments],
             parameters=[store_type(ty)? for ty in value.parameters],
             result=store_type(value.return_type)?,
@@ -375,16 +375,54 @@ def store_external(value: ExternalFunction) -> Result[StoredExternal, str]:
 
 
 def restore_external(value: StoredExternal) -> Result[ExternalFunction, str]:
-    """Restore the canonical path, complete carriers and source provenance from the accepted producer."""
+    """Select the native implementation only after the Incan-facing record has been accepted."""
     return Ok(
         ExternalFunction(
-            path=value.path,
+            path=restore_binding(value.path)?,
             type_arguments=[restore_type(ty) for ty in value.arguments],
             parameters=[restore_type(ty) for ty in value.parameters],
             return_type=restore_type(value.result),
             span=restore_span(value.span),
         ),
     )
+
+
+def store_binding(path: str) -> Result[str, str]:
+    """Translate the bounded scalar adapter's implementation paths to stable Incan identities."""
+    match path:
+        "incan_native_runtime::initialize_panic_hook" => return Ok("builtin::runtime_initialize")
+        "incan_native_runtime::println_text" => return Ok("builtin::print")
+        _ => pass
+    runtime = "incan_native_runtime::"
+    primitives = "incan_std_primitives::"
+    standard = "incan_stdlib::"
+    if path.startswith(runtime):
+        return Ok("builtin::runtime::" + path[len(runtime):])
+    if path.startswith(primitives):
+        return Ok("std::" + path[len(primitives):])
+    if path.startswith(standard):
+        return Ok("std::" + path[len(standard):])
+    return Err("scalar function products refuse an external without an Incan binding identity")
+
+
+def restore_binding(identity: str) -> Result[str, str]:
+    """Select one native implementation for an admitted Incan binding identity at adapter time."""
+    match identity:
+        "builtin::runtime_initialize" => return Ok("incan_native_runtime::initialize_panic_hook")
+        "builtin::print" => return Ok("incan_native_runtime::println_text")
+        _ => pass
+    runtime = "builtin::runtime::"
+    standard = "std::"
+    if identity.startswith(runtime):
+        return Ok("incan_native_runtime::" + identity[len(runtime):])
+    if identity.startswith(standard):
+        # Standard-library scalar adapters are currently implemented by the primitives crate. The legacy fstring
+        # target is the only pre-primitives identity still accepted by this bounded product schema.
+        suffix = identity[len(standard):]
+        if suffix == "fstring":
+            return Ok("incan_stdlib::fstring")
+        return Ok("incan_std_primitives::" + suffix)
+    return Err("unknown Incan scalar binding identity")
 
 
 def store_span(span: SourceSpan) -> StoredSpan:
@@ -411,15 +449,15 @@ def store_type(ty: PlanType) -> Result[StoredType, str]:
         PlanType.Unit => return Ok(StoredType.Unit)
         PlanType.CheckedInt => return Ok(StoredType.CheckedInt)
         PlanType.Never => return Ok(StoredType.Never)
-        PlanType.String => return Ok(StoredType.String)
-        PlanType.StrRef => return Ok(StoredType.StrRef)
-        PlanType.StringRef => return Ok(StoredType.StringRef)
-        PlanType.StringArray(length) => return Ok(StoredType.StringArray(length))
-        PlanType.StrArray(length) => return Ok(StoredType.StrArray(length))
-        PlanType.StringArrayRef(length) => return Ok(StoredType.StringArrayRef(length))
-        PlanType.StrArrayRef(length) => return Ok(StoredType.StrArrayRef(length))
-        PlanType.StringSlice => return Ok(StoredType.StringSlice)
-        PlanType.StrSlice => return Ok(StoredType.StrSlice)
+        PlanType.String => return Ok(StoredType.Text)
+        PlanType.StrRef => return Ok(StoredType.LiteralTextView)
+        PlanType.StringRef => return Ok(StoredType.TextView)
+        PlanType.StringArray(length) => return Ok(StoredType.TextValues(length))
+        PlanType.StrArray(length) => return Ok(StoredType.LiteralTextValues(length))
+        PlanType.StringArrayRef(length) => return Ok(StoredType.TextValuesView(length))
+        PlanType.StrArrayRef(length) => return Ok(StoredType.LiteralTextValuesView(length))
+        PlanType.StringSlice => return Ok(StoredType.TextSequence)
+        PlanType.StrSlice => return Ok(StoredType.LiteralTextSequence)
         _ => return Err("scalar function products refuse this native carrier")
 
 
@@ -432,15 +470,15 @@ def restore_type(stored: StoredType) -> PlanType:
         StoredType.Unit => return PlanType.Unit
         StoredType.CheckedInt => return PlanType.CheckedInt
         StoredType.Never => return PlanType.Never
-        StoredType.String => return PlanType.String
-        StoredType.StrRef => return PlanType.StrRef
-        StoredType.StringRef => return PlanType.StringRef
-        StoredType.StringArray(length) => return PlanType.StringArray(length)
-        StoredType.StrArray(length) => return PlanType.StrArray(length)
-        StoredType.StringArrayRef(length) => return PlanType.StringArrayRef(length)
-        StoredType.StrArrayRef(length) => return PlanType.StrArrayRef(length)
-        StoredType.StringSlice => return PlanType.StringSlice
-        StoredType.StrSlice => return PlanType.StrSlice
+        StoredType.Text => return PlanType.String
+        StoredType.LiteralTextView => return PlanType.StrRef
+        StoredType.TextView => return PlanType.StringRef
+        StoredType.TextValues(length) => return PlanType.StringArray(length)
+        StoredType.LiteralTextValues(length) => return PlanType.StrArray(length)
+        StoredType.TextValuesView(length) => return PlanType.StringArrayRef(length)
+        StoredType.LiteralTextValuesView(length) => return PlanType.StrArrayRef(length)
+        StoredType.TextSequence => return PlanType.StringSlice
+        StoredType.LiteralTextSequence => return PlanType.StrSlice
 
 
 def store_place(place: Place) -> Result[StoredPlace, str]:
@@ -718,7 +756,7 @@ def restore_call(
     """Restore the exact planned target, arguments, destination, successors and source provenance."""
     return Ok(
         TerminatorKind.Call(
-            Callee(kind=restore_target(callee), span=restore_span(span)),
+            Callee(kind=restore_target(callee)?, span=restore_span(span)),
             [restore_operand(value)? for value in arguments],
             restore_place(destination)?,
             target,
@@ -731,19 +769,19 @@ def store_target(target: CalleeKind) -> Result[StoredTarget, str]:
     """Retain direct dependency references and their already checked explicit type instantiations."""
     match target:
         CalleeKind.Planned(name) => return Ok(StoredTarget.Planned(name))
-        CalleeKind.External(path) => return Ok(StoredTarget.External(path))
+        CalleeKind.External(path) => return Ok(StoredTarget.External(store_binding(path)?))
         CalleeKind.Instantiated(path, arguments) =>
-            return Ok(StoredTarget.Instantiated(path, [store_type(ty)? for ty in arguments]))
+            return Ok(StoredTarget.Instantiated(store_binding(path)?, [store_type(ty)? for ty in arguments]))
         _ => return Err("native products refuse dynamic or owner-dependent callees")
 
 
-def restore_target(target: StoredTarget) -> CalleeKind:
-    """Restore the exact reference kind without inferring it from the path text."""
+def restore_target(target: StoredTarget) -> Result[CalleeKind, str]:
+    """Restore the exact reference kind, selecting its native implementation in this adapter."""
     match target:
-        StoredTarget.Planned(name) => return CalleeKind.Planned(name)
-        StoredTarget.External(path) => return CalleeKind.External(path)
-        StoredTarget.Instantiated(path, arguments) =>
-            return CalleeKind.Instantiated(path, [restore_type(ty) for ty in arguments])
+        StoredTarget.Planned(name) => return Ok(CalleeKind.Planned(name))
+        StoredTarget.External(identity) => return Ok(CalleeKind.External(restore_binding(identity)?))
+        StoredTarget.Instantiated(identity, arguments) =>
+            return Ok(CalleeKind.Instantiated(restore_binding(identity)?, [restore_type(ty) for ty in arguments]))
 
 
 def store_block(block: BasicBlock) -> Result[StoredBlock, str]:

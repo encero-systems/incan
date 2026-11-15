@@ -913,9 +913,9 @@ mod tests {
         Ok(())
     }
 
-    /// A checked owner whose canonical record projection is unsupported publishes an explicit fallback reason.
+    /// A loan-free match scrutinee is retained as a reusable owner fact instead of forcing a source fallback.
     #[test]
-    fn unsupported_checked_owner_publishes_fallback_reason() -> Result<(), Box<dyn std::error::Error>> {
+    fn loan_free_match_owner_publishes_reusable_value() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
         let program = program(source)?;
         let mut checker = TypeChecker::new();
@@ -926,12 +926,16 @@ mod tests {
 
         let outputs = checked_owner_record_outputs(&program, &checker, &["main".into()])?;
         assert_eq!(outputs.len(), 1, "a checked owner was silently omitted");
-        let CheckedOwnerRecordOutput::Fallback(fallback) = &outputs[0] else {
-            return Err("the unsupported owner unexpectedly published a reusable value".into());
+        let CheckedOwnerRecordOutput::Value(owner) = &outputs[0] else {
+            return Err("the match owner fell back".into());
         };
-        assert_eq!(fallback.name, "main");
-        assert!(fallback.identity.is_some());
-        assert!(fallback.reason.contains("ProtocolArtifacts.loan_free_scrutinees"));
+        assert_eq!(owner.name, "main");
+        assert!(
+            owner
+                .final_value
+                .iter()
+                .any(|row| row[0] == "protocol" && row[2] == "loan-free-scrutinee" && row[3] == "true")
+        );
         Ok(())
     }
 

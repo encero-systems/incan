@@ -702,6 +702,14 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         let fields = super::records::fixture_record(exact_numeric, "preserve", declaration)?;
         super::records::verify_fixture(exact_numeric, "preserve", fields)?;
     }
+    let dictionary = "def preserve(values: dict[str, list[str]]) -> dict[str, list[str]]:\n    return values\n";
+    for declaration in [true, false] {
+        let fields = super::records::fixture_record(dictionary, "preserve", declaration)?;
+        super::records::verify_fixture(dictionary, "preserve", fields)?;
+    }
+    let constructor = "model Box:\n    value: int\n\ndef make() -> Box:\n    return Box(value=1)\n";
+    let fields = super::records::fixture_record(constructor, "make", false)?;
+    super::records::verify_fixture(constructor, "make", fields)?;
     let refused = "def main() -> int:\n    return \"wrong\"\n";
     let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
     for source in [refused, warning] {
@@ -732,10 +740,12 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         assert!(super::records::verify_fixture(source, "main", malformed).is_err());
     }
     let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
-    assert!(matches!(
-        super::records::fixture_record(matched, "main", false),
-        Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
-    ));
+    let fields = super::records::fixture_record(matched, "main", false)?;
+    super::records::verify_fixture(matched, "main", fields)?;
+    let field =
+        "model Document:\n    value: str\n\ndef required_text(value: Document) -> str:\n    return value.value\n";
+    let fields = super::records::fixture_record(field, "required_text", false)?;
+    super::records::verify_fixture(field, "required_text", fields)?;
     let ordered = "def touch(mut items: list[int]) -> None:\n    pass\n\ndef caller() -> None:\n    items = [1]\n    touch(items)\n\ndef later() -> int:\n    return 1\n";
     let later = super::records::fixture_record(ordered, "later", true)?;
     super::records::verify_fixture(ordered, "later", later)?;

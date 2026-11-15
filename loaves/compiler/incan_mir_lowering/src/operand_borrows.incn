@@ -27,6 +27,7 @@ from rust::incan_semantics_core::body_ir import (
     PlaceOperand as RustPlaceOperand,
 )
 from element_places import is_element_place
+from element_borrows import shared_element_place
 from text_plan import owned_literal, owned_slice_text
 from numerics import numeric_carrier
 from strings import emit_text_helper, text_helper_arity
@@ -364,11 +365,22 @@ def borrow_element_text(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Borrow a materialized text element, adapting a static frozen wrapper as for a direct place; release the new owner after the call."""
+    """Borrow indexed text in place for a shared read; owned reads retain their independent materialization."""
     match fact:
         OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
         _ => pass
+    if fact == OwnershipFact.Borrow:
+        match value:
+            RustOperand.Place(read) =>
+                match shared_element_place(builder, read.place, span)?:
+                    Some(owner) =>
+                        if place_type(builder.locals, owner) == PlanType.String:
+                            reference = temporary(builder, PlanType.StringRef, span)
+                            builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                            return Ok(read_place(reference, false, span))
+                    None => pass
+            _ => pass
     operand = value_operand(builder, value, span)?
     if operand_type(builder, operand)? == PlanType.FrozenStr:
         # Match direct frozen text: copy its static wrapper, then provide the owned text view this helper expects.

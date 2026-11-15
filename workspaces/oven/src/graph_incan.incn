@@ -14,10 +14,10 @@ from unit_freshness import (
     artifact_files,
     compiler_fingerprint,
     description_digest,
-    cache_identities,
     fingerprint,
     linked_natives,
     native_identities,
+    toolchain_cache_identities,
     record,
     staleness,
     unit_key,
@@ -233,7 +233,7 @@ def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -
     """
     head = [EXPORT_DOMAIN, compiler_fingerprint(toolchain)?, description_digest(ready)?]
     entry = relative_name(ready.source, project)
-    mut inputs = head + ["entry", entry] + native_identities(linked_natives(ready))? + cache_identities(ready.rust_abi)?
+    mut inputs = head + ["entry", entry] + native_identities(linked_natives(ready))? + toolchain_cache_identities(toolchain)?
     sources, portable = content_facts(project)?
     inputs.extend(sources)
     bindings = ready.program_entries + ready.contract_models + ready.c_headers

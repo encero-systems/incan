@@ -49,12 +49,13 @@ pub model SelectedBodyPage:
 pub def select_namespace_inventory_except(
     selected: Snapshot,
     profile: str,
+    origin: str,
     invalid: list[str],
 ) -> Result[list[SelectedBodyPage], str]:
-    """Select installable namespace records whose source and imported declaration witnesses remain current."""
+    """Select this project origin's namespaces whose source and imported declaration witnesses remain current."""
     mut pages: list[SelectedBodyPage] = []
     for record in reusable_family_records(selected, "namespace", profile)?:
-        if record.key.identity in invalid:
+        if record.key.origin != origin or record.key.identity in invalid:
             continue
         key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
         pages.append(SelectedBodyPage(key=key, value=record.value))
@@ -117,10 +118,32 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
 pub def select_body_inventory_except(
     selected: Snapshot,
     profile: str,
+    origin: str,
     invalid: list[str],
 ) -> Result[list[SelectedBodyRecord], str]:
-    """Select complete owner records except those reached by source changes prepared for this request."""
-    return Ok([record for record in select_body_inventory(selected, profile)? if record.identity not in invalid])
+    """Select this project origin's complete owners except those reached by its current source changes."""
+    locals = reusable_family_records(selected, "local", profile)?
+    finals = reusable_family_records(selected, "final", profile)?
+    bodies = reusable_family_records(selected, "body-ir", profile)?
+    mut selected_records: list[SelectedBodyRecord] = []
+    for local in locals:
+        if local.key.origin != origin or local.key.identity in invalid:
+            continue
+        match matching_record(finals, local):
+            Some(final) =>
+                match matching_record(bodies, local):
+                    Some(body) =>
+                        selected_records.append(
+                            SelectedBodyRecord(
+                                identity=local.key.identity,
+                                local=local.value,
+                                final=final.value,
+                                body_ir=body.value,
+                            ),
+                        )
+                    None => pass
+            None => pass
+    return Ok(selected_records)
 
 
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:

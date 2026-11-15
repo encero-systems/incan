@@ -10,6 +10,7 @@ from toolchain import Toolchain
 from observation import Ledger, SETTLE_SECONDS, load_ledger, skipped_directory, trace
 from publication import publish
 from unit_freshness import fingerprint
+from frozen_inputs import observation as frozen_observation
 
 
 pub model GraphUnit:
@@ -151,8 +152,11 @@ pub def interface_inputs(directory: Path, package: str) -> Result[list[str], str
     mut inputs: list[str] = []
     for suffix in ["incnlib", "rustabi"]:
         path = directory.joinpath(f"{artifact_stem(package)}.{suffix}")
-        if path.is_file():
-            inputs.extend([suffix, ledger.digest(path)?])
+        match frozen_observation(path):
+            Some(stamp) => inputs.extend([suffix, stamp])
+            None =>
+                if path.is_file():
+                    inputs.extend([suffix, ledger.digest(path)?])
     save_observations(ledger)
     return Ok(inputs)
 

@@ -34,6 +34,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
     assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "body_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
@@ -63,6 +65,21 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     scratch = scratch_directory()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     return verify_rust_source_edit_rebuild(binary, scratch.path())
+
+
+pub def test_two_standalone_sources_share_one_store_without_body_collision() -> Result[None, str]:
+    """Two manifest-free projects with same-named helpers retain independent graph Body IR in one store."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    first = root.joinpath("first.incn")
+    second = root.joinpath("second.incn")
+    write(first, "def helper() -> int:\n    return 41\n\n\ndef main() -> None:\n    println(helper())\n")?
+    write(second, "def helper() -> int:\n    return 43\n\n\ndef main() -> None:\n    println(helper())\n")?
+    _ = lowering_example_run(binary, first, store, "41")?
+    _ = lowering_example_run(binary, second, store, "43")?
+    return stop_example_engine(binary, store)
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:

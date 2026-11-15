@@ -50,6 +50,8 @@ impl TypeChecker {
             return;
         }
         if self.callable_body_matches_current_scope(span) {
+            let body_trace = self.owner_body_trace(span);
+            let _trace = body_trace.enter();
             self.select_callable_final_record(span);
             self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
             self.symbols.exit_scope();

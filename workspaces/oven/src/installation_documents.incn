@@ -3,9 +3,10 @@
 from std.fs import Path
 from files import read_json
 from frozen_inputs import Document
-from observation import observe
+from json_fields import required_text
+from observation import file_digest, observe
 from toolchain_types import Toolchain
-from payload_types import InstalledPayload
+from payload_types import InstalledPayload, PayloadAdmission
 from unit_publication import verified_payload
 
 
@@ -39,6 +40,12 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
     for native in toolchain.externs:
         parent = Path(native.path).parent()
         directories[parent.0] = observe(parent)?.stamp
+    installed_native = directory.joinpath("native")
+    if installed_native.is_dir():
+        directories[installed_native.0] = observe(installed_native)?.stamp
+        for producer in installed_native.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+            if producer.is_dir():
+                directories[producer.0] = observe(producer)?.stamp
     mut documents: Dict[str, Document] = {}
     mut payloads: Dict[str, InstalledPayload] = {}
     # 2. Each record is parsed at admission, and its original generation remains an explicit witness.
@@ -49,7 +56,11 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
             before = observe(entry)?.stamp
             if entry.name().endswith(".oven-unit"):
                 payload = Path(entry.0[:-10])
-                admission = verified_payload(payload)?
+                admission = match verified_payload(payload):
+                    Ok(found) => found
+                    # Legacy installed native records may predate local observation evidence. Admission hashes their
+                    # bytes once against the recorded payload digest and binds that exact filesystem generation.
+                    Err(_) => legacy_payload(payload, entry)?
                 payloads[payload.0] = InstalledPayload(
                     path=payload.0,
                     record=entry.0,
@@ -61,6 +72,12 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
                 documents[entry.0] = Document(path=entry.0, stamp=before, value=value)
             if observe(entry)?.stamp != before:
                 return Err(f"{entry.0}: installed record changed during admission")
+    if toolchain.registry_lock != "":
+        lock = Path(toolchain.registry_lock)
+        before = observe(lock)?.stamp
+        documents[lock.0] = Document(path=lock.0, stamp=before, value=read_json(lock)?)
+        if observe(lock)?.stamp != before:
+            return Err(f"{lock.0}: installed registry selection changed during admission")
     paths = sorted([path for path in directories.keys()])
     return Ok(
         Captured(
@@ -83,5 +100,24 @@ def selected(name: str) -> bool:
         or ".dylib." in name
         or ".so." in name
         or ".incnlib." in name
+        or ".incnbody." in name
+        or ".rustabi." in name
         or name == "vocab-worker.oven-unit"
+    )
+
+
+def legacy_payload(payload: Path, record: Path) -> Result[PayloadAdmission, str]:
+    """Admit a legacy installed payload once from its portable producer record and exact current bytes."""
+    document = read_json(record)?
+    expected = required_text(document, "payload")?
+    before = observe(payload)?.stamp
+    if file_digest(payload)? != expected or observe(payload)?.stamp != before:
+        return Err(f"{payload.0}: installed payload digest disagrees")
+    return Ok(
+        PayloadAdmission(
+            identity=required_text(document, "unit")?,
+            payload=expected,
+            observation=before,
+            provenance=[payload.0],
+        ),
     )

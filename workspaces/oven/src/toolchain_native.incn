@@ -19,7 +19,7 @@ from rust_manifest import rust_facet
 from registry_units import RegistryUnits
 from rust_target import target_configuration
 from source_security import validate_native_sources
-from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
+from toolchain import NativeCrate, Toolchain, load_toolchain, readmit_selected_installation, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
@@ -38,6 +38,9 @@ def main() -> Result[None, str]:
     """
     # 1. Only support production and a package/profile description are accepted.
     arguments = [argument for argument in args()]
+    if len(arguments) == 2 and arguments[1] == "--readmit":
+        _ = readmit_selected_installation()?
+        return Ok(None)
     if len(arguments) >= 4 and arguments[2] in ["identify", "publish", "codegraph"]:
         return publish_prepared(arguments)
     if len(arguments) != 2 and len(arguments) != 4:

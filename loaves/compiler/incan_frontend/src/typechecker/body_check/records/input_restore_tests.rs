@@ -5,6 +5,106 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
+/// Structural checked types keep their enum shape instead of falling back to a native Debug spelling.
+#[test]
+fn structural_checked_type_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::ResolvedType;
+
+    let values = vec![
+        ResolvedType::Never,
+        ResolvedType::FrozenStr,
+        ResolvedType::FrozenBytes,
+        ResolvedType::FrozenList(Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenSet(Box::new(ResolvedType::Bool)),
+        ResolvedType::TypeToken(Box::new(ResolvedType::Named("Item".into()))),
+        ResolvedType::Tuple(vec![ResolvedType::Int, ResolvedType::Str]),
+        ResolvedType::SelfType,
+        ResolvedType::Ref(Box::new(ResolvedType::Int)),
+        ResolvedType::RefMut(Box::new(ResolvedType::Int)),
+        ResolvedType::CallSiteInfer,
+    ];
+    for expected in values {
+        let mut fields = Vec::new();
+        super::super::type_fields(&expected, &mut fields)?;
+        let mut encoded = fields.iter();
+        assert_eq!(super::super::read_type(&mut encoded)?, expected);
+        assert!(encoded.next().is_none());
+    }
+    Ok(())
+}
+
+/// A checked native result type survives the record boundary without falling back to its source-facing type.
+#[test]
+fn native_call_refinement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def view(value: int) -> int:\n    return value\n";
+    let (program, checker, owner) = fixture(source, "view")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let span = *local
+        .expressions
+        .expr_types
+        .keys()
+        .next()
+        .ok_or("missing checked expression")?;
+    let native = crate::symbols::ResolvedType::Int;
+    local.calls.body_ir_call_result_types.insert(span, native.clone());
+    local.calls.body_ir_native_argument_types.insert(span, native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let rows = fields.iter().filter(|row| row[0] == "native-call").collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    for row in rows {
+        super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    }
+    assert_eq!(restored.calls.body_ir_call_result_types.get(&span), Some(&native));
+    assert_eq!(restored.calls.body_ir_native_argument_types.get(&span), Some(&native));
+    Ok(())
+}
+
+/// A local Rust-derived value retains its exact native carrier independently of its projected source type.
+#[test]
+fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: int) -> int:\n    retained = value\n    return retained\n";
+    let (program, checker, owner) = fixture(source, "keep")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let identity = local
+        .references
+        .resolved_write_identities
+        .iter()
+        .find(|((_, name), _)| name == "retained")
+        .map(|(_, identity)| identity.clone())
+        .ok_or("missing retained local identity")?;
+    let native = crate::symbols::ResolvedType::RustPath("serde_json::Value".into());
+    local.rust.value_native_types.insert(identity.clone(), native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let row = fields
+        .iter()
+        .find(|row| row[0] == "native-value" && row[2] == "type")
+        .ok_or("missing native value type row")?;
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    assert_eq!(restored.rust.value_native_types.get(&identity), Some(&native));
+    Ok(())
+}
+
 /// A graph with an invalid entry restores only as its exact recomputed refusal, never as successful analysis.
 #[test]
 fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {

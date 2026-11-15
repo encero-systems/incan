@@ -57,6 +57,32 @@ fn compiler_registry_materializers_cross_compiled_provider_boundaries() {
     assert!(!is_exported_method_name("_private_helper"));
 }
 
+/// Public callable aliases retain whether provider parameters are optional even when the alias cannot carry the
+/// provider's materializable default expressions itself.
+#[test]
+fn projected_callable_alias_retains_provider_default_flags() -> Result<(), String> {
+    let info = FunctionInfo {
+        params: vec![CallableParam::named_with_default(
+            "level",
+            ResolvedType::Int,
+            crate::ast::ParamKind::Normal,
+            true,
+        )],
+        return_type: ResolvedType::Unit,
+        is_async: false,
+        type_params: Vec::new(),
+        type_param_bounds: HashMap::new(),
+        type_param_bound_details: HashMap::new(),
+        emitted_name: None,
+    };
+    let projected = checked_projected_function_export("basic_config", &SymbolKind::Function(info))
+        .ok_or_else(|| "expected projected function".to_string())?;
+    let manifest = crate::library_manifest::function_export_from_checked("demo", &projected);
+    assert_eq!(manifest.params.len(), 1);
+    assert!(manifest.params[0].has_default);
+    Ok(())
+}
+
 /// One checked export with the given name and kind, with an unresolved canonical identity unless one is given.
 fn named_export(name: &str, kind: CheckedExportKind, canonical: Option<CanonicalSymbolId>) -> CheckedNamedExport {
     let mut identity = CheckedExportIdentity::direct(vec!["lib".to_string(), name.to_string()]);

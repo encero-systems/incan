@@ -56,7 +56,7 @@ pub(super) fn reference_artifacts(value: &ReferenceArtifacts) -> Result<(), Node
 /// Refuse every unrepresented nonempty CallArtifacts field; additions must choose a canonical capability.
 pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingError> {
     let CallArtifacts {
-        body_ir_constructor_field_requirements,
+        body_ir_constructor_field_requirements: _,
         body_ir_reexport_calls,
         body_ir_string_slice_members,
         body_ir_self_result_methods,
@@ -82,7 +82,7 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         isinstance_targets,
         call_site_callable_params: _,
         race_arm_binding_types,
-        constructor_field_bindings,
+        constructor_field_bindings: _,
         resolved_operator_calls,
         resolved_method_calls,
         compiler_generated_member_identities,
@@ -93,7 +93,7 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         source_display_methods,
         error_message_display_types,
     } = value;
-    require_empty!("CallArtifacts"; body_ir_constructor_field_requirements, body_ir_reexport_calls, body_ir_string_slice_members, body_ir_self_result_methods, body_ir_async_call_targets, body_ir_native_constructor_bindings, body_ir_module_constructor_bindings, body_ir_native_argument_identities, body_ir_factory_result_conflicts, body_ir_factory_owner_types, body_ir_constructor_types, body_ir_native_codec_members, inferred_constructor_types, inferred_call_result_types, mutable_receiver_method_calls, fixed_unpack_plans, isinstance_targets, race_arm_binding_types, constructor_field_bindings, resolved_operator_calls, resolved_method_calls, compiler_generated_member_identities, resolved_collection_constructors, closure_holding_params, closure_returning_callables, capturing_callable_bindings, source_display_methods, error_message_display_types);
+    require_empty!("CallArtifacts"; body_ir_reexport_calls, body_ir_string_slice_members, body_ir_self_result_methods, body_ir_async_call_targets, body_ir_native_constructor_bindings, body_ir_module_constructor_bindings, body_ir_native_argument_identities, body_ir_factory_result_conflicts, body_ir_factory_owner_types, body_ir_constructor_types, body_ir_native_codec_members, inferred_constructor_types, inferred_call_result_types, mutable_receiver_method_calls, fixed_unpack_plans, isinstance_targets, race_arm_binding_types, resolved_operator_calls, resolved_method_calls, compiler_generated_member_identities, resolved_collection_constructors, closure_holding_params, closure_returning_callables, capturing_callable_bindings, source_display_methods, error_message_display_types);
     Ok(())
 }
 
@@ -114,9 +114,9 @@ pub(super) fn protocol_artifacts(value: &ProtocolArtifacts) -> Result<(), NodeBi
         item_taking_iterations,
         comprehension_source_consumption,
         in_place_match_scrutinees,
-        loan_free_scrutinees,
+        loan_free_scrutinees: _,
     } = value;
-    require_empty!("ProtocolArtifacts"; body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees, loan_free_scrutinees);
+    require_empty!("ProtocolArtifacts"; body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees);
     Ok(())
 }
 
@@ -140,7 +140,7 @@ pub(super) fn rust_interop_artifacts(value: &RustInteropArtifacts) -> Result<(),
         checked_function_values,
         iteration_hooks,
         value_item_paths,
-        value_native_types,
+        value_native_types: _,
         body_ir_diverging_import_calls,
         receiver_contracts,
         rusttype_canonical_paths,
@@ -158,7 +158,7 @@ pub(super) fn rust_interop_artifacts(value: &RustInteropArtifacts) -> Result<(),
         await_conversions,
         type_aliases,
     } = value;
-    require_empty!("RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, checked_constants, checked_calls, argument_adjustments, declared_conversions, validated_rusttype_edges, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, iteration_hooks, value_item_paths, value_native_types, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
+    require_empty!("RustInteropArtifacts"; storage_types, owner_parameters, copy_receivers, checked_layouts, checked_enums, checked_constants, checked_calls, argument_adjustments, declared_conversions, validated_rusttype_edges, element_adjustments, field_adjustments, field_projection_paths, field_values, checked_function_values, iteration_hooks, value_item_paths, body_ir_diverging_import_calls, receiver_contracts, rusttype_canonical_paths, item_public_paths, arg_coercions, trait_imports, rusttype_forwarded_trait_adoptions, return_coercions, native_return_consumers, closure_param_type_displays, closure_storage, native_callable_parameters, function_param_type_displays, async_call_realizations, await_conversions, type_aliases);
     Ok(())
 }
 

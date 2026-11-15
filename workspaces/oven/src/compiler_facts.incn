@@ -9,6 +9,7 @@ from home_paths import home
 from json_fields import required_text
 from observation import file_digest, observe
 from publication import publish
+from frozen_inputs import payload as frozen_payload
 
 
 pub model FactAdmission:
@@ -69,6 +70,8 @@ def record_fact(path: Path, digest: str, observation: str) -> Result[None, str]:
 
 pub def fact_identity(path: Path) -> Result[str, str]:
     """Read an already admitted compiler fact's content identity without reading or hashing its payload."""
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok(admission.payload)
     location = fact_record(path)?
     if not location.is_file():
         return Err(f"{path.0}: compiler fact requires admission")

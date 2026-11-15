@@ -71,8 +71,9 @@ pub def launch(
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
 
-    `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
-    declares them. When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
+    Disposable case projects never retain resident owners. `environment` holds `NAME=value` settings added to the
+    inherited environment, as a case's `environment:` block declares them, and may explicitly override that default.
+    When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
     The runner prepares its trace destination before requesting early observations, including after target removal.
     `arg0` is the program name the child is started under: `oven` selects the same installed program's project
     surface (RFC 118).
@@ -81,6 +82,7 @@ pub def launch(
     trace = trace_file(project)
     trace.parent().mkdir(true, true).map_err((error) => error.message())?
     command.env("OVEN_TRACE", trace.0)
+    command.env("OVEN_OWNER", "off")
     for setting in environment:
         name, value = environment_setting(setting)?
         command.env(name, value)

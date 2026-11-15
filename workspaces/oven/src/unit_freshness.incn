@@ -20,7 +20,8 @@ from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitDescription
-from unit_publication import published_identity, record_payload
+from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
+from frozen_inputs import observation as frozen_observation
 from source_identity import entry_scope, source_inputs
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
@@ -39,14 +40,19 @@ pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]
     described = [f"{artifact_stem(package)}.native.json"]
     mut artifacts = [directory.joinpath(name) for name in compiled + described]
     cache = directory.joinpath(f"{artifact_stem(package)}.rustabi")
-    if cache.is_file():
+    if artifact_available(cache):
         artifacts.append(cache)
     manifest = directory.joinpath(f"{artifact_stem(package)}.incnlib")
-    if manifest.is_file():
+    if artifact_available(manifest):
         declared = manifest_vocabulary(manifest)?
         if not declared.desugarer.is_null():
             artifacts.append(directory.joinpath("vocab-worker"))
     return Ok(artifacts)
+
+
+pub def artifact_available(path: Path) -> bool:
+    """Whether a frozen installation payload was admitted or an editable project artifact exists now."""
+    return frozen_observation(path).is_some() or path.is_file()
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
@@ -57,6 +63,10 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
+    if let Some(stamp) = frozen_observation(path):
+        return Ok(stamp)
+    if let Some(identity) = admitted_payload_identity(path)?:
+        return Ok(identity)
     clock = begin()
     result = observe(path)
     record_work(Operation.ArtifactIdentity, path.0, clock)
@@ -97,6 +107,10 @@ def retained_artifact_identity(path: Path, mut state: &mut ArtifactIdentityState
 def verify_artifact_identities(state: &ArtifactIdentityState) -> Result[None, str]:
     """Reconcile retained generations once after every checked-context consumer has finished."""
     for path in sorted([key for key in state.files.keys()]):
+        if frozen_observation(Path(path)) == Some(state.files[path]):
+            continue
+        if admitted_payload_identity(Path(path))? == Some(state.files[path]):
+            continue
         if observe(Path(path))?.stamp != state.files[path]:
             return Err(f"artifact changed while preparing request: {path}")
     return Ok(None)
@@ -183,8 +197,13 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     3. Bind the target and deployment selection without including installation paths. SDK contents belong only to
        units that read or link them, through `selected_unit_compiler`.
     """
-    # 1. Metadata avoids reading unchanged compiler facts but never enters the compiler identity.
-    mut facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
+    # 1. Installed selections carry the identities admitted with their immutable page. Synthetic and staged
+    # toolchains without a page retain the direct fact lookup used by installation preparation and focused tests.
+    mut facts: list[str] = []
+    if len(toolchain.compiler_facts) == len(toolchain.rust_abi) + 1:
+        facts = [toolchain.compiler_facts[0]] + toolchain_cache_identities(toolchain)?
+    else:
+        facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
     match toolchain.compiler_records:
         Some(pin) => facts.append(f"compiler-records {pin.digest}")
         None => pass
@@ -193,7 +212,11 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.
     #    The compiler's own answers are probed once per rustc installation and deployment selection.
     target = compiler_target(toolchain)?
-    facts.extend([target, deployment_target(rust_compiler(toolchain), target, inherited_deployment_selection()?)?])
+    selection = inherited_deployment_selection()?
+    mut deployment = toolchain.default_deployment_target
+    if len(selection) > 0 or toolchain.rust_version == "":
+        deployment = deployment_target(rust_compiler(toolchain), target, selection)?
+    facts.extend([target, deployment])
     return fingerprint(facts + natives)
 
 
@@ -205,9 +228,11 @@ pub def unit_compiler_identity(unit: UnitDescription, compiler: str, sdk: str) -
 
 
 pub def selected_unit_compiler(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[str, str]:
-    """Read SDK identity only for a final link or C-ABI unit, then derive that unit's compiler input."""
+    """Use the admitted default SDK identity for a final link or C-ABI unit."""
     if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
         return Ok(compiler)
+    if toolchain.default_sdk_identity != "":
+        return unit_compiler_identity(unit, compiler, toolchain.default_sdk_identity)
     return unit_compiler_identity(unit, compiler, sdk_content_identity(toolchain.sysroot)?)
 
 
@@ -231,6 +256,8 @@ def compiler_target(toolchain: Toolchain) -> Result[str, str]:
     """Read the installed compiler's version and host without retaining its physical sysroot location."""
     if toolchain.target != "":
         return Ok(toolchain.target)
+    if toolchain.rust_version != "":
+        return Ok(toolchain.rust_version)
     return compiler_version(rust_compiler(toolchain))
 
 
@@ -238,7 +265,10 @@ pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
     """Canonical native aliases and the identities their producers recorded, without reading artifact bytes."""
     mut inputs: list[str] = []
     for native in externs:
-        inputs.append(f"{native.name} {published_identity(Path(native.path))?}")
+        mut identity = native.identity
+        if identity == "":
+            identity = published_identity(Path(native.path))?
+        inputs.append(f"{native.name} {identity}")
     return Ok(sorted(inputs))
 
 
@@ -248,6 +278,13 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
     for path in caches:
         inputs.append(fact_identity(Path(path))?)
     return Ok(sorted(inputs))
+
+
+pub def toolchain_cache_identities(toolchain: Toolchain) -> Result[list[str], str]:
+    """Use Rust ABI identities sealed into an installed page, retaining direct lookup for staged toolchains."""
+    if len(toolchain.compiler_facts) == len(toolchain.rust_abi) + 1:
+        return Ok(sorted(toolchain.compiler_facts[1:]))
+    return cache_identities(toolchain.rust_abi)
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
@@ -312,8 +349,10 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
     sources = source_contents(unit, project)?
-    # 2. A rebuilt library, native crate or ABI cache the unit links changes the key of the unit linking it.
-    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))? + cache_identities(unit.rust_abi)?
+    # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
+    # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
+    # frozen installation inputs after admission.
+    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
     return Ok(

@@ -200,12 +200,24 @@ def is_format(request: CompileRequest) -> bool:
         WorkerCommand.Unit => return false
         WorkerCommand.Check => return false
         WorkerCommand.SourceFiles => return false
+        WorkerCommand.RustImports => return false
 
 
 def is_discovery(request: CompileRequest) -> bool:
     """Whether the request lists a formatting run's sources."""
     match request.command:
         WorkerCommand.SourceFiles => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+        WorkerCommand.Format => return false
+        WorkerCommand.RustImports => return false
+
+
+def is_import_discovery(request: CompileRequest) -> bool:
+    """Whether the request lists a unit's Rust crate imports."""
+    match request.command:
+        WorkerCommand.RustImports => return true
+        WorkerCommand.SourceFiles => return false
         WorkerCommand.Unit => return false
         WorkerCommand.Check => return false
         WorkerCommand.Format => return false
@@ -244,7 +256,7 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
             Err(_) => pass
             Ok(_) =>
                 assert false
-    unserved = "a compiler worker accepts only --unit, --check, --fmt and --source-files requests"
+    unserved = "a compiler worker accepts only --unit, --check, --fmt, --source-files and --rust-imports requests"
     assert encode_reply(Reply.Refused(unserved), false) == f"{{\"exit\":1,\"reason\":\"{unserved}\",\"schema\":\"{SCHEMA}\"}}".encode(
         "utf-8",
     )
@@ -451,10 +463,16 @@ pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Re
     mut unserved = caller(socket, request_text(GENERATION, "--run"))?
     invalid_policy = request_text(GENERATION, "--fmt").replace("\"cwd\"", "\"retire_after\":\"yes\",\"cwd\"")
     mut invalid_lifetime = caller(socket, invalid_policy)?
-    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
     sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    imports = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--rust-imports\",\"/p/unit.json\"],{sinks}}}"
+    mut import_discovery = caller(socket, imports)?
+    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
     listing = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{sinks}}}"
     mut discovery = caller(socket, listing)?
+    mut request = served(host)?
+    assert is_import_discovery(request) and request.arguments == ["/p/unit.json"]
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(import_discovery)?) == 0
     request = served(host)?
     assert is_format(request)
     assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]

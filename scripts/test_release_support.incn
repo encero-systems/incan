@@ -131,12 +131,24 @@ def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Re
     defaults = parse_release_options([SHA, "out"])?
     assert not defaults.keep_trees
     assert defaults.jobs == 4
+    assert defaults.seed_source == ""
+    return Ok(None)
+
+
+def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> Result[None, str]:
+    """The seed's own source commit is an explicit full SHA, separate from the qualified source SHA."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    options = parse_release_options([SHA, "out", "--seed-source", seed])?
+    assert options.source_sha == SHA
+    assert options.seed_source == seed
+    assert refused_release([SHA, "out", "--seed-source"]) == "--seed-source needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-source", "deadbeef"]) == "--seed-source needs a full lowercase source commit"
     return Ok(None)
 
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"

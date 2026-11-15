@@ -28,7 +28,7 @@ from engine_actions import Pending, ExecutionLease, finish_request
 from engine_programs import read_program, program_handle
 from engine_messages import Resolve, Resolution
 from engine_messages import Submit
-from engine_wire import Refusal, RefusalKind, zero_id
+from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind, zero_id
 from bakery import forget_verified, verification_entries
 from observation import trace
 from files import discard_file
@@ -291,7 +291,8 @@ def settle(mut client: Client, mut state: ServiceState) -> Result[None, Refusal]
             waiting.append(pending)
             continue
         match finish_request(state.store, pending):
-            Err(reason) => send_refusal(client.channel, pending.request, transport(reason), "unit-record")?
+            Err(reason) =>
+                send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
             Ok(ready) =>
                 if ready.console != "":
                     send(
@@ -335,6 +336,34 @@ def send_refusal(mut channel: Channel, request: bytes, reason: Refusal, command:
         channel,
         request,
         Message.Refused(Refused(code=refusal_code(reason.kind), command=command, detail=reason.detail)),
+    )
+
+
+def send_request_refusal(
+    mut channel: Channel,
+    store: Path,
+    request: bytes,
+    reason: Refusal,
+    command: str,
+) -> Result[None, Refusal]:
+    """Keep control frames bounded while relaying an exact large diagnostic through the console channel."""
+    detail = reason.detail.encode("utf-8")
+    body_size = 14 + len(command.encode("utf-8")) + len(detail)
+    if body_size <= MAX_PAYLOAD:
+        return send_refusal(channel, request, reason, command)
+    prefix = store.joinpath("engine/console").joinpath(f"{hexlify(request)}-refusal").0
+    Path(f"{prefix}.err")
+        .write_text(reason.detail, "utf-8", "strict", None)
+        .map_err((error) => transport(f"cannot retain engine refusal: {error.message()}"))?
+    send(channel, request, Message.Event(Event(status="Console", trace_handle=prefix)))?
+    return send_refusal(
+        channel,
+        request,
+        Refusal(
+            kind=reason.kind,
+            detail="engine request refused; the full diagnostic was relayed through the console stream",
+        ),
+        command,
     )
 
 

@@ -104,3 +104,10 @@ pub class Budget:
         )
         _restore(self.state.clone(), state)
         return Budget(state=Rc.new(RefCell.new(copied)))
+
+    pub def codec_allowance(self) -> tuple[int, int]:
+        """Expose remaining byte and element work only to bounded native codec helpers."""
+        state = _take(self.state.clone())
+        result = (state.bytes_left, state.elements_left)
+        _restore(self.state.clone(), state)
+        return result

@@ -1,0 +1,12 @@
+"""Contract batch scheduling keeps semantic incompatibility separate from elapsed compilation time."""
+
+from std.fs import Path
+from batch import group_compilation_request
+
+
+def test_compatible_batch_compilation_has_no_automatic_deadline() -> None:
+    """A valid compatible batch may compile for as long as its caller's explicit deadline permits."""
+    request = group_compilation_request("incan", ["build", "/case/src/main.incn"], Path("/case"), 37)
+    assert request.deadline_seconds == 0
+    assert request.duration_hint == 37
+    assert request.selector is None
