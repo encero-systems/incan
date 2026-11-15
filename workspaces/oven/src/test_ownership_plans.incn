@@ -183,6 +183,32 @@ pub def test_a_match_whose_arms_only_read_binds_its_payloads_by_reference() -> R
     return Ok(None)
 
 
+const BORROWED_LOOP: str = """pub model Field:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+def total_identity(fields: list[Field]) -> int:
+    mut total = 0
+    for field in fields:
+        total += len(field.identity)
+    return total
+
+
+def main() -> None:
+    fields = [Field(identity=b"ab", labels=["x"]), Field(identity=b"cde", labels=[])]
+    println(total_identity(fields))
+"""
+
+
+pub def test_a_loop_that_only_reads_its_item_borrows_each_element() -> Result[None, str]:
+    """A `for` loop over a lent list whose body only reads its item borrows each element, never copying it (#1605)."""
+    report = plan_report("looped", BORROWED_LOOP, "5")?
+    dropped = plan_counts(report, "total_identity", ["drops"])?
+    assert dropped == 0, f"total_identity drops {dropped} copies"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
