@@ -1,0 +1,11 @@
+# behavior: `incan run -c CODE` and `--command CODE` run CODE as a direct source module, and CODE that defines no `main` gets one that does nothing, as 0.5.1 runs it (#3143).
+# cli-commands:
+#   run -c """inline"""
+#   run --command """inline"""
+#   run --command="""inline"""
+# expect-stdout:
+# expect-exit: 0
+
+def main() -> None:
+    """The project's own program, which an inline run never starts."""
+    println("project main")
