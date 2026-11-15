@@ -362,13 +362,14 @@ pub def test_a_local_lent_at_its_last_use_is_dropped_after_a_call_that_returns_a
     A large local lent at its last use is dropped once, right after the call, whatever that call returns (#1604).
 
     `moved` hands the same local to a callee that keeps it, so its own frame never drops it. `lent` lends it to a
-    callee that returns text; dropped after that call, it costs one drop more than `moved`, where holding it to the
-    end of its scope costs one drop on each of the three paths that return.
+    callee that returns text; dropped after that call, it costs one drop more than `moved` on the paths that return,
+    where holding it to the end of its scope costs one drop on each of the three. Drops on unwind paths are not
+    counted: while `lent` still owns the value its call needs one, which `moved` never does.
     """
     report = plan_report("ended", ENDED_LOAN, "4 items\none\n1 kept\nother")?
-    lent = plan_counts(report, "lent", ["drops"])?
-    moved = plan_counts(report, "moved", ["drops"])?
-    assert lent <= moved + 1, f"lent holds {lent} drops and moved holds {moved}"
+    lent = returning_drops(report, "lent")?
+    moved = returning_drops(report, "moved")?
+    assert lent == moved + 1, f"lent holds {lent} drops on returning paths and moved holds {moved}"
     return Ok(None)
 
 
@@ -401,6 +402,11 @@ def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
 def clones(report: str, function: str) -> Result[int, str]:
     """The model and enum clone calls the plan of `function` holds, summed over every frame of that name."""
     return plan_counts(report, function, ["model-clones", "enum-clones"])
+
+
+def returning_drops(report: str, function: str) -> Result[int, str]:
+    """The drops the plan of `function` holds outside its unwind paths."""
+    return Ok(plan_counts(report, function, ["drops"])? - plan_counts(report, function, ["cleanup-drops"])?)
 
 
 def plan_counts(report: str, function: str, columns: list[str]) -> Result[int, str]:
