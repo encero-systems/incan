@@ -431,7 +431,7 @@ def locked_features_cover(entry: LockLoaf, domain: str, requested: list[str]) ->
     return false
 
 
-def resolved_lock(
+pub def resolved_lock(
     root: Path,
     mode: str,
     identity: str,
