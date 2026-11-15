@@ -363,7 +363,12 @@ def stage_compiled_namespaces(
     namespaces: list[CompiledNamespaceValue],
     origin: str,
 ) -> Result[None, str]:
-    """Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses."""
+    """
+    Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses.
+
+    A namespace row carries its module's whole Body IR, so it reads every owner's source: a body edit that leaves the
+    census and the declaration index unchanged must still retire the row, or the module is restored with the old body.
+    """
     for namespace in namespaces:
         projection = projections[namespace.module]
         key = namespace_key(origin, namespace.module)
@@ -372,6 +377,8 @@ def stage_compiled_namespaces(
             prepared_product_request(projection.declarations.key),
             prepared_product_request(projection.census.key),
         ]
+        for owner in projection.owners:
+            reads.append(prepared_product_request(owner.key))
         for dependency in namespace.dependencies:
             reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
             reads.append(prepared_product_request(owner_census_key(origin, dependency)))
