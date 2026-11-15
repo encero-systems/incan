@@ -1,421 +1,322 @@
-<svg viewBox="0 0 1280 944" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0015-map-title dd0015-map-desc">
-<title id="dd0015-map-title">Producer map: the hello program's records by producer stage, after a body edit and after a comment edit</title>
-<desc id="dd0015-map-desc">Columns are the producer stages in rank order, from Discover to NativeInterface; Layout, Default, MutationEffect and Instance hold no record of the hello program. Rows are the app namespace and the functions greeting and main; a band on the left holds the frozen admitted record runtime-facade(println_text). One discover(app) evaluation reads the captured source and outputs a declaration source, doc record and position map per function. Typed reads point from reader to target: P present, M members, A absent. In the body edit, where "hello" becomes "hullo", discover, greeting's declaration source, influence, local, final, Body IR chain and plan function, and native-interface are evaluated; influence(greeting) stays equal, so slot(greeting) and declaration(greeting) are reused; local(main) read only name-slot(greeting) and slot(greeting), so nothing of main is evaluated; native-interface reads the changed plan root. In the comment edit, a comment above main, only discover, position-map(main) and native-interface are evaluated. Insets show a joint group, one mutation-effect evaluation for two functions that forward to each other, publishing each member under its own key, and an absent witness at helpers.f held by name-slot(app, f), whose reader evaluates when helpers.incn is created.</desc>
-<defs>
-<style>
-.pm-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600}
-.pm-nt{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600}
-.pm-b{fill:#e4ebf2;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
-.pm-bm{fill:#e4ebf2;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7.5px}
-.pm-code{fill:#e4ebf2;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:9px}
-.pm-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
-.pm-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
-.pm-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
-.pm-tc{fill:#48f0ef;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
-.pm-h{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
-.pm-hd{fill:rgba(228,235,242,0.40);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
-.pm-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
-.pm-e{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;font-weight:700}
-.pm-ea{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;font-weight:700}
-.pm-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
-.pm-c{text-anchor:middle}
-.pm-m{fill:#030304}
-.pm-eval{fill:rgba(255,193,90,0.10);stroke:#ffc15a;stroke-width:1}
-.pm-reused{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
-.pm-src{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
-.pm-ext{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
-.pm-rec{fill:rgba(228,235,242,0.04);stroke:#98a2ad;stroke-width:1}
-.pm-absent{fill:none;stroke:rgba(228,235,242,0.34);stroke-width:1;stroke-dasharray:1.5 3;stroke-linecap:round}
-.pm-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
-.pm-zonea{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
-.pm-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
-.pm-p{fill:none;stroke:#c1c8d0;stroke-width:1.2}
-.pm-pa{fill:none;stroke:#ffc15a;stroke-width:1.4}
-.pm-dm{stroke-dasharray:5 3}
-.pm-da{stroke-dasharray:1.5 3;stroke-linecap:round}
-.pm-rel{fill:none;stroke:#98a2ad;stroke-width:1}
-.pm-tick{stroke:rgba(228,235,242,0.25);stroke-width:0.8}
-.pm-empty{stroke:rgba(228,235,242,0.14);stroke-width:1;stroke-dasharray:2 4}
-.pm-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+<svg viewBox="0 0 1280 868" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0015-map-title dd0015-map-desc">
+<title id="dd0015-map-title">Producer map: the records of the hello program, and what two edits evaluate</title>
+<desc id="dd0015-map-desc">Columns are the producer stages in rank order, from Discover to NativeInterface, with frozen admitted records in a band on the left. The top panel shows the records a cold build of the two-function hello program produces and the typed reads between them: main's local check reads greeting's name slot and slot, main's lowering demand reads the frozen runtime facade for println, the check scope reads the final records as members, and the native interface reads the plan functions as members and the position maps. The second panel shows the edit of the string in greeting: discover, greeting's declaration source, influence (whose value is equal, so its readers are reused), local, final, Body IR chain, lowering demand and plan function, and the native interface are evaluated; greeting's slot and declaration and every record of main are reused. The third panel shows a comment added above main: only discover, main's position map and the native interface are evaluated. Two insets show a joint group, a mutation-effect forwarding cycle of two functions evaluated once, and an absent witness, a read of a name that does not exist yet.</desc>
+<defs><style>
+.dd15-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600}
+.dd15-k{fill:#e4ebf2;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
+.dd15-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
+.dd15-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd15-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd15-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd15-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd15-h{fill:#e4ebf2;font-family:Brawler,Georgia,serif;font-size:14px}
+.dd15-c{text-anchor:middle}
+.dd15-m{fill:#030304}
+.dd15-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd15-reused{fill:rgba(228,235,242,0.03);stroke:rgba(228,235,242,0.55);stroke-width:1}
+.dd15-eval{fill:rgba(255,193,90,0.14);stroke:#ffc15a;stroke-width:1.2}
+.dd15-frozen{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd15-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd15-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd15-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd15-group{fill:none;stroke:rgba(228,235,242,0.30);stroke-width:0.8;stroke-dasharray:3 3}
+.dd15-joint{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd15-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd15-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd15-wa{fill:none;stroke:#ffc15a;stroke-width:1.2;stroke-dasharray:4 3}
+.dd15-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
 </style>
-<marker id="dd0015m-arrow" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="6" refX="6.5" refY="3" orient="auto"><polygon points="0 0, 7 3, 0 6" fill="#c1c8d0"/></marker>
-<marker id="dd0015m-arrow-accent" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="6" refX="6.5" refY="3" orient="auto"><polygon points="0 0, 7 3, 0 6" fill="#ffc15a"/></marker>
-<marker id="dd0015m-arrow-rel" markerUnits="userSpaceOnUse" markerWidth="6" markerHeight="5" refX="5.5" refY="2.5" orient="auto"><polygon points="0 0, 6 2.5, 0 5" fill="#98a2ad"/></marker>
+<marker id="dd15-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+<marker id="dd15-arrow-c" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#48f0ef"/></marker>
+<marker id="dd15-arrow-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
 </defs>
-<rect width="100%" height="100%" fill="#030304"/>
-
-<!-- rank order -->
-<path d="M160,44 H1266" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="566" y="38" width="294" height="12" rx="2" class="pm-m"/>
-<text x="713" y="47" class="pm-l pm-c">PRODUCER STAGES IN RANK ORDER · NAMESPACE, STAGE, GROUP</text>
-
-<!-- ============ panel 1: body edit ============ -->
-<g>
-<text x="16" y="80" class="pm-nt">Body edit</text>
-<text x="16" y="92" class="pm-ta">"HELLO" BECOMES "HULLO"</text>
-
-<!-- stage headers, two tiers -->
-<text x="205" y="100" class="pm-h pm-c">Discover</text>
-<text x="287" y="112" class="pm-h pm-c">NameSlot</text>
-<text x="351" y="100" class="pm-h pm-c">Influence</text>
-<text x="415" y="112" class="pm-h pm-c">Slot</text>
-<text x="452" y="100" class="pm-hd pm-c">Layout</text>
-<text x="464" y="112" class="pm-hd pm-c">Default</text>
-<text x="508" y="100" class="pm-h pm-c">Declaration</text>
-<text x="577" y="112" class="pm-h pm-c">Local</text>
-<text x="615" y="100" class="pm-hd pm-c">MutationEffect</text>
-<text x="653" y="112" class="pm-h pm-c">Final</text>
-<text x="722" y="100" class="pm-h pm-c">CheckScope</text>
-<text x="798" y="112" class="pm-h pm-c">BodyIrSeed</text>
-<text x="881" y="100" class="pm-h pm-c">BodyIrSummary</text>
-<text x="957" y="112" class="pm-h pm-c">BodyIr</text>
-<text x="995" y="100" class="pm-hd pm-c">Instance</text>
-<text x="1047" y="112" class="pm-h pm-c">LoweringDemand</text>
-<text x="1134" y="100" class="pm-h pm-c">PlanFunction</text>
-<text x="1223" y="112" class="pm-h pm-c">NativeInterface</text>
-<path d="M205,103 V124 M351,103 V124 M508,103 V124 M722,103 V124 M881,103 V124 M1134,103 V124 M287,115 V124 M415,115 V124 M577,115 V124 M653,115 V124 M798,115 V124 M957,115 V124 M1047,115 V124 M1223,115 V124" class="pm-tick"/>
-<path d="M452,124 V314 M464,124 V314 M615,124 V314 M995,124 V314" class="pm-empty"/>
-
-<!-- row labels and the frozen band -->
-<text x="16" y="146" class="pm-n">app</text>
-<text x="16" y="157" class="pm-t">NAMESPACE</text>
-<text x="16" y="210" class="pm-n">greeting</text>
-<text x="16" y="221" class="pm-t">FUNCTION</text>
-<text x="16" y="284" class="pm-n">main</text>
-<text x="16" y="295" class="pm-t">FUNCTION</text>
-<rect x="72" y="184" width="78" height="130" rx="6" class="pm-zonec"/>
-<text x="111" y="198" class="pm-tc pm-c">FROZEN</text>
-<text x="111" y="208" class="pm-tc pm-c">ADMITTED</text>
-
-<!-- outputs of the one discover evaluation -->
-<path d="M160,158 H155 V286 H160 M155,212 H160" class="pm-rel"/>
-
-<!-- reads: reader to target -->
-<path d="M160,148 H147" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<path d="M351,196 V184 Q351,180 347,180 H240 Q236,180 236,184 V187" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<rect x="295" y="175.5" width="10" height="9" rx="1" class="pm-m"/><text x="300" y="182.5" class="pm-ea pm-c">P</text>
-<path d="M577,196 V176 Q577,172 573,172 H228 Q224,172 224,176 V187" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<rect x="465" y="167.5" width="10" height="9" rx="1" class="pm-m"/><text x="470" y="174.5" class="pm-ea pm-c">P</text>
-<path d="M388,212 H379" class="pm-p pm-dm" marker-end="url(#dd0015m-arrow)"/>
-<text x="384" y="193" class="pm-e pm-c">M</text>
-<line x1="384" y1="203" x2="384" y2="221" stroke="#ffc15a" stroke-width="2"/>
-<path d="M476,212 H443" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="453" y="207.5" width="10" height="9" rx="1" class="pm-m"/><text x="458" y="214.5" class="pm-e pm-c">P</text>
-<path d="M476,286 H443" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="453" y="281.5" width="10" height="9" rx="1" class="pm-m"/><text x="458" y="288.5" class="pm-e pm-c">P</text>
-<path d="M626,212 H605" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<path d="M626,286 H605" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<path d="M764,212 H681" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<rect x="717" y="207.5" width="10" height="9" rx="1" class="pm-m"/><text x="722" y="214.5" class="pm-ea pm-c">P</text>
-<path d="M764,286 H681" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="717" y="281.5" width="10" height="9" rx="1" class="pm-m"/><text x="722" y="288.5" class="pm-e pm-c">P</text>
-<path d="M842,212 H833" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<path d="M842,286 H833" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<path d="M930,212 H921" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<path d="M930,286 H921" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<path d="M1006,286 H985" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<path d="M1098,273 H1089" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<!-- local(main) reads greeting's name slot and slot -->
-<path d="M571,270 V258 Q571,254 567,254 H291 Q287,254 287,250 V229" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="335" y="249.5" width="10" height="9" rx="1" class="pm-m"/><text x="340" y="256.5" class="pm-e pm-c">P</text>
-<path d="M583,270 V248 Q583,244 579,244 H419 Q415,244 415,240 V229" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="495" y="239.5" width="10" height="9" rx="1" class="pm-m"/><text x="500" y="246.5" class="pm-e pm-c">P</text>
-<!-- native-interface reads the selected plan roots and the position maps -->
-<path d="M1170,212 H1175 V298 H1170 M1170,273 H1175" class="pm-rel"/>
-<path d="M1186,164 V172 Q1186,176 1182,176 H1179 Q1175,176 1175,180 V211" class="pm-pa pm-dm" marker-end="url(#dd0015m-arrow-accent)"/>
-<rect x="1170" y="186.5" width="10" height="9" rx="1" class="pm-m"/><text x="1175" y="193.5" class="pm-ea pm-c">M</text>
-<path d="M1215,164 V318 Q1215,322 1211,322 H209 Q205,322 205,318 V311" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<path d="M255,322 V233 Q255,229 251,229" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="695" y="317.5" width="10" height="9" rx="1" class="pm-m"/><text x="700" y="324.5" class="pm-e pm-c">P</text>
-<!-- lowering-demand(main) reads the admitted runtime facade -->
-<path d="M1047,302 V330 Q1047,334 1043,334 H115 Q111,334 111,330 V303" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="595" y="329.5" width="10" height="9" rx="1" class="pm-m"/><text x="600" y="336.5" class="pm-e pm-c">P</text>
-
-<!-- app -->
-<rect x="76" y="132" width="70" height="32" rx="4" class="pm-src"/>
-<text x="111" y="146" class="pm-b pm-c">source</text>
-<text x="111" y="157" class="pm-t pm-c">APP.INCN</text>
-<rect x="160" y="132" width="90" height="32" rx="4" class="pm-eval"/>
-<text x="205" y="146" class="pm-b pm-c">discover</text>
-<text x="205" y="157" class="pm-t pm-c">ONE PARSE</text>
-<rect x="690" y="132" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="722" y="151" class="pm-b pm-c">check-scope</text>
-<rect x="1180" y="132" width="86" height="32" rx="4" class="pm-eval"/>
-<text x="1223" y="151" class="pm-b pm-c">native-interface</text>
-
-<!-- greeting -->
-<rect x="160" y="188" width="90" height="14" rx="3" class="pm-eval"/>
-<text x="205" y="198" class="pm-bm pm-c">declaration-source</text>
-<rect x="160" y="205" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="215" class="pm-bm pm-c">doc</text>
-<rect x="160" y="222" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="232" class="pm-bm pm-c">position-map</text>
-<rect x="260" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="287" y="215" class="pm-b pm-c">name-slot</text>
-<rect x="324" y="196" width="54" height="32" rx="4" class="pm-eval"/>
-<text x="351" y="210" class="pm-b pm-c">influence</text>
-<text x="351" y="221" class="pm-t pm-c">EQUAL</text>
-<rect x="388" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="415" y="215" class="pm-b pm-c">slot</text>
-<rect x="476" y="196" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="508" y="215" class="pm-b pm-c">declaration</text>
-<rect x="550" y="196" width="54" height="32" rx="4" class="pm-eval"/>
-<text x="577" y="215" class="pm-b pm-c">local</text>
-<rect x="626" y="196" width="54" height="32" rx="4" class="pm-eval"/>
-<text x="653" y="215" class="pm-b pm-c">final</text>
-<rect x="764" y="196" width="68" height="32" rx="4" class="pm-eval"/>
-<text x="798" y="215" class="pm-b pm-c">body-ir-seed</text>
-<rect x="842" y="196" width="78" height="32" rx="4" class="pm-eval"/>
-<text x="881" y="215" class="pm-b pm-c">representation</text>
-<rect x="930" y="196" width="54" height="32" rx="4" class="pm-eval"/>
-<text x="957" y="215" class="pm-b pm-c">body-ir</text>
-<rect x="1098" y="196" width="72" height="32" rx="4" class="pm-eval"/>
-<text x="1134" y="215" class="pm-b pm-c">plan-function</text>
-
-<!-- main -->
-<rect x="160" y="262" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="272" class="pm-bm pm-c">declaration-source</text>
-<rect x="160" y="279" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="289" class="pm-bm pm-c">doc</text>
-<rect x="160" y="296" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="306" class="pm-bm pm-c">position-map</text>
-<rect x="260" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="287" y="289" class="pm-b pm-c">name-slot</text>
-<rect x="388" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="415" y="289" class="pm-b pm-c">slot</text>
-<rect x="476" y="270" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="508" y="289" class="pm-b pm-c">declaration</text>
-<rect x="550" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="577" y="289" class="pm-b pm-c">local</text>
-<rect x="626" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="653" y="289" class="pm-b pm-c">final</text>
-<rect x="764" y="270" width="68" height="32" rx="4" class="pm-reused"/>
-<text x="798" y="289" class="pm-b pm-c">body-ir-seed</text>
-<rect x="842" y="270" width="78" height="32" rx="4" class="pm-reused"/>
-<text x="881" y="289" class="pm-b pm-c">representation</text>
-<rect x="930" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="957" y="289" class="pm-b pm-c">body-ir</text>
-<rect x="1006" y="270" width="82" height="32" rx="4" class="pm-reused"/>
-<text x="1047" y="289" class="pm-b pm-c">lowering-demand</text>
-<rect x="1098" y="262" width="72" height="23" rx="4" class="pm-reused"/>
-<text x="1134" y="272" class="pm-b pm-c">plan-function</text>
-<text x="1134" y="281" class="pm-t pm-c">MAIN</text>
-<rect x="1098" y="287" width="72" height="23" rx="4" class="pm-reused"/>
-<text x="1134" y="297" class="pm-b pm-c">plan-function</text>
-<text x="1134" y="306" class="pm-t pm-c">ENTRY</text>
-
-<!-- frozen admitted record -->
-<rect x="76" y="270" width="70" height="32" rx="4" class="pm-ext"/>
-<text x="111" y="284" class="pm-bm pm-c">runtime-facade</text>
-<text x="111" y="295" class="pm-t pm-c">PRINTLN_TEXT</text>
-
-<text x="16" y="360" class="pm-i">influence(greeting) reads the changed body and is evaluated; its value is equal, so slot(greeting) and declaration(greeting) are reused.</text>
-<text x="16" y="378" class="pm-i">local(main) read only name-slot(greeting) and slot(greeting), so main evaluates nothing; native-interface(app) reads a changed plan root, and the unit is baked again, whole.</text>
-</g>
-
-<line x1="16" y1="396" x2="1266" y2="396" class="pm-rule"/>
-
-<!-- ============ panel 2: comment edit ============ -->
-<g transform="translate(0,330)">
-<text x="16" y="80" class="pm-nt">Comment edit</text>
-<text x="16" y="92" class="pm-ta">A COMMENT ABOVE MAIN</text>
-
-<text x="205" y="100" class="pm-h pm-c">Discover</text>
-<text x="287" y="112" class="pm-h pm-c">NameSlot</text>
-<text x="351" y="100" class="pm-h pm-c">Influence</text>
-<text x="415" y="112" class="pm-h pm-c">Slot</text>
-<text x="452" y="100" class="pm-hd pm-c">Layout</text>
-<text x="464" y="112" class="pm-hd pm-c">Default</text>
-<text x="508" y="100" class="pm-h pm-c">Declaration</text>
-<text x="577" y="112" class="pm-h pm-c">Local</text>
-<text x="615" y="100" class="pm-hd pm-c">MutationEffect</text>
-<text x="653" y="112" class="pm-h pm-c">Final</text>
-<text x="722" y="100" class="pm-h pm-c">CheckScope</text>
-<text x="798" y="112" class="pm-h pm-c">BodyIrSeed</text>
-<text x="881" y="100" class="pm-h pm-c">BodyIrSummary</text>
-<text x="957" y="112" class="pm-h pm-c">BodyIr</text>
-<text x="995" y="100" class="pm-hd pm-c">Instance</text>
-<text x="1047" y="112" class="pm-h pm-c">LoweringDemand</text>
-<text x="1134" y="100" class="pm-h pm-c">PlanFunction</text>
-<text x="1223" y="112" class="pm-h pm-c">NativeInterface</text>
-<path d="M205,103 V124 M351,103 V124 M508,103 V124 M722,103 V124 M881,103 V124 M1134,103 V124 M287,115 V124 M415,115 V124 M577,115 V124 M653,115 V124 M798,115 V124 M957,115 V124 M1047,115 V124 M1223,115 V124" class="pm-tick"/>
-<path d="M452,124 V314 M464,124 V314 M615,124 V314 M995,124 V314" class="pm-empty"/>
-
-<text x="16" y="146" class="pm-n">app</text>
-<text x="16" y="157" class="pm-t">NAMESPACE</text>
-<text x="16" y="210" class="pm-n">greeting</text>
-<text x="16" y="221" class="pm-t">FUNCTION</text>
-<text x="16" y="284" class="pm-n">main</text>
-<text x="16" y="295" class="pm-t">FUNCTION</text>
-<rect x="72" y="184" width="78" height="130" rx="6" class="pm-zonec"/>
-<text x="111" y="198" class="pm-tc pm-c">FROZEN</text>
-<text x="111" y="208" class="pm-tc pm-c">ADMITTED</text>
-
-<path d="M160,158 H155 V286 H160 M155,212 H160" class="pm-rel"/>
-
-<path d="M160,148 H147" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<path d="M1215,164 V318 Q1215,322 1211,322 H209 Q205,322 205,318 V311" class="pm-pa" marker-end="url(#dd0015m-arrow-accent)"/>
-<rect x="695" y="317.5" width="10" height="9" rx="1" class="pm-m"/><text x="700" y="324.5" class="pm-ea pm-c">P</text>
-
-<rect x="76" y="132" width="70" height="32" rx="4" class="pm-src"/>
-<text x="111" y="146" class="pm-b pm-c">source</text>
-<text x="111" y="157" class="pm-t pm-c">APP.INCN</text>
-<rect x="160" y="132" width="90" height="32" rx="4" class="pm-eval"/>
-<text x="205" y="146" class="pm-b pm-c">discover</text>
-<text x="205" y="157" class="pm-t pm-c">ONE PARSE</text>
-<rect x="690" y="132" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="722" y="151" class="pm-b pm-c">check-scope</text>
-<rect x="1180" y="132" width="86" height="32" rx="4" class="pm-eval"/>
-<text x="1223" y="146" class="pm-b pm-c">native-interface</text>
-<text x="1223" y="157" class="pm-t pm-c">LINE TABLES</text>
-
-<rect x="160" y="188" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="198" class="pm-bm pm-c">declaration-source</text>
-<rect x="160" y="205" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="215" class="pm-bm pm-c">doc</text>
-<rect x="160" y="222" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="232" class="pm-bm pm-c">position-map</text>
-<rect x="260" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="287" y="215" class="pm-b pm-c">name-slot</text>
-<rect x="324" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="351" y="215" class="pm-b pm-c">influence</text>
-<rect x="388" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="415" y="215" class="pm-b pm-c">slot</text>
-<rect x="476" y="196" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="508" y="215" class="pm-b pm-c">declaration</text>
-<rect x="550" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="577" y="215" class="pm-b pm-c">local</text>
-<rect x="626" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="653" y="215" class="pm-b pm-c">final</text>
-<rect x="764" y="196" width="68" height="32" rx="4" class="pm-reused"/>
-<text x="798" y="215" class="pm-b pm-c">body-ir-seed</text>
-<rect x="842" y="196" width="78" height="32" rx="4" class="pm-reused"/>
-<text x="881" y="215" class="pm-b pm-c">representation</text>
-<rect x="930" y="196" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="957" y="215" class="pm-b pm-c">body-ir</text>
-<rect x="1098" y="196" width="72" height="32" rx="4" class="pm-reused"/>
-<text x="1134" y="215" class="pm-b pm-c">plan-function</text>
-
-<rect x="160" y="262" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="272" class="pm-bm pm-c">declaration-source</text>
-<rect x="160" y="279" width="90" height="14" rx="3" class="pm-reused"/>
-<text x="205" y="289" class="pm-bm pm-c">doc</text>
-<rect x="160" y="296" width="90" height="14" rx="3" class="pm-eval"/>
-<text x="205" y="306" class="pm-bm pm-c">position-map</text>
-<rect x="260" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="287" y="289" class="pm-b pm-c">name-slot</text>
-<rect x="388" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="415" y="289" class="pm-b pm-c">slot</text>
-<rect x="476" y="270" width="64" height="32" rx="4" class="pm-reused"/>
-<text x="508" y="289" class="pm-b pm-c">declaration</text>
-<rect x="550" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="577" y="289" class="pm-b pm-c">local</text>
-<rect x="626" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="653" y="289" class="pm-b pm-c">final</text>
-<rect x="764" y="270" width="68" height="32" rx="4" class="pm-reused"/>
-<text x="798" y="289" class="pm-b pm-c">body-ir-seed</text>
-<rect x="842" y="270" width="78" height="32" rx="4" class="pm-reused"/>
-<text x="881" y="289" class="pm-b pm-c">representation</text>
-<rect x="930" y="270" width="54" height="32" rx="4" class="pm-reused"/>
-<text x="957" y="289" class="pm-b pm-c">body-ir</text>
-<rect x="1006" y="270" width="82" height="32" rx="4" class="pm-reused"/>
-<text x="1047" y="289" class="pm-b pm-c">lowering-demand</text>
-<rect x="1098" y="262" width="72" height="23" rx="4" class="pm-reused"/>
-<text x="1134" y="272" class="pm-b pm-c">plan-function</text>
-<text x="1134" y="281" class="pm-t pm-c">MAIN</text>
-<rect x="1098" y="287" width="72" height="23" rx="4" class="pm-reused"/>
-<text x="1134" y="297" class="pm-b pm-c">plan-function</text>
-<text x="1134" y="306" class="pm-t pm-c">ENTRY</text>
-
-<rect x="76" y="270" width="70" height="32" rx="4" class="pm-ext"/>
-<text x="111" y="284" class="pm-bm pm-c">runtime-facade</text>
-<text x="111" y="295" class="pm-t pm-c">PRINTLN_TEXT</text>
-
-<text x="16" y="360" class="pm-i">Header seeds and body projections are equal, so every semantic record is reused; position-map(main) changes, and native-interface(app) reads it for the line tables.</text>
-</g>
-
-<!-- ============ inset: joint group ============ -->
-<g transform="translate(0,712)">
-<rect x="16" y="0" width="614" height="160" rx="8" class="pm-zone"/>
-<rect x="28" y="4" width="210" height="12" rx="2" class="pm-m"/>
-<text x="133" y="13" class="pm-t pm-c">INSET · A JOINT GROUP OF TWO FUNCTIONS</text>
-<text x="92" y="32" class="pm-h pm-c">Local</text>
-<text x="300" y="32" class="pm-h pm-c">MutationEffect</text>
-<text x="508" y="32" class="pm-h pm-c">Final</text>
-
-<rect x="172" y="40" width="256" height="98" rx="6" class="pm-zonea"/>
-<text x="300" y="54" class="pm-b pm-c">mutation-effect</text>
-<text x="300" y="65" class="pm-t pm-c">KEY: RULE + MEMBERSHIP DIGEST</text>
-<rect x="190" y="72" width="100" height="30" rx="4" class="pm-rec"/>
-<text x="240" y="85" class="pm-b pm-c">even</text>
-<text x="240" y="96" class="pm-t pm-c">MEMBER OUTPUT</text>
-<rect x="310" y="72" width="100" height="30" rx="4" class="pm-rec"/>
-<text x="360" y="85" class="pm-b pm-c">odd</text>
-<text x="360" y="96" class="pm-t pm-c">MEMBER OUTPUT</text>
-<path d="M290,81 H309" class="pm-rel" marker-end="url(#dd0015m-arrow-rel)"/>
-<path d="M310,93 H291" class="pm-rel" marker-end="url(#dd0015m-arrow-rel)"/>
-<text x="300" y="131" class="pm-ta pm-c">FORWARDING CYCLE · ONE EVALUATION</text>
-
-<rect x="60" y="54" width="64" height="32" rx="4" class="pm-rec"/>
-<text x="92" y="68" class="pm-b pm-c">local</text>
-<text x="92" y="79" class="pm-t pm-c">EVEN</text>
-<rect x="60" y="98" width="64" height="32" rx="4" class="pm-rec"/>
-<text x="92" y="112" class="pm-b pm-c">local</text>
-<text x="92" y="123" class="pm-t pm-c">ODD</text>
-<path d="M172,70 H125" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="143" y="65.5" width="10" height="9" rx="1" class="pm-m"/><text x="148" y="72.5" class="pm-e pm-c">P</text>
-<path d="M172,114 H125" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="143" y="109.5" width="10" height="9" rx="1" class="pm-m"/><text x="148" y="116.5" class="pm-e pm-c">P</text>
-
-<rect x="476" y="54" width="64" height="32" rx="4" class="pm-rec"/>
-<text x="508" y="68" class="pm-b pm-c">final</text>
-<text x="508" y="79" class="pm-t pm-c">EVEN</text>
-<rect x="476" y="98" width="64" height="32" rx="4" class="pm-rec"/>
-<text x="508" y="112" class="pm-b pm-c">final</text>
-<text x="508" y="123" class="pm-t pm-c">ODD</text>
-<path d="M476,70 H448 Q440,70 440,76 V83 Q440,87 436,87 H411" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="453" y="65.5" width="10" height="9" rx="1" class="pm-m"/><text x="458" y="72.5" class="pm-e pm-c">P</text>
-<path d="M476,114 H244 Q240,114 240,110 V103" class="pm-p" marker-end="url(#dd0015m-arrow)"/>
-<rect x="453" y="109.5" width="10" height="9" rx="1" class="pm-m"/><text x="458" y="116.5" class="pm-e pm-c">P</text>
-
-<text x="28" y="153" class="pm-i">One evaluation runs the fixed point; each member publishes under its own key.</text>
-</g>
-
-<!-- ============ inset: absent witness ============ -->
-<g transform="translate(0,712)">
-<rect x="646" y="0" width="620" height="160" rx="8" class="pm-zone"/>
-<rect x="658" y="4" width="160" height="12" rx="2" class="pm-m"/>
-<text x="738" y="13" class="pm-t pm-c">INSET · AN ABSENT WITNESS</text>
-<text x="672" y="40" class="pm-code">from helpers import f</text>
-<text x="672" y="52" class="pm-t">IN APP.INCN, BEFORE HELPERS.INCN EXISTS</text>
-<rect x="672" y="70" width="80" height="32" rx="4" class="pm-rec"/>
-<text x="712" y="84" class="pm-b pm-c">name-slot</text>
-<text x="712" y="95" class="pm-t pm-c">APP · F</text>
-<rect x="940" y="70" width="110" height="32" rx="4" class="pm-absent"/>
-<text x="995" y="84" class="pm-b pm-c">helpers.f</text>
-<text x="995" y="95" class="pm-t pm-c">NO RECORD</text>
-<path d="M752,86 H939" class="pm-p pm-da" marker-end="url(#dd0015m-arrow)"/>
-<rect x="841" y="81.5" width="10" height="9" rx="1" class="pm-m"/><text x="846" y="88.5" class="pm-e pm-c">A</text>
-<text x="846" y="118" class="pm-s pm-c">exact slot · selection context · exclusion digest</text>
-<text x="660" y="136" class="pm-i">Creating helpers.incn puts a record at helpers.f, so name-slot(app, f) evaluates;</text>
-<text x="660" y="152" class="pm-i">unrelated modules and unrelated new siblings do not.</text>
-</g>
-
-<!-- legend -->
-<line x1="16" y1="884" x2="1266" y2="884" class="pm-rule"/>
-<text x="16" y="904" class="pm-t">LEGEND</text>
-<rect x="96" y="894" width="20" height="12" rx="2" class="pm-eval"/><text x="124" y="904" class="pm-l">evaluated, or a new value</text>
-<rect x="276" y="894" width="20" height="12" rx="2" class="pm-reused"/><text x="304" y="904" class="pm-l">reused</text>
-<rect x="368" y="894" width="20" height="12" rx="2" class="pm-src"/><text x="396" y="904" class="pm-l">edited source, engine capture</text>
-<rect x="580" y="894" width="20" height="12" rx="2" class="pm-ext"/><text x="608" y="904" class="pm-l">frozen admitted record</text>
-<rect x="760" y="894" width="20" height="12" rx="2" class="pm-rec"/><text x="788" y="904" class="pm-l">record (insets)</text>
-<path d="M904,894 H900 V906 H904" class="pm-rel"/><text x="912" y="904" class="pm-l">outputs of one evaluation</text>
-<rect x="1100" y="894" width="20" height="12" rx="2" class="pm-zonea"/><text x="1128" y="904" class="pm-l">joint group</text>
-<text x="16" y="928" class="pm-t">READS</text>
-<line x1="96" y1="924" x2="124" y2="924" class="pm-p"/><text x="132" y="928" class="pm-l">P present</text>
-<line x1="216" y1="924" x2="244" y2="924" class="pm-p pm-dm"/><text x="252" y="928" class="pm-l">M members</text>
-<line x1="344" y1="924" x2="372" y2="924" class="pm-p pm-da"/><text x="380" y="928" class="pm-l">A absent</text>
-<line x1="464" y1="924" x2="492" y2="924" class="pm-pa"/><text x="500" y="928" class="pm-l">the target changed: witness invalidated</text>
-<line x1="740" y1="916" x2="740" y2="932" stroke="#ffc15a" stroke-width="2"/><text x="752" y="928" class="pm-l">equal value: propagation stops</text>
-<text x="1266" y="928" class="pm-l" text-anchor="end">every read points from reader to target</text>
+<rect width="1280" height="868" fill="#030304"/>
+<text x="24" y="26" class="dd15-h">Cold build of the hello program: every record, in rank order</text>
+<text x="213" y="50" class="dd15-t dd15-c">DISCOVER</text>
+<text x="338" y="46" class="dd15-t dd15-c">NAME</text>
+<text x="338" y="55" class="dd15-t dd15-c">SLOT</text>
+<text x="426" y="50" class="dd15-t dd15-c">INFLUENCE</text>
+<text x="514" y="50" class="dd15-t dd15-c">SLOT</text>
+<text x="602" y="50" class="dd15-t dd15-c">DECLARATION</text>
+<text x="690" y="50" class="dd15-t dd15-c">LOCAL</text>
+<text x="778" y="50" class="dd15-t dd15-c">FINAL</text>
+<text x="866" y="46" class="dd15-t dd15-c">CHECK</text>
+<text x="866" y="55" class="dd15-t dd15-c">SCOPE</text>
+<text x="954" y="46" class="dd15-t dd15-c">BODY IR</text>
+<text x="954" y="55" class="dd15-t dd15-c">CHAIN</text>
+<text x="1042" y="46" class="dd15-t dd15-c">LOWERING</text>
+<text x="1042" y="55" class="dd15-t dd15-c">DEMAND</text>
+<text x="1130" y="46" class="dd15-t dd15-c">PLAN</text>
+<text x="1130" y="55" class="dd15-t dd15-c">FUNCTION</text>
+<text x="1218" y="46" class="dd15-t dd15-c">NATIVE</text>
+<text x="1218" y="55" class="dd15-t dd15-c">INTERFACE</text>
+<rect x="24" y="64" width="96" height="232" rx="6" class="dd15-zonec"/>
+<text x="72" y="78" class="dd15-t dd15-c">FROZEN</text>
+<text x="72" y="88" class="dd15-t dd15-c">ADMITTED STD</text>
+<rect x="134" y="64" width="158" height="176" rx="6" class="dd15-zone"/>
+<text x="286" y="77" class="dd15-ta" text-anchor="end">ONE PARSE</text>
+<rect x="138" y="134" width="76" height="102" rx="5" class="dd15-group"/>
+<rect x="738" y="134" width="80" height="102" rx="5" class="dd15-group"/>
+<rect x="1090" y="134" width="80" height="158" rx="5" class="dd15-group"/>
+<path d="M304,154 L285,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M392,154 L373,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M480,154 L461,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M568,154 L549,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M744,154 L725,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M920,154 L813,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1008,154 L989,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1096,154 L1077,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="288.5" y="141" width="11" height="10" class="dd15-m"/>
+<text x="294" y="149" class="dd15-l dd15-c">M</text>
+<rect x="464.5" y="141" width="11" height="10" class="dd15-m"/>
+<text x="470" y="149" class="dd15-l dd15-c">M</text>
+<path d="M304,216 L285,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M392,216 L373,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M480,216 L461,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M568,216 L549,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M744,216 L725,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M920,216 L813,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1008,216 L989,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1096,216 L1077,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="288.5" y="203" width="11" height="10" class="dd15-m"/>
+<text x="294" y="211" class="dd15-l dd15-c">M</text>
+<rect x="464.5" y="203" width="11" height="10" class="dd15-m"/>
+<text x="470" y="211" class="dd15-l dd15-c">M</text>
+<path d="M700,202 L700,186 Q700,180 694,180 L520,180 Q514,180 514,174 L514,169" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M680,202 L680,196 Q680,190 674,190 L344,190 Q338,190 338,184 L338,169" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="499.5" y="171" width="11" height="10" class="dd15-m"/>
+<text x="505" y="179" class="dd15-l dd15-c">P</text>
+<rect x="323.5" y="177" width="11" height="10" class="dd15-m"/>
+<text x="329" y="185" class="dd15-l dd15-c">P</text>
+<path d="M832,98 L784,98 Q778,98 778,104 L778,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="792.5" y="85" width="11" height="10" class="dd15-m"/>
+<text x="798" y="93" class="dd15-l dd15-c">M</text>
+<path d="M1184,98 L1136,98 Q1130,98 1130,104 L1130,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="1144.5" y="85" width="11" height="10" class="dd15-m"/>
+<text x="1150" y="93" class="dd15-l dd15-c">M</text>
+<path d="M1218,84 L1218,74 Q1218,68 1212,68 L182,68 Q176,68 176,74 L176,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="657" y="58" width="86" height="10" class="dd15-m"/>
+<text x="700" y="66" class="dd15-l dd15-c">P  POSITION MAPS</text>
+<path d="M1042,230 L1042,240 Q1042,246 1036,246 L78,246 Q72,246 72,240 L72,231" class="dd15-wc" marker-end="url(#dd15-arrow-c)"/>
+<rect x="554.5" y="236" width="91" height="10" class="dd15-m"/>
+<text x="600" y="244" class="dd15-l dd15-c">P  RUNTIME FACADE</text>
+<rect x="30" y="202" width="84" height="28" rx="4" class="dd15-frozen"/>
+<text x="72" y="215" class="dd15-k dd15-c">runtime-facade</text>
+<text x="72" y="225" class="dd15-s dd15-c">println_text</text>
+<rect x="216" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="97" class="dd15-k dd15-c">discover</text>
+<text x="250" y="107" class="dd15-s dd15-c">app</text>
+<rect x="142" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="176" y="153" class="dd15-k dd15-c">position-map</text>
+<text x="176" y="163" class="dd15-s dd15-c">greeting</text>
+<rect x="216" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="153" class="dd15-k dd15-c">decl-source</text>
+<text x="250" y="163" class="dd15-s dd15-c">greeting</text>
+<rect x="304" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="338" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="392" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="426" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="480" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="514" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="568" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="602" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="656" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="690" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="744" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="778" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="920" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="954" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="1008" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1042" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="1096" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="142" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="176" y="215" class="dd15-k dd15-c">position-map</text>
+<text x="176" y="225" class="dd15-s dd15-c">main</text>
+<rect x="216" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="215" class="dd15-k dd15-c">decl-source</text>
+<text x="250" y="225" class="dd15-s dd15-c">main</text>
+<rect x="304" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="338" y="220" class="dd15-n dd15-c">main</text>
+<rect x="392" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="426" y="220" class="dd15-n dd15-c">main</text>
+<rect x="480" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="514" y="220" class="dd15-n dd15-c">main</text>
+<rect x="568" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="602" y="220" class="dd15-n dd15-c">main</text>
+<rect x="656" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="690" y="220" class="dd15-n dd15-c">main</text>
+<rect x="744" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="778" y="220" class="dd15-n dd15-c">main</text>
+<rect x="920" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="954" y="220" class="dd15-n dd15-c">main</text>
+<rect x="1008" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1042" y="220" class="dd15-n dd15-c">main</text>
+<rect x="1096" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="220" class="dd15-n dd15-c">main</text>
+<rect x="832" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="866" y="102" class="dd15-n dd15-c">app</text>
+<rect x="1184" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1218" y="102" class="dd15-n dd15-c">app</text>
+<rect x="1096" y="258" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="276" class="dd15-n dd15-c">entry</text>
+<line x1="24" y1="318" x2="60" y2="318" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<text x="68" y="321" class="dd15-l">READER TO WHAT IT READ   ·   P PRESENT, A ABSENT, M MEMBERS; UNLABELLED IS P   ·   NOT DRAWN: EACH RECORD'S READ OF ITS OWN DECLARATION SOURCE, AND DOC RECORDS</text>
+<line x1="24" y1="338" x2="1256" y2="338" class="dd15-rule"/>
+<text x="24" y="366" class="dd15-h">Body edit: &quot;hello&quot; becomes &quot;hullo&quot; in greeting</text>
+<text x="24" y="382" class="dd15-i">greeting is checked, lowered and planned again. Its influence value is equal, so its slot and declaration are reused, and main evaluates nothing.</text>
+<rect x="216" y="396" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="409" class="dd15-k dd15-c">discover</text>
+<rect x="142" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="439" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="439" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="392" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="426" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="480" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="568" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="656" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="690" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="744" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="778" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="920" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="954" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="1008" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1042" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="1096" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1130" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="142" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="469" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="469" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="469" class="dd15-k dd15-c">main</text>
+<rect x="392" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="469" class="dd15-k dd15-c">main</text>
+<rect x="480" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="469" class="dd15-k dd15-c">main</text>
+<rect x="568" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="469" class="dd15-k dd15-c">main</text>
+<rect x="656" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="469" class="dd15-k dd15-c">main</text>
+<rect x="744" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="469" class="dd15-k dd15-c">main</text>
+<rect x="920" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="469" class="dd15-k dd15-c">main</text>
+<rect x="1008" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="469" class="dd15-k dd15-c">main</text>
+<rect x="1096" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="469" class="dd15-k dd15-c">main</text>
+<rect x="832" y="396" width="68" height="20" rx="4" class="dd15-dim"/>
+<text x="866" y="409" class="dd15-k dd15-c">app</text>
+<rect x="1184" y="396" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1218" y="409" class="dd15-k dd15-c">app</text>
+<rect x="1096" y="486" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="499" class="dd15-k dd15-c">entry</text>
+<rect x="30" y="456" width="84" height="20" rx="4" class="dd15-frozen"/>
+<text x="72" y="469" class="dd15-k dd15-c">runtime-facade</text>
+<text x="426" y="422" class="dd15-ta dd15-c">EQUAL VALUE</text>
+<text x="250" y="422" class="dd15-ta dd15-c">NEW BODY</text>
+<text x="24" y="536" class="dd15-h">Comment edit: a comment added above main</text>
+<text x="24" y="552" class="dd15-i">Header seeds and body projections are equal, so every semantic record is reused. Only main's lines move.</text>
+<rect x="216" y="566" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="579" class="dd15-k dd15-c">discover</text>
+<rect x="142" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="609" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="609" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="392" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="480" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="568" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="656" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="744" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="920" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="1008" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="1096" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="142" y="626" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="176" y="639" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="639" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="639" class="dd15-k dd15-c">main</text>
+<rect x="392" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="639" class="dd15-k dd15-c">main</text>
+<rect x="480" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="639" class="dd15-k dd15-c">main</text>
+<rect x="568" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="639" class="dd15-k dd15-c">main</text>
+<rect x="656" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="639" class="dd15-k dd15-c">main</text>
+<rect x="744" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="639" class="dd15-k dd15-c">main</text>
+<rect x="920" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="639" class="dd15-k dd15-c">main</text>
+<rect x="1008" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="639" class="dd15-k dd15-c">main</text>
+<rect x="1096" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="639" class="dd15-k dd15-c">main</text>
+<rect x="832" y="566" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="866" y="579" class="dd15-k dd15-c">app</text>
+<rect x="1184" y="566" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1218" y="579" class="dd15-k dd15-c">app</text>
+<rect x="1096" y="656" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="669" class="dd15-k dd15-c">entry</text>
+<rect x="30" y="626" width="84" height="20" rx="4" class="dd15-frozen"/>
+<text x="72" y="639" class="dd15-k dd15-c">runtime-facade</text>
+<rect x="24" y="694" width="26" height="14" rx="4" class="dd15-eval"/>
+<text x="58" y="704" class="dd15-l">EVALUATED</text>
+<rect x="140" y="694" width="26" height="14" rx="4" class="dd15-reused"/>
+<text x="174" y="704" class="dd15-l">REUSED</text>
+<rect x="236" y="694" width="26" height="14" rx="4" class="dd15-dim"/>
+<text x="270" y="704" class="dd15-l">NOT STATED BY THE EDIT MATRIX</text>
+<rect x="456" y="694" width="26" height="14" rx="4" class="dd15-frozen"/>
+<text x="490" y="704" class="dd15-l">FROZEN, NEVER EVALUATED</text>
+<line x1="24" y1="722" x2="1256" y2="722" class="dd15-rule"/>
+<text x="24" y="746" class="dd15-h">Joint group</text>
+<rect x="24" y="758" width="330" height="86" rx="6" class="dd15-joint"/>
+<text x="34" y="772" class="dd15-ta">MUTATION-EFFECT  ·  KEY = RULE + DIGEST OF SORTED MEMBERSHIP</text>
+<path d="M124,793 L253,793" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M254,807 L125,807" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="183.5" y="781" width="11" height="10" class="dd15-m"/>
+<text x="189" y="789" class="dd15-l dd15-c">M</text>
+<rect x="183.5" y="810" width="11" height="10" class="dd15-m"/>
+<text x="189" y="818" class="dd15-l dd15-c">M</text>
+<rect x="44" y="784" width="80" height="32" rx="4" class="dd15-box"/>
+<text x="84" y="799" class="dd15-k dd15-c">effect</text>
+<text x="84" y="809" class="dd15-s dd15-c">a, parameter</text>
+<rect x="254" y="784" width="80" height="32" rx="4" class="dd15-box"/>
+<text x="294" y="799" class="dd15-k dd15-c">effect</text>
+<text x="294" y="809" class="dd15-s dd15-c">b, parameter</text>
+<text x="34" y="836" class="dd15-s">a forwards to b and b to a: one evaluation runs the fixed point</text>
+<text x="370" y="790" class="dd15-i">A dependency cycle is one evaluation.</text>
+<text x="370" y="808" class="dd15-i">Each member is published under its own key,</text>
+<text x="370" y="826" class="dd15-i">so an equal member value still stops propagation.</text>
+<text x="680" y="746" class="dd15-h">Absent witness</text>
+<path d="M800,800 L899,800" class="dd15-wa" marker-end="url(#dd15-arrow-a)"/>
+<rect x="844.5" y="787" width="11" height="10" class="dd15-m"/>
+<text x="850" y="795" class="dd15-l dd15-c">A</text>
+<rect x="680" y="784" width="120" height="32" rx="4" class="dd15-box"/>
+<text x="740" y="799" class="dd15-k dd15-c">name-slot</text>
+<text x="740" y="809" class="dd15-s dd15-c">app, f</text>
+<rect x="900" y="784" width="120" height="32" rx="4" class="dd15-dim"/>
+<text x="960" y="799" class="dd15-k dd15-c">helpers.f</text>
+<text x="960" y="809" class="dd15-s dd15-c">no record at this key</text>
+<text x="680" y="836" class="dd15-s">from helpers import f, before helpers.incn exists</text>
+<text x="1036" y="790" class="dd15-i">The read records that nothing is there.</text>
+<text x="1036" y="808" class="dd15-i">Creating helpers.incn evaluates</text>
+<text x="1036" y="826" class="dd15-i">this witness's readers and no one else.</text>
 </svg>

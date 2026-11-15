@@ -73,8 +73,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 3. **Error taxonomy**
    - Categorize errors (user, infra, programming) and indicate recoverability.
    - Prefer stable, typed public errors (e.g., via `thiserror`) and keep error messages actionable and consistent.
-   - In this repo: compiler diagnostics are typically built with `miette`, and shared runtime/semantic errors should
-        stay aligned (see [Layering Rules](../explanation/layering.md)).
+   - In this repo: compiler diagnostics are typically built with `miette`, and shared runtime/semantic errors should stay aligned (see [Layering Rules](../explanation/layering.md)).
 
 4. **Concurrency discipline**
    - Make `Send + Sync` requirements explicit; guard shared state predictably.
