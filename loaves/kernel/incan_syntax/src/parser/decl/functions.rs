@@ -205,6 +205,7 @@ impl<'a> Parser<'a> {
         }
         self.expect_punct(PunctuationId::Arrow, "Expected '->' before property return type")?;
         let return_type = self.type_expr()?;
+        let result_source = self.result_source()?;
 
         let body = if self.check(&TokenKind::Newline) {
             if !allow_abstract {
@@ -234,6 +235,7 @@ impl<'a> Parser<'a> {
                 visibility,
                 name,
                 return_type,
+                result_source,
                 body,
             },
             Span::new(start, end),
