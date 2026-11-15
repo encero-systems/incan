@@ -7,7 +7,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from c_facet import CCompile, CConfiguration, CFacet
-from c_interop import host_triple
+from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget, LinkedArchive, host_triple, linked_archives
 from clove_units import CloveConfigurationUnit, CloveUnit, clove_unit, entry_applies
 from files import read, write
 from scratch import scratch_directory
@@ -37,8 +37,8 @@ def clove(root: str, identity: str, definitions: list[str]) -> CloveUnit:
     )
 
 
-def linking(cloves: list[CloveUnit]) -> UnitDescription:
-    """A program unit that reaches `cloves`, described with fixed locations."""
+def linking(cloves: list[CloveUnit], archives: list[LinkedArchive] = []) -> UnitDescription:
+    """A program unit that reaches `cloves` and declared static `archives`, described with fixed locations."""
     return UnitDescription(
         source="/checkout/project/src/main.incn",
         project_root="/checkout/project",
@@ -53,16 +53,18 @@ def linking(cloves: list[CloveUnit]) -> UnitDescription:
         contract_models=[],
         c_headers=[],
         cloves=cloves,
+        c_archives=archives,
     )
 
 
-pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[None, str]:
+pub def test_a_rebuilt_clove_or_static_archive_rekeys_the_units_that_reach_it() -> Result[None, str]:
     """
-    A unit is compiled again when a Clove it reaches compiled different archive bytes or definitions.
+    A unit is compiled again when a Clove it reaches or a package-owned static archive has different bytes.
 
     1. Reaching a Clove changes the description digest.
     2. A rebuilt archive with different bytes, or different definitions, changes it again.
     3. The same archive at another location keeps it.
+    4. Editing a declared static archive changes its consumer's description digest.
     """
     # 1. The Clove is an input of the unit.
     first = description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=2"])]))?
@@ -72,6 +74,15 @@ pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[
     assert description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=3"])]))? != first
     # 3. Locations are provenance, not identity.
     assert description_digest(linking([clove("/elsewhere/project", "sha256:aa", ["SHIM_OFFSET=2"])]))? == first
+    # 4. A package-owned archive's bytes are an input of every unit that links it.
+    scratch = scratch_directory()?
+    archive = scratch.path().joinpath("libbridge.a")
+    write(archive, "first archive generation")?
+    artifact = CInteropArtifact(name="bridge", kind=CArtifactKind.Static, path="libbridge.a", link_name="bridge")
+    target = CInteropTarget(target=host_triple(), artifacts=[artifact])
+    first_archive = description_digest(linking([], linked_archives(scratch.path().0, [target])?))?
+    write(archive, "second archive generation")?
+    assert description_digest(linking([], linked_archives(scratch.path().0, [target])?))? != first_archive
     return Ok(None)
 
 

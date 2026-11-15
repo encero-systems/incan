@@ -3,7 +3,7 @@
 from rust::std::fs import OpenOptions, metadata
 from std.fs import Path
 from std.json import JsonValue
-from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
+from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget, host_triple
 from dependency_commands import DependencyVerb, parse_dependency_command
 from dependency_plans import (
     chosen_name,
@@ -323,11 +323,36 @@ pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> R
     count_work(physical)
     ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     assert finish_counting().parses == 0, "the edited manifest's no-change reconciliation was not retained"
-    rewrite_in_place(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"EDITED\"\n")?
+    rewrite_in_place(
+        root.joinpath("loaf.toml"),
+        "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"EDITED\"\n",
+    )?
     count_work(physical)
     ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     rewritten = finish_counting()
     assert rewritten.parses > 0, "a manifest rewritten to the same size and modification time was not resolved again"
+    return Ok(None)
+
+
+pub def test_a_changed_static_archive_is_refused_by_a_locked_build() -> Result[None, str]:
+    """A lock records a declared static archive's bytes, and locked mode refuses another generation."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    make_directory(root.joinpath("src"))?
+    manifest = f"[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[interop.c]\n\n[[interop.c.targets]]\ntarget = \"{host_triple()}\"\n\n[[interop.c.targets.artifacts]]\nname = \"bridge\"\nkind = \"static\"\npath = \"libbridge.a\"\n"
+    write(root.joinpath("loaf.toml"), manifest)?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
+    archive = root.joinpath("libbridge.a")
+    write(archive, "first archive generation")?
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    write(archive, "second archive generation")?
+    match ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), true):
+        Ok(_) => return Err("locked mode accepted a changed static archive")
+        Err(message) =>
+            assert "would change at static artifact" in message
+            assert "bridge" in message
+            assert host_triple() in message
+            assert "oven lock" in message
     return Ok(None)
 
 
