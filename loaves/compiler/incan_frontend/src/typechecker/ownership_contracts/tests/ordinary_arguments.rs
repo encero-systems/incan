@@ -95,3 +95,11 @@ fn builtin_methods_with_plain_results_read_their_receiver() -> Result<(), Box<dy
     assert_proved(source, "shout")?;
     assert_proved(source, "collect")
 }
+
+/// A call result that can hold no borrow is a fresh value in every position that takes ownership: a constructor
+/// field, an enum payload, a list element and a builtin collection argument, also when taken with `?`.
+#[test]
+fn fresh_call_results_fill_owned_positions() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Tag:\n    name: str\n\nmodel Entry:\n    tag: Tag\n    tags: list[Tag]\n\nenum Slot:\n    Filled(Tag)\n\ndef tag(name: str) -> Tag:\n    return Tag(name=name)\n\ndef parse(name: str) -> Result[Tag, str]:\n    return Ok(Tag(name=name))\n\ndef build(names: Borrowed[list[str]]) -> Result[Entry, str]:\n    mut tags = [tag(\"a\"), parse(\"b\")?]\n    tags.append(tag(\"c\"))\n    slot = Slot.Filled(tag(\"d\"))\n    match slot:\n        Slot.Filled(value) => tags.append(value)\n    return Ok(Entry(tag=tag(\"e\"), tags=tags))\n";
+    assert_proved(source, "build")
+}
