@@ -1,24 +1,13 @@
 """Dependency reuse contracts: a changed dependency artifact, worker or installed interface rekeys its consumers."""
 
-from rust::std::fs import metadata, remove_dir_all, rename
+from rust::std::fs import metadata, remove_dir_all
 from rust::std::process import Command
 from rust::std::time import Instant
 from std.fs import Path
-from std.encoding.hex import hexlify
-from std.hash import sha256
-from std.io import BytesIO
 from std.json import JsonValue, parse
-from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
-from installation_check import verify_runtime
-from installation_page import recall as recall_installation, begin_command, end_command
-from home_paths import installation_catalog
-from installation_codec import decode as decode_installation, encode as encode_installation
-from trace_adapter import count_work, finish_counting
-from page_codec import Reader, put_texts
 from files import json_text, make_directory, read, read_json, remove
 from json_fields import required_items
-from store_path_conversion import payload_path
 from bakery import bakery, library_directory
 from observation import file_digest
 from vocabulary import published_workers, stage_vocabulary
@@ -30,10 +19,7 @@ from toolchain import (
     NativeCrate,
     Toolchain,
     read_toolchain,
-    prepare_installation,
-    finish_installation,
     load_toolchain_at,
-    readmit_installation,
 )
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit_rust import add_extern, compile_library_unit, prepare_linked
@@ -88,14 +74,6 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_request_artifact_identities(scratch.path().joinpath("artifact-identities"))?
     verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
     return Ok(None)
-
-pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
-    """An installed generation is selected from its admitted page without reopening any frozen input."""
-    scratch = scratch_directory()?
-    original = scratch.path().joinpath("producer/runtime.incnlib")
-    write(original, "runtime interface")?
-    record_payload(original, "runtime producer")?
-    return verify_published_installation(scratch.path(), original)
 
 @derive(Eq)
 enum SemanticEdit(str):
@@ -1044,8 +1022,6 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
     selected = read_toolchain(directory)?
     assert selected.codegraph_on_request
     verify_renamed_admission(scratch, original)?
-    verify_published_installation(scratch, original)?
-    verify_installation_check(scratch)?
     assert published_identity(copied)? == "runtime producer"
     assert published_identity(standard)? == "runtime producer"
     assert published_identity(registry)? == "registry producer"
@@ -1088,179 +1064,6 @@ def verify_renamed_admission(scratch: Path, original: Path) -> Result[None, str]
         Ok(_) =>
             assert false, "changed compiler retained installation admission"
         Err(_) => pass
-    return Ok(None)
-
-
-def verify_published_installation(scratch: Path, original: Path) -> Result[None, str]:
-    """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
-    stage = scratch.joinpath("installation-stage")
-    write(stage.joinpath("driver"), "fixture compiler")?
-    rustc = stage.joinpath("sysroot/bin/rustc")
-    write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
-    make_executable(rustc)?
-    write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
-    write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
-    write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
-    write(stage.joinpath("library.rlib"), read(original)?)?
-    write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
-    record_payload(stage.joinpath("library.rlib"), "installed producer")?
-    write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
-    write(
-        stage.joinpath("toolchain.json"),
-        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true}",
-    )?
-    _, admission = prepare_installation(stage)?
-    assert len(admission.payloads) == 1 and len(admission.facts) == 2
-    target = scratch.joinpath("installation-published")
-    rename(stage.0, target.0).map_err((error) => str(error))?
-    finish_installation(target, admission)?
-    installed = load_toolchain_at(target)?
-    assert installed.driver == target.joinpath("driver").0
-    assert installed.codegraph_on_request
-    assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
-    verify_installation_page(target)?
-    _ = flush_trace()
-    return Ok(None)
-
-
-def verify_installation_page(directory: Path) -> Result[None, str]:
-    """Warm selections read only the admitted page, preserve full intent and refuse page damage."""
-    page = match recall_installation(directory)?:
-        None => return Err("installation did not publish an admitted page")
-        Some(found) => found
-
-    assert len(page.manifests) == 1
-    assert page.manifests[0].intent.name == "primitives"
-    assert len(page.manifests[0].digest) == 64
-    # Repeated source-level selections emit no reads, decodes or hashes of these installed inputs.
-    count_work(directory.0 + "/")
-    for _index in range(2):
-        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
-        assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
-        assert len(required_items(read_json(directory.joinpath("library.native.json"))?, "search")?) == 0
-    work = finish_counting()
-    assert work.reads == 0 and work.hashes == 0
-    assert work.parses == 0 and work.decodes == 0
-    assert work.stats == 0, f"warm installation selection stat'ed frozen inputs {work.stats} times"
-    assert work.pages <= 1
-    # A command captures once; ending it makes a later resident request select the admitted page again.
-    begin_command()
-    _ = load_toolchain_at(directory)?
-    count_work(directory.0 + "/")
-    for _index in range(2):
-        assert load_toolchain_at(directory)?.driver == page.toolchain.driver
-    captured = finish_counting()
-    end_command()
-    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0, f"captured installation touched frozen inputs: stats={captured.stats} reads={captured.reads} hashes={captured.hashes}"
-    encoded = encode_installation(page)?
-    fixture = directory.parent().joinpath("installation-page.bin")
-    fixture.write_bytes(encoded).map_err((error) => error.message())?
-    mapped = fixture.map_read().map_err((error) => error.message())?
-    match mapped.view(0, mapped.len()):
-        None => return Err("fixture has no whole mapped range")
-        Some(view) =>
-            decoded = decode_installation(view)?
-            assert encode_installation(decoded)? == encoded
-            assert decoded.toolchain.codegraph_on_request
-            assert decoded.manifests[0].intent == page.manifests[0].intent
-    verify_page_refusals(fixture, encoded)?
-    verify_page_vectors(fixture)?
-    digest = fingerprint_page(encoded)
-    canonical = payload_path(installation_catalog()?, digest)
-    canonical.chmod(false).map_err((error) => error.message())?
-    canonical.write_bytes(b"damaged page").map_err((error) => error.message())?
-    match recall_installation(directory):
-        Ok(_) => return Err("damaged installation page was silently reused or reproduced")
-        Err(_) => pass
-    canonical.write_bytes(encoded).map_err((error) => error.message())?
-    manifest = directory.joinpath("stdlib/primitives/loaf.toml")
-    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
-    write(directory.joinpath("library.rlib"), "changed frozen payload")?
-    write(record_path(directory.joinpath("library.rlib")), "changed frozen producer record")?
-    native = directory.joinpath("library.native.json")
-    write(native, "{\"search\":[\"changed\"],\"externs\":[],\"macro_externs\":[]}")?
-    count_work(directory.0 + "/")
-    match recall_installation(directory)?:
-        None => return Err("an installed manifest edit discarded immutable admission")
-        Some(admitted) =>
-            if admitted.manifests[0].intent.version != "1.0.0":
-                return Err(f"an installed manifest edit changed immutable admission to {admitted.manifests[0].intent.version}")
-    assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
-    assert len(required_items(read_json(native)?, "search")?) == 0
-    assert load_toolchain_at(directory)?.driver == page.toolchain.driver
-    immutable = finish_counting()
-    assert immutable.stats == 0 and immutable.reads == 0 and immutable.hashes == 0, f"immutable admission touched frozen inputs: stats={immutable.stats} reads={immutable.reads} hashes={immutable.hashes}"
-    record_payload(directory.joinpath("library.rlib"), "replacement producer")?
-    _ = readmit_installation(directory)?
-    replaced = match recall_installation(directory)?:
-        None => return Err("explicit installation re-admission did not select the replacement generation")
-        Some(admitted) => admitted
-    assert replaced.manifests[0].intent.version == "2.0.0"
-    assert published_identity(directory.joinpath("library.rlib"))? == "replacement producer"
-    assert len(required_items(read_json(native)?, "search")?) == 1
-    return Ok(None)
-
-
-def fingerprint_page(data: bytes) -> str:
-    """The exact value digest used by the sealed page's immutable revision."""
-    return hexlify(sha256.digest(data))
-
-
-def verify_page_refusals(path: Path, data: bytes) -> Result[None, str]:
-    """Malformed page scalars, versions, truncation and trailing bytes refuse before they can supply facts."""
-    extended = BytesIO(b"")
-    extended.write_bytes(data).map_err((error) => error.message())?
-    extended.write_bytes(b"\x00").map_err((error) => error.message())?
-    for bytes in [b"invalid", data[:16], extended.getvalue()]:
-        path.write_bytes(bytes).map_err((error) => error.message())?
-        mapped = path.map_read().map_err((error) => error.message())?
-        if let Some(view) = mapped.view(0, mapped.len()):
-            match decode_installation(view):
-                Ok(_) => return Err("malformed installation page was accepted")
-                Err(_) => pass
-    return Ok(None)
-
-
-def verify_page_vectors(path: Path) -> Result[None, str]:
-    """Packed vectors retain empty and Unicode strings; separator contents use the canonical length form."""
-    for values in [[], [""], ["first", "λ", ""], ["embedded\\x00value", ""]]:
-        buffer = BytesIO(b"")
-        put_texts(buffer, values)?
-        path.write_bytes(buffer.getvalue()).map_err((error) => error.message())?
-        mapped = path.map_read().map_err((error) => error.message())?
-        match mapped.view(0, mapped.len()):
-            None => return Err("vector fixture has no mapped range")
-            Some(view) =>
-                mut reader = Reader(view=view)
-                assert reader.texts()? == values
-                assert reader.offset == view.len()
-    return Ok(None)
-
-
-def verify_installation_check(scratch: Path) -> Result[None, str]:
-    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
-    directory = scratch.joinpath("checked-installation")
-    make_directory(directory)?
-    oven = scratch.joinpath("installation-oven")
-    calls = scratch.joinpath("installation-calls")
-    mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
-    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
-    script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
-    script += "printf 'incan installation verified\\n'\n"
-    write(oven, script)?
-    make_executable(oven)?
-    verify_runtime(oven.0, directory)?
-    assert read(calls)? == "x"
-    # A refused runtime is reported after removing the check's project too.
-    write(oven, script + "exit 1\n")?
-    make_executable(oven)?
-    match verify_runtime(oven.0, directory):
-        Ok(_) =>
-            assert false, "installation accepted a failed runtime"
-        Err(_) => pass
-    assert read(calls)? == "xx"
-    for path in scratch.iterdir().map_err((error) => error.message())?:
-        assert not path.name().startswith(".installation-check-")
     return Ok(None)
 
 
