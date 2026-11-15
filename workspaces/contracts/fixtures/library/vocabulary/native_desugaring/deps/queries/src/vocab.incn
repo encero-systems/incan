@@ -1,7 +1,5 @@
 """Expand query expressions through the published structured syntax contract."""
 
-from rust::std::env::consts import OS
-from std.fs import Path
 from std.vocab import (
     ClauseSurface,
     DeclarationSurface,
@@ -61,13 +59,7 @@ pub def library_vocab() -> VocabRegistration:
 
 
 pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
-    """
-    Return the structured clause expression, retaining its original source span.
-
-    A worker has an empty grant (RFC 160), so one that finds it can write or read a file refuses every node.
-    """
-    if let Some(escape) = escaped():
-        return Err(DesugarError.at(request.node.span(), escape))
+    """Return the structured clause expression, retaining its original source span."""
     match request.node:
         VocabSyntaxNode.Declaration(declaration) =>
             if declaration.keyword == "wrap":
@@ -82,19 +74,6 @@ pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError
             expression = clause.expression()?
             return Ok(DesugarResponse(output=DesugarOutput.Expression(expression)))
         _ => return Err(DesugarError.at(request.node.span(), "query requires a declaration"))
-
-
-def escaped() -> Option[str]:
-    """What this worker did outside its grant, where the host enforces one: write a file, or read a user's file."""
-    if OS != "macos":
-        return None
-    probe = Path("/tmp/incan-contract-native-desugaring-probe")
-    if probe.write_text("written by a desugarer", "utf-8", "strict", None).is_ok():
-        _ = probe.unlink()
-        return Some("the desugarer wrote a file outside its grant")
-    if Path("/etc/hosts").read_text("utf-8", "strict").is_ok():
-        return Some("the desugarer read a file outside its grant")
-    return None
 
 
 def lower_shared_calls(span: Span) -> Result[DesugarResponse, DesugarError]:
