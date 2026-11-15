@@ -552,12 +552,12 @@ def read(item: Native) -> int:
     Ok(())
 }
 
-/// A published callable's parameter passing is part of its signature, so it follows the base's read-only rule
-/// whatever its body does; only a callable nothing outside the module can name borrows a parameter its body never
-/// consumes. A published body that clones a field out of its input therefore keeps the by-value input that a Rust
-/// caller or another package was compiled against.
+/// A published callable's parameters follow the same inference as a private callable's: a parameter its body never
+/// consumes is lent, whoever can name the callable. Only a contract the source states overrides that, so a callable
+/// that hand-written Rust or another package calls by value says `Owned[T]`.
 #[test]
-fn published_callables_keep_the_read_only_rule() -> Result<(), Box<dyn std::error::Error>> {
+fn published_callables_follow_the_same_inference_unless_the_source_states_a_contract()
+-> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model Activation:
     snapshot: list[int]
@@ -571,6 +571,9 @@ def private_clone(activation: Activation) -> list[int]:
     return held
 
 pub def published_read(activation: Activation) -> int:
+    return len(activation.snapshot)
+
+pub def published_owned(activation: Owned[Activation]) -> int:
     return len(activation.snapshot)
 
 model Reader:
@@ -589,13 +592,14 @@ model Reader:
         std::slice::from_mut(&mut module),
         crate::body_ir::ContextModules::default(),
     );
-    let inferred = incan_semantics_core::IncanInputAccess::Inferred;
+    let owned = incan_semantics_core::IncanInputAccess::Owned;
     let shared = incan_semantics_core::IncanInputAccess::InferredShared;
     let expected = vec![
-        ("published_clone", inferred),
+        ("published_clone", shared),
         ("private_clone", shared),
         ("published_read", shared),
-        ("published_method", inferred),
+        ("published_owned", owned),
+        ("published_method", shared),
         ("private_method", shared),
     ];
     let mut actual = Vec::new();
