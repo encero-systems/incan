@@ -358,41 +358,7 @@ impl Positions {
         }
         // A constructor of an imported model or class names the checked field each of its arguments initializes.
         identities.extend(imported_members::field_identities(checker));
-        let mut type_identities: BTreeMap<String, CanonicalSymbolId> = checker
-            .symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, _)| checker.symbols.identity_of(index))
-            .filter(|canonical| {
-                canonical.scope_discriminant.is_none()
-                    && ((canonical.origin == checker.symbols.declaration_origin()
-                        && matches!(
-                            canonical.kind,
-                            SemanticSourceTargetKind::Model
-                                | SemanticSourceTargetKind::Class
-                                | SemanticSourceTargetKind::Newtype
-                                | SemanticSourceTargetKind::Rusttype
-                                | SemanticSourceTargetKind::Enum
-                                | SemanticSourceTargetKind::TypeAlias
-                                | SemanticSourceTargetKind::Trait
-                        ))
-                        || (canonical.kind == SemanticSourceTargetKind::RustItem
-                            && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
-            })
-            .filter_map(|canonical| {
-                StableDeclarationId::from_canonical(canonical, None, None)
-                    .map(|stable| (stable.render_compact(), canonical.clone()))
-            })
-            .collect();
-        for identity in checker.public_library_type_identities.values() {
-            let Some(canonical) = &identity.canonical else {
-                continue;
-            };
-            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
-                type_identities.insert(stable.render_compact(), canonical.clone());
-            }
-        }
+        let type_identities = admitted_type_identities(checker);
         let nested = checker
             .checked_body(owner)
             .into_iter()
@@ -473,6 +439,18 @@ impl Positions {
         let mut positions = Self::new(checker, program, owner, false)?;
         for (canonical, stable) in positions.nodes.binding_identities(local.nested.values())? {
             positions.identities.insert(stable.render_compact(), canonical);
+        }
+        for canonical in local
+            .expressions
+            .expression_type_identities
+            .values()
+            .flat_map(|identities| identities.values())
+        {
+            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+                positions
+                    .type_identities
+                    .insert(stable.render_compact(), canonical.clone());
+            }
         }
         Ok(positions)
     }
@@ -610,6 +588,63 @@ fn persisted_local_name(owner: &StableDeclarationId, identity: &str) -> Result<S
         return Err(refused());
     }
     Ok(rendered.declaration_name)
+}
+
+/// Collect every active nominal owner that the checker already authenticated independently of one lexical spelling.
+fn admitted_type_identities(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
+    let mut identities = checker
+        .symbols
+        .all_symbols()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, _)| checker.symbols.identity_of(index))
+        .filter(|canonical| {
+            canonical.scope_discriminant.is_none()
+                && ((canonical.origin == checker.symbols.declaration_origin()
+                    && matches!(
+                        canonical.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Newtype
+                            | SemanticSourceTargetKind::Rusttype
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::TypeAlias
+                            | SemanticSourceTargetKind::Trait
+                    ))
+                    || (canonical.kind == SemanticSourceTargetKind::RustItem
+                        && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
+        })
+        .filter_map(|canonical| {
+            StableDeclarationId::from_canonical(canonical, None, None)
+                .map(|stable| (stable.render_compact(), canonical.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let active = checker
+        .type_info
+        .declarations
+        .named_type_identities
+        .values()
+        .chain(checker.type_info.declarations.body_ir_native_type_identities.values())
+        .chain(
+            checker
+                .type_info
+                .expressions
+                .expression_type_identities
+                .values()
+                .flat_map(|identities| identities.values()),
+        )
+        .chain(
+            checker
+                .public_library_type_identities
+                .values()
+                .filter_map(|identity| identity.canonical.as_ref()),
+        );
+    for canonical in active {
+        if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+            identities.insert(stable.render_compact(), canonical.clone());
+        }
+    }
+    identities
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
