@@ -48,6 +48,9 @@ pub model NativeContext:
     pub memory: int
     pub timeout_seconds: int
     pub trace: Option[ReleaseTrace] = None
+    # Keep an installed standard Loaf that was built from the same inputs, as a relink into a used home wants. A
+    # release builds every Loaf of its candidate.
+    pub reuse_standard: bool = false
 
 
 pub model NativeBuildPlan:

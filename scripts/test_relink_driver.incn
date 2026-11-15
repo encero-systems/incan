@@ -8,13 +8,15 @@ from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from native_build import (
     NativeContext,
+    StandardProfile,
+    build_standard_packages,
     build_support_tool,
     runtime_root,
     share_seed_generations,
     update_runtime_manifest,
 )
 from relink_driver import install_driver, prepare_compiler_home, readmit
-from release_support import TOOLCHAIN_DIRECTORY
+from release_support import STANDARD_PACKAGES, TOOLCHAIN_DIRECTORY
 
 # The fields of an installed manifest every compiler home needs, before its registry fields.
 const MANIFEST_HEAD: str = "{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[],"
@@ -425,3 +427,87 @@ def test_a_standard_relink_names_its_installed_runtime_from_the_toolchain() -> R
     directories = [entry.expect_str().map_err((error) => error.message())? for entry in search]
     assert directories == ["native/a", "native/generation"], text
     return Ok(None)
+
+
+def test_a_standard_relink_keeps_each_standard_loaf_built_from_the_same_inputs() -> Result[None, str]:
+    """
+    A relink into a home whose compiler and standard sources did not change compiles no standard Loaf again: each
+    installed Loaf the helper vouches for stays as it is, and one whose stamp is gone is the only one compiled.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    repo = root.joinpath("repo")
+    for package in STANDARD_PACKAGES:
+        project = repo.joinpath(f"loaves/stdlib/{package}")
+        project.mkdir(true, true).map_err((error) => error.message())?
+        project
+            .joinpath("loaf.toml")
+            .write_text(f"[project]\nname = \"incan_stdlib_{package}\"\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+    compiled = root.joinpath("compiled.txt")
+    driver = root.joinpath("driver")
+    executable(driver, f"#!/bin/sh\necho \"$3\" >> {compiled.0}\n")?
+    toolchain = root.joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(f"{{\"driver\":\"{driver.0}\",\"sysroot\":\"sysroot\"}}", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    # The stub helper stamps what it publishes and vouches for a directory that still carries its stamp.
+    helper = root.joinpath("helper")
+    executable(helper, stub_helper())?
+    evidence = root.joinpath("evidence")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    context = NativeContext(
+        repo=repo,
+        lane=root.joinpath("lane"),
+        home=root.joinpath("home"),
+        builder="",
+        stdlib="",
+        evidence=evidence,
+        timings=evidence.joinpath("timings.tsv"),
+        jobs=2,
+        memory=8589934592,
+        timeout_seconds=60,
+        reuse_standard=true,
+    )
+    build_standard_packages(context, helper, "relink-", [StandardProfile.Release])?
+    assert len(compiled_names(compiled)?) == len(STANDARD_PACKAGES), "the first relink compiles every standard Loaf"
+    build_standard_packages(context, helper, "relink-", [StandardProfile.Release])?
+    again = compiled_names(compiled)?
+    assert len(again) == len(STANDARD_PACKAGES), f"the second relink compiled again: {again[len(STANDARD_PACKAGES):]}"
+    vocab = toolchain.joinpath("loaves/incan_stdlib_vocab")
+    left = [entry.name() for entry in vocab.iterdir().map_err((error) => error.message())?]
+    assert sorted(left) == ["debug", "release"], f"a kept Loaf leaves no staged directory: {left}"
+    vocab.joinpath("release/.oven-inputs.sha256").unlink().map_err((error) => error.message())?
+    build_standard_packages(context, helper, "relink-", [StandardProfile.Release])?
+    assert compiled_names(compiled)?[len(STANDARD_PACKAGES):] == ["incan_stdlib_vocab"]
+    return Ok(None)
+
+
+def compiled_names(log: Path) -> Result[list[str], str]:
+    """The Loaves the stub driver was asked to compile, in order."""
+    text = log.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return Ok([line for line in text.split("\n") if line != ""])
+
+
+def stub_helper() -> str:
+    """
+    A support helper for tests: it describes any unit as `{}`, stamps the directory it publishes, and says a directory
+    is reusable while that stamp is there.
+    """
+    stamp = "\"$4/.oven-inputs.sha256\""
+    answer = "printf '{\"reusable\": %s}\\n'"
+    return "\n".join(
+        [
+            "#!/bin/sh",
+            "if [ \"$1\" = \"--readmit\" ]; then exit 0; fi",
+            "case \"$2\" in",
+            "  identify) echo identity > \"$3.identity\"; : > \"$3.arguments\";;",
+            f"  publish) echo stamp > {stamp};;",
+            f"  reusable) if [ -f {stamp} ]; then {answer} true; else {answer} false; fi;;",
+            "  *) echo '{}';;",
+            "esac",
+            "",
+        ],
+    )
