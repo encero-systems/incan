@@ -1,0 +1,13 @@
+# behavior: a `mut` pattern binding of a place needs a place that permits mutation; `Some(mut items)` matched on a field of a read-only `cart` is refused at the binding, whether or not the arm changes it, and never becomes a copy or a move (RFC 129 writable alias rule 8, #1846).
+# pending: a pattern does not accept `mut name`; the program is refused as a syntax error, with no ownership diagnostic.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: Option[list[str]]
+
+
+def main() -> None:
+    cart = Cart(items=Some(["apple"]))
+    match cart.items:
+        Some(mut items) => println(len(items))
+        None => pass
