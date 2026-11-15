@@ -21,7 +21,7 @@ from pub::incan_mir_plan import (
     GenericEnumDeclaration,
     StaticCell,
     ZipCarrier,
-    fold_carrier_positions,
+    fold_remaining_carrier_positions,
     fold_inventories,
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
@@ -936,7 +936,7 @@ def completed_plan(
         zip_carriers=zip_carriers,
     )
     # The inventories were folded when the last carrier was appended; storage and templates are folded here.
-    return Ok(Some(fold_carrier_positions(planned, sources)?))
+    return Ok(Some(fold_remaining_carrier_positions(planned, sources)?))
 
 
 def lower_plan_frames(

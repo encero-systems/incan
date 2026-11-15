@@ -99,7 +99,7 @@ pub from nominal_identities import (
     carrier_position,
     is_carrier_index,
 )
-pub from carrier_positions import fold_carrier_positions, fold_inventories
+pub from carrier_positions import fold_carrier_positions, fold_inventories, fold_remaining_carrier_positions
 pub from record_codec import (
     encode_record_plan,
     encode_record_plan_products,

@@ -93,6 +93,39 @@ pub def fold_carrier_positions(plan: Plan, sources: int) -> Result[Plan, str]:
     )
 
 
+pub def fold_remaining_carrier_positions(plan: Plan, sources: int) -> Result[Plan, str]:
+    """Retain inventories already folded after the final carrier append, then fold storage and templates."""
+    mut remap = folding_remap(sources)
+    mut statics: list[StaticCell] = []
+    for cell in plan.statics:
+        mut kept = cell.clone()
+        kept.ty = remap_type(cell.ty, remap)?
+        statics.append(kept)
+    mut zips: list[ZipCarrier] = []
+    for carrier in plan.zip_carriers:
+        mut kept = carrier.clone()
+        kept.left = remap_element(carrier.left, remap)?
+        kept.right = remap_element(carrier.right, remap)?
+        kept.target = remap_type(carrier.target, remap)?
+        zips.append(kept)
+    return Ok(
+        Plan(
+            enums=plan.enums,
+            models=plan.models,
+            functions=plan.functions,
+            externals=plan.externals,
+            span=plan.span,
+            statics=statics,
+            exports=plan.exports,
+            tests=plan.tests,
+            zip_carriers=zips,
+            programs=plan.programs,
+            generic_models=[fold_generic_model(declaration, remap)? for declaration in plan.generic_models],
+            generic_enums=[fold_generic_enum(declaration, remap)? for declaration in plan.generic_enums],
+        ),
+    )
+
+
 pub def fold_inventories(
     mut functions: list[Function],
     mut models: list[ModelDeclaration],
