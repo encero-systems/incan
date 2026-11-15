@@ -590,7 +590,7 @@ impl TypeChecker {
         );
         let final_params = Self::substitute_callable_params(&params, &type_bindings);
         self.type_info
-            .record_call_site_callable_params(call.span, &final_params);
+            .record_call_site_callable_params_for_dispatch(call.span, &final_params);
         Some(substitute_resolved_type(&result, &type_bindings))
     }
 }
