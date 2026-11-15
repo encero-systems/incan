@@ -453,6 +453,17 @@ impl Builder<'_> {
             }
             // A property read is a getter call, not storage, whether its result is a fresh value or a view.
             Expr::Field(_, _) if self.property_read(expression) => Ok(None),
+            // A native constant is a value, not storage.
+            Expr::Field(_, _)
+                if self
+                    .checker
+                    .type_info
+                    .rust
+                    .checked_constants
+                    .contains_key(&expression.span) =>
+            {
+                Ok(None)
+            }
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)

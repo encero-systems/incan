@@ -370,6 +370,8 @@ impl SourceAccesses<'_, '_> {
                     .is_some_and(|identity| {
                         identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant
                     }) => {}
+            // A native constant is a value with no stored place behind it.
+            Expr::Field(_, _) if self.proof.facts.rust.checked_constants.contains_key(&expression.span) => {}
             // A property read is its getter's invocation; a view result is then read at its substituted place.
             Expr::Field(receiver, _) if self.property_invocation(expression) => {
                 if self.place(expression)?.is_some() {
