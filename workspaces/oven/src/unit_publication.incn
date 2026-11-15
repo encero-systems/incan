@@ -14,6 +14,9 @@ from frozen_inputs import payload as frozen_payload
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
 
+# The entries directories of the registry stores an admitted closure named in this process.
+static admitted_stores: dict[str, bool] = {}
+
 
 pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
     """Capture an admitted payload's proof before publishing its containing installation by rename."""
@@ -137,15 +140,27 @@ pub def admitted_identity(path: Path) -> Result[Option[str], str]:
     return Ok(registry_entry(path))
 
 
+pub def admit_store(entries: str) -> None:
+    """
+    Trust the entries directory of a registry store that an admitted closure names.
+
+    Only such a store is content-named by its producer, so only there does an entry directory identify what it holds.
+    """
+    admitted_stores[entries] = true
+
+
 def registry_entry(path: Path) -> Option[str]:
     """
     The identity of the registry entry an artifact belongs to: `<store>/entries/sha256-<digest>/artifacts/<file>`
-    names entry `sha256:<digest>`. Registry stores are content-named, so the entry directory is the producer identity.
+    names entry `sha256:<digest>`, in a store an admitted closure names. Anywhere else the same spelling names
+    nothing: a path proves nothing about who wrote the file at it.
     """
     artifacts = path.parent()
     entry = artifacts.parent()
     name = entry.name()
     if artifacts.name() != "artifacts" or entry.parent().name() != "entries" or not name.startswith("sha256-"):
+        return None
+    if entry.parent().0 not in admitted_stores:
         return None
     digest = name[len("sha256-"):]
     if len(digest) != 64:
