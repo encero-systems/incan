@@ -3,25 +3,36 @@
 //! A whole-owner read that copies its owner transfers it instead when no statement on any path after the read reads
 //! that owner again. The analysis walks the structured statements backward, joins the paths of an `If`, a `Match` and
 //! a race, and iterates a `Loop` to a fixed point, so a value read once on each branch transfers where the textual
-//! countdown copied it. A read inside a loop keeps its copy: lowering requires every owner a loop enters with to hold
-//! its value whenever the loop repeats or exits. It only ever turns a copy into a transfer: every fact the builder
-//! already selected stays as it is.
+//! countdown copied it. A whole read inside a loop keeps its copy: lowering requires every owner a loop enters with to
+//! hold its value whenever the loop repeats or exits. It only ever turns a copy into a transfer: every fact the
+//! builder already selected stays as it is.
+//!
+//! The pass is the one source of last-use facts for an enum field read out of a local model. The builder records
+//! which owner and field may part ([`BodyBuilder::source_place_operand`]) and always copies; the copy becomes a
+//! transfer here when nothing reads the owner afterward. Inside a loop the owner must be declared in that loop, so
+//! each round reads a value of its own.
 
 use super::*;
 
 /// Locals some statement on some later path still reads.
 type Live = HashSet<bir::LocalId>;
 
-/// Live sets a `Break` and a `Continue` of one enclosing loop continue with.
+/// Live sets a `Break` and a `Continue` of one enclosing loop continue with, and the scope of the loop's body.
 struct LoopExits {
     after: Live,
     head: Live,
+    scope: bir::ScopeId,
 }
 
 /// One frame's analysis state: the function body itself, or one closure or generator body inside it.
 struct Liveness<'a> {
     /// Owners the frame holds by value, whose copied whole read may transfer.
     owners: &'a HashSet<bir::LocalId>,
+    /// Owner and field of the copied field reads that may transfer.
+    fields: &'a HashSet<(bir::LocalId, CanonicalSymbolId)>,
+    /// The body's locals and scopes, which place an owner inside or outside a loop.
+    locals: &'a [bir::LocalDecl],
+    scopes: &'a [bir::ScopeInfo],
     /// Enclosing loops of the statement being visited, innermost last.
     loops: Vec<LoopExits>,
     /// Locals still read after the frame returns: a closure's captures, since it may run again.
@@ -36,7 +47,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// An owner is a non-Copy value this frame holds by value in a source binding, an owned parameter or a temporary:
     /// never a receiver, caller-owned parameter storage, a capture or an unresolved reference. Its scope-exit drop
     /// stays, and rustc elaborates it to the paths that still own the value (DD-0018).
-    pub(super) fn transfer_at_last_reads(&self, statements: &mut [bir::Statement]) {
+    pub(in crate::body_ir) fn transfer_at_last_reads(&self, statements: &mut [bir::Statement]) {
         let owners = self
             .locals
             .iter()
@@ -55,6 +66,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let mut liveness = Liveness {
             owners: &owners,
+            fields: &self.field_transfer_candidates,
+            locals: &self.locals,
+            scopes: &self.scopes,
             loops: Vec::new(),
             exit: Live::new(),
             apply: true,
@@ -175,6 +189,9 @@ impl Liveness<'_> {
     fn frame(&self, exit: Live) -> Liveness<'_> {
         Liveness {
             owners: self.owners,
+            fields: self.fields,
+            locals: self.locals,
+            scopes: self.scopes,
             loops: Vec::new(),
             exit,
             apply: self.apply,
@@ -182,7 +199,8 @@ impl Liveness<'_> {
     }
 
     /// Join a match's arms. A pattern or guard that fails continues with the next arm, so an arm's guard statements
-    /// also keep every owner a later arm reads.
+    /// also keep every owner a later arm reads. An arm's pattern gives its bindings their values, so no binding is
+    /// read before its arm.
     fn arms(&mut self, arms: &mut [bir::MatchArm], live: &mut Live) {
         let after = std::mem::take(live);
         let mut following = Live::new();
@@ -195,14 +213,13 @@ impl Liveness<'_> {
                 self.read(guard, &mut selected, &Live::new());
             }
             self.block(&mut arm.guard_stmts, &mut selected);
+            bind_pattern(&arm.pattern, &mut selected);
             live.extend(selected.iter().copied());
             following = selected;
         }
     }
 
     /// Iterate a loop body until the set live at its head stops growing, then rewrite its facts once from that set.
-    /// A local the body binds without an assignment, such as a pattern binding, stays live around the loop: its reads
-    /// inside the body keep the fact the builder gave them.
     fn repeated(&mut self, body: &mut bir::Block, live: &mut Live) {
         let after = live.clone();
         let apply = std::mem::replace(&mut self.apply, false);
@@ -226,6 +243,7 @@ impl Liveness<'_> {
         self.loops.push(LoopExits {
             after: after.clone(),
             head: head.clone(),
+            scope: body.scope,
         });
         let mut live = head.clone();
         self.block(&mut body.stmts, &mut live);
@@ -273,25 +291,88 @@ impl Liveness<'_> {
         }
     }
 
-    /// Visit one operand: transfer its owner when nothing later reads it and no loop encloses the read, then keep the
-    /// owner live before it.
+    /// Visit one operand: transfer its owner when nothing later reads it and no loop encloses the read, or the field
+    /// it reads out of an owner nothing later reads, then keep the owner live before it.
     fn read(&mut self, operand: &mut bir::Operand, live: &mut Live, lent: &Live) {
         let bir::Operand::Place(read) = operand else {
             return;
         };
         if let Some(local) = read.place.local_id()
-            && read.place.projection.is_empty()
             && read.fact == bir::OwnershipFact::Clone
-            && self.owners.contains(&local)
             && !live.contains(&local)
             && !lent.contains(&local)
             && self.apply
-            && self.loops.is_empty()
+            && (self.transfers_owner(local, &read.place) || self.transfers_field(local, &read.place))
         {
             read.fact = bir::OwnershipFact::Move;
             read.last_use = true;
         }
         read_place(&read.place, live);
+    }
+
+    /// Whether a copied read of `place` is a whole read of an owner outside every loop.
+    fn transfers_owner(&self, local: bir::LocalId, place: &bir::Place) -> bool {
+        place.projection.is_empty() && self.owners.contains(&local) && self.loops.is_empty()
+    }
+
+    /// Whether a copied read of `place` is a recorded field read whose owner each round of the innermost loop
+    /// declares anew, or that no loop encloses.
+    fn transfers_field(&self, local: bir::LocalId, place: &bir::Place) -> bool {
+        let [
+            bir::PlaceElem::Field {
+                canonical: Some(field),
+                structural: false,
+                ..
+            },
+        ] = place.projection.as_slice()
+        else {
+            return false;
+        };
+        self.fields.contains(&(local, field.clone()))
+            && self
+                .loops
+                .last()
+                .is_none_or(|innermost| self.declared_inside(local, innermost.scope))
+    }
+
+    /// Whether `local` is declared in `scope` or in a scope nested inside it.
+    fn declared_inside(&self, local: bir::LocalId, scope: bir::ScopeId) -> bool {
+        let mut current = self.locals.get(local.index()).map(|declaration| declaration.scope);
+        while let Some(visited) = current {
+            if visited == scope {
+                return true;
+            }
+            current = self
+                .scopes
+                .iter()
+                .find(|entry| entry.id == visited)
+                .and_then(|entry| entry.parent);
+        }
+        false
+    }
+}
+
+/// End the liveness of every local a pattern binds: the pattern assigns each of them.
+fn bind_pattern(pattern: &bir::Pattern, live: &mut Live) {
+    match pattern {
+        bir::Pattern::Var(binding) => {
+            live.remove(&binding.local);
+        }
+        bir::Pattern::Tuple(fields)
+        | bir::Pattern::Or(fields)
+        | bir::Pattern::Result { fields, .. }
+        | bir::Pattern::Enum { fields, .. }
+        | bir::Pattern::UnionMember { fields, .. } => {
+            for field in fields {
+                bind_pattern(field, live);
+            }
+        }
+        bir::Pattern::Struct { fields, .. } | bir::Pattern::Nominal { fields, .. } => {
+            for (_, field) in fields {
+                bind_pattern(field, live);
+            }
+        }
+        bir::Pattern::Wildcard | bir::Pattern::Literal(_) | bir::Pattern::FieldlessEnumVariant(_) => {}
     }
 }
 

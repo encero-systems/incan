@@ -64,6 +64,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
+            field_transfer_candidates: HashSet::new(),
             borrowed_parameters: HashSet::new(),
             owned_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),

@@ -50,6 +50,7 @@ pub(super) fn lower_getter_body(
     } else {
         builder.lower_block_into(source, scope, &mut stmts);
         builder.insert_scope_drops(&mut stmts, scope);
+        builder.transfer_at_last_reads(&mut stmts);
     }
     if builder
         .locals
