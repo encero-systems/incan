@@ -2,7 +2,7 @@
 
 from rust::std::fs import Permissions, metadata, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
-from rust::std::process import Child, Command, Stdio
+from rust::std::process import Child, Command, Output, Stdio
 from std.environ import get_or
 from std.fs import Path
 from files import json_text, read, remove
@@ -304,6 +304,39 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     verify_check_replay(scratch.path().joinpath("checks"))?
     verify_import_records(scratch.path().joinpath("imports"))?
     return Ok(None)
+
+
+pub def test_toolchain_plan_failure_is_retried() -> Result[None, str]:
+    """A one-shot malformed-plan failure is not retained as a source refusal, so the unchanged next build retries."""
+    scratch = scratch_directory()?
+    project = scratch.path().joinpath("project")
+    failure = scratch.path().joinpath("fail-native-plan-once")
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"retry_toolchain_failure\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(project.joinpath("src/main.incn"), "def main() -> None:\n    println(\"retried\")\n")?
+    write(failure, "fail once")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    first = build_project(binary, project, scratch.path().joinpath("bakery"), failure)?
+    first_text = decoded(first.stdout) + decoded(first.stderr)
+    assert not first.status.success(), first_text
+    assert "forced toolchain plan failure" in first_text, first_text
+    assert not failure.is_file(), "the driver did not consume the one-shot failure"
+    second = build_project(binary, project, scratch.path().joinpath("bakery"), failure)?
+    second_text = decoded(second.stdout) + decoded(second.stderr)
+    assert second.status.success(), second_text
+    assert "retried" in second_text, second_text
+    return Ok(None)
+
+
+def build_project(binary: str, project: Path, bakery: Path, failure: Path) -> Result[Output, str]:
+    """Build `project` without an owner, retaining one bakery while the one-shot native-plan failure is consumed."""
+    mut command = Command.new(binary)
+    command.arg("build").arg(project.0).current_dir(project.0)
+    command.env("OVEN_OWNER", "off").env("INCAN_ENGINE", "records")
+    command.env("INCAN_BAKERY", bakery.0).env("INCAN_TEST_PLAN_FAILURE_ONCE", failure.0)
+    return command.output().map_err((error) => f"cannot run {binary}: {error}")
 
 
 def verify_import_records(scratch: Path) -> Result[None, str]:
