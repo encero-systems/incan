@@ -1,0 +1,18 @@
+# behavior: a test file checked with generated case entries compiles when its worker hands rustc to a fresh process: that process reads the text the file was checked as, entries included, instead of the shorter file on disk (round 96's `test_builtin_fixtures` refusal, "source coordinate is outside the retained file"); the test-only bound below makes every worker hand rustc off
+# environment:
+#   INCAN_WORKER_FOOTPRINT_BOUND=1
+# cli-commands:
+#   test tests/test_entries.incn
+# expect-exit: 0
+# expect-stdout-contains:
+#   test_entries.incn::test_fixture_value PASSED
+#   test_entries.incn::test_builtin_fixture PASSED
+# expect-trace-contains:
+#   compiler worker: rustc handed to a fresh process
+
+"""Name the project whose test file the command runs."""
+
+
+def main() -> None:
+    """Print one line."""
+    println("main")
