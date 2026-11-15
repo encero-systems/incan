@@ -1,0 +1,86 @@
+"""Authenticated RFC 125 advisory events and the explicit Oven audit decision over locked versions."""
+
+from registry_trust import Signature, StatementKind, Trust, verify_statement
+
+
+pub enum AdvisoryAction(str):
+    """Append-only advisory state transitions."""
+
+    Publish = "publish"
+    Withdraw = "withdraw"
+
+
+pub model Advisory:
+    """One signed advisory event targeting an exact immutable package version."""
+
+    pub identifier: str
+    pub package: str
+    pub version: str
+    pub action: AdvisoryAction
+    pub reason: str
+    pub sequence: int
+
+
+pub model VerifiedAdvisory:
+    """An advisory event authenticated by a root-delegated registry key."""
+
+    pub registry: str
+    pub identifier: str
+    pub package: str
+    pub version: str
+    pub action: AdvisoryAction
+    pub reason: str
+    pub sequence: int
+
+
+pub def verify_advisory(trust: Trust, advisory: Advisory, signature: Signature) -> Result[VerifiedAdvisory, str]:
+    """Verify every advisory field under the registry's delegated event key."""
+    if advisory.sequence < 0:
+        return Err("the registry advisory has a negative sequence")
+    if not plain(advisory.identifier) or not plain(advisory.package) or not plain(advisory.version) or not plain(advisory.reason):
+        return Err("the registry advisory is malformed")
+    payload = advisory_payload(advisory)
+    _ = verify_statement(trust, StatementKind.Event, advisory.sequence, payload, signature)?
+    return Ok(
+        VerifiedAdvisory(
+            registry=trust.registry,
+            identifier=advisory.identifier,
+            package=advisory.package,
+            version=advisory.version,
+            action=advisory.action,
+            reason=advisory.reason,
+            sequence=advisory.sequence,
+        ),
+    )
+
+
+pub def audit_advisories(package: str, version: str, advisories: list[VerifiedAdvisory]) -> Result[None, str]:
+    """Fail explicit audit for each target whose latest authenticated advisory event is a publication."""
+    for candidate in advisories:
+        if candidate.package != package or candidate.version != version or candidate.action != AdvisoryAction.Publish:
+            continue
+        mut superseded = false
+        for later in advisories:
+            if later.identifier == candidate.identifier and later.sequence > candidate.sequence:
+                superseded = true
+        if not superseded:
+            return Err(f"{package} {version} has advisory {candidate.identifier}: {candidate.reason}")
+    return Ok(None)
+
+
+def advisory_payload(advisory: Advisory) -> bytes:
+    """Canonical advisory event payload covered by the registry statement signature."""
+    text = (
+        "incan-registry-advisory-v1\n" +
+        f"id={advisory.identifier}\n" +
+        f"package={advisory.package}\n" +
+        f"version={advisory.version}\n" +
+        f"action={advisory.action.value()}\n" +
+        f"reason={advisory.reason}\n"
+    )
+    return text.encode("utf-8")
+
+
+def plain(value: str) -> bool:
+    """Keep canonical line fields nonempty and single-line."""
+    return value != "" and "\n" not in value and "\r" not in value
