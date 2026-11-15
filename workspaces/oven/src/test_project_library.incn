@@ -92,3 +92,31 @@ pub def test_two_test_sources_share_one_shared_library() -> Result[None, str]:
     assert library_output(first, key, key).0 == library_output(second, key, key).0
     assert library_loaf(first, key, library_output(first, key, key)).key == key
     return Ok(None)
+
+
+pub def test_a_shared_library_leaves_out_a_project_nested_in_its_source_root() -> Result[None, str]:
+    """A directory with its own `loaf.toml` is another project: none of its modules is one of the outer library's."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    tool = root.joinpath("src/tool")
+    make_directory(tool.joinpath("src"))?
+    write(tool.joinpath("loaf.toml"), "[project]\nname = \"tool\"\nversion = \"1\"\n")?
+    for name in ["helper.incn", "src/main.incn", "src/test_tool.incn"]:
+        write(tool.joinpath(name), "\"\"\"A module of the nested project.\"\"\"\n")?
+    linked = with_project_library(project_unit(root, "test_reader.incn"))?
+    src = root.joinpath("src")
+    assert linked.excluded_sources == [
+        src.joinpath("nested/conftest.incn").0,
+        src.joinpath("nested/shape_test.incn").0,
+        src.joinpath("test_reader.incn").0,
+        src.joinpath("test_writer.incn").0,
+        tool.joinpath("helper.incn").0,
+        tool.joinpath("src/main.incn").0,
+        tool.joinpath("src/test_tool.incn").0,
+    ]
+    # A source root whose only other modules belong to a nested project has nothing to share.
+    for name in ["reader.incn", "nested/shape.incn"]:
+        src.joinpath(name).unlink().map_err((error) => error.message())?
+    assert with_project_library(project_unit(root, "test_reader.incn"))?.project_library == None
+    return Ok(None)
