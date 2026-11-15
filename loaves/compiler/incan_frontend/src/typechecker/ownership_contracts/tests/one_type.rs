@@ -131,3 +131,18 @@ fn imported_explicit_input_names_a_nominal_its_caller_does_not_import() -> Resul
     }
     Ok(())
 }
+
+/// A property's `Borrowed[T]` result is a receiver-tied view that reads as its value type `T` at every access:
+/// indexing, iteration, a method and comparison act as on the field it views (shape B2).
+#[test]
+fn property_view_result_reads_as_its_value_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Frame:\n    nominals: list[int]\n\n    property nominals_view -> Borrowed[list[int]] from self.nominals:\n        return self.nominals\n\ndef main() -> int:\n    frame = Frame(nominals=[1, 2])\n    mut total = frame.nominals_view[0] + len(frame.nominals_view)\n    for value in frame.nominals_view:\n        total += value\n    if frame.nominals_view == [1, 2] and frame.nominals_view.contains(1):\n        total += 1\n    return total\n";
+    let checker = checked(source)?;
+    let reads: Vec<_> = checker
+        .errors
+        .iter()
+        .filter(|error| error.stable_code().is_none())
+        .collect();
+    assert!(reads.is_empty(), "{reads:?}");
+    Ok(())
+}
