@@ -1,5 +1,4 @@
 # behavior: A function with an explicit shared input is called from another module of the same Loaf with an owned local, as a call in its own module would be (RFC 164).
-# pending: the imported signature keeps `Borrowed[str]` as the parameter type, so the call is refused: "Argument 'content' of 'text_size' has type mismatch: expected 'Borrowed[Str]', found 'Str'".
 # expect-stdout:
 #   3
 
