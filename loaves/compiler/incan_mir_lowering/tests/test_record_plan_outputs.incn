@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue, parse
 from std.tempfile import TemporaryDirectory
+from pub::internal_models.plan_function_records import decode_plan_function_record
 from pub::incan_mir_plan import (
     BasicBlock,
     ModelDeclaration,
@@ -37,7 +38,27 @@ pub def test_fresh_keyed_plan_retains_the_whole_program_function() -> Result[Non
     assert decode_record_plan(interface_plan(report)?)? == plan
     event = parse(read(report.joinpath(f"{key}.event"))?).map_err((error) => error.message())?
     product = event.require("product").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    assert product == read(products.joinpath(f"{key}.incnfunction"))?
+    retained = decode_plan_function_record(
+        products.joinpath(f"{key}.incnfunction").read_bytes().map_err((error) => error.message())?,
+    )?
+    published = parse(product).map_err((error) => error.message())?
+    assert published.require("schema").and_then((field) => field.expect_int()).map_err((error) => error.message())? == 4
+    assert published.require("function").and_then((field) => field.expect_str()).map_err(
+        (error) => error.message(),
+    )? == retained.function
+    assert published.require("digest").and_then((field) => field.expect_str()).map_err(
+        (error) => error.message(),
+    )? == retained.digest
+    assert published.require("inputs").and_then((field) => field.to_json()).map_err(
+        (error) => error.message(),
+    )? == JsonValue.array([JsonValue.string(value) for value in retained.inputs]).to_json().map_err(
+        (error) => error.message(),
+    )?
+    assert published.require("requests").and_then((field) => field.to_json()).map_err(
+        (error) => error.message(),
+    )? == JsonValue.array([JsonValue.string(value) for value in retained.requests]).to_json().map_err(
+        (error) => error.message(),
+    )?
     return Ok(None)
 
 
@@ -192,5 +213,5 @@ def interface_plan(report: Path) -> Result[str, str]:
 
 
 def read(path: Path) -> Result[str, str]:
-    """Read one complete report or product file."""
+    """Read one complete JSON report file."""
     return path.read_text("utf-8", "strict").map_err((error) => error.message())
