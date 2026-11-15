@@ -5,8 +5,17 @@ from std.fs import Path
 from json_fields import field
 from intake import library_source, read_project, ManifestReader
 from rust_target import compiler_version, host_triple
+from observation import file_digest
 from toml_fields import optional_flag, optional_string, optional_strings, required_string
 from toolchain_access import BINARY_SEPARATOR, read_access
+
+
+pub model RustFactOut:
+    """One committed generated file of a build fact: the name the crate reads, its path in the Loaf, its digest."""
+
+    pub name: str
+    pub path: str
+    pub digest: str
 
 
 pub model RustBuildFact:
@@ -21,8 +30,8 @@ pub model RustBuildFact:
     # The complete enabled feature set of the binding, sorted.
     pub features: list[str]
     pub cfg: list[str]
-    # The committed generated tree the crate reads as `OUT_DIR`, relative to the Loaf; empty when it has none.
-    pub out: str = ""
+    # The committed generated files the crate reads from `OUT_DIR`.
+    pub out: list[RustFactOut] = []
     pub environment: Dict[str, str] = {}
     # Declared publisher-side work (`link`, `tool`) the record carries; this Oven does not run it yet.
     pub work: list[str] = []
@@ -148,14 +157,36 @@ pub def fact_arguments(fact: RustBuildFact) -> list[str]:
     return arguments
 
 
-pub def fact_environment(project: str, fact: RustBuildFact) -> Dict[str, str]:
-    """The environment a build fact gives the crate's compile: its recorded variables, and `OUT_DIR` for its tree."""
+pub def fact_environment(project: str, fact: RustBuildFact) -> Result[Dict[str, str], str]:
+    """The environment a build fact gives the crate's compile: its recorded variables, and `OUT_DIR` for its files."""
     mut environment: Dict[str, str] = {}
     for name in sorted([name for name in fact.environment.keys()]):
         environment[name] = fact.environment[name]
-    if fact.out != "":
-        environment["OUT_DIR"] = Path(project).joinpath(fact.out).0
-    return environment
+    if len(fact.out) > 0:
+        environment["OUT_DIR"] = out_directory(project, fact.out)?
+    return Ok(environment)
+
+
+def out_directory(project: str, files: list[RustFactOut]) -> Result[str, str]:
+    """
+    The one directory of the Loaf that holds a fact's generated files, each under its recorded name and digest.
+
+    The compile reads them where they are, so they must share one directory and be named as the crate reads them; a
+    file whose bytes are not its recorded digest refuses the unit.
+    """
+    mut directory = ""
+    for file in files:
+        parent = Path(file.path).parent().0
+        if Path(file.path).name() != file.name or (directory != "" and parent != directory):
+            reason = f"a build fact's out files must lie in one directory under their names; {file.path} does not"
+            return Err(f"{project}: {reason}")
+        directory = parent
+    for file in files:
+        actual = "sha256:" + file_digest(Path(project).joinpath(file.path))?
+        if actual != file.digest:
+            reason = f"generated file {file.path} has digest {actual}; its build fact records {file.digest}"
+            return Err(f"{project}: {reason}")
+    return Ok(Path(project).joinpath(directory).0)
 
 
 def unit_build_fact(
@@ -193,7 +224,7 @@ pub def unit_environment(
     """A unit's compile environment: its package environment, then what its build fact records for its binding."""
     mut environment = package_environment(project, declared, declared.crate_name)
     if let Some(fact) = unit_build_fact(declared, rustc, profile, features)?:
-        recorded = fact_environment(project, fact)
+        recorded = fact_environment(project, fact)?
         for name in sorted([name for name in recorded.keys()]):
             environment[name] = recorded[name]
     return Ok(environment)
@@ -232,7 +263,7 @@ def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
             profile=required_string(record, "profile")?,
             features=sorted(optional_strings(record, "features")?.unwrap_or([])),
             cfg=optional_strings(record, "cfg")?.unwrap_or([]),
-            out=optional_string(record, "out")?.unwrap_or(""),
+            out=fact_outputs(table)?,
             environment=environment,
             work=work,
         ),
@@ -311,3 +342,19 @@ pub def package_environment(project: str, declared: RustFacet, crate_name: str) 
         environment[names[index]] = number
     environment["CARGO_PKG_VERSION_PRE"] = pre
     return environment
+
+
+def fact_outputs(table: Dict[str, TomlValue]) -> Result[list[RustFactOut], str]:
+    """A fact's `out` files: each with its name, Loaf-relative path and `sha256:` digest."""
+    if "out" not in table:
+        return Ok([])
+    mut files: list[RustFactOut] = []
+    for item in table["out"].as_array().map_err((error) => f"rust.facts.out: {error.message()}")?:
+        files.append(
+            RustFactOut(
+                name=required_string(item, "name")?,
+                path=required_string(item, "path")?,
+                digest=required_string(item, "digest")?,
+            ),
+        )
+    return Ok(files)
