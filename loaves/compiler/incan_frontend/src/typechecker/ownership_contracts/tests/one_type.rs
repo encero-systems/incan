@@ -118,3 +118,16 @@ fn explicit_view_parameters_are_native_reference_parameters() -> Result<(), Box<
     );
     Ok(())
 }
+
+/// An imported explicit input whose value type names a nominal the caller does not import is still the same
+/// contract: the caller's spelling of the parameter is its value type (shape B1).
+#[test]
+fn imported_explicit_input_names_a_nominal_its_caller_does_not_import() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = "pub model Entry:\n    pub count: int\n\npub def entries() -> list[Entry]:\n    return [Entry(count=1)]\n\npub def total(values: Borrowed[list[Entry]]) -> int:\n    return len(values)\n";
+    let consumer =
+        "from views import entries, total\n\ndef main() -> int:\n    items = entries()\n    return total(items)\n";
+    for (route, errors) in consumer_errors(provider, consumer)? {
+        assert!(errors.is_empty(), "{route}: {errors:?}");
+    }
+    Ok(())
+}
