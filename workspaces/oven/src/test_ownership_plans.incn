@@ -104,6 +104,37 @@ pub def test_a_field_leaves_its_owner_at_the_owners_last_read() -> Result[None, 
     return Ok(None)
 
 
+const INDEXED_LIST: str = """pub model Variant:
+    pub identity: bytes
+    pub labels: list[str]
+
+
+pub model Stored:
+    pub variants: list[Variant]
+
+
+def count_labels(labels: &list[str]) -> int:
+    return len(labels)
+
+
+def via_index(stored: &Stored, at: int) -> int:
+    return count_labels(stored.variants[at].labels)
+
+
+def main() -> None:
+    stored = Stored(variants=[Variant(identity=b"ab", labels=["x", "y"])])
+    println(via_index(stored, 0))
+"""
+
+
+pub def test_a_list_inside_an_indexed_element_is_lent_without_a_copy() -> Result[None, str]:
+    """A list field of a list element passed to a shared list parameter is lent through the element (#1605)."""
+    report = plan_report("indexed", INDEXED_LIST, "2")?
+    dropped = plan_counts(report, "via_index", ["drops"])?
+    assert dropped == 0, f"via_index drops {dropped} copies"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
@@ -132,6 +163,11 @@ def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
 
 def clones(report: str, function: str) -> Result[int, str]:
     """The model and enum clone calls the plan of `function` holds, summed over every frame of that name."""
+    return plan_counts(report, function, ["model-clones", "enum-clones"])
+
+
+def plan_counts(report: str, function: str, columns: list[str]) -> Result[int, str]:
+    """The named counts of the plan report's rows for `function`, summed over every frame of that name."""
     mut total = 0
     mut found = false
     for line in report.split("\n"):
@@ -140,7 +176,7 @@ def clones(report: str, function: str) -> Result[int, str]:
             continue
         found = true
         for position in range(len(fields) - 1):
-            if fields[position] == "model-clones" or fields[position] == "enum-clones":
+            if fields[position] in columns:
                 total += int(fields[position + 1])
     if not found:
         return Err(f"the plan report names no function {function}")
