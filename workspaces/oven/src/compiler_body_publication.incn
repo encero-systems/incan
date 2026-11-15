@@ -145,12 +145,15 @@ def authenticate_compiled_bodies(
     retained: list[SelectedBodyRecord],
     restored: list[str],
 ) -> Result[AuthenticatedCompiledBodies, str]:
-    """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
+    """Authenticate one compiler output transport, consume it and count owners checked or restored this activation."""
     authenticating = begin_work()
-    if not output.is_dir():
+    if not output.is_dir() and not output.is_file():
         return Err("successful graph-enabled compile did not publish body output rows")
     outputs = read_compiled_body_outputs(output)?
-    remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
+    if output.is_dir():
+        remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
+    else:
+        output.unlink().map_err((error) => f"cannot consume compiled body output {output.0}: {error.message()}")?
     chosen = set([record.identity for record in retained])
     restored_identities = set([owner for owner in restored if owner in chosen])
     mut owner_evaluations = len(outputs.fallbacks)
