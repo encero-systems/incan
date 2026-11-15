@@ -4,6 +4,8 @@
 mod blocks;
 #[path = "../../../../stdlib/primitives/rust/src/crumb/semantic_columns.rs"]
 mod columns;
+#[path = "../../../../stdlib/primitives/rust/src/crumb/encoders.rs"]
+mod encoders;
 #[path = "../../../../stdlib/primitives/rust/src/crumb/semantic_envelope.rs"]
 mod envelope;
 #[path = "../../../../stdlib/primitives/rust/src/crumb/semantic_hash.rs"]
@@ -20,6 +22,8 @@ mod rows;
 use columns::Budget;
 use hash::Value;
 use rows::{Meta, ReadInputs, Record, Rows, admit, get, read_rows};
+
+pub use encoders::{Encoded, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
 
 const MAX_PAYLOAD_BYTES: usize = 67_108_864;
 const PAYLOAD_BUDGET_BYTES: u64 = 268_435_456;
