@@ -121,6 +121,9 @@ pub model UnitDescription:
     pub checked_products: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
+    # The active features only `incan test --feature NAME` adds: testing features that `std.testing.feature(NAME)`
+    # observes during collection. They are no package feature, so a project's shared library is built without them.
+    pub testing_features: list[str] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
     pub manifests: ManifestReader = ManifestReader()
     # Preparation retains the selected compiler generation; it is never serialized as a compiler input field.

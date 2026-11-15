@@ -267,7 +267,7 @@ Runner options select, order and report the collected tests. Each option that ta
 | `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
 | `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. A parametrized case's record also carries `parameters`, its argument values as strings. |
 | `--junit PATH` | Path, none | Writes a JUnit XML report whose class names are modules relative to the working directory. Skipped tests and expected failures are skipped cases. |
-| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
+| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A testing feature is no package feature: it needs no `[features]` entry, and the project's own modules beside its tests are built without it. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
 
 An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, also with `--list`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
