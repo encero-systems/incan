@@ -91,6 +91,10 @@ pub struct UnitDescription {
     /// `c.loaf_library` binding verifies against one and links its archive.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloves: Vec<UnitClove>,
+    /// The declared `[[interop.c.targets]]` entry checked C bindings verify against instead of the host
+    /// (`--interop-target`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c_abi_target: Option<UnitCAbiTarget>,
     /// Producer registration prepared by Oven, in the existing versioned vocabulary descriptor format.
     #[serde(default)]
     pub vocab: Option<PathBuf>,
@@ -238,6 +242,42 @@ pub struct UnitCloveConfiguration {
     pub archive: PathBuf,
     /// The archive's content identity.
     pub identity: String,
+}
+
+/// The declared `[[interop.c.targets]]` entry a unit's checked C bindings verify against instead of the host
+/// (`--interop-target`): its ABI facts, definitions and capability requirements. Verification only; nothing is
+/// cross-compiled for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCAbiTarget {
+    /// The declared target triple.
+    pub target: String,
+    /// An Android target's API level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_level: Option<u32>,
+    /// An iOS target's minimum deployment target, `major.minor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_target: Option<String>,
+    /// The target's preprocessor definitions, `NAME` or `NAME=VALUE`.
+    #[serde(default)]
+    pub definitions: Vec<String>,
+    /// The compatible toolchain capability the selected compiler must provide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<UnitCapabilityRequirement>,
+    /// The compatible SDK capability the selected SDK must provide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<UnitCapabilityRequirement>,
+}
+
+/// A declared toolchain or SDK capability and its semantic-version requirement, empty for any version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCapabilityRequirement {
+    /// The capability's name.
+    pub capability: String,
+    /// The compatible versions, empty for any.
+    #[serde(default)]
+    pub version: String,
 }
 
 /// One Loaf a unit reaches.

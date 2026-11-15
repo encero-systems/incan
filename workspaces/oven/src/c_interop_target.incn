@@ -1,0 +1,80 @@
+"""
+`--interop-target TRIPLE`: the declared `[[interop.c.targets]]` entry a unit's checked C bindings verify against instead
+of the host, as 0.5's `--interop-target` selected one. The selection is verification only; the unit is still built
+for the host, and nothing is cross-compiled.
+"""
+
+from std.json import JsonValue
+from c_interop import CInteropTarget
+from c_interop_requirements import CCapabilityRequirement, CPlatformKind, CTargetPlatform
+
+
+pub model CAbiTargetSelection:
+    """The selected target's ABI facts, definitions and capability requirements, as the compiler reads them."""
+
+    pub target: str
+    pub platform: Option[CTargetPlatform] = None
+    pub definitions: list[str] = []
+    pub toolchain: Option[CCapabilityRequirement] = None
+    pub sdk: Option[CCapabilityRequirement] = None
+
+    pub def to_json(self) -> JsonValue:
+        """The selection as the unit description spells it."""
+        mut fields = {"target": JsonValue.string(self.target), "definitions": JsonValue.array(
+            [JsonValue.string(definition) for definition in self.definitions],
+        )}
+        if let Some(platform) = self.platform:
+            if platform.kind == CPlatformKind.Android:
+                fields["api_level"] = JsonValue.int(platform.api_level)
+            else:
+                fields["deployment_target"] = JsonValue.string(platform.deployment_target)
+        if let Some(toolchain) = self.toolchain:
+            fields["toolchain"] = requirement_json(toolchain)
+        if let Some(sdk) = self.sdk:
+            fields["sdk"] = requirement_json(sdk)
+        return JsonValue.object(fields)
+
+    pub def fact(self) -> str:
+        """The selection as one identity fact: a unit verified against another target is another unit."""
+        mut platform = ""
+        if let Some(selected) = self.platform:
+            platform = f"{selected.kind.value()}:{selected.api_level}:{selected.deployment_target}"
+        mut toolchain = ""
+        if let Some(requirement) = self.toolchain:
+            toolchain = f"{requirement.capability}:{requirement.version}"
+        mut sdk = ""
+        if let Some(requirement) = self.sdk:
+            sdk = f"{requirement.capability}:{requirement.version}"
+        return f"c-abi-target={self.target}|{platform}|{",".join(self.definitions)}|{toolchain}|{sdk}"
+
+
+def requirement_json(requirement: CCapabilityRequirement) -> JsonValue:
+    """A capability requirement; an empty version accepts any version."""
+    return JsonValue.object(
+        {"capability": JsonValue.string(requirement.capability), "version": JsonValue.string(requirement.version)},
+    )
+
+
+pub def select_interop_target(
+    package: str,
+    targets: list[CInteropTarget],
+    triple: str,
+) -> Result[CAbiTargetSelection, str]:
+    """The package's declared entry for `triple`; a target the package does not declare is refused by name."""
+    for target in targets:
+        if target.target == triple:
+            return Ok(
+                CAbiTargetSelection(
+                    target=target.target,
+                    platform=target.platform,
+                    definitions=target.definitions,
+                    toolchain=target.toolchain,
+                    sdk=target.sdk,
+                ),
+            )
+    mut declared = "none"
+    if len(targets) > 0:
+        declared = ", ".join([target.target for target in targets])
+    return Err(
+        f"`--interop-target {triple}` is not a target `{package}` declares; its `[[interop.c.targets]]` are {declared}",
+    )

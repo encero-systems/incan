@@ -1,0 +1,15 @@
+# behavior: `oven inspect interop-plan --target TRIPLE` prints the selected target's requirements: its toolchain and SDK capabilities, its platform fact, its definitions and the system artifacts it needs, as 0.5's plan carried them (#3135)
+# cli-commands:
+#   oven inspect interop-plan --target aarch64-apple-ios
+# expect-stdout:
+#   target aarch64-apple-ios
+#   project interop_plan_requirements
+#     toolchain apple-clang >=17
+#     sdk iphoneos >=18, <28
+#     platform ios 13.0
+#     definition BRIDGE_MOBILE=1
+#     system artifact foundation: apple.framework.Foundation
+#     header interop/include/bridge.h
+
+def main() -> None:
+    println("not run")

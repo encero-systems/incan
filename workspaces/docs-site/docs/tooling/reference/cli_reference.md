@@ -52,10 +52,11 @@ There is no implicit command. Without `PATH`, `run`, `check` and `build` select 
 | `--locked` | Boolean, false | On `oven run`, `oven build` and `oven test`, refuses a missing lock or any resolution that would change it. |
 | `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
 | `--release` | Not accepted | Refused with exit `2`, naming its spelling `--profile release`. |
+| `--interop-target TRIPLE` | Target triple, the host | On `check`, `build`, `test` and `run`, verifies checked C bindings against the package's declared [`[[interop.c.targets]]`](project_configuration.md#interopc) entry for `TRIPLE`: its ABI, definitions and toolchain and SDK requirements. The unit is still built for the host; nothing is cross-compiled. A target the package does not declare, and a requirement the selected C toolchain or SDK does not meet, are refused by name. |
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path; `build` also accepts an `OUTPUT_DIR` after it. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
-`incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--locked` and `--engine-report`.
+`incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--interop-target`, `--locked` and `--engine-report`.
 
 ## `oven lock`
 
@@ -290,19 +291,24 @@ LIBRARY
 
 ## `oven inspect interop-plan`
 
-`oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]` prints what a build for `TRIPLE` (default: the host) links for C interop, from the manifests of the project at or above `PATH` (default `.`) and its path dependencies, without building. For each project it lists its [`[c]` facet](project_configuration.md#c) (library, public headers, and each configuration with its resolved definitions), the static archives the target declares under [`[interop.c]`](project_configuration.md#interopc) in link order, its binding relations and its headers. The text report is:
+`oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]` prints what a build for `TRIPLE` (default: the host) links for C interop, from the manifests of the project at or above `PATH` (default `.`) and its path dependencies, without building. For each project it lists its [`[c]` facet](project_configuration.md#c) (library, public headers, and each configuration with its resolved definitions), the target's requirements, the static archives the target declares under [`[interop.c]`](project_configuration.md#interopc) in link order, its binding relations and its headers. The text report is:
 
 ```text
 target TRIPLE
 project NAME
   clove library LIBRARY: public headers HEADER, ...
     configuration NAME: DEFINITION ...
+  toolchain CAPABILITY REQUIREMENT
+  sdk CAPABILITY REQUIREMENT
+  platform android api-level N | platform ios DEPLOYMENT-TARGET
+  definition DEFINITION
+  system artifact NAME: CAPABILITY
   static archive NAME: PATH (links as LINK), before DEPENDENCY, ...
   binding MODULE.NAME: ARTIFACT, ...
   header HEADER
 ```
 
-`--format json` prints `incan.interop-plan/1` with the same facts, each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
+`--format json` prints `incan.interop-plan/1` with the same facts (the target's under `requirements`), each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
 
 ## `incan mcp`
 

@@ -126,18 +126,28 @@ Accepts a required nonempty string `entry`; `crate` and other keys are refused. 
 
 ## `[interop.c]`
 
-`[interop.c]` accepts only `targets`. Each `[[interop.c.targets]]` entry requires `target`, a target triple, and accepts `headers`, an array of project-relative paths supplied to the checker, `artifacts` and `bindings`. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
+`[interop.c]` accepts only `targets`. Each `[[interop.c.targets]]` entry requires `target`, a target triple declared once per package, and accepts the target's requirements, `headers`, an array of project-relative paths supplied to the checker, `artifacts` and `bindings`. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
 
 ```toml
 [[interop.c.targets]]
-target = "aarch64-apple-darwin"
+target = "aarch64-apple-ios"
+toolchain = { capability = "apple-clang", version = ">=17" }
+sdk = { capability = "iphoneos", version = ">=18" }
+platform = { kind = "ios", deployment-target = "13.0" }
 headers = ["interop/include/bridge.h"]
+definitions = ["BRIDGE_MOBILE=1"]
 
 [[interop.c.targets.artifacts]]
 name = "bridge"
 kind = "static"
 path = "interop/lib/libbridge.a"
 origin = { source = "https://example.invalid/bridge", revision = "v1.2.3", license = "MIT" }
+dependencies = ["foundation"]
+
+[[interop.c.targets.artifacts]]
+name = "foundation"
+kind = "system"
+capability = "apple.framework.Foundation"
 
 [[interop.c.targets.bindings]]
 module = ["bridge"]
@@ -145,19 +155,33 @@ name = "Bridge"
 artifacts = ["bridge"]
 ```
 
-Each `[[interop.c.targets.artifacts]]` entry declares a package-owned archive:
+A target's requirements describe what the package needs; they never name an installation:
+
+| Field | Form | Meaning |
+| --- | --- | --- |
+| `toolchain` | Table of a non-empty `capability` and an optional semantic-version requirement `version`. | The compatible C toolchain: `apple-clang`, `clang` or `android-ndk`. |
+| `sdk` | The same form. | The compatible SDK: `macosx`, `iphoneos`, `iphonesimulator` or `android`. |
+| `definitions` | Array of non-empty `NAME` or `NAME=VALUE` strings. | Preprocessor definitions for verification against this target. |
+| `platform` | `{ kind = "android", api-level = N }` or `{ kind = "ios", deployment-target = "major.minor" }`. | The mobile version fact that completes the target's ABI. |
+
+An Android `platform` belongs to `aarch64-linux-android` only, requires `api-level` 21 or later and the `android` SDK capability. An iOS `platform` belongs to `aarch64-apple-ios`, which requires the `iphoneos` SDK capability, or `aarch64-apple-ios-sim`, which requires `iphonesimulator`; its `deployment-target` is numeric `major.minor`.
+
+Each `[[interop.c.targets.artifacts]]` entry declares a package-owned archive or a system capability:
 
 | Field | Form | Meaning |
 | --- | --- | --- |
 | `name` | Required identifier, unique within the target. | The artifact's package-local name. |
-| `kind` | Required: `static`. | A static archive linked into the units that link a binding naming it. |
-| `path` | Required path to `lib<link>.a`, inside the package. | The archive; `<link>` is the link name a binding's `c.system_library("<link>")` uses. |
-| `dependencies` | Array of other artifact names of the same target. | Archives this one needs; they link after it. |
-| `origin` | Table of `source` (an HTTPS URL), `revision` and `license`, all non-empty. | Upstream provenance of the package's copy; never downloaded. |
+| `kind` | Required: `static` or `system`. | A `static` archive is linked into the units that link a binding naming it; a `system` artifact is a library or framework the selected toolchain or SDK supplies. |
+| `path` | `static` only: required path to `lib<link>.a`, inside the package. | The archive; `<link>` is the link name a binding's `c.system_library("<link>")` uses. |
+| `capability` | `system` only: required, non-empty. | The toolchain or SDK capability, such as `apple.framework.Foundation` or `android.library.log`. |
+| `dependencies` | Array of other artifact names of the same target. | Artifacts this one needs; archives link after the archives that need them. |
+| `origin` | `static` only: table of `source` (an HTTPS URL), `revision` and `license`, all non-empty. | Upstream provenance of the package's copy; never downloaded. |
 
-Each `[[interop.c.targets.bindings]]` entry relates one checked binding, by its `module` (a non-empty array of names) and `name`, to the artifacts (`artifacts`, a non-empty array of distinct declared names) that provide its symbols; the relation is never inferred from a header, library name or file name. A build for the host target links every declared static artifact of the package's units as a static library, an archive before the archives it depends on, and an archive's bytes are part of the identity of each unit that links it.
+Each `[[interop.c.targets.bindings]]` entry relates one checked binding, by its `module` (a non-empty array of names) and `name`, to the artifacts (`artifacts`, a non-empty array of distinct declared names) that provide its symbols; the relation is never inferred from a header, library name or file name. A build for the host target links every declared static artifact of the package's units as a static library, an archive before the archives it depends on, and an archive's bytes are part of the identity of each unit that links it. A `system` artifact is recorded in the [interop plan](cli_reference.md#oven-inspect-interop-plan), not linked.
 
-- Refused: an unknown key; a missing `target`, `name`, `kind` or `path`; a `kind` other than `static`; a path outside the package or not named `lib<link>.a`; an artifact declared twice; a dependency or relation that names an undeclared artifact; an `origin` without an HTTPS `source`, `revision` or `license`; and, at build time, a declared archive that is not a file.
+`check`, `build`, `test` and `run` verify checked C bindings against the host. With `--interop-target TRIPLE` they verify them against the package's declared entry for `TRIPLE` instead: its ABI, its `definitions`, and its `toolchain` and `sdk` requirements, which the selected C toolchain and SDK must meet. The unit is still built for the host. See [Checked C bindings](../../language/how-to/checked_c_bindings.md#verify-against-a-declared-target).
+
+- Refused: an unknown key; a missing `target`, `name`, `kind`, `path` or `capability`; a target declared twice; a capability requirement whose `version` is not a version requirement; an empty definition; a `platform` on another target, with an Android API level below 21, a malformed iOS deployment target, or without its SDK capability; a `kind` other than `static` and `system`; a static path outside the package or not named `lib<link>.a`; a static artifact with a `capability`, or a system artifact with a `path` or `origin`; an artifact declared twice; a dependency or relation that names an undeclared artifact; an `origin` without an HTTPS `source`, `revision` or `license`; and, at build time, a declared archive that is not a file.
 
 ## `[c]`
 

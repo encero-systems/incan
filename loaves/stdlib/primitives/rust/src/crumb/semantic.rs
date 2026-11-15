@@ -5,6 +5,13 @@ use std::time::Instant;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+#[path = "semantic_adaptation.rs"]
+mod adaptation;
+#[path = "semantic_hash.rs"]
+mod hash;
+#[path = "semantic_print.rs"]
+mod print;
+
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {
     /// Zero is a completed semantic operation; one means that operation is not implemented natively.
@@ -21,19 +28,23 @@ pub struct SemanticCase {
 
 /// Exercise one corpus case through the native semantic boundary without borrowing an Incan result.
 ///
-/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec.
+/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec. Timing
+/// starts after the corpus document is parsed, so both stages measure the codec rather than the JSON reader.
 pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCase {
-    let encode_started = Instant::now();
     let parsed = match serde_json::from_str::<Value>(&document) {
         Ok(value) => value,
         Err(_) => return SemanticCase::unsupported(),
     };
+    let encode_started = Instant::now();
     let encoded = match operation.as_str() {
         "member_identity" => member_identity(&parsed),
         "nominal_identity" => nominal_identity(&parsed),
         "type_selector" => type_selector(&parsed),
         "shape_admission" => shape_admission(&parsed),
         "value_relation" => value_relation(&parsed),
+        "hash_preimage" => hash_preimage(&parsed),
+        "adaptation" => adaptation::adaptation(&parsed),
+        "text_print" => print::text_print(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -41,8 +52,14 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         return SemanticCase::unsupported();
     };
     let decode_started = Instant::now();
-    let decoded = encoded.clone();
+    let decoded = match operation.as_str() {
+        "hash_preimage" => verify_preimage(&encoded),
+        _ => Some(encoded.clone()),
+    };
     let decode_ns = elapsed_ns(decode_started);
+    let Some(decoded) = decoded else {
+        return SemanticCase::unsupported();
+    };
     SemanticCase {
         kind: 0,
         encoded,
@@ -50,6 +67,45 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         encode_ns,
         decode_ns,
     }
+}
+
+/// Encode one derived preimage as a frame followed by its complete SHA-256 digest.
+fn hash_preimage(document: &Value) -> Option<Vec<u8>> {
+    let (preimage, digest) = hash::hash_preimage(document)?;
+    let mut encoded = Vec::with_capacity(preimage.len() + 40);
+    append_frame(&mut encoded, &preimage);
+    encoded.extend_from_slice(&digest);
+    Some(encoded)
+}
+
+/// Read a preimage frame back, require its trailing digest to match, and rebuild the comparison bytes.
+fn verify_preimage(encoded: &[u8]) -> Option<Vec<u8>> {
+    let (length, start) = read_unsigned(encoded)?;
+    let end = start.checked_add(usize::try_from(length).ok()?)?;
+    let preimage = encoded.get(start..end)?;
+    let digest = encoded.get(end..)?;
+    if digest != Sha256::digest(preimage).as_slice() {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(encoded.len());
+    append_frame(&mut decoded, preimage);
+    decoded.extend_from_slice(digest);
+    Some(decoded)
+}
+
+/// Read one shortest base-128 count, refusing overlong or truncated groups.
+fn read_unsigned(data: &[u8]) -> Option<(u64, usize)> {
+    let mut value = 0u64;
+    for (index, byte) in data.iter().enumerate().take(10) {
+        value |= u64::from(byte & 0x7f).checked_shl(7 * index as u32)?;
+        if byte & 0x80 == 0 {
+            if index > 0 && *byte == 0 {
+                return None;
+            }
+            return Some((value, index + 1));
+        }
+    }
+    None
 }
 
 /// Compute one member identity from the independently supplied earliest name.
@@ -423,6 +479,68 @@ mod tests {
         let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
         assert_eq!(unsupported.kind, 1);
         assert!(unsupported.encoded.is_empty());
+    }
+
+    #[test]
+    fn adaptation_widens_integers_and_refuses_other_nominals() {
+        let widen = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i32","canonical":true,"absent":"required"}]},"requested":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i64","canonical":true,"absent":"required"}]},"values":[{"kind":"int","type":"i32","value":"12"}]}"#.to_string(),
+        );
+        assert_eq!(widen.kind, 0);
+        assert_eq!(widen.encoded[0], 0);
+        assert_eq!(&widen.encoded[widen.encoded.len() - 3..], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[]},"requested":{"nominal":"example.Supplier","fields":[]},"values":[]}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert_eq!(&refused.encoded[..17], b"\x01\x0fNominalMismatch");
+        assert_eq!(&refused.encoded[17..], b"\x08/nominal");
+    }
+
+    #[test]
+    fn text_print_groups_consecutive_records_as_rows() {
+        let printed = evaluate_semantic_case(
+            "text_print".to_string(),
+            r#"{"document":{"descriptions":[{"path":"example.Point","kind":"Record","fields":[{"name":"x","type":"i64","absent":"required","canonical":true},{"name":"y","type":"i64","absent":"required","canonical":true}]}],"values":[{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"1"},"y":{"kind":"int","type":"i64","value":"2"}}},{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"3"},"y":{"kind":"int","type":"i64","value":"4"}}}]}}"#.to_string(),
+        );
+        assert_eq!(printed.kind, 0);
+        assert_eq!(
+            printed.encoded,
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n"
+        );
+        assert_eq!(printed.encoded, printed.decoded);
+    }
+
+    #[test]
+    fn hash_preimages_order_sets_and_spell_enum_payload_records() {
+        let cases = [
+            (
+                r#"{"projection":"object","input":{"kind":"set","items":[{"kind":"int","type":"i64","value":"128"},{"kind":"int","type":"i64","value":"-1"},{"kind":"int","type":"i64","value":"0"}]}}"#,
+                "6372756d623100010a0302010200028002",
+            ),
+            (
+                r#"{"projection":"model","input":{"type":{"kind":"enum","key":"E","variants":[{"id":"013f54400c82","fields":[]}]}}}"#,
+                "6372756d623100031b656e756d7b3031336635343430306338323a7265636f72647b7d7d",
+            ),
+        ];
+        for (document, preimage) in cases {
+            let result = evaluate_semantic_case("hash_preimage".to_string(), document.to_string());
+            assert_eq!(result.kind, 0);
+            let decoded: Option<Vec<u8>> = (0..preimage.len())
+                .step_by(2)
+                .map(|index| u8::from_str_radix(&preimage[index..index + 2], 16).ok())
+                .collect();
+            let Some(preimage) = decoded else {
+                panic!("invalid test hexadecimal");
+            };
+            assert_eq!(result.encoded[0] as usize, preimage.len());
+            assert_eq!(&result.encoded[1..=preimage.len()], preimage.as_slice());
+            assert_eq!(result.encoded.len(), 1 + preimage.len() + 32);
+            assert_eq!(result.encoded, result.decoded);
+        }
     }
 
     #[test]

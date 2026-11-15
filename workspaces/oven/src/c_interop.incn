@@ -1,7 +1,8 @@
 """
-The `[interop.c]` table: per-target headers, package-owned static archives and the explicit binding-to-archive
-relation (RFC 116, carried forward from 0.5's `[oven.interop]`). Intake reads no file; a unit identifies the archives it
-links by their bytes.
+The `[interop.c]` table: what each target requires (toolchain and SDK capabilities, definitions, mobile platform facts),
+its package-owned static archives and system capabilities, and the explicit binding-to-artifact relation (RFC 116,
+carried forward from 0.5's `[oven.interop]`). Intake reads no file; a unit identifies the archives it links by their
+bytes.
 """
 
 from rust::std::env::consts import ARCH, OS
@@ -12,11 +13,37 @@ from std.toml import TomlValue
 from manifest_errors import IntakeError, IntakeErrorKind
 from cfg_predicate import identifier
 from c_facet import as_table, as_text, as_texts, known_keys, loaf_path_refusal, refused
+from c_interop_requirements import (
+    CCapabilityRequirement,
+    CTargetPlatform,
+    check_platform,
+    definitions_entry,
+    platform_entry,
+    requirement_entry,
+)
 
-const TARGET_KEYS: FrozenList[str] = ["target", "headers", "artifacts", "bindings"]
-const ARTIFACT_KEYS: FrozenList[str] = ["name", "kind", "path", "dependencies", "origin"]
+const TARGET_KEYS: FrozenList[str] = [
+    "target",
+    "toolchain",
+    "sdk",
+    "platform",
+    "headers",
+    "definitions",
+    "artifacts",
+    "bindings",
+]
+const ARTIFACT_KEYS: FrozenList[str] = ["name", "kind", "path", "dependencies", "origin", "capability"]
 const BINDING_KEYS: FrozenList[str] = ["module", "name", "artifacts"]
 const ORIGIN_KEYS: FrozenList[str] = ["source", "revision", "license"]
+
+
+pub enum CArtifactKind(str):
+    """How a target consumes a declared artifact."""
+
+    # A package-owned archive linked into the units that link the target's bindings.
+    Static = "static"
+    # A library or framework the selected toolchain or SDK supplies, named by its capability.
+    System = "system"
 
 
 @derive(Eq)
@@ -29,21 +56,25 @@ pub model CArtifactOrigin:
 
 
 @derive(Eq)
-pub model CStaticArtifact:
-    """A package-owned static archive (`kind = "static"`), linked into the units that link a binding naming it."""
+pub model CInteropArtifact:
+    """One `[[interop.c.targets.artifacts]]` entry."""
 
     pub name: str
-    # Loaf-relative path of `lib<link_name>.a`.
-    pub path: str
-    pub link_name: str
-    # Artifacts of the same target this archive needs, linked after it.
+    pub kind: CArtifactKind
+    # Loaf-relative path of a package-owned file; empty for a system artifact.
+    pub path: str = ""
+    # A static archive `lib<link_name>.a`'s link name.
+    pub link_name: str = ""
+    # Artifacts of the same target this one needs, linked or loaded after it.
     pub dependencies: list[str] = []
     pub origin: Option[CArtifactOrigin] = None
+    # A system artifact's toolchain or SDK capability.
+    pub capability: str = ""
 
 
 @derive(Eq)
 pub model CArtifactBinding:
-    """The explicit relation between one checked binding and the archives that provide its symbols."""
+    """The explicit relation between one checked binding and the artifacts that provide its symbols."""
 
     pub module: list[str]
     pub name: str
@@ -55,13 +86,17 @@ pub model CInteropTarget:
     """One `[[interop.c.targets]]` entry."""
 
     pub target: str
+    pub toolchain: Option[CCapabilityRequirement] = None
+    pub sdk: Option[CCapabilityRequirement] = None
+    pub platform: Option[CTargetPlatform] = None
     pub headers: list[str] = []
-    pub artifacts: list[CStaticArtifact] = []
+    pub definitions: list[str] = []
+    pub artifacts: list[CInteropArtifact] = []
     pub bindings: list[CArtifactBinding] = []
 
 
 pub def parse_c_targets(root: Dict[str, TomlValue], manifest: str) -> Result[list[CInteropTarget], IntakeError]:
-    """Every `[[interop.c.targets]]` entry, validated."""
+    """Every `[[interop.c.targets]]` entry, validated; each target triple is declared once."""
     if "interop" not in root:
         return Ok([])
     interop = as_table(root["interop"], manifest, ["interop"])?
@@ -77,17 +112,31 @@ pub def parse_c_targets(root: Dict[str, TomlValue], manifest: str) -> Result[lis
         .map_err((error) => refused(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
     mut targets: list[CInteropTarget] = []
     for index in range(len(entries)):
-        targets.append(target_entry(entries[index], manifest, ["interop", "c", "targets", str(index)])?)
+        field = ["interop", "c", "targets", str(index)]
+        target = target_entry(entries[index], manifest, field)?
+        if target.target in [known.target for known in targets]:
+            return Err(
+                refused(
+                    manifest,
+                    field + ["target"],
+                    IntakeErrorKind.Invalid,
+                    f"target `{target.target}` is declared twice",
+                ),
+            )
+        targets.append(target)
     return Ok(targets)
 
 
 def target_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CInteropTarget, IntakeError]:
-    """One target: its triple, headers, archives and binding relations."""
+    """One target: its triple, requirements, headers, artifacts and binding relations."""
     entry = as_table(value, manifest, field)?
     known_keys(entry, list(TARGET_KEYS), manifest, field)?
     if "target" not in entry:
         return Err(refused(manifest, field + ["target"], IntakeErrorKind.Missing, "required field target"))
-    mut target = CInteropTarget(target=as_text(entry["target"], manifest, field + ["target"])?)
+    triple = as_text(entry["target"], manifest, field + ["target"])?
+    if triple.strip() == "":
+        return Err(refused(manifest, field + ["target"], IntakeErrorKind.Invalid, "an empty target triple"))
+    mut target = requirements(entry, CInteropTarget(target=triple), manifest, field)?
     if "headers" in entry:
         target.headers = as_texts(entry["headers"], manifest, field + ["headers"])?
     if "artifacts" in entry:
@@ -127,8 +176,29 @@ def target_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CI
     return Ok(target)
 
 
-def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CStaticArtifact, IntakeError]:
-    """One `[[interop.c.targets.artifacts]]`; this toolchain links `static` archives."""
+def requirements(
+    entry: Dict[str, TomlValue],
+    target: CInteropTarget,
+    manifest: str,
+    field: list[str],
+) -> Result[CInteropTarget, IntakeError]:
+    """The target's toolchain and SDK capabilities, definitions and platform facts, validated together."""
+    mut required = target
+    if "toolchain" in entry:
+        required.toolchain = Some(requirement_entry(entry["toolchain"], manifest, field + ["toolchain"])?)
+    if "sdk" in entry:
+        required.sdk = Some(requirement_entry(entry["sdk"], manifest, field + ["sdk"])?)
+    if "definitions" in entry:
+        required.definitions = definitions_entry(entry["definitions"], manifest, field + ["definitions"])?
+    if "platform" in entry:
+        platform = platform_entry(entry["platform"], manifest, field + ["platform"])?
+        check_platform(required.target, platform, required.sdk, manifest, field)?
+        required.platform = Some(platform)
+    return Ok(required)
+
+
+def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CInteropArtifact, IntakeError]:
+    """One `[[interop.c.targets.artifacts]]`: a `static` archive or a `system` capability."""
     entry = as_table(value, manifest, field)?
     known_keys(entry, list(ARTIFACT_KEYS), manifest, field)?
     for key in ["name", "kind"]:
@@ -138,13 +208,39 @@ def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[
     if not identifier(name):
         return Err(refused(manifest, field + ["name"], IntakeErrorKind.Invalid, f"`{name}` is not an artifact name"))
     kind = as_text(entry["kind"], manifest, field + ["kind"])?
-    if kind != "static":
+    mut artifact = CInteropArtifact(name=name, kind=CArtifactKind.Static)
+    if kind == CArtifactKind.Static.value():
+        artifact = static_artifact(entry, name, manifest, field)?
+    elif kind == CArtifactKind.System.value():
+        artifact = system_artifact(entry, name, manifest, field)?
+    else:
         return Err(
             refused(
                 manifest,
                 field + ["kind"],
                 IntakeErrorKind.Unsupported,
-                f"artifact kind `{kind}` is not supported; this toolchain links `static` archives",
+                f"artifact kind `{kind}` is not supported; an artifact is `static` or `system`",
+            ),
+        )
+    if "dependencies" in entry:
+        artifact.dependencies = as_texts(entry["dependencies"], manifest, field + ["dependencies"])?
+    return Ok(artifact)
+
+
+def static_artifact(
+    entry: Dict[str, TomlValue],
+    name: str,
+    manifest: str,
+    field: list[str],
+) -> Result[CInteropArtifact, IntakeError]:
+    """A package-owned `lib<name>.a` archive, with an optional origin."""
+    if "capability" in entry:
+        return Err(
+            refused(
+                manifest,
+                field + ["capability"],
+                IntakeErrorKind.Invalid,
+                f"static artifact `{name}` cannot declare a system capability",
             ),
         )
     if "path" not in entry:
@@ -163,12 +259,40 @@ def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[
                 f"`{path}` is not a static archive named `lib<name>.a`",
             ),
         )
-    mut artifact = CStaticArtifact(name=name, path=path, link_name=link_name)
-    if "dependencies" in entry:
-        artifact.dependencies = as_texts(entry["dependencies"], manifest, field + ["dependencies"])?
+    mut artifact = CInteropArtifact(name=name, kind=CArtifactKind.Static, path=path, link_name=link_name)
     if "origin" in entry:
         artifact.origin = Some(origin_entry(entry["origin"], manifest, field + ["origin"])?)
     return Ok(artifact)
+
+
+def system_artifact(
+    entry: Dict[str, TomlValue],
+    name: str,
+    manifest: str,
+    field: list[str],
+) -> Result[CInteropArtifact, IntakeError]:
+    """A capability the selected toolchain or SDK supplies; it names no package file and no origin."""
+    for key in ["path", "origin"]:
+        if key in entry:
+            mut what = "a package path"
+            if key == "origin":
+                what = "a package-artifact origin"
+            return Err(
+                refused(
+                    manifest,
+                    field + [key],
+                    IntakeErrorKind.Invalid,
+                    f"system artifact `{name}` cannot declare {what}",
+                ),
+            )
+    if "capability" not in entry:
+        return Err(
+            refused(manifest, field + ["capability"], IntakeErrorKind.Missing, "a system artifact requires capability"),
+        )
+    capability = as_text(entry["capability"], manifest, field + ["capability"])?.strip()
+    if capability == "":
+        return Err(refused(manifest, field + ["capability"], IntakeErrorKind.Invalid, "empty capability"))
+    return Ok(CInteropArtifact(name=name, kind=CArtifactKind.System, capability=capability))
 
 
 def origin_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CArtifactOrigin, IntakeError]:
@@ -230,19 +354,20 @@ def binding_entry(
     return Ok(CArtifactBinding(module=module, name=name, artifacts=artifacts))
 
 
-pub def linked_artifacts(target: CInteropTarget) -> list[CStaticArtifact]:
+pub def linked_artifacts(target: CInteropTarget) -> list[CInteropArtifact]:
     """
     Every static archive the target declares, each once, an archive before the archives it needs, so a single-pass
     linker resolves them. The binding relations name which archives provide which binding; every declared static
-    archive is linked into the package's units.
+    archive is linked into the package's units. A system artifact is a capability the selected toolchain or SDK
+    supplies; it orders the archives that need it but is not a file to link.
     """
     mut order: list[str] = []
     for artifact in target.artifacts:
         order = with_dependencies(target, artifact.name, order, [])
-    mut linked: list[CStaticArtifact] = []
+    mut linked: list[CInteropArtifact] = []
     for name in order:
         for artifact in target.artifacts:
-            if artifact.name == name:
+            if artifact.name == name and artifact.kind == CArtifactKind.Static:
                 linked.append(artifact)
     return linked
 

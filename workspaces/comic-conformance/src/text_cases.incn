@@ -117,7 +117,7 @@ def copied_bytes(value: bytes) -> bytes:
     return copied
 
 
-def corpus_document(value: JsonValue, context: TextContext, mut budget: Budget) -> Result[TextDocument, str]:
+pub def corpus_document(value: JsonValue, context: TextContext, mut budget: Budget) -> Result[TextDocument, str]:
     """Translate independent corpus notation into the production printer carrier."""
     mut descriptions: list[TextDescription] = []
     for item in array(value, "descriptions")?:

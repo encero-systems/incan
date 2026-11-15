@@ -1,0 +1,234 @@
+"""
+What one `[[interop.c.targets]]` entry requires beyond its files, carried forward from 0.5's `[oven.interop]`: the
+compatible `toolchain` and `sdk` capabilities, the preprocessor `definitions` and the Android or iOS `platform` facts. These
+are package requirements; the toolchain, SDK and sysroot a check selects are recorded separately and never searched for.
+"""
+
+from std.toml import TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from semver_req import parse_requirement
+from c_facet import as_table, as_text, as_texts, known_keys, refused
+
+const REQUIREMENT_KEYS: FrozenList[str] = ["capability", "version"]
+const PLATFORM_KEYS: FrozenList[str] = ["kind", "api-level", "deployment-target"]
+const ANDROID_TARGET: str = "aarch64-linux-android"
+const IOS_DEVICE_TARGET: str = "aarch64-apple-ios"
+const IOS_SIMULATOR_TARGET: str = "aarch64-apple-ios-sim"
+const MINIMUM_ANDROID_API_LEVEL: int = 21
+
+
+pub enum CPlatformKind(str):
+    """The mobile platforms whose version facts complete a target's ABI."""
+
+    Android = "android"
+    Ios = "ios"
+
+
+@derive(Eq)
+pub model CCapabilityRequirement:
+    """A compatible toolchain or SDK capability and an optional semantic-version requirement; never a selection."""
+
+    pub capability: str
+    # Empty when any version of the capability is compatible.
+    pub version: str = ""
+
+    pub def shown(self) -> str:
+        """`capability` or `capability (requirement)`."""
+        if self.version == "":
+            return f"`{self.capability}`"
+        return f"`{self.capability}` (`{self.version}`)"
+
+
+@derive(Eq)
+pub model CTargetPlatform:
+    """A mobile target's version fact: an Android API level or an iOS deployment target."""
+
+    pub kind: CPlatformKind
+    pub api_level: int = 0
+    pub deployment_target: str = ""
+
+
+pub def requirement_entry(
+    value: TomlValue,
+    manifest: str,
+    field: list[str],
+) -> Result[CCapabilityRequirement, IntakeError]:
+    """A `{ capability = "...", version = "..." }` table, the version a valid requirement."""
+    entry = as_table(value, manifest, field)?
+    known_keys(entry, list(REQUIREMENT_KEYS), manifest, field)?
+    if "capability" not in entry:
+        return Err(refused(manifest, field + ["capability"], IntakeErrorKind.Missing, "required field capability"))
+    capability = as_text(entry["capability"], manifest, field + ["capability"])?.strip()
+    if capability == "":
+        return Err(refused(manifest, field + ["capability"], IntakeErrorKind.Invalid, "empty capability"))
+    mut requirement = CCapabilityRequirement(capability=capability)
+    if "version" in entry:
+        version = as_text(entry["version"], manifest, field + ["version"])?.strip()
+        match parse_requirement(version):
+            Err(reason) =>
+                return Err(
+                    refused(
+                        manifest,
+                        field + ["version"],
+                        IntakeErrorKind.Invalid,
+                        f"`{version}` is not a version requirement: {reason}",
+                    ),
+                )
+            Ok(_) => pass
+        requirement.version = version
+    return Ok(requirement)
+
+
+pub def definitions_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """Preprocessor definitions, `NAME` or `NAME=VALUE`, none of them empty."""
+    definitions = as_texts(value, manifest, field)?
+    for index in range(len(definitions)):
+        if definitions[index].strip() == "":
+            return Err(
+                refused(manifest, field + [str(index)], IntakeErrorKind.Invalid, "an empty preprocessor definition"),
+            )
+    return Ok(definitions)
+
+
+pub def platform_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CTargetPlatform, IntakeError]:
+    """`{ kind = "android", api-level = N }` or `{ kind = "ios", deployment-target = "major.minor" }`."""
+    entry = as_table(value, manifest, field)?
+    known_keys(entry, list(PLATFORM_KEYS), manifest, field)?
+    if "kind" not in entry:
+        return Err(refused(manifest, field + ["kind"], IntakeErrorKind.Missing, "required field kind"))
+    kind = as_text(entry["kind"], manifest, field + ["kind"])?
+    if kind == CPlatformKind.Android.value():
+        if "deployment-target" in entry:
+            return Err(
+                refused(
+                    manifest,
+                    field + ["deployment-target"],
+                    IntakeErrorKind.Invalid,
+                    "an Android platform declares api-level",
+                ),
+            )
+        if "api-level" not in entry:
+            return Err(refused(manifest, field + ["api-level"], IntakeErrorKind.Missing, "required field api-level"))
+        level = entry["api-level"]
+            .as_int()
+            .map_err((error) => refused(manifest, field + ["api-level"], IntakeErrorKind.Invalid, error.message()))?
+        return Ok(CTargetPlatform(kind=CPlatformKind.Android, api_level=level))
+    if kind == CPlatformKind.Ios.value():
+        if "api-level" in entry:
+            return Err(
+                refused(manifest, field + ["api-level"], IntakeErrorKind.Invalid, "an iOS platform declares deployment-target"),
+            )
+        if "deployment-target" not in entry:
+            return Err(
+                refused(manifest, field + ["deployment-target"], IntakeErrorKind.Missing, "required field deployment-target"),
+            )
+        version = as_text(entry["deployment-target"], manifest, field + ["deployment-target"])?
+        return Ok(CTargetPlatform(kind=CPlatformKind.Ios, deployment_target=version))
+    return Err(
+        refused(manifest, field + ["kind"], IntakeErrorKind.Invalid, f"platform kind `{kind}` is not `android` or `ios`"),
+    )
+
+
+pub def check_platform(
+    target: str,
+    platform: CTargetPlatform,
+    sdk: Option[CCapabilityRequirement],
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """A platform fits its target triple, its version fact is well formed, and the target names the platform's SDK."""
+    at = field + ["platform"]
+    match platform.kind:
+        CPlatformKind.Android =>
+            if target != ANDROID_TARGET:
+                return Err(
+                    refused(
+                        manifest,
+                        at,
+                        IntakeErrorKind.Invalid,
+                        f"Android platform facts require the `{ANDROID_TARGET}` target, found `{target}`",
+                    ),
+                )
+            if platform.api_level < MINIMUM_ANDROID_API_LEVEL:
+                return Err(
+                    refused(
+                        manifest,
+                        at + ["api-level"],
+                        IntakeErrorKind.Invalid,
+                        f"Android arm64 target `{target}` requires API level {MINIMUM_ANDROID_API_LEVEL} or later, found {platform.api_level}",
+                    ),
+                )
+            return platform_sdk(sdk, "android", "Android", target, manifest, field)
+        CPlatformKind.Ios =>
+            if target != IOS_DEVICE_TARGET and target != IOS_SIMULATOR_TARGET:
+                return Err(
+                    refused(
+                        manifest,
+                        at,
+                        IntakeErrorKind.Invalid,
+                        f"iOS platform facts require `{IOS_DEVICE_TARGET}` or `{IOS_SIMULATOR_TARGET}`, found `{target}`",
+                    ),
+                )
+            if not numeric_version(platform.deployment_target):
+                return Err(
+                    refused(
+                        manifest,
+                        at + ["deployment-target"],
+                        IntakeErrorKind.Invalid,
+                        f"iOS deployment target `{platform.deployment_target}` for `{target}` must be a numeric `major.minor` version",
+                    ),
+                )
+            return platform_sdk(sdk, ios_sdk(target), "iOS", target, manifest, field)
+
+
+pub def ios_sdk(target: str) -> str:
+    """The one SDK capability an iOS device or simulator target is built against."""
+    if target == IOS_SIMULATOR_TARGET:
+        return "iphonesimulator"
+    return "iphoneos"
+
+
+def platform_sdk(
+    sdk: Option[CCapabilityRequirement],
+    expected: str,
+    platform: str,
+    target: str,
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """A mobile target names the SDK capability its platform is built against."""
+    match sdk:
+        None =>
+            return Err(
+                refused(
+                    manifest,
+                    field + ["sdk"],
+                    IntakeErrorKind.Missing,
+                    f"{platform} target `{target}` requires the `{expected}` SDK capability",
+                ),
+            )
+        Some(requirement) =>
+            if requirement.capability != expected:
+                return Err(
+                    refused(
+                        manifest,
+                        field + ["sdk"],
+                        IntakeErrorKind.Invalid,
+                        f"{platform} target `{target}` requires the `{expected}` SDK capability, found `{requirement.capability}`",
+                    ),
+                )
+            return Ok(None)
+
+
+def numeric_version(value: str) -> bool:
+    """`major.minor` or longer, every component ASCII digits."""
+    parts = value.split(".")
+    if len(parts) < 2:
+        return false
+    for part in parts:
+        if part == "":
+            return false
+        for character in part:
+            if character not in "0123456789":
+                return false
+    return true
