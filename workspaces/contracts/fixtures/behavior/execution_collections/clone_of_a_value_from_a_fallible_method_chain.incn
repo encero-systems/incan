@@ -1,0 +1,20 @@
+# behavior: a value taken with `?` from a chain of Result methods has its checked type, so `.clone()` on it gives an independent value of that type and arithmetic on both type-checks (#1846).
+# pending: the check does not know the type of `reused` after `and_then(...).map_err(...)?`: "Type mismatch: expected 'numeric', found '? + ?'"; a build that only clones it stops in lowering with "unsupported Body IR type Unknown".
+# expect-stdout:
+#   Ok(6)
+
+def field(value: int) -> Result[int, str]:
+    if value < 0:
+        return Err("negative")
+    return Ok(value)
+
+
+def counts(value: int) -> Result[int, str]:
+    reused = field(value).and_then((found) => field(found + 1)).map_err((error) => f"bad: {error}")?
+    mut decoded = reused.clone()
+    decoded += 1
+    return Ok(decoded + reused)
+
+
+def main() -> None:
+    println(counts(1))

@@ -1,0 +1,15 @@
+# behavior: `.clone()` gives an independent value for a scalar read out of a list element and for a constant of a sized integer type, as it does for a plain local (RFC 129's copy spelling, #1846).
+# pending: lowering refuses the element with "unsupported Body IR model index or slice projection" and the sized constant with "unsupported Body IR scalar literal borrow of another type".
+# expect-stdout:
+#   [0, 2, 1, 3] 420
+
+const OPEN_FILE: u32 = 420
+
+
+def main() -> None:
+    mut order = [index for index in range(4)]
+    held = order[1].clone()
+    order[1] = order[2]
+    order[2] = held
+    mut mode = OPEN_FILE.clone()
+    println(f"{order} {mode}")
