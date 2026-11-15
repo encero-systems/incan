@@ -159,7 +159,7 @@ pub def checked_list_argument(
         _ => return Err("unsupported Body IR constant list argument")
 
 
-def has_slice_projection(source: &RustPlace) -> bool:
+pub def has_slice_projection(source: &RustPlace) -> bool:
     """Recognize a projection that materializes a fresh sequence owner instead of naming stored element storage."""
     for projection in source.projection:
         match projection:
