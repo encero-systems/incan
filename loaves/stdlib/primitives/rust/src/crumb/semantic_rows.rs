@@ -617,7 +617,7 @@ fn validate_selectors(source: &Meta, kinds: &[(String, bool)], budget: &mut Budg
 }
 
 /// One named property of a metadata map.
-fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
+pub(super) fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
     let Meta::Map(entries) = value else { return None };
     entries.iter().find(|(key, _)| key == name).map(|(_, value)| value)
 }
@@ -682,7 +682,12 @@ fn record_kind(metadata: &Meta, kinds: &[(String, bool)], budget: &mut Budget) -
 }
 
 /// Admit one complete description: its D digest, kind, K, path, properties and member tables.
-fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Budget) -> Result<Stored, Refused> {
+pub(super) fn admit(
+    metadata: Meta,
+    inline: bool,
+    kinds: &[(String, bool)],
+    budget: &mut Budget,
+) -> Result<Stored, Refused> {
     let mut encoded = b"crumb1\x00\x05".to_vec();
     budget.bytes(8)?;
     encode_metadata(&metadata, &mut encoded, budget)?;
