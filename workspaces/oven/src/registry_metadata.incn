@@ -10,9 +10,9 @@ from registry_units import RegistryUnit, sole_library
 from rust_target import decoded
 from toolchain import load_toolchain, rust_compiler
 from jec import begin, record
+from frozen_inputs import REGISTRY_COMPLETION
 
 # The selection under which a closure's completion is retained, followed by the pinned compiler that read it.
-pub const COMPLETION: str = "registry-completion/2"
 
 
 pub def complete_legacy(units: list[RegistryUnit]) -> Result[list[RegistryUnit], str]:
@@ -32,7 +32,7 @@ def has_native_metadata(unit: RegistryUnit) -> bool:
 
 pub def completion_selection(rustc: str) -> Result[str, str]:
     """The exact compiler generation that interprets a completed closure, separate from project locks."""
-    return Ok(f"{COMPLETION}:{rustc}:{observe(Path(rustc))?.stamp}")
+    return Ok(f"{REGISTRY_COMPLETION}:{rustc}:{observe(Path(rustc))?.stamp}")
 
 
 def completed_units(units: list[RegistryUnit], rustc: str, sysroot: str) -> Result[list[RegistryUnit], str]:

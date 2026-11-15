@@ -6,13 +6,36 @@ from std.hash import sha256
 from files import json_text, read_json
 from json_fields import required_text
 from std.json import JsonValue
-from observation import file_digest, observe
+from observation import Observation, file_digest, observe
 from publication import publish
 from home_paths import home
 from payload_types import PayloadAdmission
 from frozen_inputs import payload as frozen_payload
+from frozen_inputs import admit_registry_stores, cached_registry_store, registry_selection
+from registry_pages import question as registry_question, recall_catalog
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
+
+
+def registry_store_admitted(entries: str) -> Result[bool, str]:
+    """Derive the selected closure's stores once from its sealed catalog, without reopening a frozen input."""
+    path, identity, compiler = registry_selection()
+    if path == "":
+        return Ok(false)
+    key = registry_question(Path(path), Observation(stamp=identity, newest=0), compiler)?
+    if let Some(admitted) = cached_registry_store(key, entries):
+        return Ok(admitted)
+    catalog = match recall_catalog(key)?:
+        None => return Err("unit identity refused: selected toolchain registry closure has no admitted catalog")
+        Some(found) => found
+    mut stores: list[str] = []
+    for unit in catalog.units:
+        if unit.entry != "":
+            store = Path(unit.directory).parent().parent().0
+            if store not in stores:
+                stores.append(store)
+    admit_registry_stores(key, stores)
+    return Ok(entries in stores)
 
 
 pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
@@ -115,7 +138,7 @@ pub def published_identity(path: Path) -> Result[str, str]:
         return Ok(identity)
     mut record = available_record(path)?
     if not record.is_file():
-        if let Some(entry) = registry_entry(path):
+        if let Some(entry) = registry_entry(path)?:
             import_payload(path, entry)?
             record = available_record(path)?
     if not record.is_file():
@@ -134,10 +157,10 @@ pub def admitted_identity(path: Path) -> Result[Option[str], str]:
     """Return an installed payload's admitted producer identity without reopening its bytes or record."""
     if let Some(admission) = frozen_payload(path)?:
         return Ok(Some(admission.identity))
-    return Ok(registry_entry(path))
+    return registry_entry(path)
 
 
-def registry_entry(path: Path) -> Option[str]:
+def registry_entry(path: Path) -> Result[Option[str], str]:
     """
     The identity of the registry entry an artifact belongs to: `<store>/entries/sha256-<digest>/artifacts/<file>`
     names entry `sha256:<digest>`. Registry stores are content-named, so the entry directory is the producer identity.
@@ -146,14 +169,16 @@ def registry_entry(path: Path) -> Option[str]:
     entry = artifacts.parent()
     name = entry.name()
     if artifacts.name() != "artifacts" or entry.parent().name() != "entries" or not name.startswith("sha256-"):
-        return None
+        return Ok(None)
+    if not registry_store_admitted(entry.parent().0)?:
+        return Ok(None)
     digest = name[len("sha256-"):]
     if len(digest) != 64:
-        return None
+        return Ok(None)
     for character in digest:
         if character not in "0123456789abcdef":
-            return None
-    return Some(f"sha256:{digest}")
+            return Ok(None)
+    return Ok(Some(f"sha256:{digest}"))
 
 
 pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
