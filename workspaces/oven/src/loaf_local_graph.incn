@@ -26,6 +26,7 @@ from intake import ManifestReader, read_project
 from manifest_intent import ProjectIntent
 from pub::incan_platform.trace import Operation
 from jec import begin, record
+from semver_req import compare_version_order, parse_version
 
 
 @derive(Eq)
@@ -159,11 +160,12 @@ def child(
         RustDependencySource.Path(path, _) => relative = path
         RustDependencySource.Registry(_) => registry = true
         _ => return Err("local child requires a path declaration")
-    if registry and declaration.package not in substitutes:
+    substitute = substitute_for(declaration, substitutes)?
+    if registry and substitute == "":
         return Err(f"registry dependency {declaration.alias} is a local child only through a substitute")
     mut located = Path(parent.project).joinpath(relative)
-    if declaration.package in substitutes:
-        located = Path(substitutes[declaration.package])
+    if substitute != "":
+        located = Path(substitute)
     path = located
         .resolve()
         .map_err((error) => f"{parent.project}: dependency `{declaration.alias}` at {located.0}: {error.message()}")?
@@ -182,6 +184,32 @@ def child(
     if intent.rust_type == "proc-macro":
         domain = DependencyDomain.Host
     return Ok(LocalDemand(project=path.0, domain=domain, features=features, defaults=defaults))
+
+
+def substitute_for(declaration: RustDependencyDeclaration, substitutes: Dict[str, str]) -> Result[str, str]:
+    """
+    The directory the build substitutes for an edge's Loaf, or empty when it substitutes none.
+
+    A substitute named by the package serves every edge to it. One named `NAME@VERSION` serves an edge whose
+    requirement admits that version, the newest such version when several do, so two versions of one Loaf in a closure
+    each compile from their own source.
+    """
+    if declaration.package in substitutes:
+        return Ok(substitutes[declaration.package])
+    prefix = declaration.package + "@"
+    mut chosen = ""
+    mut directory = ""
+    for key in sorted([key for key in substitutes.keys()]):
+        if not key.startswith(prefix):
+            continue
+        version = key[len(prefix):]
+        if let Some(requirement) = declaration.version_requirement:
+            if not version_matches(requirement, version, declaration.alias).map_err((error) => error.message())?:
+                continue
+        if chosen == "" or compare_version_order(parse_version(version)?, parse_version(chosen)?) > 0:
+            chosen = version
+            directory = substitutes[key]
+    return Ok(directory)
 
 
 def request(
@@ -490,7 +518,7 @@ def facet_of(
                 )
                 children.append(selected)
             RustDependencySource.Registry(_) =>
-                if edge.package in substitutes:
+                if substitute_for(edge, substitutes)? != "":
                     # A substituted registry Loaf compiles from the substitute directory, as a path edge's would.
                     selected = child(demand, edge, edge_features, defaults, substitutes, reader)?
                     local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
