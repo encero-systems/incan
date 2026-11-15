@@ -1,4 +1,4 @@
-# behavior: vocabulary output preserves declarations and distinguishes nested generated calls sharing one source span
+# behavior: vocabulary output preserves declarations and distinguishes nested generated calls sharing one source span; a desugarer runs under its empty grant, unable to write or read a file
 # expect-stdout:
 #   42
 #   8
