@@ -362,6 +362,13 @@ pub(super) fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
         .skip_normalization()
         .skip_binder();
     let receiver = tcx.def_kind(def) == DefKind::AssocFn && tcx.associated_item(def).is_method();
+    // A function written in Rust keeps its parameter names, so a caller can name its arguments. A constructor has
+    // none, and a parameter bound by a pattern or by `_` stays positional.
+    let names: &[Option<rustc_span::Ident>] = if matches!(tcx.def_kind(def), DefKind::Fn | DefKind::AssocFn) {
+        tcx.fn_arg_idents(def)
+    } else {
+        &[]
+    };
     let params = signature
         .inputs()
         .iter()
@@ -373,10 +380,17 @@ pub(super) fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>)
             } else {
                 signature_display(tcx, def, *input)
             };
-            RustParam {
-                name: (receiver && index == 0).then(|| "self".to_owned()),
-                type_display,
-            }
+            let name = if receiver && index == 0 {
+                Some("self".to_owned())
+            } else {
+                names
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .map(|name| name.to_string())
+                    .filter(|name| name != "_" && name != "self")
+            };
+            RustParam { name, type_display }
         })
         .collect();
     let is_async = !matches!(tcx.def_kind(def), DefKind::Ctor(..)) && tcx.asyncness(def).is_async();
