@@ -7,14 +7,13 @@ imports of those modules as imports of the library, so the test unit compiles on
 from std.fs import Path
 from files import make_directory, read, write
 from home import dependency_artifact_dir, standard_packages
+from observation import entered
 from unit import UnitDescription, UnitLoaf
 
 # The suffix that names a project's shared library, as package and dependency key, after the project's package.
 pub const LIBRARY_SUFFIX: str = "_project_library"
 # The generated root of a shared library. It imports nothing: a library unit holds every module of its source root.
 const ROOT_TEXT: str = "\"\"\"A project's shared library: its source-root modules but its tests.\"\"\"\n"
-# The directories the compiler's source collection never enters, beside hidden ones.
-const UNCOLLECTED: FrozenList[str] = ["target", "node_modules"]
 # A source root's own entry files, which no shared library holds.
 const ROOT_ENTRIES: FrozenList[str] = ["main.incn", "lib.incn"]
 
@@ -95,8 +94,8 @@ pub def is_test_module(name: str) -> bool:
 pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]], str]:
     """
     The test modules under a source root and the modules its shared library provides, each in byte order. Root
-    `main.incn` and `lib.incn` are entry files of neither; the walk skips what the compiler's collection skips: hidden
-    directories, build output, vendored packages, and a nested project, a directory with its own `loaf.toml`.
+    `main.incn` and `lib.incn` are entry files of neither; the walk enters what every source walk enters (see
+    `entered`): no hidden directory, build output or vendored packages, and no nested project.
     """
     mut tests: list[str] = []
     mut provided: list[str] = []
@@ -113,7 +112,7 @@ pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]],
             if name.startswith("."):
                 continue
             if entry.is_dir():
-                if name not in UNCOLLECTED and not entry.joinpath("loaf.toml").is_file():
+                if entered(entry):
                     pending.append(entry)
             elif is_test_module(name):
                 tests.append(entry.0)

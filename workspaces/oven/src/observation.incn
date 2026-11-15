@@ -277,6 +277,15 @@ pub model Ledger:
         )
 
 
+pub def entered(directory: Path) -> bool:
+    """
+    Whether a walk of a project's sources enters a directory. It never enters a hidden directory, build output or
+    vendored packages (see `skipped_directory`), and never a nested project, a directory with its own `loaf.toml`:
+    that project's sources are its own, compiled against its own dependencies, as the compiler's collection has it.
+    """
+    return not skipped_directory(directory.name()) and not directory.joinpath("loaf.toml").is_file()
+
+
 pub def skipped_directory(name: str) -> bool:
     """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
     return name.startswith(".") or name == "target" or name == "node_modules"
@@ -285,7 +294,7 @@ pub def skipped_directory(name: str) -> bool:
 pub def children(directory: Path, extension: str) -> Result[Children, str]:
     """
     List a directory once: the files whose names end with `extension` (every file when it is empty) and the
-    subdirectories worth entering (see `skipped_directory`).
+    subdirectories worth entering (see `entered`).
     """
     mut files: list[str] = []
     mut directories: list[str] = []
@@ -294,7 +303,8 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
         name = child.name()
         checked += 1
         if child.is_dir():
-            if not skipped_directory(name):
+            checked += 1
+            if entered(child):
                 directories.append(name)
             continue
         checked += 1
