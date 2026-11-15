@@ -205,7 +205,7 @@ def matched_members(root: Path, pattern: str) -> Result[list[str], str]:
     for segment in pattern.split("/"):
         mut next: list[str] = []
         for prefix in found:
-            mut directory = root
+            mut directory = root.clone()
             if prefix != "":
                 directory = root.joinpath(prefix)
             if not has_glob(segment):

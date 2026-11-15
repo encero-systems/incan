@@ -36,7 +36,7 @@ pub def option_isinstance(
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """Test a present Option payload against the checked target type without consuming the Option."""
-    payload = builder.intrinsics[carrier_position(owner)].variants[1].fields[0]
+    payload = builder.intrinsics[carrier_position(owner)].variants[1].fields[0].clone()
     match payload:
         PlanType.Enum(inner, _name) =>
             if is_union_carrier(builder, inner):

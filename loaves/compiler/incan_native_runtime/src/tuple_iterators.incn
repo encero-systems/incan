@@ -55,7 +55,7 @@ pub def zip_lists_generator[T with (Clone, Static), U with (Clone, Static)](
 ) -> Generator[tuple[T, U]]:
     """Defer remaining pairs: 1. Transfer the owned snapshots at their cursors. 2. Wrap left-before-right polling."""
     # 1. Move each owned vector out of the local cursor without cloning its elements or consuming the caller's value.
-    mut cursor = values
+    cursor = values
     left = IntoIterator.into_iter(take(cursor.left)).skip(nonnegative_count(cursor.left_index))
     right = IntoIterator.into_iter(take(cursor.right)).skip(nonnegative_count(cursor.right_index))
     # 2. Wrap native zip polling without drawing an item now.

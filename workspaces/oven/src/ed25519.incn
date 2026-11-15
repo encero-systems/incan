@@ -384,7 +384,7 @@ def scaled(field: Modulus, point: Point, scalar: list[int]) -> Point:
 
 def cofactored(field: Modulus, point: Point) -> Point:
     """Multiply a point by Ed25519's cofactor eight."""
-    mut result = point
+    mut result = point.clone()
     for _ in range(3):
         result = doubled(field, result)
     return result

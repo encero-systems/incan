@@ -247,7 +247,7 @@ pub def prepare_captured_source_inputs(
     inputs: list[CapturedInput],
 ) -> Result[PreparedSourceInputs, str]:
     """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     mut changed: list[RecordKey] = []
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
@@ -383,7 +383,7 @@ pub def prepare_compiled_bodies(
     staging = begin_work()
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     projections = projection_cache(unit, origin, outputs)?
     mut modules: set[str] = set()
     for namespace in outputs.namespaces:
@@ -857,7 +857,7 @@ def prepare_lowering_records(
         return Err("successful records compile did not publish lowering outputs")
     scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
     mut staged_source = source.for_profile(LOWERING_PROFILE)
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     mut bodies: Dict[str, LoweringBody] = {}
     for value in values:
         if value.symbol == "":

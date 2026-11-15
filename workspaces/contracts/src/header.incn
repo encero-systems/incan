@@ -183,13 +183,13 @@ pub def parse_header(text: str) -> Result[Header, str]:
                 return Err(f"line {number}: an indented line outside a block directive")
             if width == 0:
                 width = indent
-            mut take = width
+            mut take = width.clone()
             if indent < width:
                 take = indent
             header = push_item(header, open_block, number, rest[take:])?
             continue
         # ---- Directive: `# key: value` ----
-        mut directive = rest
+        mut directive = rest.clone()
         if rest.startswith(" "):
             directive = rest[1:]
         if directive.startswith(" ") or directive.startswith("\t"):
@@ -215,7 +215,7 @@ pub def parse_header(text: str) -> Result[Header, str]:
 
 def directive_into(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
     """Admit one directive, refusing a repeat or a malformed value."""
-    mut next = header
+    mut next = header.clone()
     if key not in DIRECTIVES:
         return Err(f"line {number}: unknown directive `{key}`; the header accepts {", ".join(list(DIRECTIVES))}")
     if key == "behavior":
@@ -248,7 +248,7 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
 
 def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
     """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `trace-invariant`, `hosts` and `pending`."""
-    mut next = header
+    mut next = header.clone()
     if key == "expect-exit":
         if next.declares(key):
             return Err(f"line {number}: `expect-exit:` is declared twice")
@@ -296,7 +296,7 @@ def push_item(header: Header, key: str, number: int, item: str) -> Result[Header
     if key in SET_BLOCKS and item in items:
         return Err(f"line {number}: `{key}:` lists `{item}` twice; one occurrence satisfies both")
     items.append(item)
-    mut next = header
+    mut next = header.clone()
     next.block_items[key] = items
     return Ok(next)
 
@@ -393,7 +393,7 @@ def late_reason(number: int, key: str, ended: int, blank: bool) -> str:
 
 def hosts_directive(header: Header, number: int, value: str) -> Result[Header, str]:
     """Admit `hosts: NAME, ...`: the operating systems the case runs on, each once."""
-    mut next = header
+    mut next = header.clone()
     if len(next.hosts) > 0:
         return Err(f"line {number}: `hosts:` is declared twice")
     for item in value.split(","):

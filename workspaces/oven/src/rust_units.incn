@@ -110,7 +110,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     3. Any report fails the build, and the error carries them all.
     4. Publish the receipt of the libraries built, which the code graph reads.
     """
-    mut request = request
+    mut request = request.clone()
     # 1. The graph is the one the pinned rustc's own target selects, and every unit comes after those it links.
     configuration = target_configuration(request.rustc)?
     root = Path(request.project).resolve().map_err((error) => f"{request.project}: {error.message()}")?
@@ -123,7 +123,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     )
     facets = ordered(local_facets(demand, configuration, request.substitutes, request.manifests)?)?
     validate_native_sources(facets)?
-    mut request = request
+    mut request = request.clone()
     request.registry = selected_registry(request.registry, facets, request.profile)?
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles; a check keeps them apart.
@@ -374,7 +374,7 @@ def admitted_generation(facets: list[LocalFacet], request: RustBuild) -> Result[
     if not request.check_only:
         return Err(mismatch(differing))
     trace(f"check keeps the prebuilt {", ".join(differing)} for its consumers and lints the edited sources")
-    mut checking = request
+    mut checking = request.clone()
     checking.schedule_rust_units = false
     return Ok(checking)
 
@@ -416,7 +416,7 @@ def require_coherent_installed_generation(facets: list[LocalFacet], request: Rus
             if native == None:
                 unavailable[facet.key()] = declared.crate_name
                 continue
-        mut selected = native
+        mut selected = native.clone()
         if provider:
             selected = None
             if facet.project in standard_roots:
@@ -528,7 +528,7 @@ def build_prepared_dependencies(
     Analysis may leave out the project's own library (`include_root` false) when no binary links it.
     """
     root = Path(request.project).resolve().map_err((error) => f"cannot {error.message()}")?
-    mut request = request
+    mut request = request.clone()
     validate_native_sources(facets)?
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles; an Incan provider inside a
@@ -638,7 +638,7 @@ pub def compile_library(
 
 def covered_unit(unit: BuiltUnit, facet: LocalFacet, request: RustBuild) -> BuiltUnit:
     """Attach stable trust evidence for this selected Loaf without making it part of artifact identity."""
-    mut result = unit
+    mut result = unit.clone()
     if facet.package in request.covered_by:
         result.covered_by = request.covered_by[facet.package]
     return result
@@ -682,7 +682,7 @@ pub def require_coherent_installed_producer(
 pub def stored_library(unit: BuiltUnit) -> Result[BuiltUnit, str]:
     """Bind compiler consumers to the library's store-owned filenames, never a project's replaceable target."""
     directory = library_directory(bakery()?, Path(unit.directory))?
-    mut stored = unit
+    mut stored = unit.clone()
     stored.artifact = directory.joinpath(Path(unit.artifact).name()).0
     stored.directory = directory.0
     return Ok(stored)
@@ -1269,7 +1269,7 @@ def provider_dependencies(
     if not needs_facade:
         return Ok(built)
     # The same graph producer prepares the provider's ordinary Incan dependency closure; compiled units are shared.
-    mut provider = request
+    mut provider = request.clone()
     provider.project = facet.project
     provider.features = facet.features
     provider.default_features = false

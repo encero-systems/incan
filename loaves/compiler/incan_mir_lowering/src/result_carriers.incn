@@ -89,7 +89,7 @@ pub def lower_result_construction(
     owner = enum_owner(place_type(builder.locals, target))?
     if owner < len(builder.enums):
         return Err("invalid Body IR Result destination")
-    declaration = builder.intrinsics[carrier_position(owner)]
+    declaration = builder.intrinsics[carrier_position(owner)].clone()
     if declaration.carrier != Carrier.Result or not variant.has_complete_canonical_types():
         return Err("invalid Body IR Result payload identity")
     mut slot = 0
@@ -116,7 +116,7 @@ pub def lower_option_construction(
         return Err("invalid Body IR Some destination or payload")
     match elements[0].as_one():
         Some(payload) =>
-            ty = builder.intrinsics[carrier_position(owner)].variants[1].fields[0]
+            ty = builder.intrinsics[carrier_position(owner)].variants[1].fields[0].clone()
             value = carrier_payload(builder, payload, ty, span)?
             assign_carrier(builder, target, owner, 1, [value], span)
             return Ok(None)
@@ -260,7 +260,7 @@ pub def retained_reference_value(
                         referent, writable = reference_contract(expected)?
                         if not writable:
                             return Err("unsupported Body IR stored exclusive view without writable reference storage")
-                        mut borrowed = place
+                        mut borrowed = place.clone()
                         if actual == expected:
                             borrowed = dereferenced_place(place, referent, span)?
                         elif actual != referent:

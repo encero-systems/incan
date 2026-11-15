@@ -186,7 +186,7 @@ pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
     rendered under another project's root, so the caller must not retain that checked export.
     """
     observed = tree_inputs(root)?
-    mut base = root
+    mut base = root.clone()
     if root.is_file():
         base = root.parent()
     canonical_root = base.resolve().map_err((error) => f"cannot {error.message()}")?

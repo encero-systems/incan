@@ -88,7 +88,7 @@ pub def signature_lifetimes(body: &Body, arguments: list[RustType]) -> Result[li
             if view.access != IncanInputAccess.Owned:
                 slot = int(view.slot)
                 signature[slot] = ["view"] + signature[slot]
-                result = signature[len(signature) - 1]
+                result = signature[len(signature) - 1].clone()
                 if len(view.component) == 0:
                     signature[len(signature) - 1] = ["view"] + result
                 else:
@@ -121,7 +121,7 @@ def retain_unique_source_elision(mut signature: list[list[str]]) -> None:
                 input_elisions += 1
     if input_elisions != 1:
         return
-    result = signature[len(signature) - 1]
+    result = signature[len(signature) - 1].clone()
     if "" not in result:
         return
     for slot in range(len(signature) - 1):

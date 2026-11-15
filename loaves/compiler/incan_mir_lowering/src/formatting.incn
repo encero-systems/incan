@@ -376,7 +376,7 @@ def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: Sou
         copied = clone_nominal_operand(builder, place, span)?
         return debug_plan_operand(builder, copied, span)
     if is_carrier_index(owner) and carrier_position(owner) < len(builder.intrinsics):
-        declaration = builder.intrinsics[carrier_position(owner)]
+        declaration = builder.intrinsics[carrier_position(owner)].clone()
         if declaration.carrier == Carrier.Option or declaration.carrier == Carrier.Result:
             return borrowed_enum_debug(builder, place, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")

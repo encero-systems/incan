@@ -82,7 +82,7 @@ def announce(ready: str, generation: str) -> Result[None, str]:
 
 def serve_connection(mut owner: Owner, connection: Connection, idle: int) -> bool:
     """Read one request and answer it. Whether the owner retires."""
-    mut served = connection
+    mut served = connection.clone()
     served.wait_at_most(READ_SECONDS)
     served.write_at_most(WRITE_SECONDS)
     reply = answer(owner, receive_document(served), idle)

@@ -413,7 +413,7 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     A new view is assembled beside the destination and swapped in, so it is never half written. A whole-unit view also
     holds `fact.json`, which names the unit it was viewed from.
     """
-    mut files = fact.files
+    mut files = fact.files.clone()
     if prefix != "":
         files = [file for file in fact.files if file.path.startswith(prefix + "/")]
     mut same_identity = prefix != ""

@@ -54,7 +54,7 @@ pub def resolve_features(
         all_features=request.all_features,
         purpose=purpose,
     )
-    mut facets = selected_facets
+    mut facets = selected_facets.clone()
     if len(facets) == 0:
         facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?, {}, reader)?
     # 2. Rust facets participate in activation but are not published as Incan Loaves.

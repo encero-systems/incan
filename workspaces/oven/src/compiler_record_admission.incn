@@ -42,7 +42,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot {error.message()}")?
     shipped = installed.joinpath(SHIPPED_RECORDS)
-    mut converted = shipped
+    mut converted = shipped.clone()
     if not shipped.joinpath("index.json").is_file():
         converted = temporary.path().joinpath("converted")
         export_records(driver, installed, converted)?

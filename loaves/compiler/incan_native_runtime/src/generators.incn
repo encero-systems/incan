@@ -33,7 +33,7 @@ from native_copying import clone_native
 pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output: list[T]) -> bool:
     """Poll once: 1. Advance the borrowed generator. 2. Append an item on success, preserving output on exhaustion."""
     # 1. Advance the borrowed generator.
-    mut iterator = values
+    iterator = values
     match iterator.poll():
         Some(value) =>
             # 2. Append the owned item.

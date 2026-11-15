@@ -95,7 +95,7 @@ def transpose_column(
                     positions = field_positions(fields, budget)?
                 budget.charge_elements(1)?
                 budget.charge_bytes(12)?
-                mut source = field_index
+                mut source = field_index.clone()
                 if not identity_ordered:
                     key = hexlify(description.fields[field_index].shape.identity)
                     if key not in positions:

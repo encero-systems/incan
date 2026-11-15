@@ -96,7 +96,7 @@ pub model RegistryUnits:
             entries[identity(unit)] = unit
         mut requests: Dict[str, RegistryDemand] = {}
         for demand in demands:
-            mut kept = demand
+            mut kept = demand.clone()
             # A requirement the root project declares stays its own when a dependency repeats it.
             if demand.key() in requests and requests[demand.key()].direct:
                 kept.direct = true

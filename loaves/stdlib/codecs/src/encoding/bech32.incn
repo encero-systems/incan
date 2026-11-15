@@ -241,7 +241,7 @@ def _create_checksum(hrp: str, data: list[int], variant: Bech32Variant) -> list[
     into the concrete checksum digits appended to the output.
     """
     values = _hrp_expand(hrp) + data + list.repeat(0, 6)
-    mut constant = _BECH32_CONST
+    mut constant = _BECH32_CONST.clone()
     if variant == Bech32Variant.Bech32m:
         constant = _BECH32M_CONST
     polymod = _polymod(values) ^ constant
@@ -345,7 +345,7 @@ def _lower_ascii(value: &str) -> str:
     """Lowercase ASCII letters while leaving all other characters unchanged."""
     mut out: list[u8] = []
     for code in _encode_utf8(value):
-        mut lowered = code
+        mut lowered = code.clone()
         if code >= 65 and code <= 90:
             lowered = code + 32
         byte: u8 = lowered.wrapping_resize()

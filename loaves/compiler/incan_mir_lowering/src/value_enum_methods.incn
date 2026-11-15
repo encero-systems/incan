@@ -204,7 +204,7 @@ pub def select_value_enum_raw(
     declaration = builder.value_enums[owner]
     result_type = value_enum_raw_type(builder, owner)
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     branches = tag_branches(builder, source, len(declaration.variants), span)
     # 2. Materialize that variant's retained scalar value.
     for slot in range(len(branches)):
@@ -290,7 +290,7 @@ pub def lower_value_enum_from_value(
     ):
         return Err("unsupported Body IR value enum from_value destination")
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     for slot in range(len(builder.value_enums[owner].variants)):
         raw_value: RustConstant = builder.value_enums[owner].variants[slot].raw_value.clone()
         condition = raw_value_matches(builder, raw, raw_value, span)?
@@ -369,7 +369,7 @@ pub def lower_enum_message(
         return Err("unsupported Body IR enum message destination")
     variants = builder.enums[index].variants
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     branches = tag_branches(builder, source, len(variants), span)
     for slot in range(len(branches)):
         builder.current = branches[slot]

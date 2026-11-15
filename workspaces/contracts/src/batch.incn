@@ -442,7 +442,7 @@ def submit(
     2. Each prepared group contributes one build, and each isolated case one own command.
     3. Each build's entries follow it, gated on its success.
     """
-    mut pending = groups
+    mut pending = groups.clone()
     if not discovery.sharing:
         pending = dissolved(pending)
     mut isolated: list[Fixture] = []
@@ -479,7 +479,7 @@ def submit(
             Err(_) => pass
             Ok(None) => pass
             Ok(Some(request)) =>
-                mut own = request
+                mut own = request.clone()
                 own.capture = "-own"
                 discovery.own[base + len(requests)] = fixture.case_name()
                 requests.append(own)
@@ -510,7 +510,7 @@ def settled_group(
     Take a group's quiet build, keep a build whose output names cases for the others, or refine its refusal; the
     groups to compile or run next.
     """
-    group = discovery.attempts[index]
+    group = discovery.attempts[index].clone()
     for note in unit_notes(trace_file(group.project)):
         notes.append(note)
     refusal, evidence = compilation_refusal(result)
@@ -721,7 +721,7 @@ def materialize_group(project: Path, entries: list[Entry]) -> Result[None, str]:
         candidate = entries[index]
         module = f"case_{index}"
         mut path = f"src/{module}.incn"
-        mut import_path = module
+        mut import_path = module.clone()
         if candidate.fixture.shape == "module":
             original = fixture_files(candidate.fixture)?
             for relative in sorted([relative for relative in original.keys()]):

@@ -36,7 +36,7 @@ pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, s
     tests, provided = source_modules(Path(unit.source_root))?
     if len(provided) == 0:
         return Ok(unit)
-    mut linked = unit
+    mut linked = unit.clone()
     linked.project_library = Some(library_key(unit.package))
     linked.excluded_sources = tests
     return Ok(linked)
@@ -52,7 +52,7 @@ pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescriptio
     The shared library a test unit links: the test unit's own project, features and Loaves, described as a library
     of the project's modules under its own package, and checked as the project's program is.
     """
-    mut library = unit
+    mut library = unit.clone()
     library.kind = "library"
     library.source = library_root(unit, key)?.0
     library.package = key

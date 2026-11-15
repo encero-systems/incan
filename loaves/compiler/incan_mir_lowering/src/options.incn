@@ -115,7 +115,7 @@ pub def propagate_result(
     builder.finish(TerminatorKind.SwitchBool(condition, failure, success), span)
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
     forget_owned(builder, source.local)
-    owners = builder.owned
+    owners = builder.owned.clone()
     builder.current = failure
     error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
     mut propagated = read_place(error, true, span)
@@ -732,7 +732,7 @@ def lower_carrier_unwrap(
     payload_type = declaration.variants[present].fields[0]
     selected = builder.new_block(span)
     missing = builder.new_block(span)
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
@@ -797,7 +797,7 @@ def lower_carrier_default(
     selected = builder.new_block(span)
     missing = builder.new_block(span)
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     builder.current = selected
@@ -813,7 +813,7 @@ def lower_carrier_default(
     builder.owned = owners
     track_rvalue_moves(builder, RvalueKind.Use(fallback))
     builder.emit(plan_assign(target, RvalueKind.Use(fallback), span))
-    retained = builder.owned
+    retained = builder.owned.clone()
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = join
     builder.owned = retained

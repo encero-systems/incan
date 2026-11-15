@@ -353,7 +353,7 @@ def slot_demand(
         return SlotDemand(index=declaration.index, activation=SlotActivation.Inactive(reason))
     if declaration.optional == Some(true) and declaration.alias not in closure.optional_aliases:
         return SlotDemand(index=declaration.index, activation=SlotActivation.Inactive(InactiveReason.OptionalNotEnabled))
-    mut requested = declaration.features
+    mut requested = declaration.features.clone()
     for symbol in closure.forwarding:
         match symbol:
             FeatureSymbol.DependencyFeature(alias, feature, _) =>
@@ -386,8 +386,8 @@ pub def activate_unit(
     if context.host.triple == "" or context.target.triple == "":
         return Err(refusal(manifest, [], IntakeErrorKind.Missing, "original host and target identities"))
     restrictions = slot_restrictions(catalog, context, manifest)?
-    mut authority = catalog
-    mut authority_restrictions = restrictions
+    mut authority = catalog.clone()
+    mut authority_restrictions = restrictions.clone()
     if let Some(original) = feature_authority:
         authority = original
         authority_restrictions = slot_restrictions(authority, context, manifest)?

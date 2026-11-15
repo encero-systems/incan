@@ -273,7 +273,7 @@ pub class WorkerHost:
         3. A request of another protocol or generation retires the worker, which never serves it.
         4. An admitted request opens the activation.
         """
-        mut caller = connection
+        mut caller = connection.clone()
         caller.wait_at_most(READ_SECONDS)
         caller.write_at_most(WRITE_SECONDS)
         # 1. The OS reports the peer's user; nothing is read from a foreign peer.
@@ -329,13 +329,13 @@ pub class WorkerHost:
 
     def answer(mut self, caller: Connection, reply: Reply) -> None:
         """Send one reply, marked retired once the socket is withdrawn, then close the connection."""
-        mut answered = caller
+        mut answered = caller.clone()
         delivered(answered.send(encode_reply(reply, self.phase != Phase.Serving)))
         hang_up(answered)
 
     def answer_record(mut self, caller: Connection, reply: RecordMessage) -> None:
         """Send one typed record reply and close its activation; lifecycle never adds fields to this schema."""
-        mut answered = caller
+        mut answered = caller.clone()
         delivered(answered.send(encode_record_message(reply, self.generation)))
         hang_up(answered)
 
@@ -509,7 +509,7 @@ def delivered(sent: Result[None, str]) -> None:
 
 def hang_up(connection: Connection) -> None:
     """Close a connection; one its peer already closed needs nothing more."""
-    mut closing = connection
+    closing = connection
     match closing.close():
         Ok(_) => pass
         Err(_) => pass

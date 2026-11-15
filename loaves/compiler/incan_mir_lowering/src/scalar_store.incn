@@ -348,7 +348,7 @@ def record_payload(
                 Ok(digest) =>
                     if record.digest != digest:
                         return None
-            mut payload = record.function
+            mut payload = record.function.clone()
             if inputs[0] == RECORD_FUNCTION:
                 if let Some(current) = span:
                     # Node ordinals take this body's positions; a body without those nodes is a miss.

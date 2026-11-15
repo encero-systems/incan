@@ -95,7 +95,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
     3. Collect and withdraw both sinks; a failed submission relays what it wrote to this command's streams.
     """
     # 1. Private sinks hold exactly this request's bytes.
-    mut foreground = toolchain
+    mut foreground = toolchain.clone()
     foreground.console = ""
     match capture_for(foreground):
         Err(reason) =>
@@ -130,7 +130,7 @@ pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[
     found_connection = connection_for(toolchain)
     record(Operation.WorkerConnect, toolchain.driver, connecting)
     connected_socket, generation, _slot = found_connection?
-    mut connected = connected_socket
+    mut connected = connected_socket.clone()
     clock = begin()
     connected.send(encode_record_message(request, generation))?
     payload = connected.receive()?
@@ -146,7 +146,7 @@ def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
         return Ok(toolchain)
     directory = owners_dir()?
     prepare_directory(directory.0)?
-    mut capturing = toolchain
+    mut capturing = toolchain.clone()
     capturing.console = directory.joinpath(f"r-{id()}").0
     discard_file(Path(f"{capturing.console}.out"))
     discard_file(Path(f"{capturing.console}.err"))
@@ -229,7 +229,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
         Ok(found) =>
             # The slot stays held until this request completes, so no other caller queues behind it.
             connected_socket, generation, slot = found
-            mut connected = connected_socket
+            mut connected = connected_socket.clone()
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
             directory = working_directory()?
@@ -474,7 +474,7 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
     for poll in range(READINESS_POLLS):
         match listener.poll()?:
             Some(waiting) =>
-                mut connected = waiting
+                mut connected = waiting.clone()
                 connected.wait_at_most(5)
                 document = receive_document(connected)?
                 ready(document, endpoint.generation, int(child.id()))?

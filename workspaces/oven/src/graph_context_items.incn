@@ -92,10 +92,10 @@ pub def anchor(record: JsonValue, root: str) -> str:
 
 pub def anchor_root(path: Path) -> Path:
     """Prefer repository-relative source anchors, falling back to the nearest owning project for standalone Loaves."""
-    mut directory = path
+    mut directory = path.clone()
     if directory.is_file():
         directory = directory.parent()
-    mut project = directory
+    mut project = directory.clone()
     mut found = false
     while true:
         if directory.joinpath(".git").is_file() or directory.joinpath(".git").is_dir():

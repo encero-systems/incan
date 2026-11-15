@@ -61,7 +61,7 @@ pub def type_component(ty: &RustType) -> str:
 
 def type_sequence(prefix: str, types: &list[RustType]) -> str:
     """Append a known count of recursively self-delimiting type components in declaration order."""
-    mut encoded = prefix
+    mut encoded = prefix.clone()
     for ty in types:
         encoded += type_component(ty)
     return encoded

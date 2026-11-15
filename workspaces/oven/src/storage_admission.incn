@@ -128,7 +128,7 @@ pub def available_space(store: Path) -> Result[int, str]:
     """The free bytes admission observes for `store`: those of the filesystem holding its nearest existing directory."""
     if store.0 in observed_free:
         return Ok(observed_free[store.0])
-    mut directory = store
+    mut directory = store.clone()
     while not directory.exists() and directory.parent().0 != directory.0:
         directory = directory.parent()
     return available_bytes(directory.0)
@@ -274,7 +274,7 @@ pub def read_reservations(store: Path) -> Result[list[Reservation], str]:
         match read_record(entry):
             None => pass
             Some(record) =>
-                mut observed = record
+                mut observed = record.clone()
                 staged = store.joinpath("staging").joinpath(record.name)
                 observed.allocated = tree_bytes(staged)
                 observed.live = owner_live(record.claim, staged)
@@ -409,7 +409,7 @@ def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[Mainta
             release(store, record.name)
             continue
         # 3. The window starts when the end is confirmed, never at a file's modification time.
-        mut ended = record
+        mut ended = record.clone()
         if record.phase != "ended" or now < record.ended:
             ended.phase = "ended"
             ended.ended = now

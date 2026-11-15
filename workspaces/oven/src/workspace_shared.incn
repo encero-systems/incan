@@ -143,7 +143,7 @@ pub def member_tables(root: Path, member: Path) -> Result[Dict[str, JsonValue], 
     for alias in sorted([alias for alias in entries.keys()]):
         entry = entry_table(entries[alias])
         mut origin = "member"
-        mut base = member
+        mut base = member.clone()
         mut source = entry
         if flag_of(entry, "workspace", false) and alias in shared:
             origin = "workspace"

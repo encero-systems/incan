@@ -251,7 +251,7 @@ def _decode_base58(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
     mut bytes_le: list[int] = []
     for index, ch in enumerate(clean):
         value = _decode_char(ch, alphabet, index)?
-        mut carry = value
+        mut carry = value.clone()
         mut byte_index = 0
         while byte_index < len(bytes_le):
             # Carry through base-256 bytes, again least-significant first.

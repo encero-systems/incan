@@ -17,12 +17,12 @@ pub def pack(
     # 1. Rank facts from the selected snapshot.
     mut started = Instant.now()
     context = fingerprint(["incan.context/1", snapshot, task, str(budget)])?
-    unresolved = index.unresolved
+    unresolved = index.unresolved.clone()
     scores, reasons = index.rank(task, preferences)?
     trace(f"graph context candidates: {started.elapsed().as_millis()} ms")
     started = Instant.now()
     mut ranked: Dict[str, str] = {}
-    mut smallest = budget
+    mut smallest = budget.clone()
     for identifier in scores.keys():
         score = scores[identifier]
         if score > 0:
@@ -33,7 +33,7 @@ pub def pack(
     # 2. Select whole nodes, reserving room for relationships that explain their inclusion.
     node_budget = budget * 3 // 4
     header_size = tokens(render(chosen, snapshot, context, degraded, unresolved, budget, format)?)
-    mut used = header_size
+    mut used = header_size.clone()
     if used + 1 > budget:
         return Err("--budget is too small for the context header")
     for key in sorted([item for item in ranked.keys()]):

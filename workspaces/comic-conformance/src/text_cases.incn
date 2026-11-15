@@ -394,7 +394,7 @@ def record_json(
     """Translate records and enum payloads with declaration-ordered object keys."""
     mut named: dict[str, JsonValue] = {}
     description = description_for_type(storage_type, descriptions)
-    mut declared_fields = description.fields
+    mut declared_fields = description.fields.clone()
     mut variant_name = ""
     if kind == FixtureValueKind.Enum:
         for variant in description.variants:

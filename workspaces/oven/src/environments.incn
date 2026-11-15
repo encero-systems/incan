@@ -97,7 +97,7 @@ pub def parse_env(arguments: list[str]) -> Result[EnvRequest, str]:
 
 def admitted(request: EnvRequest, operands: list[str]) -> Result[EnvRequest, str]:
     """Each action takes its own operands: none for `list`, an optional ENV for `show`, ENV and SCRIPT for `run`."""
-    mut checked = request
+    mut checked = request.clone()
     if checked.format not in ["text", "json"] or (checked.action == "run" and checked.format != "text"):
         return Err(f"`--format` is text or json for list and show, got `{checked.format}`")
     mut limit = 0
@@ -327,7 +327,7 @@ pub def toolchain_satisfies(requirement: VersionReq, active: Version) -> bool:
     for comparator in requirement.comparators:
         if len(comparator.prerelease) > 0 and comparator.parts == [active.major, active.minor, active.patch]:
             return requirement_matches(requirement, active)
-    mut release = active
+    mut release = active.clone()
     release.prerelease = []
     return requirement_matches(requirement, release)
 
@@ -387,7 +387,7 @@ def run_script(
     if script not in resolved.scripts:
         return Err(f"script `{script}` is not configured in resolved environment `{name}`")
     argv = resolved.scripts[script] + request.passed
-    mut directory = root
+    mut directory = root.clone()
     if resolved.cwd != ".":
         directory = root.joinpath(resolved.cwd)
     if request.dry_run:
@@ -510,7 +510,7 @@ def resolved_document(resolved: Resolved, root: Path) -> JsonValue:
     for key in resolved.scripts.keys():
         scripts[key] = JsonValue.array([JsonValue.string(word) for word in resolved.scripts[key]])
     chain = ["project"] + resolved.chain
-    mut directory = root
+    mut directory = root.clone()
     if resolved.cwd != ".":
         directory = root.joinpath(resolved.cwd)
     mut fields: Dict[str, JsonValue] = {}

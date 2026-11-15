@@ -47,7 +47,7 @@ pub def lower_assertion(
         _ => pass
     failed = builder.new_block(span)
     passed = builder.new_block(span)
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     builder.finish(TerminatorKind.SwitchBool(operand, failed, passed), span)
     builder.current = failed
     lower_failure(builder, message, span)?
@@ -164,7 +164,7 @@ def lower_pattern_assertion(
     condition = variant_condition(builder, source, slot, span)
     failed = builder.new_block(span)
     passed = builder.new_block(span)
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     builder.finish(TerminatorKind.SwitchBool(condition, failed, passed), span)
     builder.current = failed
     failure = f"incan_native_runtime::{pattern_failure(declaration.carrier, slot)}"

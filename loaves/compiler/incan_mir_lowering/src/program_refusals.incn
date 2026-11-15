@@ -89,7 +89,7 @@ def body_refusals(
         borrowed_at(modules, entry),
         empty_templates,
     )?
-    mut context = specialized_context
+    mut context = specialized_context.clone()
     mut constructor_table, unions, initial_intrinsics = layout_tables(
         context,
         files[entry],
@@ -97,7 +97,7 @@ def body_refusals(
         package_versions,
     )?
     constructors = Arc.new(with_generic_constructor_arities(constructor_table, template_constructors))
-    mut intrinsics = initial_intrinsics
+    mut intrinsics = initial_intrinsics.clone()
     mut models: list[ModelDeclaration] = []
     mut enums: list[EnumDeclaration] = []
     mut functions: list[Function] = []
@@ -119,7 +119,7 @@ def body_refusals(
         externals,
         instances,
     )?
-    mut program = initial_program
+    mut program = initial_program.clone()
     mut refusals: list[str] = []
     mut selected_count = 0
     mut emitted_frames = no_emitted_frames()
@@ -228,7 +228,7 @@ def append_context_refusals(
     ):
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
-    mut retained_nominals = nominal_instances
+    mut retained_nominals = nominal_instances.clone()
     mut instance_cells: list[StaticCell] = []
     match lower_instances(
         template_constructors,

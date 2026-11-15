@@ -73,7 +73,7 @@ pub def locate(table: FixedTable, record: int, mut budget: Budget) -> Result[int
     if record < 0 or record >= table.final:
         return Err(shared(failure(BinaryFailure.RecordIndex, table.origin)))
     mut low = 0
-    mut high = table.count
+    mut high = table.count.clone()
     while low + 1 < high:
         budget.charge_elements(1).map_err((e) => primitive(e, table.origin))?
         middle = low + (high - low) // 2

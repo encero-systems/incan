@@ -156,8 +156,8 @@ def lower_delegated_call(
         return Err("unsupported Body IR nonlocal function with type parameters")
     # A checked native signature in a source body can name that body's binders. A compiled Loaf instead owns its
     # declaration binders; neither signature infers a type from a runtime operand.
-    mut signature_names = names
-    mut signature_arguments = closed
+    mut signature_names = names.clone()
+    mut signature_arguments = closed.clone()
     if checked_rust:
         signature_names = builder.type_parameters
         signature_arguments = builder.type_arguments
@@ -198,7 +198,7 @@ def lower_delegated_call(
         Some(frame) => result = return_representation(frame, result)?
         None => pass
     mut type_arguments: list[PlanType] = []
-    mut native_arguments = closed
+    mut native_arguments = closed.clone()
     if checked_rust:
         native_arguments = checked_type_arguments(builder, delegation.native_type_arguments)?
     for argument in native_arguments:

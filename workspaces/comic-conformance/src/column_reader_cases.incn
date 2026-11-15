@@ -102,7 +102,7 @@ def check_block(
     mut writer_keys: Option[ColumnDictionary] = None
     mut keys: Option[ColumnKeys] = None
     if len(input_keys) != 0:
-        mut key_type = stored_type
+        mut key_type = stored_type.clone()
         if not dictionary_type(stored_type):
             # Invalid block types still receive the independently declared external key context.
             # The reader must reject encoding/type compatibility before using these keys.

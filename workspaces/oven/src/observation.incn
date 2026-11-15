@@ -179,7 +179,7 @@ pub model Ledger:
         mut pending = [root]
         mut index = 0
         while index < len(pending):
-            directory = pending[index]
+            directory = pending[index].clone()
             index += 1
             entry = self.listing(directory)?
             for name in entry.files:
@@ -492,7 +492,7 @@ pub def load_ledger(location: Path, settle: int, extension: str = ".incn") -> Le
     empty = Ledger(location=location, settle=settle, extension=extension)
     if not location.is_file():
         return empty
-    mut loaded = empty
+    mut loaded = empty.clone()
     match loaded.read():
         Ok(_) => return loaded
         Err(_) => return empty

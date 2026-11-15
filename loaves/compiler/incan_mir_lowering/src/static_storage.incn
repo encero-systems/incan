@@ -128,7 +128,7 @@ pub def lower_computed_statics(
                     [],
                     DecoratorFrame.Normal,
                 )?
-                mut original_function = original
+                mut original_function = original.clone()
                 original_function.name = f"{original_function.name}__incan_original"
                 if len(named_functions(names, functions, original_function.name)) != 0:
                     return Err("unsupported Body IR original callable name collision")
@@ -155,7 +155,7 @@ pub def lower_computed_statics(
                     [],
                     DecoratorFrame.Normal,
                 )?
-                mut initializer = function
+                mut initializer = function.clone()
                 initializer.name = static_initializer_name(slot)
                 constructors = program.constructors.as_ref()
                 ty = native_source_type(

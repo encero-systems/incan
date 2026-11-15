@@ -362,7 +362,7 @@ pub def field_path(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[list[FieldProjection], str]:
     """Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering."""
-    mut ty = root
+    mut ty = root.clone()
     mut fields: list[FieldProjection] = []
     for position in range(count):
         steps = field_steps(constructors, declarations, ty, projections[position], enums, unions, intrinsics)?

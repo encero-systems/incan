@@ -59,10 +59,10 @@ pub def identifier_at(text: str, line: int, column: int) -> str:
     at = column - 1
     if at < 0 or at >= len(characters) or not identifier_character(characters[at]):
         return ""
-    mut begin = at
+    mut begin = at.clone()
     while begin > 0 and identifier_character(characters[begin - 1]):
         begin -= 1
-    mut end = at
+    mut end = at.clone()
     while end < len(characters) and identifier_character(characters[end]):
         end += 1
     return "".join(characters[begin:end])

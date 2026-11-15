@@ -43,7 +43,7 @@ pub def standard_graphs(
     # 2. The origins to follow are the ones each unit's graph records, starting from the units selected.
     mut graphs: list[GraphUnit] = []
     mut seen = [exclude] + [unit.package for unit in units if unit.package in available]
-    mut queue = units
+    mut queue = units.clone()
     while len(queue) > 0:
         current = queue.pop()
         for line in read_graph(current, toolchain, "origins")?.split("\n"):

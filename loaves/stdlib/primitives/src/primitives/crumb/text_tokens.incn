@@ -247,7 +247,7 @@ pub class TextTokens:
 
     def ensure(mut self, distance: int) -> Result[None, TextError]:
         """Scan only enough spans to satisfy nonnegative parser lookahead."""
-        mut requested = distance
+        mut requested = distance.clone()
         if requested < 0:
             requested = 0
         while self.index + requested >= len(self.items) and not self.terminal:

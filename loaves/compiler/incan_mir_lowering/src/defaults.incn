@@ -280,8 +280,8 @@ pub def evaluate_default(
     _ = default_type(ty)?
     match body.params[index].default:
         CallableParamDefault.Source(computation) =>
-            incoming = builder.owned
-            saved = builder.local_offset
+            incoming = builder.owned.clone()
+            saved = builder.local_offset.clone()
             # Body IR owns these local types; reserve a distinct copy of that frame in the caller.
             offset = len(builder.locals)
             builder.locals.append(Local(ty=PlanType.Unit, span=span))
@@ -301,12 +301,12 @@ pub def evaluate_default(
                 )
             builder.local_offset = offset
             # The computation runs for this construction or call, so its statements report that site.
-            anchor = builder.anchor
+            anchor = builder.anchor.clone()
             builder.anchor = Some(span)
             for position in range(len(computation.stmts)):
                 lower_statement(module, builder, borrowed_at(computation.stmts, position))?
             builder.anchor = anchor
-            before = builder.owned
+            before = builder.owned.clone()
             result = call_argument_operand(builder, computation.result, ty, span, owned, access)?
             mut result_owner = -1
             match result.kind:

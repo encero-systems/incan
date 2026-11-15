@@ -364,7 +364,7 @@ def _base85_block(value: int, alphabet: str) -> str:
 
     Digits are produced from right to left because repeated modulo finds the least-significant Base85 digit first.
     """
-    mut n = value
+    mut n = value.clone()
     mut chars: list[str] = ["", "", "", "", ""]
     for offset in range(5):
         index = 4 - offset

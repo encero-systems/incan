@@ -256,8 +256,8 @@ pub def await_future(
 ) -> Result[None, str]:
     """Retain a native suspension and an explicit cancellation edge; the adapter emits only the pinned poll plumbing."""
     # The checked suspension already retains its output. Rustc validates the native Future obligation and exact poll output.
-    incoming = builder.owned
-    current = builder.current
+    incoming = builder.owned.clone()
+    current = builder.current.clone()
     cancelled = builder.new_block(span)
     builder.current = cancelled
     drop_all_owned(builder, span)

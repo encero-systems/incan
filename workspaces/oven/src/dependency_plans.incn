@@ -98,7 +98,7 @@ pub def plan_update(name: str, text: str, manifest: str, units: list[RegistryUni
     """
     # 1. A named Loaf must be a dependency, named in full.
     dependencies = registry_dependencies(text, manifest)?
-    mut selected = dependencies
+    mut selected = dependencies.clone()
     if name != "":
         loaf = full_name(name, [dependency.loaf for dependency in dependencies], "registry dependency")?
         selected = [dependency for dependency in dependencies if dependency.loaf == loaf]
@@ -266,7 +266,7 @@ def inserted(text: str, line: str) -> str:
         if appended != "":
             appended += "\n"
         return appended + DEPENDENCIES + "\n" + line + "\n"
-    mut last = header
+    mut last = header.clone()
     mut index = header + 1
     while index < len(lines) and not lines[index].strip().startswith("["):
         if lines[index].strip() != "":
@@ -370,7 +370,7 @@ def replaced_requirement(
     index = requirement_line(lines, dependency.key)
     if index < 0 or len(lines[index].split(old)) != 2:
         return Err(f"{manifest}: no one line sets `{dependency.key}`'s version as {old}; edit it by hand")
-    mut changed = lines
+    mut changed = lines.clone()
     changed[index] = lines[index].replace(old, "\"" + requirement + "\"")
     return Ok("\n".join(changed))
 

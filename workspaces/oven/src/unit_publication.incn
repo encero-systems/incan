@@ -127,7 +127,7 @@ pub def record_verified_payload(
     """
     if observe(path)?.stamp != observation:
         return Err(f"{path.0}: verified payload changed before publication")
-    mut origins = provenance
+    mut origins = provenance.clone()
     if record_path(path).is_file():
         previous = read_json(record_path(path))?
         if required_text(previous, "unit")? == identity and required_text(previous, "payload")? == payload:

@@ -65,7 +65,7 @@ def completed_units(units: list[RegistryUnit], rustc: str, sysroot: str) -> Resu
     # 2. Every registry dependency must have the exact hash its producer recorded.
     mut completed: list[RegistryUnit] = []
     for original in units:
-        mut unit = original
+        mut unit = original.clone()
         if unit.entry in refusals:
             unit.refusal = refusals[unit.entry]
             completed.append(unit)

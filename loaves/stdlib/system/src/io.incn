@@ -355,7 +355,7 @@ pub class _BytesIO with (
             After reading two bytes from `BytesIO(b"abcd")`, `truncate()?` leaves `b"ab"`.
         """
         position = self.tell()
-        mut target = position
+        mut target = position.clone()
         if let Some(value) = size:
             target = value
         if target < 0:

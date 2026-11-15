@@ -242,11 +242,11 @@ def body_builder(
     """Construct frame storage and its checked lookup context before any executable block is emitted."""
     callable_arguments: list[RustType] = [argument.clone() for argument in type_arguments]
     method_names, method_bindings = body_type_bindings(module, body, type_arguments)?
-    mut names = method_names
-    mut bindings = method_bindings
+    mut names = method_names.clone()
+    mut bindings = method_bindings.clone()
     if len(parameters) != 0:
         append_default_type_bindings(module, body, parameters[0].ty, names, bindings)?
-    mut selected_unions = unions
+    mut selected_unions = unions.clone()
     retain_body_unions(selected_unions, program.union_types.as_ref(), body)
     scoped_locals, scope_parents = frame_scopes(body)
     return Ok(

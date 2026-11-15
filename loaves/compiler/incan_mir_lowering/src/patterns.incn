@@ -41,7 +41,7 @@ pub def enum_pattern_place(mut builder: Builder, source: Place, span: SourceSpan
                 return Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span)
             return source
         _ => return source
-    mut reference = source
+    mut reference = source.clone()
     if source.projection != Projection.Whole:
         reference = temporary(builder, place_type(builder.locals, source), span)
         builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
@@ -287,7 +287,7 @@ pub def nominal_field(
                         slot,
                         builder.intrinsics,
                     )?
-                    mut field = source
+                    mut field = source.clone()
                     for step in stored_steps(FieldProjection(slot=slot, ty=ty)):
                         field = appended_field(field, step, span)?
                     return Ok(field)
