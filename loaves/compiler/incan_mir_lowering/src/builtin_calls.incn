@@ -296,7 +296,7 @@ def lower_file_builtin(
         return Err("unsupported Body IR file builtin result carrier")
     if declaration.variants[0].fields != [success_type] or declaration.variants[1].fields != [PlanType.String]:
         return Err("unsupported Body IR file builtin result payloads")
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     mut operands: list[Operand] = []
     mut parameters: list[PlanType] = []
     for argument in arguments:

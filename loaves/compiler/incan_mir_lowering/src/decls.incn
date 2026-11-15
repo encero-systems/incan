@@ -136,7 +136,7 @@ pub def lower_model_declarations(
                 derives.append(derive)
         mut fields: list[Parameter] = []
         mut unavailable_fields: list[int] = []
-        mut field_public = declaration.field_public
+        field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
             library_arguments = library_model_arguments(
@@ -569,7 +569,7 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
 
     A union field is refused: the direct route's union layout carries no serde derive.
     """
-    mut result = names
+    mut result = names.clone()
     match ty:
         RustType.NativeBuiltin(_builtin) => return Err("unsupported Body IR serde of a builtin runtime carrier")
         RustType.Named(name) =>
@@ -592,7 +592,7 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
 pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[str], list[str]]) -> list[str]:
     """Append each serde derive a serde-deriving declaration's fields require of `name`, unless it is already derived."""
     serialize, deserialize = reached
-    mut result = derives
+    mut result = derives.clone()
     if name in serialize and "serde::Serialize" not in result:
         result.append("serde::Serialize")
     if name in deserialize and "serde::Deserialize" not in result:

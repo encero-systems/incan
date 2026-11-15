@@ -93,7 +93,7 @@ def instance_native_arguments(
         for name in instance.declaration.type_parameters:
             parameter: RustType = RustType.TypeVar(str(name))
             templates.append(parameter.clone())
-    mut closed = instance.arguments
+    mut closed = instance.arguments.clone()
     if len(declaration.native_type_arguments) != 0:
         closed = []
         for argument in declaration.native_type_arguments:

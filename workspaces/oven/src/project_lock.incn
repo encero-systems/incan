@@ -362,7 +362,7 @@ pub def local_interop(
             continue
         seen.append(project)
         for entry in project_interop(Path(project), reader)?:
-            mut scoped = entry
+            mut scoped = entry.clone()
             if project != root:
                 scoped.package = package
             entries.append(scoped)

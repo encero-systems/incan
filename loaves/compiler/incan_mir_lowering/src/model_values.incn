@@ -317,7 +317,7 @@ pub def lower_model_from_json(
             output = scalar_place(builder, place, span)?
             result = place_type(builder.locals, output)
             require_parsed_result(builder, result, ty)?
-            incoming = builder.owned
+            incoming = builder.owned.clone()
             text = text_argument(builder, arguments, 0, span)?
             path = "incan_native_runtime::deserialize_model"
             builder.externals.append(

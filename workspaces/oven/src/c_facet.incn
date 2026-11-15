@@ -294,7 +294,7 @@ def check_inheritance(configurations: Dict[str, CConfiguration], manifest: str) 
         field = ["c", "configurations", name]
         mut seen: list[str] = [name]
         mut inherited: Dict[str, str] = {}
-        mut current = configurations[name].base
+        mut current = configurations[name].base.clone()
         while true:
             match current:
                 None => break

@@ -99,7 +99,7 @@ def parse_cells(
             return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek()?.position))
         key_token = tokens.peek()?
         key_text = tokens.text(key_token)?
-        mut selected = positional
+        mut selected = positional.clone()
         next = tokens.peek_at(1)?
         if tokens.text(next)? == "=":
             saw_key = true

@@ -21,7 +21,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
     2. Apply the host policy to those locked identities.
     3. Carry only admitted identities into the compiler's unit description.
     """
-    mut ready = unit
+    mut ready = unit.clone()
     ready.vocab_admissions = []
     ready.vocab_policy = get_or("INCAN_VOCAB_POLICY", "locked-dependencies")
     mut providers: list[JsonValue] = []

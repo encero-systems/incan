@@ -10,13 +10,13 @@ pub def balanced_module_ranges(weights: &list[int], worker_limit: int = 4) -> li
     for weight in weights:
         remaining_weight += weight
     mut start = 0
-    mut workers_left = worker_limit
+    mut workers_left = worker_limit.clone()
     if len(weights) < workers_left:
         workers_left = len(weights)
     while start < len(weights):
         target_weight = (remaining_weight + workers_left - 1) // workers_left
         mut selected_weight = 0
-        mut end = start
+        mut end = start.clone()
         maximum_end = len(weights) - workers_left + 1
         while end < maximum_end and (end == start or selected_weight < target_weight):
             selected_weight += weights[end]

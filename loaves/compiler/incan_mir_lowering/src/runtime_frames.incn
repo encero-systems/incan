@@ -80,7 +80,7 @@ pub def runtime_frame_adapter(
         reference = plan_place(len(locals), span)
         locals.append(Local(ty=borrowed, span=span))
         statements.append(plan_assign(reference, RvalueKind.Borrow(source), span))
-        mut argument = reference
+        mut argument = reference.clone()
         if borrowed != expected:
             argument = plan_place(len(locals), span)
             locals.append(Local(ty=expected, span=span))
@@ -102,7 +102,7 @@ pub def runtime_frame_adapter(
             return Err(f"unsupported governed runtime result alias for {external.path}")
         output = plan_place(len(locals), span)
         locals.append(Local(ty=result, span=span))
-        cleanup = normal
+        cleanup = normal.clone()
         normal = len(blocks)
         blocks.append(
             plan_block(

@@ -83,8 +83,8 @@ pub def lower_enum_match(
         _ => return lower_structural_match(module, builder, target, source, arms, span)
     owner = enum_owner(place_type(builder.locals, source))?
     join = builder.new_block(span)
-    mut owners = builder.owned
-    incoming = builder.owned
+    mut owners = builder.owned.clone()
+    incoming = builder.owned.clone()
     mark = len(builder.released)
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
@@ -239,7 +239,7 @@ def bind_alternative(
     builder.current = matched
     builder.owned = incoming
     bind_structural_pattern(builder, source, alternative, span)?
-    owners = builder.owned
+    owners = builder.owned.clone()
     builder.finish(TerminatorKind.Goto(selected), span)
     return Ok(owners)
 
@@ -266,7 +266,7 @@ def tuple_paths(
         builder.owned = incoming
         for position in range(len(items)):
             bind_tuple_item(builder, fields[position], items[position], choices[position], span)?
-        owners = builder.owned
+        owners = builder.owned.clone()
         builder.finish(TerminatorKind.Goto(selected), span)
         return Ok(owners)
     if not is_binding_alternation(items[index]):
@@ -455,8 +455,8 @@ def lower_structural_match(
         return Err("unsupported Body IR nonprimitive structural match scrutinee")
     result_type = place_type(builder.locals, target)
     join = builder.new_block(span)
-    mut owners = builder.owned
-    incoming = builder.owned
+    mut owners = builder.owned.clone()
+    incoming = builder.owned.clone()
     mark = len(builder.released)
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
@@ -544,7 +544,7 @@ def lower_arm_guard(
             admitted = builder.new_block(span)
             refused = builder.new_block(span)
             builder.finish(TerminatorKind.SwitchBool(condition, refused, admitted), span)
-            kept = builder.owned
+            kept = builder.owned.clone()
             builder.current = refused
             release_match_scratch(builder, incoming, span)
             builder.finish(TerminatorKind.Goto(rejected), span)

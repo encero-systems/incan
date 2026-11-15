@@ -406,7 +406,7 @@ def await_greeting(mut listener: Listener, child: Child, endpoint: Endpoint) -> 
 
 def read_greeting(waiting: Connection, endpoint: Endpoint) -> Result[None, str]:
     """Read the greeting of a started owner and remove the readiness socket."""
-    mut greeting = waiting
+    mut greeting = waiting.clone()
     greeting.wait_at_most(LIFECYCLE_SECONDS)
     greeting_read = receive_document(greeting)
     discard_ready(endpoint)
@@ -444,7 +444,7 @@ pub def ask(endpoint: Endpoint, request: Request, start: bool) -> Result[Option[
         None => return Ok(None)
         Some(found) =>
             # 2. A build may take as long as it takes, while a lifecycle question and any write are bounded.
-            mut owner = found
+            mut owner = found.clone()
             owner.wait_at_most(timeout_for(request.command))
             owner.write_at_most(10)
             # 3. The owner's answer arrives with the trace lines of its reasoning, which this command relays.
@@ -482,7 +482,7 @@ def stop_owner(socket: Path, generation: str) -> bool:
                     discard_file(socket)
                     return false
                 Some(live) =>
-                    mut owner = live
+                    mut owner = live.clone()
                     owner.wait_at_most(LIFECYCLE_SECONDS)
                     # An owner that answered counts as stopped, whether or not its reply to `stop` arrives.
                     send_quietly(owner, Request(command="stop", generation=generation).to_json())

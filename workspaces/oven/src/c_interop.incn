@@ -224,7 +224,7 @@ def requirements(
     field: list[str],
 ) -> Result[CInteropTarget, IntakeError]:
     """The target's toolchain and SDK capabilities, definitions and platform facts, validated together."""
-    mut required = target
+    mut required = target.clone()
     if "toolchain" in entry:
         required.toolchain = Some(requirement_entry(entry["toolchain"], manifest, field + ["toolchain"])?)
     if "sdk" in entry:

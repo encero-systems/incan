@@ -195,7 +195,7 @@ pub def bind_defaulted_parameter(
     joined = lifted.new_block(span)
     flag = read_place(plan_place(flag_slot, span), false, span)
     lifted.finish(TerminatorKind.SwitchBool(flag, omitted, supplied), span)
-    incoming = lifted.owned
+    incoming = lifted.owned.clone()
     lifted.current = supplied
     owned = ty == PlanType.String
     passed = read_place(plan_place(flag_slot + 1, span), owned, span)

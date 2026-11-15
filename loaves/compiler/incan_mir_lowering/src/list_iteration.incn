@@ -459,7 +459,7 @@ pub def list_next(
     )
     next_block = builder.new_block(span)
     exhausted = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
     builder.current = exhausted
     drop_loop_owners(builder, span)?
@@ -478,7 +478,7 @@ pub def list_next(
             borrow_iteration_item(builder, target.local)
         # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
         widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
-        mut item = target
+        mut item = target.clone()
         if widened:
             item = temporary(builder, PlanType.U8, span)
         iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?

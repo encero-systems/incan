@@ -194,7 +194,7 @@ def refreshed_request(
     reach: Option[SourceGraph],
 ) -> Result[CapturedRequest, str]:
     """`captured` with an epoch of the same identity and fresher metadata, staged for publication with its reach."""
-    mut refreshed = captured
+    mut refreshed = captured.clone()
     encoded = epoch.encoded()?
     refreshed.epoch = epoch
     refreshed.revision = fingerprint([encoded])?

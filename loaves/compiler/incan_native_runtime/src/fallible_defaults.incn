@@ -107,7 +107,7 @@ pub def fallible_fold[T with Clone, E with Clone, Source with FallibleIterator[T
     f: Folder,
 ) -> Result[U, E]:
     """Update the accumulator in source order and stop before calling the folder on a failing poll."""
-    mut accumulator = initial
+    mut accumulator = initial.clone()
     while true:
         match source.__next__():
             Ok(Some(item)) =>

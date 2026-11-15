@@ -266,7 +266,7 @@ def retain_shared_factory_poll(
         for index in range(len(functions)):
             if functions[index].name != name:
                 continue
-            original = functions[index]
+            original = functions[index].clone()
             reference = PlanType.ModelMutRef(owner, models[owner].name)
             if len(original.parameters) != 1 or original.parameters[0].ty != reference:
                 continue

@@ -280,7 +280,7 @@ pub def owner_census_key(origin: str, path: str) -> RecordKey:
 
 pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
-    mut key = owner.key
+    mut key = owner.key.clone()
     key.family = "declaration-signature"
     return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
 

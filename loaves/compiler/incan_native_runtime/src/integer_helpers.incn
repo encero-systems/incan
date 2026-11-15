@@ -16,8 +16,8 @@ pub def integer_power[T](left: T, right: int, identity: T) -> T:
     if exponent == 0:
         return identity
     # 2. Keep the original multiplication sequence, including checked-overflow failures.
-    mut base = left
-    mut accumulator = identity
+    mut base = left.clone()
+    mut accumulator = identity.clone()
     while exponent > 1:
         if exponent & 1 == 1:
             accumulator = accumulator * base

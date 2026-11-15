@@ -25,8 +25,8 @@ pub def native_callable_storage(
     1. Read each callback's already evaluated storage from its checked slot.
     2. Replace only the generic position retained for that parameter, preserving the checked signature.
     """
-    mut inputs = parameters
-    mut generics = type_arguments
+    mut inputs = parameters.clone()
+    mut generics = type_arguments.clone()
     for positions in declaration.native_callable_parameters:
         slot = int(positions.parameter_slot)
         generic = int(positions.type_argument_slot)

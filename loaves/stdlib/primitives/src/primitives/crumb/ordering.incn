@@ -272,8 +272,8 @@ pub def order_values(items: &list[Value], projection: Projection, mut budget: Bu
         while first < len(items):
             middle = first + min([width, len(items) - first])
             end = middle + min([width, len(items) - middle])
-            mut a = first
-            mut b = middle
+            mut a = first.clone()
+            mut b = middle.clone()
             while a < middle or b < end:
                 budget.charge_elements(1)?
                 budget.charge_bytes(8)?
@@ -312,8 +312,8 @@ pub def order_entries(
         while first < len(items):
             middle = first + min([width, len(items) - first])
             end = middle + min([width, len(items) - middle])
-            mut a = first
-            mut b = middle
+            mut a = first.clone()
+            mut b = middle.clone()
             while a < middle or b < end:
                 budget.charge_elements(1)?
                 budget.charge_bytes(8)?

@@ -117,7 +117,7 @@ pub def inspect_incan_with_unit(
 pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Option[Path] = None) -> Result[Path, str]:
     """Retain one prepared unit's checked graph without selecting dependencies or compiling native code."""
     project = Path(ready.project_root)
-    mut cache_root = project
+    mut cache_root = project.clone()
     if let Some(selected) = owner:
         cache_root = selected
     digest, source_portable = export_digest(ready, project, toolchain)?
@@ -202,7 +202,7 @@ def prepared_unit(
     each built crate replacing the toolchain's of the same name. Its standard Loaves are kept, and every other Loaf it
     reaches is linked to its checked interface.
     """
-    mut selected = unit
+    mut selected = unit.clone()
     selected.loaves = linked_loaves(
         [loaf for loaf in unit.loaves if not loaf.is_dependency()] + source_loaves,
         interfaces,
@@ -217,9 +217,9 @@ def prepared_unit(
 
 def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result[list[UnitLoaf], str]:
     """The Loaves with each non-standard one pointing at its checked interface; one without an interface is refused."""
-    mut linked = loaves
+    mut linked = loaves.clone()
     for index in range(len(linked)):
-        mut loaf = linked[index]
+        mut loaf = linked[index].clone()
         if loaf.is_dependency():
             if loaf.name not in interfaces:
                 return Err(f"inspection needs the checked interface of {loaf.name}")

@@ -88,7 +88,7 @@ def count_adapter(
     if value_type(builder, count)? != PlanType.Int:
         return Err("unsupported Body IR generator count-adapter type")
     element = source_element(source_type)?
-    mut result = source_type
+    mut result = source_type.clone()
     if method == RustIteratorMethodId.Batch:
         leaf, depth = require_generator(source_type)?
         result = PlanType.Generator(leaf, depth + 1)

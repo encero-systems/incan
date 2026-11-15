@@ -114,7 +114,7 @@ pub def explicit_input_operation(
     referent, writable = reference_contract(expected)?
     if writable != exclusive:
         return Err("invalid Body IR explicit input reference contract")
-    mut borrowed = source
+    mut borrowed = source.clone()
     if actual != referent:
         held, held_writable = reference_contract(actual)?
         if held != referent or (exclusive and not held_writable):

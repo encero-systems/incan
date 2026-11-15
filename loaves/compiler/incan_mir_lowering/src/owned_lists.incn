@@ -116,7 +116,7 @@ pub def owned_list_next(mut builder: Builder, receiver: Place, target: Place, sp
             )
             exhausted = builder.new_block(span)
             selected = builder.new_block(span)
-            owners = builder.owned
+            owners = builder.owned.clone()
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             builder.current = exhausted
             drop_owned(builder, poll.local, span)

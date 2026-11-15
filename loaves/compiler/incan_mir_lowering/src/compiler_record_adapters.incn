@@ -457,7 +457,7 @@ def complete_authored_provenance(
 ) -> Result[CanonicalSymbolId, str]:
     """Complete one nested authored identity without requiring its intentionally incomplete boundary form to validate."""
     source_file = authored_source_file(identity.origin.clone(), fallback_source_file, source_files)?
-    mut origin = identity.origin
+    mut origin = identity.origin.clone()
     match origin:
         SymbolOrigin.Package(package, module_path) =>
             match package_versions.get(package.name):

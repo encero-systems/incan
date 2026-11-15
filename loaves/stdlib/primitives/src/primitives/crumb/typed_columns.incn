@@ -213,7 +213,7 @@ pub class TypedColumnReader:
             block = group.fields[field_index].blocks[logical // 256]
             within = logical % 256
             mut present = true
-            mut stored = within
+            mut stored = within.clone()
             if field.shape.absent != AbsentPolicy.Required:
                 present = bit(block.bitmap, within, block.bitmap_origin).map_err(binary_error)?
                 stored = rank(block.bitmap, within, block.bitmap_origin, budget).map_err(binary_error)?

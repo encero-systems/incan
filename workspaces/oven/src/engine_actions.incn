@@ -95,7 +95,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     mut produced = produced_result?
     produced.index_pages = read.pages - reading.pages
     produced.keys_listed = read.listed - reading.listed
-    mut counters = pending.capture.counters
+    mut counters = pending.capture.counters.clone()
     counters.frozen.stats += frozen.stats
     counters.frozen.reads += frozen.reads
     counters.frozen.hashes += frozen.hashes

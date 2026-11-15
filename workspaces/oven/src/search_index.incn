@@ -74,7 +74,7 @@ def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> R
     Publish the sorted, distinct directories of the toolchain's crates and of its registry units in one document named
     by its SHA-256, unless that document already exists.
     """
-    mut directories = toolchain.search
+    mut directories = toolchain.search.clone()
     registry = Path(toolchain.registry_units)
     if toolchain.registry_units != "" and registry.is_file():
         known = match available:

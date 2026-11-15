@@ -397,7 +397,7 @@ def lift_closure(
     for index in range(len(captures)):
         captured_local = capture_locals[index]
         destination = int(captured_local.index()) + 1 + count
-        mut captured = lifted.locals[destination].ty
+        mut captured = lifted.locals[destination].ty.clone()
         # A shared reference capture is stored as that reference; the body reads its borrowed value through it.
         if reference_capture(arguments[index]):
             captured = arguments[index]

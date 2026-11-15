@@ -44,7 +44,7 @@ def append_work(text: str) -> None:
     match Path(directory).joinpath(f"engine-contracts-{id()}.jsonl").open("a"):
         Err(_) => pass
         Ok(opened) =>
-            mut sink = opened
+            sink = opened
             _ = sink.write(text + "\n")
 
 

@@ -120,7 +120,7 @@ def event_loop(mut listener: Listener, mut state: ServiceState, idle: int) -> Re
         greetings = greet_ready(greetings, clients, state, now)
         if len(clients) > 0:
             for index in range(len(clients)):
-                mut client = clients[index]
+                mut client = clients[index].clone()
                 service_client(client, state)
                 clients[index] = client
             clients = [client for client in clients if not client.closed]
@@ -134,7 +134,7 @@ def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: Ser
     """Admit every ready Hello while silent peers wait independently until their bounded handshake expires."""
     mut waiting: list[Greeting] = []
     for index in range(len(greetings)):
-        mut greeting = greetings[index]
+        greeting = greetings[index]
         if now - greeting.accepted >= int(HANDSHAKE_SECONDS) * 1000:
             _ = greeting.channel.transport.close()
             continue
@@ -150,7 +150,7 @@ def greet_ready(greetings: list[Greeting], mut clients: list[Client], state: Ser
 
 def greet(initial: Channel, state: ServiceState) -> Result[Client, Refusal]:
     """Authenticate OS credentials and Hello before assigning a fresh nonzero session id."""
-    mut channel = initial
+    mut channel = initial.clone()
     channel.transport.wait_at_most(HANDSHAKE_SECONDS)
     channel.transport.write_at_most(HANDSHAKE_SECONDS)
     first = channel.receive()?

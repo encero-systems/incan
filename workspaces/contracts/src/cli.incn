@@ -108,7 +108,7 @@ pub def located(outcome: Outcome, project: Path) -> Outcome:
         Err(_) => pass
     if len(spellings) == 2 and len(spellings[1]) > len(spellings[0]):
         spellings = [spellings[1], spellings[0]]
-    mut stdout = outcome.stdout
+    mut stdout = outcome.stdout.clone()
     for spelling in spellings:
         stdout = stdout.replace(spelling, PROJECT)
     return Outcome(stdout=stdout, stderr=outcome.stderr, code=outcome.code)

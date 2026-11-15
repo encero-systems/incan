@@ -36,7 +36,7 @@ pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, s
     tests, provided = source_modules(Path(unit.source_root))?
     if len(provided) == 0:
         return Ok(unit)
-    mut linked = unit
+    mut linked = unit.clone()
     linked.project_library = Some(library_key(unit.package))
     linked.excluded_sources = tests
     return Ok(linked)
@@ -66,7 +66,7 @@ pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescriptio
     library of the project's modules under its own package, and checked as the project's program is. The unit's
     testing features stay its own: they are no feature of the package, as in 0.5.1.
     """
-    mut library = unit
+    mut library = unit.clone()
     library.kind = "library"
     library.source = library_root(unit, key)?.0
     library.package = key

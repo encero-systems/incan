@@ -93,7 +93,7 @@ pub def element(data: bytes, at: int, limit: int) -> Result[Element, str]:
         return Err("unsupported DER tag")
     first = int(data[at + 1])
     mut content = at + 2
-    mut length = first
+    mut length = first.clone()
     if first >= 128:
         count = first - 128
         if count == 0 or count > 3 or content + count > limit:
@@ -120,7 +120,7 @@ pub def expect(data: bytes, at: int, limit: int, tag: int) -> Result[Element, st
 pub def children(data: bytes, parent: Element) -> Result[list[Element], str]:
     """Read every element inside a constructed one."""
     mut found: list[Element] = []
-    mut at = parent.content
+    mut at = parent.content.clone()
     while at < parent.end:
         child = element(data, at, parent.end)?
         at = child.end
@@ -145,7 +145,7 @@ def unsigned(data: bytes, part: Element) -> Result[bytes, str]:
         return Err("expected a DER integer")
     if int(data[part.content]) >= 128:
         return Err("negative integer in a signature")
-    mut first = part.content
+    mut first = part.content.clone()
     while first < part.end - 1 and int(data[first]) == 0:
         first += 1
     return Ok(data[first:part.end])
@@ -324,7 +324,7 @@ def instant(data: bytes, part: Element) -> Result[int, str]:
 
 def days_from_civil(year: int, month: int, day: int) -> int:
     """Days from 1970-01-01 to a proleptic Gregorian date, for years from 1950 on."""
-    mut shifted_year = year
+    mut shifted_year = year.clone()
     mut shifted_month = month + 9
     if month > 2:
         shifted_month = month - 3

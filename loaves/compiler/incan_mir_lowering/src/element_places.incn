@@ -80,7 +80,7 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
 
 def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
     """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
-    mut source = ty
+    mut source = ty.clone()
     match source:
         PlanType.FrozenCollectionRef(name, elements) => source = PlanType.FrozenCollection(name, elements)
         _ => pass

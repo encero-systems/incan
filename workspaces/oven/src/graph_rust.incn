@@ -62,7 +62,7 @@ pub def inspect_rust(
     """
     # 1. The dependencies contribute the graphs they published, and the standard Loaves those graphs reach add theirs.
     prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
-    mut paths = prepared.paths
+    mut paths = prepared.paths.clone()
     if len(paths) > 0:
         paths = paths + standard_graphs(
             root,
@@ -75,7 +75,7 @@ pub def inspect_rust(
     # 2. Every Rust export is keyed by the compiler, the libraries built and the registry artifacts it links against.
     context = native_context(prepared, toolchain)?
     registry = registry_artifacts(prepared.facets, prepared.request)?
-    mut inputs = context.inputs
+    mut inputs = context.inputs.clone()
     mut registry_inputs: list[str] = []
     for artifact in registry.keys():
         registry_inputs.append(f"{registry[artifact]} {published_identity(Path(artifact))?}")

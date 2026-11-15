@@ -108,7 +108,7 @@ pub def change_version(request: VersionRequest) -> Result[str, str]:
         next = spelled(bumped(old, bump, request.keep_prerelease))
     # 3. Only the version's quoted value changes.
     if not request.dry_run:
-        mut changed = lines
+        mut changed = lines.clone()
         changed[line] = lines[line].replace(f"\"{current}\"", f"\"{next}\"")
         write(manifest, "\n".join(changed))?
     mut report: list[str] = []
@@ -167,7 +167,7 @@ pub def bumped(version: Version, bump: Bump, keep_prerelease: bool) -> Version:
     The version after `bump`, as 0.5.1 computed it: a release bump increments its component and resets those below,
     dropping the prerelease unless kept; a channel bump starts `CHANNEL.1` or advances the current channel's number.
     """
-    mut next = version
+    mut next = version.clone()
     next.build = []
     if bump == Bump.Major or bump == Bump.Minor or bump == Bump.Patch:
         if bump == Bump.Major:

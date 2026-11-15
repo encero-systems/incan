@@ -217,7 +217,7 @@ pub trait Iterator[T]:
 
         `init` is returned unchanged when the iterator is empty.
         """
-        mut acc = init
+        mut acc = init.clone()
         while true:
             match self.__next__():
                 Some(item) =>
@@ -431,7 +431,7 @@ pub trait FallibleIterator[T, E]:
         `f` runs once per successful item in source order, beginning with `init`. It does not run for the failing poll.
         The accumulator type must support `Clone` under the current value-semantics contract.
         """
-        mut acc = init
+        mut acc = init.clone()
         while true:
             match self.__next__():
                 Ok(Some(item)) =>

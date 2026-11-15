@@ -359,7 +359,7 @@ pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDesc
     The unit with its checked C bindings verifying against its package's declared target `triple` instead of the
     host (`--interop-target`); an empty triple selects the host.
     """
-    mut selected = unit
+    mut selected = unit.clone()
     if triple == "":
         return Ok(selected)
     match discovered_project(Path(unit.source))?:

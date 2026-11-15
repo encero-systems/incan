@@ -171,7 +171,7 @@ def declaration_meaning(text: str) -> Result[tuple[str, list[tuple[str, str]]], 
 
 def bound_text(text: str, keys: &list[tuple[str, str]]) -> str:
     """Replace each bound carrier key, longest first, by its span-free identity text."""
-    mut bound = text
+    mut bound = text.clone()
     mut replaced: list[bool] = [false for _ in keys]
     for _round in range(len(keys)):
         mut longest = -1

@@ -153,7 +153,7 @@ def _collapsed_star_position(pattern: str, start: int) -> int:
 
     Collapsing `***` to one star avoids redundant backtracking without changing match semantics.
     """
-    mut position = start
+    mut position = start.clone()
     while position + 1 < len(pattern) and _char_at(pattern, position + 1) == "*":
         position += 1
     return position
@@ -213,8 +213,8 @@ def _glob_match_parts(name: str, parts: list[_GlobPart], name_index: int, part_i
     `Star` delegates to `_glob_star_match()` because it may need to try multiple input suffixes. All other parts consume
     at most one input character and advance linearly.
     """
-    mut name_pos = name_index
-    mut part_pos = part_index
+    mut name_pos = name_index.clone()
+    mut part_pos = part_index.clone()
     while part_pos < len(parts):
         part = parts[part_pos]
         match part:

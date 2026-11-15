@@ -140,7 +140,7 @@ pub def project_registry(
         return Err(
             f"{path.0}: toolchain {lock.toolchain.version} ({lock.toolchain.identity}) differs from {TOOLCHAIN} ({identity}); run `oven lock`",
         )
-    mut selected = registry
+    mut selected = registry.clone()
     selected.recorded_bindings = recorded_bindings(lock, registry.units)?
     selected.installation_bindings = []
     selected.resolution_mode = lock.mode

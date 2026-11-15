@@ -73,7 +73,7 @@ pub def retain_frame_nominals(
     mut added: list[NominalDeclaration] = []
     mut cursor = 0
     while cursor < len(instances):
-        instance = instances[cursor]
+        instance = instances[cursor].clone()
         cursor += 1
         declaration = close_layout(instance)?
         if retains_declaration(context.nominal_declarations, declaration) or retains_declaration(added, declaration):
@@ -175,7 +175,7 @@ pub def specialize_nominals_with_instances(
         if len(pending[cursor]) == 0:
             cursor += 1
             continue
-        mut instance = instances[cursor]
+        instance = instances[cursor]
         lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
         previous = len(selected)
         pending[cursor] = collect_owner_body_types(
@@ -250,7 +250,7 @@ def lay_out_instance(
     templates: &list[int],
 ) -> Result[list[int], str]:
     """Collect one instance's field instances, then return the owner frames, in module order, it may close."""
-    mut instance = instances[index]
+    instance = instances[index]
     declaration = close_layout(instance)?
     lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
     if not native_owner(declaration):
@@ -520,7 +520,7 @@ def retain_nominal_instance(
     ancestors: list[str],
 ) -> Result[None, str]:
     """Reuse exact source or physical native instances before rejecting a recursive field expansion of their owner."""
-    mut retained_arguments = arguments
+    mut retained_arguments = arguments.clone()
     if native_owner(declaration):
         retained_arguments = representation_arguments(declarations, constructors, retained_arguments)
     # Borrow each retained instance: a copy would duplicate its whole declaration for every checked type.

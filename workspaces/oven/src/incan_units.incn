@@ -175,7 +175,7 @@ pub def make_unit(
     3. Compile a library, or reuse an executable whose inputs have not changed.
     """
     # 1. The shared library is compiled once per project and profile; a test unit then compiles only its own modules.
-    mut described = unit
+    mut described = unit.clone()
     if let Some(key) = unit.project_library:
         library_path = library_output(unit, key, native_crate_name(key))
         library = make_unit(shared_library(unit, key)?, toolchain, library_path)?

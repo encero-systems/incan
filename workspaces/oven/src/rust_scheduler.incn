@@ -33,10 +33,10 @@ pub class RustUnitSchedule:
     @staticmethod
     pub def start(facets: list[LocalFacet], jobs: int = 0, memory: int = -1) -> RustUnitSchedule:
         """Create a schedule using explicit test bounds or the current host's declared resources."""
-        mut selected_jobs = jobs
+        mut selected_jobs = jobs.clone()
         if selected_jobs <= 0:
             selected_jobs = scheduler_jobs()
-        mut selected_memory = memory
+        mut selected_memory = memory.clone()
         if selected_memory < 0:
             selected_memory = scheduler_memory()
         return RustUnitSchedule(

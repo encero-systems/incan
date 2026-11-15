@@ -104,13 +104,13 @@ pub def producer_frame(mut function: Function, handle: int, leaf: ListLeaf, dept
     """Move the implicit yield handle into parameter slot one after lowering the ordinary Body IR frame."""
     # Body IR's local mapping remains unchanged during lowering. Only the completed plan is permuted, so the
     # implicit runtime argument never impersonates a checked source local or changes evaluation order.
-    original = function.locals[handle]
+    original = function.locals[handle].clone()
     for index in range(handle, 1, -1):
         function.locals[index] = function.locals[index - 1]
     function.locals[1] = original
     function.parameters = [Parameter(name="__incan_yield", ty=PlanType.GeneratorYield(leaf, depth), span=function.span)] + function.parameters
     for index in range(len(function.blocks)):
-        block = function.blocks[index]
+        block = function.blocks[index].clone()
         mut statements: list[Statement] = []
         for statement in block.statements:
             statements.append(Statement(kind=swap_statement(statement.kind, handle), span=statement.span))
@@ -137,7 +137,7 @@ def swap_place(value: Place, handle: int) -> Place:
 
 def swap_operand(value: Operand, handle: int) -> Operand:
     """Keep ownership facts intact when permuting the completed producer frame."""
-    mut kind = value.kind
+    mut kind = value.kind.clone()
     match kind:
         OperandKind.Copy(place) => kind = OperandKind.Copy(swap_place(place, handle))
         OperandKind.Move(place) => kind = OperandKind.Move(swap_place(place, handle))
@@ -330,7 +330,7 @@ pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceS
     """Borrow the live generator or reborrow an existing iterator alias without copying its mutable reference."""
     match generator_shape(borrowed_at(builder.locals, receiver.local).ty):
         Some((leaf, depth)) =>
-            mut source = receiver
+            mut source = receiver.clone()
             if borrowed_at(builder.locals, receiver.local).ty == PlanType.GeneratorMutRef(leaf, depth):
                 source.projection = Projection.Deref(PlanType.Generator(leaf, depth))
             reference = temporary(builder, PlanType.GeneratorMutRef(leaf, depth), span)
@@ -385,7 +385,7 @@ pub def generator_next(mut builder: Builder, receiver: Place, output: Place, spa
             )
             exhausted = builder.new_block(span)
             selected = builder.new_block(span)
-            owners = builder.owned
+            owners = builder.owned.clone()
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             # Each branch owns the initialized poll buffer independently; even exhaustion must drop it.
             builder.current = exhausted

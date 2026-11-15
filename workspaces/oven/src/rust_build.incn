@@ -143,7 +143,7 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
     """
     # 1. The selected generation is shared by native facets and Incan providers.
     selected = selected_toolchain(request)?
-    mut prepared = request
+    mut prepared = request.clone()
     prepared.toolchain = Some(selected)
     # 2. Legacy installed producers permit a local bake, but cannot authorize a portable unit identity.
     if prepared.compiler == "":

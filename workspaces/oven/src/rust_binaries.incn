@@ -177,7 +177,7 @@ pub def binary_arguments(
 ) -> Result[list[str], str]:
     """Frame crate and link arguments, preserving the planner's explicit host library for a macro test consumer."""
     arguments = [source, "--crate-name", name.replace("-", "_"), "--crate-type", "bin", "--edition", declared.edition]
-    mut selected = arguments
+    mut selected = arguments.clone()
     if testing and source == declared.library:
         selected = library_arguments(declared)
     if testing:

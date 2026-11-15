@@ -162,7 +162,7 @@ def observe(
     payload_type = input.variants[slot].fields[0]
     selected = builder.new_block(span)
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     condition = variant_condition(builder, source, slot, span)
     builder.finish(TerminatorKind.SwitchBool(condition, join, selected), span)
     builder.current = selected
@@ -200,7 +200,7 @@ def transform(
     if result.carrier != Carrier.Result:
         return Err("unsupported Body IR Result combinator output carrier")
     payload_type = input.variants[slot].fields[0]
-    mut callback_result = output_type
+    mut callback_result = output_type.clone()
     if combinator.effect == "wrap":
         callback_result = result.variants[slot].fields[0]
     selected = builder.new_block(span)
@@ -210,7 +210,7 @@ def transform(
     builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
     # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
     forget_owned(builder, source.local)
-    owners = builder.owned
+    owners = builder.owned.clone()
     builder.current = other
     kept_type = input.variants[1 - slot].fields[0]
     kept = Place(local=source.local, projection=Projection.VariantField(1 - slot, 0, kept_type), span=span)
@@ -219,7 +219,7 @@ def transform(
     if value_type(builder, converted)? != kept_target:
         return Err("unsupported Body IR Result combinator changing the untouched side")
     assign_carrier(builder, output, owner, 1 - slot, [converted], span)
-    retained = builder.owned
+    retained = builder.owned.clone()
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = selected
     builder.owned = owners

@@ -55,7 +55,7 @@ pub def plan_options(arguments: list[str]) -> Result[PlanOptions, str]:
 pub def inspect_interop_plan(options: PlanOptions) -> Result[i32, str]:
     """Print the interop plan of the project at or above the path for the selected target."""
     selected = Path(options.path)
-    mut root = selected
+    mut root = selected.clone()
     if not selected.joinpath("loaf.toml").is_file():
         match discovered_project(selected.joinpath("loaf.toml"))?:
             Some(found) => root = found

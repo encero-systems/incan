@@ -248,7 +248,7 @@ def clone_into(
     """Borrow the receiver and write the owned copy to the call's destination, replacing what it held."""
     reference = temporary(builder, reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
-    mut output = source
+    mut output = source.clone()
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
