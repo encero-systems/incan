@@ -493,6 +493,14 @@ def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
     return Ok([JsonValue.string(path) for path in sorted([path for path in paths])])
 
 
+pub def share_seed_generations(seed: Path, destination: Path, name: str) -> Result[None, str]:
+    """Link one immutable seed tree of generation directories into the candidate home when the seed publishes it."""
+    source = seed.joinpath(name)
+    if source.exists():
+        destination.joinpath(name).symlink_to(source).map_err((error) => error.message())?
+    return Ok(None)
+
+
 pub def runtime_root(toolchain: Path) -> Path:
     """The directory of `toolchain` that holds one directory per installed runtime generation."""
     return toolchain.joinpath("runtime")

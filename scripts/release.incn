@@ -25,6 +25,7 @@ from native_build import (
     publish_support,
     readmit_build_home,
     require_unique_runtime_root,
+    share_seed_generations,
     standard_profiles,
     start_candidate_lsp,
 )
@@ -438,7 +439,7 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
         .map_err((error) => error.message())?
     apply_release_trust(run.paths.source, run.paths.toolchain)?
     share_seed_tree(seed, run.paths.toolchain, "loaves")?
-    share_seed_tree(seed, run.paths.toolchain, "native")?
+    share_seed_generations(seed, run.paths.toolchain, "native")?
     # The candidate ships its own registry closure, each unit with the source checksum the release pins.
     write_checksummed_registry(run.paths.toolchain, run.paths.source.joinpath(REGISTRY_CHECKSUMS))?
     sysroot = manifest_string(read_json(run.paths.toolchain.joinpath("toolchain.json"))?, "sysroot")?
