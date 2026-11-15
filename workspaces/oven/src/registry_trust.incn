@@ -108,6 +108,28 @@ pub def verify_statement(
     )
 
 
+pub def verify_root_revocation(
+    root: Root,
+    key_id: str,
+    sequence: int,
+    reason: str,
+    signature: Signature,
+) -> Result[None, str]:
+    """Verify a delegated-key revocation under the pinned root, never under the delegated key itself."""
+    if sequence < 0 or key_id == "" or reason == "" or "\n" in reason or "\r" in reason:
+        return Err("the registry signing-key revocation is malformed")
+    text = (
+        "incan-registry-key-revocation-v1\n" +
+        f"registry={root.registry}\n" +
+        f"key={key_id}\n" +
+        f"sequence={sequence}\n" +
+        f"reason={reason}\n"
+    )
+    if not verifies(root.key, text.encode("utf-8"), signature):
+        return Err("the registry root did not authorize the signing-key revocation")
+    return Ok(None)
+
+
 def delegation_payload(registry: str, key: Key) -> bytes:
     """Canonical root authorization for one registry signing key."""
     text = (

@@ -1,0 +1,107 @@
+"""Permanent RFC 125 signing-key, publisher and artifact revocations with their distinct authorities."""
+
+from registry_trust import Root, Signature, StatementKind, Trust, verify_root_revocation, verify_statement
+
+
+pub enum RevocationKind(str):
+    """Authorities a registry can permanently remove from future admission."""
+
+    SigningKey = "signing key"
+    Publisher = "publisher"
+    Artifact = "artifact"
+
+
+pub model Revocation:
+    """One append-only revocation target, reason and registry event sequence."""
+
+    pub kind: RevocationKind
+    pub target: str
+    pub reason: str
+    pub sequence: int
+
+
+pub model VerifiedRevocation:
+    """A revocation authenticated by the authority its kind requires."""
+
+    pub registry: str
+    pub kind: RevocationKind
+    pub target: str
+    pub reason: str
+    pub sequence: int
+
+
+pub def verify_key_revocation(
+    root: Root,
+    trust: Trust,
+    sequence: int,
+    reason: str,
+    signature: Signature,
+) -> Result[VerifiedRevocation, str]:
+    """Verify a delegated signing-key revocation under the pinned root key."""
+    if root.registry != trust.registry:
+        return Err("the signing key belongs to another registry root")
+    verify_root_revocation(root, trust.key_id, sequence, reason, signature)?
+    return Ok(
+        VerifiedRevocation(
+            registry=trust.registry,
+            kind=RevocationKind.SigningKey,
+            target=trust.key_id,
+            reason=reason,
+            sequence=sequence,
+        ),
+    )
+
+
+pub def verify_revocation(trust: Trust, revocation: Revocation, signature: Signature) -> Result[VerifiedRevocation, str]:
+    """Verify a publisher or artifact revocation as a delegated registry event."""
+    if revocation.kind == RevocationKind.SigningKey:
+        return Err("only the registry root can revoke a registry signing key")
+    if revocation.sequence < 0 or not plain(revocation.target) or not plain(revocation.reason):
+        return Err("the registry revocation is malformed")
+    payload = revocation_payload(revocation)
+    _ = verify_statement(trust, StatementKind.Event, revocation.sequence, payload, signature)?
+    return Ok(
+        VerifiedRevocation(
+            registry=trust.registry,
+            kind=revocation.kind,
+            target=revocation.target,
+            reason=revocation.reason,
+            sequence=revocation.sequence,
+        ),
+    )
+
+
+pub def require_active_trust(trust: Trust, revocations: list[VerifiedRevocation]) -> Result[Trust, str]:
+    """Refuse a delegated registry key after the pinned root has revoked it."""
+    for revocation in revocations:
+        if revocation.registry == trust.registry and revocation.kind == RevocationKind.SigningKey and revocation.target == trust.key_id:
+            return Err(f"registry signing key {trust.key_id} is revoked: {revocation.reason}")
+    return Ok(trust)
+
+
+pub def require_not_revoked(
+    kind: RevocationKind,
+    target: str,
+    revocations: list[VerifiedRevocation],
+) -> Result[None, str]:
+    """Refuse an exact publisher or artifact target covered by an authenticated revocation."""
+    for revocation in revocations:
+        if revocation.kind == kind and revocation.target == target:
+            return Err(f"{kind.value()} {target} is revoked: {revocation.reason}")
+    return Ok(None)
+
+
+def revocation_payload(revocation: Revocation) -> bytes:
+    """Canonical publisher or artifact revocation payload."""
+    text = (
+        "incan-registry-revocation-v1\n" +
+        f"kind={revocation.kind.value()}\n" +
+        f"target={revocation.target}\n" +
+        f"reason={revocation.reason}\n"
+    )
+    return text.encode("utf-8")
+
+
+def plain(value: str) -> bool:
+    """Keep a canonical line field nonempty and single-line."""
+    return value != "" and "\n" not in value and "\r" not in value
