@@ -56,15 +56,22 @@ pub(super) struct Stored {
     pub(super) digest: Vec<u8>,
     pub(super) fields: Vec<StoredField>,
     pub(super) variants: Vec<StoredVariant>,
+    /// For a reference entry, the position of the supplied description it resolved to.
+    pub(super) supplied: Option<usize>,
 }
 
 /// One decoded record: its description slot and logical value.
+#[derive(Clone)]
 pub(super) struct Record {
     pub(super) slot: usize,
     pub(super) value: Value,
+    /// The row frame's envelope offset and length, for reading it again on request.
+    pub(super) origin: usize,
+    pub(super) length: usize,
 }
 
 /// A decoded envelope: the K-ordered dictionary, records, seal status and the input bytes it occupies.
+#[derive(Clone)]
 pub(super) struct Rows {
     pub(super) dictionary: Vec<Stored>,
     pub(super) records: Vec<Record>,
@@ -280,7 +287,12 @@ fn read_records(
             hash::frame(&mut seal, &contribution);
         }
         budget.bytes(64).place(origin)?;
-        records.push(Record { slot, value });
+        records.push(Record {
+            slot,
+            value,
+            origin,
+            length: raw.len(),
+        });
     }
     if sealed {
         let offset = cursor.absolute();
@@ -318,6 +330,7 @@ fn read_entries(
     let mut entries: Vec<Stored> = Vec::with_capacity(count);
     for index in 0..count {
         let offset = cursor.absolute();
+        let mut resolved = None;
         let (source, inline) = match cursor.byte(budget)? {
             0 => {
                 let view = cursor.frame(budget)?;
@@ -332,14 +345,17 @@ fn read_entries(
                     .map_err(|kind| invalid_as(kind, "invalid_selector"))
                     .place(offset)?;
                 let digest = cursor.take(32, budget)?.to_vec();
-                (referenced(&key, &digest, supplied, kinds, budget).place(offset)?, false)
+                let (position, source) = referenced(&key, &digest, supplied, kinds, budget).place(offset)?;
+                resolved = Some(position);
+                (source, false)
             }
             _ => return Err(at("unsupported_profile", offset)),
         };
         validate_selectors(&source, kinds, budget).place(offset)?;
-        let checked = admit(source, inline, kinds, budget)
+        let mut checked = admit(source, inline, kinds, budget)
             .map_err(|kind| invalid_as(kind, "invalid_description"))
             .place(offset)?;
+        checked.supplied = resolved;
         if entries.iter().any(|entry| entry.key == checked.key) {
             return Err(at("duplicate_selector", offset));
         }
@@ -411,9 +427,9 @@ fn referenced(
     supplied: &[Meta],
     kinds: &[(String, bool)],
     budget: &mut Budget,
-) -> Result<Meta, Refused> {
+) -> Result<(usize, Meta), Refused> {
     let mut found_key = false;
-    for candidate in supplied {
+    for (position, candidate) in supplied.iter().enumerate() {
         budget.elements(1)?;
         let Some(Meta::Binary(raw_key)) = get(candidate, "nominal") else {
             return Err("invalid_description");
@@ -426,7 +442,7 @@ fn referenced(
         let parsed =
             admit(candidate.clone(), false, kinds, budget).map_err(|kind| invalid_as(kind, "invalid_description"))?;
         if parsed.digest == digest {
-            return Ok(candidate.clone());
+            return Ok((position, candidate.clone()));
         }
     }
     Err(if found_key {
@@ -594,6 +610,7 @@ fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Bu
         digest,
         fields,
         variants,
+        supplied: None,
     })
 }
 

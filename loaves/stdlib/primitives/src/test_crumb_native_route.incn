@@ -6,7 +6,8 @@ from crate.primitives.crumb.descriptions import Description, DescriptionMode
 from crate.primitives.crumb.metadata_values import encode
 from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_reader import read_rows
+from crate.primitives.crumb.encoding_errors import BinaryFailure
+from crate.primitives.crumb.row_reader import read_prefix, read_rows
 from crate.primitives.crumb.row_writer import write_rows
 from crate.primitives.crumb.types import AbsentPolicy
 from crate.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
@@ -150,4 +151,43 @@ def test_the_native_entry_admits_a_supplied_description_by_its_d_encoding() -> R
     admitted = supplied.admit()
     assert admitted.admitted(), f"the supplied description was not admitted: {admitted.category}"
     assert admitted.records == 1
+    return Ok(None)
+
+
+def test_the_public_row_set_reads_fields_and_descriptions_natively() -> Result[None, str]:
+    """A field's cell, its value and the written description come from the native set, with the reader's refusals."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, false, budget).map_err((e) => e.message())?
+    owner = MappedFile.owned(envelope)?
+    match owner.view(0, owner.len()):
+        None => return Err("missing test view")
+        Some(view) =>
+            before = twin_row_reads()
+            rows, consumed = read_prefix(view, [], registry, false, budget).map_err((e) => e.message())?
+            assert consumed == len(envelope)
+            assert rows.len() == 1
+            match rows.field_view(0, b"field1", budget).map_err((e) => e.message())?:
+                None => return Err("a required field had no cell")
+                Some(cell) =>
+                    assert cell.len() == 1
+                    assert cell.read_u8(0) == Some(7u8)
+            match rows.read_field(0, b"field1", budget).map_err((e) => e.message())?:
+                Value.Integer(number) =>
+                    assert number == IntegerValue.Signed(7i128)
+                _ => return Err("the selected field's value changed")
+            match rows.read_field(0, b"absent", budget):
+                Ok(_) => return Err("an unknown field was read")
+                Err(error) =>
+                    assert error.kind == BinaryFailure.MissingField
+            match rows.read_record(1, budget):
+                Ok(_) => return Err("a record past the set was read")
+                Err(error) =>
+                    assert error.kind == BinaryFailure.RecordIndex
+            written = rows.descriptions(budget).map_err((e) => e.message())?
+            assert len(written) == 1
+            assert written[0].mode == DescriptionMode.Inline
+            read_back = encode(written[0].metadata, budget).map_err((e) => e.message())?
+            assert read_back == encode(stored().metadata, budget).map_err((e) => e.message())?
+            assert twin_row_reads() == before, "the public row set ran the Incan twin"
     return Ok(None)

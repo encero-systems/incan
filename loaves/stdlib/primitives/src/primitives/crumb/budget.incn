@@ -111,3 +111,10 @@ pub class Budget:
         result = (state.bytes_left, state.elements_left)
         _restore(self.state.clone(), state)
         return result
+
+    pub def depth_allowance(self) -> int:
+        """Expose the nesting depth still available below the active depth, only to bounded native codec helpers."""
+        state = _take(self.state.clone())
+        result = state.depth_limit - state.active_depth
+        _restore(self.state.clone(), state)
+        return result

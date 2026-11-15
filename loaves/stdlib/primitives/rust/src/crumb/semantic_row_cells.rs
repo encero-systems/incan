@@ -98,13 +98,7 @@ fn read_fields(
             position += 1;
             field_cell(field, view, origin, dictionary, budget).map_err(|refusal| refusal.in_field(&field.identity))?
         } else {
-            match (field.absent, &field.storage) {
-                ('n', _) => Value::Absent,
-                ('e', Node::Container(kind, _)) if kind == "list" => Value::List(Vec::new()),
-                ('e', Node::Container(kind, _)) if kind == "set" => Value::Set(Vec::new()),
-                ('e', Node::Container(kind, _)) if kind == "map" => Value::Map(Vec::new()),
-                _ => return Err(at("invalid_description", bitmap.origin)),
-            }
+            absent_value(field, bitmap.origin)?
         };
         result.push(hash::Field {
             identity: field.identity.clone(),
@@ -353,5 +347,140 @@ fn checked_order(previous: &Value, current: &Value, origin: usize) -> Positioned
         std::cmp::Ordering::Equal => Err(at("duplicate_key", origin)),
         std::cmp::Ordering::Greater => Err(at("collection_order", origin)),
         std::cmp::Ordering::Less => Ok(()),
+    }
+}
+
+/// One stored field of an admitted row, selected by identity: its cell bytes and envelope offset, or `None` for
+/// declared absence, and the enum variant it belongs to.
+pub(super) struct Selected<'a> {
+    pub(super) field: &'a StoredField,
+    pub(super) cell: Option<(&'a [u8], usize)>,
+    bitmap_origin: usize,
+    variant: Option<&'a [u8]>,
+}
+
+/// Select one field of an admitted row by identity, as `row_projection.project_view` does. The admission already
+/// charged the row's bitmap and index, so they are read again outside `budget`; the selection itself is charged. A
+/// refusal inside an enum names its variant.
+pub(super) fn select_field<'a>(
+    stored: &'a Stored,
+    raw: &'a [u8],
+    origin: usize,
+    identity: &[u8],
+    budget: &mut Budget,
+) -> Positioned<Selected<'a>> {
+    let mut admitted = Budget::new(u64::MAX, u64::MAX, u64::MAX);
+    let mut cursor = Span::new(raw, origin);
+    if stored.record {
+        return select_in(&stored.fields, None, &mut cursor, identity, &mut admitted, budget);
+    }
+    let variant = cursor.length(&mut admitted)?;
+    let variant = stored
+        .variants
+        .get(variant)
+        .ok_or_else(|| at("variant_index", origin))?;
+    select_in(
+        &variant.fields,
+        Some(&variant.identity),
+        &mut cursor,
+        identity,
+        &mut admitted,
+        budget,
+    )
+    .map_err(|refusal| refusal.in_variant(&variant.identity))
+}
+
+/// Find the field by binary search over identity order, then address its cell through its presence rank.
+fn select_in<'a>(
+    fields: &'a [StoredField],
+    variant: Option<&'a [u8]>,
+    cursor: &mut Span<'a>,
+    identity: &[u8],
+    admitted: &mut Budget,
+    budget: &mut Budget,
+) -> Positioned<Selected<'a>> {
+    let (bitmap, index) = read_record_index(fields, cursor, admitted)?;
+    let position = field_index(fields, identity, bitmap.origin, budget)?;
+    let field = &fields[position];
+    let required_before = fields[..position].iter().filter(|field| field.absent == 'r').count();
+    let eligible_before = position - required_before;
+    let mut selected = Selected {
+        field,
+        cell: None,
+        bitmap_origin: bitmap.origin,
+        variant,
+    };
+    if field.absent != 'r' && !bitmap.bit(eligible_before) {
+        return Ok(selected);
+    }
+    let preceding = rank(&bitmap, eligible_before, budget)?;
+    selected.cell = Some(index.selected(required_before + preceding, budget)?);
+    Ok(selected)
+}
+
+/// The stored field with exactly this six-octet identity; any other identity is `missing_field`.
+fn field_index(fields: &[StoredField], identity: &[u8], origin: usize, budget: &mut Budget) -> Positioned<usize> {
+    if identity.len() != 6 {
+        return Err(at("missing_field", origin));
+    }
+    budget.bytes(12).place(origin)?;
+    let (mut low, mut high) = (0, fields.len());
+    while low < high {
+        budget.elements(1).place(origin)?;
+        budget.bytes(12).place(origin)?;
+        let middle = low + (high - low) / 2;
+        match fields[middle].identity.as_slice().cmp(identity) {
+            std::cmp::Ordering::Equal => return Ok(middle),
+            std::cmp::Ordering::Less => low = middle + 1,
+            std::cmp::Ordering::Greater => high = middle,
+        }
+    }
+    Err(at("missing_field", origin))
+}
+
+/// Count the present eligible fields before one, charging each whole bitmap byte it scans.
+fn rank(bitmap: &Bitmap, before: usize, budget: &mut Budget) -> Positioned<usize> {
+    if before / 8 > bitmap.bytes.len() || (before / 8 == bitmap.bytes.len() && before % 8 != 0) {
+        return Err(at("invalid_offsets", bitmap.origin));
+    }
+    let mut count = 0;
+    for index in 0..before / 8 {
+        budget.elements(1).place(bitmap.origin + index)?;
+        count += bitmap.bytes[index].count_ones() as usize;
+    }
+    if before % 8 != 0 {
+        count += (bitmap.bytes[before / 8] & ((1u8 << (before % 8)) - 1)).count_ones() as usize;
+    }
+    Ok(count)
+}
+
+/// Materialize a selected field's value, as `row_projection.project_value` does: a present cell is read under
+/// `budget` and names the requested field in a refusal, and declared absence restores its stored absent value.
+pub(super) fn read_selected(
+    selected: &Selected,
+    identity: &[u8],
+    dictionary: &[Stored],
+    budget: &mut Budget,
+) -> Positioned<Value> {
+    let value = match selected.cell {
+        Some((view, origin)) => {
+            field_cell(selected.field, view, origin, dictionary, budget).map_err(|refusal| refusal.in_field(identity))
+        }
+        None => absent_value(selected.field, selected.bitmap_origin),
+    };
+    match selected.variant {
+        Some(variant) => value.map_err(|refusal| refusal.in_variant(variant)),
+        None => value,
+    }
+}
+
+/// A field's stored absence: none for an option, an empty collection for an empty policy.
+fn absent_value(field: &StoredField, origin: usize) -> Positioned<Value> {
+    match (field.absent, &field.storage) {
+        ('n', _) => Ok(Value::Absent),
+        ('e', Node::Container(kind, _)) if kind == "list" => Ok(Value::List(Vec::new())),
+        ('e', Node::Container(kind, _)) if kind == "set" => Ok(Value::Set(Vec::new())),
+        ('e', Node::Container(kind, _)) if kind == "map" => Ok(Value::Map(Vec::new())),
+        _ => Err(at("invalid_description", origin)),
     }
 }
