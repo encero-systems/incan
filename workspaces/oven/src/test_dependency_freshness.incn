@@ -15,6 +15,7 @@ from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
 from scratch import scratch_directory
 from rust_target import decoded
+from trace_adapter import count_work, finish_counting
 from toolchain import (
     NativeCrate,
     Toolchain,
