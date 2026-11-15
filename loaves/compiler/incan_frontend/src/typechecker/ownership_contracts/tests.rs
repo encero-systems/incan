@@ -7,6 +7,7 @@ mod contracts_and_modes;
 mod explicit_calls;
 mod invocations_and_accesses;
 mod lazy_reader_control_flow;
+mod one_type;
 mod source_flow;
 mod trait_inputs;
 
