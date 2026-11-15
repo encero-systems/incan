@@ -167,12 +167,53 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Place construction does not read the base separately. Generated pattern/range projections instead use
     /// [`Self::ownership_fact_for_place`] directly: several generated reads may implement one source occurrence,
     /// so they must not consume the source countdown. Canonical local identity selects the owner, not field spelling.
+    /// A field read that is its owner's last read takes the field out of the owner
+    /// ([`Self::field_leaves_dead_owner`]).
     pub(super) fn source_place_operand(&mut self, place: bir::Place, ty: &IncanType) -> bir::Operand {
         if !place.projection.is_empty() {
-            let _ = self.consume_place_read(&place);
+            let remaining = self.consume_place_read(&place);
+            if remaining == Some(0) && self.field_leaves_dead_owner(&place, ty) {
+                return bir::Operand::place(place, bir::OwnershipFact::Move, true);
+            }
         }
         let (fact, last_use) = self.ownership_fact_for_place(&place, ty);
         bir::Operand::place(place, fact, last_use)
+    }
+
+    /// Whether the last read of an owner may take one field out of it instead of copying that field.
+    ///
+    /// The owner is a model the frame holds by value in a binding the source declared: never a parameter, a receiver,
+    /// a temporary or the storage a local alias names. It is declared inside the innermost loop, so the read runs once
+    /// for each value, and no pending argument still reads it. The field is one stored field holding a source model or
+    /// enum. The owner keeps its scope-exit drop, which rustc elaborates to the fields this read leaves behind
+    /// (DD-0018). Text, tuples and collections keep their copy, because lowering refuses those partial moves.
+    fn field_leaves_dead_owner(&self, place: &bir::Place, ty: &IncanType) -> bool {
+        let [
+            bir::PlaceElem::Field {
+                canonical: Some(_),
+                structural: false,
+                ..
+            },
+        ] = place.projection.as_slice()
+        else {
+            return false;
+        };
+        let Some(local) = place.local_id() else {
+            return false;
+        };
+        let Some(owner) = self.locals.get(local.index()) else {
+            return false;
+        };
+        let declared = |ty: &IncanType, kinds: &[SemanticSourceTargetKind]| {
+            matches!(ty, IncanType::Named(name) if parameter_types::retained_nominal_identity(name, self.type_info)
+                .is_some_and(|identity| kinds.contains(&identity.kind)))
+        };
+        matches!(owner.origin, bir::LocalOrigin::UserBinding)
+            && declared(&owner.ty, &[SemanticSourceTargetKind::Model])
+            && declared(ty, &[SemanticSourceTargetKind::Model, SemanticSourceTargetKind::Enum])
+            && self.input_aliases.is_empty()
+            && !self.pending_argument_reads.contains(&local)
+            && !self.loop_reuses_local(local)
     }
 
     /// Consume one seeded read through its canonical owner, returning the remaining source occurrences.
@@ -233,8 +274,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
     /// remain transfers or reborrows. This differs from a borrowed ABI slot whose logical source type is an owner.
-    /// Projected reads (`.field`, `[index]`) never move: v0 does not track partial-move state, so a non-Copy
-    /// projected read borrows rather than risking an unsound move out of a place the surrounding code still owns.
+    /// Projected reads (`.field`, `[index]`) never move here, so a non-Copy projected read borrows rather than risking
+    /// an unsound move out of a place the surrounding code still owns; only [`Self::source_place_operand`] takes one
+    /// field out, at the last read of an owner it proves dead.
     /// A checked source enum field instead records an explicit clone when read as a value; reference consumers retain
     /// their ordinary borrow adjustment. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`)
     /// never moves either, for a stronger reason than the projected case: a receiver is always a Rust-level
