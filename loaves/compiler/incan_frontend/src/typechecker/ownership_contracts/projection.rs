@@ -1,7 +1,7 @@
 //! Authenticate the source body's ownership proof before any native projection consumes it.
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
@@ -446,7 +446,20 @@ impl TypeCheckInfo {
                 call.kind != InputCallKind::Indirect && call.receiver.is_none(),
             )?;
             for argument in &invocation.arguments {
-                let access = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
+                let declared = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
+                // A caller-visible `mut` slot writes through to its argument (RFC 129), so the call takes it
+                // exclusively although the slot declares no explicit mode.
+                let access = if declared == IncanInputAccess::Inferred
+                    && argument.access == IncanInputAccess::Exclusive
+                    && call
+                        .parameters
+                        .get(argument.slot)
+                        .is_some_and(|parameter| parameter.is_mut)
+                {
+                    IncanInputAccess::Exclusive
+                } else {
+                    declared
+                };
                 if argument.access != access {
                     return Err("invocation argument access differs from the selected parameter");
                 }

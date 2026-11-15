@@ -1,6 +1,6 @@
 //! RFC 129 ordinary parameters inside an explicit body: an ordinary inferred slot receives a value, so a fresh value
-//! is evaluated into it and a place is read as it is passed; a caller-visible `mut` slot writes through, so the call
-//! takes its argument's place exclusively.
+//! is evaluated into it and an ordinary place is read as it is passed; a caller-visible `mut` slot writes through, so
+//! the call takes its argument's place exclusively.
 
 use super::*;
 
@@ -27,12 +27,31 @@ fn assert_proved(source: &str, name: &str) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// A shared input, a field of an owned input, a literal and a fresh result all pass to ordinary value slots.
+/// A field of an owned input, an ordinary input, a literal and a fresh result all pass to ordinary value slots. A
+/// place reached through a shared input stays refused: whether the callee shares it or would clone it is not known.
 #[test]
 fn ordinary_value_slots_take_places_and_fresh_values() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Row:\n    name: str\n    tags: list[str]\n\ndef encode(row: Borrowed[Row]) -> bytes:\n    return b\"row\"\n\ndef size(data: bytes) -> int:\n    return len(data)\n\ndef count(tags: list[str], label: str) -> int:\n    return len(tags) + len(label)\n\ndef shared(row: Borrowed[Row]) -> int:\n    return count(row.tags, row.name) + count(row.tags, \"x\")\n\ndef digest(row: Owned[Row]) -> int:\n    return size(encode(row)) + count(row.tags, row.name)\n";
-    assert_proved(source, "shared")?;
-    assert_proved(source, "digest")
+    let declarations = "model Row:\n    name: str\n    tags: list[str]\n\ndef encode(row: Borrowed[Row]) -> bytes:\n    return b\"row\"\n\ndef size(data: bytes) -> int:\n    return len(data)\n\ndef count(tags: list[str], label: str) -> int:\n    return len(tags) + len(label)\n\n";
+    assert_proved(
+        &format!(
+            "{declarations}def digest(row: Owned[Row], label: str) -> int:\n    return size(encode(row)) + count(row.tags, row.name) + count(row.tags, label) + count([], \"x\")\n"
+        ),
+        "digest",
+    )?;
+    let shared = format!("{declarations}def shared(row: Borrowed[Row]) -> int:\n    return count(row.tags, \"x\")\n");
+    let checker = checked(&shared)?;
+    let Some(InputFlow::Unavailable(unavailable)) = flow(&checker, "shared") else {
+        return Err(format!(
+            "a shared input's place passed to an ordinary slot was admitted: {:?}",
+            flow(&checker, "shared")
+        )
+        .into());
+    };
+    assert_eq!(
+        unavailable.reason,
+        "ordinary argument requires inferred access or mutable binding facts"
+    );
+    Ok(())
 }
 
 /// An owned input's field forwarded through an ordinary helper into an owned result is a value the helper owns: the
@@ -48,10 +67,14 @@ fn owned_field_forwarded_through_a_helper_retains_nothing() -> Result<(), Box<dy
 fn caller_visible_mut_slots_take_their_argument_exclusively() -> Result<(), Box<dyn std::error::Error>> {
     let declarations = "model Remap:\n    seen: list[int]\n\ndef note(mut remap: Remap, value: int) -> None:\n    remap.seen.append(value)\n\n";
     assert_proved(
-        &format!("{declarations}def record(mut remap: BorrowedMut[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n"),
+        &format!(
+            "{declarations}def record(mut remap: BorrowedMut[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n"
+        ),
         "record",
     )?;
-    let refused = format!("{declarations}def record(remap: Borrowed[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n");
+    let refused = format!(
+        "{declarations}def record(remap: Borrowed[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n"
+    );
     let checker = checked(&refused)?;
     assert!(
         checker

@@ -145,7 +145,23 @@ impl BodyBuilder<'_, '_> {
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
             let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
+            let closure = self
+                .input_body
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .is_some_and(|proof| proof.is_closure_argument(expression.span));
             let value = match argument.source {
+                // An ordinary inferred slot receives a value, passed as the ordinary call route passes it.
+                Some(CheckedInputSource::Place { .. }) if argument.access == IncanInputAccess::Inferred && !closure => {
+                    self.lower_value_argument(expression, Some(&ty), scope, out)?
+                }
+                // A native reference is the view it already is (RFC 164, one type): it is passed as it is.
+                Some(CheckedInputSource::Place { .. })
+                    if native_reference_view(&self.resolve_ty(expression.span), &ty, argument.access) =>
+                {
+                    self.lower_expr_to_operand(expression, scope, out)
+                }
                 Some(CheckedInputSource::Place { root, fields, elements }) => {
                     if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
                         return Err("explicit source-place input cannot coerce or copy its owner".into());
@@ -321,5 +337,17 @@ impl BodyBuilder<'_, '_> {
             self.retain_argument_borrow(read, access == IncanInputAccess::Exclusive);
         }
         Ok(value)
+    }
+}
+
+/// Whether an argument of checked type `actual` is a native reference to the view slot's value type `slot`, with the
+/// access the slot takes: `&T` or `&mut T` for a shared view, `&mut T` for an exclusive one.
+fn native_reference_view(actual: &IncanType, slot: &IncanType, access: IncanInputAccess) -> bool {
+    match (access, actual) {
+        (IncanInputAccess::Shared, IncanType::Ref(value) | IncanType::RefMut(value))
+        | (IncanInputAccess::Exclusive, IncanType::RefMut(value)) => {
+            super::parameter_types::physical_type_argument(value.as_ref().clone()) == *slot
+        }
+        _ => false,
     }
 }
