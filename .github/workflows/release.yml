@@ -49,10 +49,13 @@ jobs:
         with:
           target: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
+      # A tag's release is stamped with scripts/release-signer.json, and a stamped incan installs only what the sign job
+      # signed, so a tag's run packs here and leaves installed verification to the verify job. Every other run is
+      # unstamped and runs every phase here.
       - name: Build, verify and reproduce the checkout release
         run: >-
           incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release" --prove-fixed-point
-          --jobs 6 --timeout 600
+          --jobs 6 --timeout 600 ${{ startsWith(github.ref, 'refs/tags/v') && '--stamp-signer' || '' }}
       - name: Retain the bundle a tag signs
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
@@ -74,7 +77,8 @@ jobs:
             ${{ runner.temp }}/release/**/*.txt
           if-no-files-found: warn
 
-  # DD-0016: every release asset is signed keylessly from this workflow's own identity. Only a tag is a release, so
+  # DD-0016: every release asset is signed keylessly from this workflow's own identity, in the one job that holds the
+  # token. It checks nothing out and runs nothing the release built: only cosign. Only a tag is a release, so
   # the certificate names this file at `refs/tags/<tag>`, which is the signer an installed toolchain carries. Moving
   # or renaming this file changes that identity, and needs a signed release that states the new one first.
   sign:
@@ -121,6 +125,66 @@ jobs:
           name: signed-bundle-${{ matrix.target }}
           path: bundle
           if-no-files-found: error
+
+  # The stamped incan installs the bundle the sign job signed, verifying each signature against the signer it carries,
+  # and the installed toolchain then passes the release's installed verification.
+  verify:
+    name: Verify the signed release (${{ matrix.target }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sign
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    env:
+      INCAN_STDLIB: ${{ github.workspace }}/loaves/stdlib
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Restore release caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/incan-build-toolchain/cache/release-reference
+            ${{ runner.temp }}/incan-build-toolchain/cache/release-rust
+          key: release-v1-${{ matrix.target }}-${{ hashFiles('build-toolchain.json') }}-${{ github.sha }}
+          restore-keys: release-v1-${{ matrix.target }}-${{ hashFiles('build-toolchain.json') }}-
+      - name: Install the released build seed
+        uses: ./.github/actions/install-build-toolchain
+        with:
+          target: ${{ matrix.target }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch the signed bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed-bundle-${{ matrix.target }}
+          path: ${{ runner.temp }}/signed
+      # An artifact keeps no file modes; the signatures cover the bytes.
+      - name: Make the signed programs executable
+        run: chmod +x "$RUNNER_TEMP/signed/incan" "$RUNNER_TEMP/signed/incan-lsp"
+      - name: Install the signed bundle with its stamped incan and verify the installation
+        run: >-
+          incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release"
+          --verify-installed "$RUNNER_TEMP/signed" --jobs 6 --timeout 600
+      - name: Retain verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verified-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/release/**/*.diff
+            ${{ runner.temp }}/release/**/*.json
+            ${{ runner.temp }}/release/**/*.log
+            ${{ runner.temp }}/release/**/*.sha256
+            ${{ runner.temp }}/release/**/*.tsv
+            ${{ runner.temp }}/release/**/*.txt
+          if-no-files-found: warn
 
   docs:
     name: US English and strict docs
