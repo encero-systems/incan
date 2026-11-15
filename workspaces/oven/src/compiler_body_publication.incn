@@ -163,7 +163,7 @@ class CompiledBodyFrames:
         return Ok(None)
 
 
-def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
+pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
     """Read the sidecar as one bounded owner allocation at a time while retaining only decoded semantic values."""
     mut reader = CompiledBodyFrames.open(path)?
     mut values: list[CompiledBodyValue] = []

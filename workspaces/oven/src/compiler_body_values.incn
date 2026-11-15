@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
-from pub::internal_models.records import ReadReceipt, RecordKey
+from pub::internal_models.records import ReadReceipt, ReadWitness, RecordKey
 from compiler_graph_records import (
     PublishedEvaluation,
     ReusableRecord,
@@ -37,6 +37,9 @@ pub model SelectedBodyRecord:
     pub local: bytes
     pub final: bytes
     pub body_ir: bytes
+    pub module: str = ""
+    pub name: str = ""
+    pub dependencies: list[str] = []
 
 
 pub model SelectedBodyPage:
@@ -105,6 +108,9 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
                         selected_records.append(
                             SelectedBodyRecord(
                                 identity=local.key.identity,
+                                module=body_module(local),
+                                name=body_name(local),
+                                dependencies=body_dependencies(local),
                                 local=local.value,
                                 final=final.value,
                                 body_ir=body.value,
@@ -136,6 +142,9 @@ pub def select_body_inventory_except(
                         selected_records.append(
                             SelectedBodyRecord(
                                 identity=local.key.identity,
+                                module=body_module(local),
+                                name=body_name(local),
+                                dependencies=body_dependencies(local),
                                 local=local.value,
                                 final=final.value,
                                 body_ir=body.value,
@@ -206,3 +215,37 @@ def matching_record(records: list[ReusableRecord], local: ReusableRecord) -> Opt
         ):
             return Some(record)
     return None
+
+
+def body_module(record: ReusableRecord) -> str:
+    """Recover the compiler-authenticated source module from an owner's exact source read."""
+    for witness in record.receipt.witnesses:
+        match witness:
+            ReadWitness.Found(found, _) =>
+                if found.request.key.family == "owner-source":
+                    return found.request.key.identity
+            _ => pass
+    return ""
+
+
+def body_name(record: ReusableRecord) -> str:
+    """Recover the compiler-authenticated source name from an owner's exact source read."""
+    for witness in record.receipt.witnesses:
+        match witness:
+            ReadWitness.Found(found, _) =>
+                if found.request.key.family == "owner-source":
+                    return found.request.key.facet
+            _ => pass
+    return ""
+
+
+def body_dependencies(record: ReusableRecord) -> list[str]:
+    """Recover direct project signature reads as logical module/name pairs for frontier ordering."""
+    mut dependencies: set[str] = set()
+    for witness in record.receipt.witnesses:
+        match witness:
+            ReadWitness.Found(found, _) =>
+                if found.request.key.family == "declaration-signature":
+                    dependencies.add(found.request.key.identity + "\n" + found.request.key.facet)
+            _ => pass
+    return sorted([dependency for dependency in dependencies])
