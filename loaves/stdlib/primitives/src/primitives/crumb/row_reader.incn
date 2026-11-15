@@ -124,7 +124,7 @@ def admit(
     budget.charge_bytes(admission.bytes_charged).map_err((e) => primitive(e, admission.offset))?
     budget.charge_elements(admission.elements_charged).map_err((e) => primitive(e, admission.offset))?
     if not admission.admitted():
-        return Err(refusal(admission.category, admission.offset, admission.field, admission.variant))
+        return Err(refusal(admission.category, admission.offset, admission.field, admission.variant, admission.cause))
     consumed = admission.consumed
     match view.slice(0, consumed):
         None => return Err(failure(BinaryFailure.Truncated, consumed))

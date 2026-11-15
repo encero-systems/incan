@@ -21,6 +21,8 @@ pub struct RowAdmission {
     pub field: Option<Vec<u8>>,
     /// The enum variant identity a refusal is in, when known.
     pub variant: Option<Vec<u8>>,
+    /// The exhausted caller-owned resource when a budget charge caused the refusal.
+    pub cause: String,
     /// The input bytes the admitted envelope occupies.
     pub consumed: i64,
     /// True only when the complete logical seal was verified.
@@ -113,7 +115,13 @@ impl RowRequest {
             None => Err(at("invalid_description", 0)),
         };
         let (bytes_left, elements_left) = budget.left();
-        admission(result, &self.data, bytes - bytes_left, elements - elements_left)
+        admission(
+            result,
+            &self.data,
+            bytes - bytes_left,
+            elements - elements_left,
+            budget.cause(),
+        )
     }
 
     /// Decode each supplied description outside the caller's allowance; the caller already holds them as values.
@@ -126,7 +134,13 @@ impl RowRequest {
 }
 
 /// The admission's facts from a read result and the allowance it used.
-fn admission(result: Result<Rows, Refusal>, data: &[u8], bytes: u64, elements: u64) -> RowAdmission {
+fn admission(
+    result: Result<Rows, Refusal>,
+    data: &[u8],
+    bytes: u64,
+    elements: u64,
+    cause: Option<&str>,
+) -> RowAdmission {
     let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
     let charged = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
     let mut admission = RowAdmission {
@@ -134,6 +148,7 @@ fn admission(result: Result<Rows, Refusal>, data: &[u8], bytes: u64, elements: u
         offset: 0,
         field: None,
         variant: None,
+        cause: String::new(),
         consumed: 0,
         sealed: false,
         records: 0,
@@ -155,6 +170,9 @@ fn admission(result: Result<Rows, Refusal>, data: &[u8], bytes: u64, elements: u
             admission.offset = count(refusal.offset);
             admission.field = refusal.field;
             admission.variant = refusal.variant;
+            if refusal.category == "limit_exceeded" {
+                admission.cause = cause.unwrap_or_default().to_string();
+            }
         }
     }
     admission
@@ -248,14 +266,15 @@ mod tests {
             (again.bytes_charged, again.elements_charged),
             (first.bytes_charged, first.elements_charged)
         );
-        for (bytes_left, elements_left) in [
-            (first.bytes_charged - 1, first.elements_charged),
-            (first.bytes_charged, first.elements_charged - 1),
+        for (bytes_left, elements_left, cause) in [
+            (first.bytes_charged - 1, first.elements_charged, "bytes"),
+            (first.bytes_charged, first.elements_charged - 1, "elements"),
         ] {
             let mut short = RowRequest::new(bytes(ENUM_INLINE), false, true);
             short.allow(bytes_left, elements_left, 128);
             let refused = short.admit();
             assert_eq!(refused.category, "limit_exceeded");
+            assert_eq!(refused.cause, cause);
             assert!(refused.bytes_charged <= bytes_left && refused.elements_charged <= elements_left);
         }
     }
