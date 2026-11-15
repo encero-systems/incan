@@ -4,6 +4,7 @@ from rust::std::process import Command, Output, Stdio
 from codegen import native_arguments, rust_arguments
 from std.environ import get_or
 from std.fs import Path
+from std.testing import fail
 from files import read, remove
 from intake import ManifestReader
 from invocation_identity import invocation_facts
@@ -682,3 +683,41 @@ def standard_build(project: Path, stdlib: Path) -> Result[Output, str]:
     command.arg("build").arg(project.0).arg("--profile").arg("release").current_dir(project.0)
     command.env("INCAN_STDLIB", stdlib.0).env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
     return command.output().map_err((error) => f"cannot run {binary}: {error}")
+
+
+def out_key(project: Path, out: str) -> Result[str, str]:
+    """Key a crate whose compile sees `OUT_DIR=out` and reads one generated file, as a fresh process would."""
+    mut ledger = load_ledger(project.joinpath("ledger.json"), 0, "")
+    paths = [project.joinpath("src/lib.rs").0, project.joinpath(".oven-out/tag.rs").0]
+    environment = {"OUT_DIR": out}
+    key = reconciled_rust_key(project, project, paths, ["OUT_DIR"], ["crate snap lib"], environment, [], "c", ledger)?
+    return Ok(key.digest)
+
+
+def generated_crate(project: Path, tag: str) -> Result[None, str]:
+    """A crate that includes one file its build fact's `out` tree holds."""
+    write(project.joinpath("src/lib.rs"), "include!(concat!(env!(\"OUT_DIR\"), \"/tag.rs\"));\n")?
+    return write(project.joinpath(".oven-out/tag.rs"), f"pub const TAG: u8 = {tag};\n")
+
+
+pub def test_a_fact_out_directory_keys_by_its_loaf_relative_place_under_any_root() -> Result[None, str]:
+    """
+    A build fact's `OUT_DIR` is spelled by its Loaf-relative place in the unit identity, so one crate under two absolute
+    roots has one identity, while its generated files still key by content. An `OUT_DIR` outside the Loaf, like any
+    other location-bearing value, still refuses a portable identity.
+    """
+    scratch = scratch_directory()?
+    mut digests: list[str] = []
+    for root in ["first root", "second"]:
+        project = scratch.path().joinpath(root).joinpath("snap")
+        generated_crate(project, "1")?
+        digests.append(out_key(project, project.joinpath(".oven-out").0)?)
+    assert digests[0] == digests[1], f"{digests}"
+    changed = scratch.path().joinpath("changed").joinpath("snap")
+    generated_crate(changed, "2")?
+    assert out_key(changed, changed.joinpath(".oven-out").0)? != digests[0]
+    match out_key(changed, scratch.path().joinpath("elsewhere").0):
+        Ok(_) => fail("an OUT_DIR outside the Loaf was given a portable identity")
+        Err(reason) =>
+            assert "location-bearing environment OUT_DIR" in reason, reason
+    return Ok(None)
