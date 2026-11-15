@@ -1,0 +1,26 @@
+# behavior: a writable alias of a list element, of a field of an element, of a tuple field or of a dictionary value writes through to that place (RFC 129 writable alias rule 7, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the program prints `[1] [2]`, `[3]` and `[5]`.
+# expect-stdout:
+#   [1, 10] [2, 20]
+#   [3, 30]
+#   [5, 50]
+
+class Row:
+    pub cells: list[int]
+
+
+def main() -> None:
+    mut rows = [Row(cells=[1]), Row(cells=[2])]
+    mut first = rows[0]
+    first.cells.append(10)
+    mut cells = rows[1].cells
+    cells.append(20)
+    println(f"{rows[0].cells} {rows[1].cells}")
+    mut pair = (Row(cells=[3]), Row(cells=[4]))
+    mut left = pair.0
+    left.cells.append(30)
+    println(pair.0.cells)
+    mut table: dict[str, Row] = {"a": Row(cells=[5])}
+    mut entry = table["a"]
+    entry.cells.append(50)
+    println(table["a"].cells)
