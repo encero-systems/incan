@@ -29,7 +29,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.enter_terminal_path(stmts, scope);
         }
         for (index, stmt) in stmts.iter().enumerate() {
-            if is_documentation(stmt, &stmts[index + 1..]) {
+            // Documentation has no effect, so it never reaches Body IR or the plans keyed on it.
+            if crate::documentation::is_documentation(stmt, &stmts[index + 1..]) {
                 continue;
             }
             let first_temporary = self.locals.len();

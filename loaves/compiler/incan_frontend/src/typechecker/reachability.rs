@@ -95,7 +95,12 @@ impl TypeChecker {
         self.statement_blocks.serial += 1;
         self.statement_blocks.current = self.statement_blocks.serial;
         self.report_unreachable_after_return(body);
-        for stmt in body {
+        for (index, stmt) in body.iter().enumerate() {
+            // Documentation has no effect and never reaches Body IR, so it has nothing to check and leaves no fact for
+            // a checker record to anchor.
+            if crate::documentation::is_documentation(stmt, &body[index + 1..]) {
+                continue;
+            }
             self.check_statement(stmt);
         }
         self.reject_unread_open_rust_generic_bindings_of_block(self.statement_blocks.current);
