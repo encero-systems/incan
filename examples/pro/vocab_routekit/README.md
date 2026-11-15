@@ -8,11 +8,10 @@ This example shows:
 - A nested block-context clause: `middleware:`.
 - A scoped operator-like glyph inside the route block: `get + post`.
 - A scoped mapping glyph made from punctuation syntax: `get + post -> handler.index`.
-- A Rust desugarer receiving the scoped glyph payload and lowering the block to ordinary statements.
+- An Incan entry in `producer/src/vocab.incn` receiving structured glyph operands through `std.vocab` and returning an ordinary print statement. The example reports verb and handler syntax; it does not start an HTTP server.
 
 Run it from the repository root:
 
 ```bash
-./target/debug/incan build --lib examples/pro/vocab_routekit/producer/src/lib.incn
-./target/debug/incan run examples/pro/vocab_routekit/consumer/src/main.incn
+incan run examples/pro/vocab_routekit/consumer/src/main.incn
 ```

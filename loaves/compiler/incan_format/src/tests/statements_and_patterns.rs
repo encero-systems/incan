@@ -81,6 +81,7 @@ fn test_format_source_normalizes_blank_after_match_arm_arrow() -> Result<(), For
     Ok(())
 }
 
+/// A blank after an arrow is removed when its single assignment fits inline.
 #[test]
 fn test_format_source_normalizes_blank_after_match_arm_arrow_before_statement() -> Result<(), FormatError> {
     let source = r#"def f(result: Result[int, str]) -> None:
@@ -92,13 +93,14 @@ fn test_format_source_normalizes_blank_after_match_arm_arrow_before_statement() 
 "#;
     let formatted = format_source(source)?;
     assert!(
-        formatted.contains("        Err(err) =>\n            message = err"),
+        formatted.contains("        Err(err) => message = err"),
         "expected blank after match arm arrow before statement to be removed; got:\n{formatted}"
     );
     assert!(
         !formatted.contains("        Err(err) =>\n\n            message = err"),
         "formatter left an empty line between match arm arrow and statement body; got:\n{formatted}"
     );
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
 
@@ -151,6 +153,7 @@ fn test_format_source_normalizes_blank_after_elif_and_else_headers() -> Result<(
     Ok(())
 }
 
+/// Joining a short assignment arm still leaves exactly one blank line between match statements.
 #[test]
 fn test_format_source_does_not_double_space_after_multiline_match_statement() -> Result<(), FormatError> {
     let source = r#"def f(first: Result[int, str], second: Result[int, str]) -> None:
@@ -167,13 +170,14 @@ fn test_format_source_does_not_double_space_after_multiline_match_statement() ->
 "#;
     let formatted = format_source(source)?;
     assert!(
-        formatted.contains("            message = err\n\n    match second:"),
+        formatted.contains("        Err(err) => message = err\n\n    match second:"),
         "expected exactly one blank line after multiline match statement; got:\n{formatted}"
     );
     assert!(
-        !formatted.contains("            message = err\n\n\n    match second:"),
+        !formatted.contains("        Err(err) => message = err\n\n\n    match second:"),
         "formatter emitted two blank lines after multiline match statement; got:\n{formatted}"
     );
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
 
@@ -313,11 +317,7 @@ fn continue_match_arm_stays_parseable_and_idempotent() -> Result<(), FormatError
         );
         let formatted = assert_format_round_trip_lex_parse(&source)?;
         assert_eq!(format_source(&formatted)?, formatted);
-        if statement == "continue" {
-            assert!(formatted.contains("_ =>\n                continue"), "{formatted}");
-        } else {
-            assert!(formatted.contains(&format!("_ => {statement}")), "{formatted}");
-        }
+        assert!(formatted.contains(&format!("_ => {statement}")), "{formatted}");
     }
     Ok(())
 }

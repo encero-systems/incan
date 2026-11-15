@@ -8,23 +8,21 @@ This page documents the internal integration model, runtime boundary design, and
 [Language → How-to → `std.testing` guide]:../../language/how-to/testing_stdlib.md
 [Standard library reference → `std.testing`]:../../language/reference/stdlib/testing.md
 
-## Integration model (RFC 023 Phase 5)
+## Integration model (RFC 171)
 
 `std.testing` is compiled from Incan source instead of relying on hardcoded Rust assertion helpers.
 
 - **Source of truth**: `loaves/stdlib/testing/src/testing.incn`.
-- **Rust module mapping**: the file declares `rust.module("incan_std_testing")`, routing host-boundary calls to the `incan_std_testing` Rust module.
-- **Incan-implemented assertions**: `assert`, `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_is_some`, `assert_is_none`, `assert_is_ok`, `assert_is_err`, and `fail` are all written in Incan source. They delegate to `fail_t()` for the actual panic.
-- **Host-boundary primitives** (`@rust.extern`):
-    - `fail_t[T](msg)` — generic panic primitive implemented in `incan_std_testing`.
-    - Marker entrypoints (`skip`, `xfail`, `slow`, `fixture`, `parametrize`) — their Rust implementations intentionally panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.
+- **Direct Rust imports**: narrow host functions are imported from `rust::incan_std_testing`; the source names every boundary item explicitly.
+- **Incan-implemented assertions**: `assert`, `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_is_some`, `assert_is_none`, `assert_is_ok`, `assert_is_err`, and `fail` are all written in Incan source. They call the directly imported generic `fail_t()` primitive for the actual panic.
+- **Marker declarations**: runner-only functions such as `skip`, `xfail`, `slow`, `fixture`, and `parametrize` carry checked `@marker(...)` metadata. Their ordinary Incan bodies call private Rust imports that intentionally report runtime misuse.
 - **Known blocker**:
     - `assert_raises` remains unimplemented as an Incan-side placeholder (fails via `fail_t`) until parser/lowering support for `assert ... raises ...` lands.
-- **Marker metadata**: each marker extern carries `metadata={...}` on its `@rust.extern` annotation. `incan test` reads this metadata from the parsed stdlib source (via `loaves/compiler/incan_frontend/src/testing_markers.rs`) as the single source of truth for marker semantics.
+- **Marker metadata**: each marker declaration carries named literal fields in `@marker(...)`. `incan test` reads the checked API metadata (via `loaves/compiler/incan_frontend/src/testing_markers.rs`) as the single source of truth for marker semantics.
 - **Surface semantics routing**:
     - Pack contracts live in `loaves/kernel/incan_semantics_core` (`SurfaceFeatureKey`, pack trait, registry).
-    - Stdlib handlers live in `loaves/compiler/incan_semantics_stdlib` and are feature-gated by `std_testing`.
-    - Frontend/back adapters call into the registry (`loaves/compiler/incan_frontend/src/surface_semantics.rs` and `loaves/compiler/incan_ir/src/surface_semantics.rs`).
+    - Stdlib handlers live in `loaves/compiler/incan_semantics_stdlib` and are included in every compiler consumer.
+    - The frontend calls into the registry through `loaves/compiler/incan_frontend/src/surface_semantics.rs`; the former IR adapter was removed.
     - `assert` statement syntax is lowered through registry-provided canonical call target metadata.
     - Lowered assert calls carry canonical callee paths (`std.testing.assert_*`) in IR.
     - Emission uses canonical paths for stdlib dispatch, so `import std.testing` and `from std.testing import assert_*` behave consistently.
@@ -44,10 +42,10 @@ The runtime boundary is intentionally narrow:
 ```text
 stdlib testing declarations             frontend marker metadata
 ┌──────────────────────────┐          ┌──────────────────────────────┐
-│ @rust.extern(metadata={  │  parse   │  TestingMarkerSemantics      │
-│   "marker_kind": "skip", │ ───────► │  ├ markers: { skip, xfail,   │
-│   "runner_only": true    │          │  │            slow, fixture, │
-│ })                       │          │  │            parametrize }  │
+│ @marker(                 │  check   │  TestingMarkerSemantics      │
+│   kind="skip",           │ ───────► │  ├ markers: { skip, xfail,   │
+│   runner_only=true,      │          │  │            slow, fixture, │
+│ )                        │          │  │            parametrize }  │
 │ pub def skip(...)        │          │  └ metadata per marker       │
 └──────────────────────────┘          └──────────────┬───────────────┘
                                                      │

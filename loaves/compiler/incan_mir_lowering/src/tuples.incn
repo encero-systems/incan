@@ -4,6 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
 from rust::incan_semantics_core::body_ir import PlaceElem, Operand, Constant
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from frame import Builder, temporary, read_place, external_call, place_type, appended_field
+from numerics import numeric_type, sized_numeric
 from text_plan import format_parts
 from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import (
@@ -22,6 +23,7 @@ from pub::incan_mir_plan import (
 pub def type_name(ty: &RustType) -> str:
     """Name every canonical type kind even when its legacy Display implementation is empty."""
     match ty:
+        RustType.NativeCChar | RustType.NativePointer(mutable=_, pointee=_) => return str(ty)
         RustType.Tuple(elements) =>
             mut names: list[str] = []
             for element in elements:
@@ -30,6 +32,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Function(params=_params, return_type=_result) => return "Function"
         RustType.Primitive(value) => return str(value)
         RustType.Named(name) => return "Named[" + str(name) + "]"
+        RustType.Trait(identity) => return "Trait[" + identity.render_compact() + "]"
         RustType.Generic(base=base, args=arguments) =>
             mut names: list[str] = []
             for argument in arguments:
@@ -41,7 +44,9 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Ref(_inner) => return "Ref"
         RustType.RefMut(_inner) => return "RefMut"
         RustType.RustInteropPath(_path) => return "RustInteropPath"
+        RustType.NativeArray(element=_element, length=_length) => return "NativeArray"
         RustType.NativeBuiltin(_builtin) => return str(ty)
+        RustType.NativeTraitObject(path=_path, send=_send, sync=_sync) => return str(ty)
         RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"
         RustType.SelfType => return "SelfType"
@@ -64,7 +69,7 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
     """Admit only tuple elements whose native scalar layout is already supported."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
     if len(elements) == 1:
-        return Err("unsupported Body IR singleton Tuple: legacy scalar emission")
+        return Err("a one-element tuple cannot be represented as a scalar")
     mut types: list[TupleElement] = []
     for element in elements:
         match element:
@@ -72,6 +77,10 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
                 match primitive:
                     Primitive.Int => types.append(TupleElement.Int)
                     Primitive.Float => types.append(TupleElement.Float)
+                    Primitive.Numeric(kind) =>
+                        match sized_numeric(numeric_type(kind)?):
+                            Some(carrier) => types.append(TupleElement.Numeric(carrier))
+                            None => return Err(f"unsupported Body IR tuple element type {type_name(element)}")
                     Primitive.Bool => types.append(TupleElement.Bool)
                     Primitive.Str => types.append(TupleElement.String)
                     Primitive.FrozenStr => types.append(TupleElement.FrozenStr)
@@ -83,19 +92,39 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
 
 pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, str]:
     """Retain a resolved tuple element's scalar, text, collection, nominal, function-pointer or nested tuple layout."""
+    match sized_numeric(ty):
+        Some(kind) => return Ok(TupleElement.Numeric(kind))
+        None => pass
     match ty:
         PlanType.Int => return Ok(TupleElement.Int)
         PlanType.Float => return Ok(TupleElement.Float)
         PlanType.Bool => return Ok(TupleElement.Bool)
         PlanType.Unit => return Ok(TupleElement.Unit)
         PlanType.String => return Ok(TupleElement.String)
+        PlanType.StrRef => return Ok(TupleElement.Reference(false, [PlanType.NativeStr]))
+        PlanType.StringRef => return Ok(TupleElement.Reference(false, [PlanType.String]))
+        PlanType.StringMutRef => return Ok(TupleElement.Reference(true, [PlanType.String]))
         PlanType.FrozenStr => return Ok(TupleElement.FrozenStr)
+        PlanType.FrozenBytes => return Ok(TupleElement.FrozenBytes)
+        PlanType.StaticText => return Ok(TupleElement.StaticText)
+        PlanType.StaticBytes => return Ok(TupleElement.StaticBytes)
+        PlanType.FrozenCollection(name, elements) => return Ok(TupleElement.FrozenCollection(name, elements))
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Dict(key, value) => return Ok(TupleElement.Dict(key, value))
+        PlanType.Set(leaf) => return Ok(TupleElement.Set(leaf))
         PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
         PlanType.FunctionPointer(signature) => return Ok(TupleElement.FunctionPointer(signature))
-        _ => return Err(f"unsupported Body IR tuple element type {type_name(source)}")
+        PlanType.ScalarRef(elements) => return Ok(TupleElement.Reference(false, elements))
+        PlanType.ScalarMutRef(elements) => return Ok(TupleElement.Reference(true, elements))
+        PlanType.ModelRef(index, name) => return Ok(TupleElement.ModelRef(index, name))
+        PlanType.ModelMutRef(index, name) => return Ok(TupleElement.ModelMutRef(index, name))
+        PlanType.EnumRef(index, name) => return Ok(TupleElement.Reference(false, [PlanType.Enum(index, name)]))
+        PlanType.EnumMutRef(index, name) => return Ok(TupleElement.Reference(true, [PlanType.Enum(index, name)]))
+        PlanType.SliceRef(elements) => return Ok(TupleElement.SliceRef(elements))
+        PlanType.SliceMutRef(elements) => return Ok(TupleElement.SliceMutRef(elements))
+        _ => return Err(f"unsupported Body IR tuple element type {type_name(source)} with carrier {ty:?}")
 
 
 pub def is_tuple_type(ty: PlanType) -> bool:
@@ -111,15 +140,14 @@ pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
     mut slot = -1
     match projection:
         PlaceElem.Field(name=name, canonical=_canonical, structural=structural) =>
-            if not structural.clone():
+            if not structural:
                 return Err("unsupported Body IR nonstructural tuple field")
             slot = int(str(name))
         PlaceElem.Index(index) =>
             match index.as_ref():
                 Operand.Constant(constant) =>
                     match constant:
-                        Constant.Int(value) =>
-                            slot = value.clone()
+                        Constant.Int(value) => slot = value.clone()
                         _ => return Err("unsupported Body IR nonconstant tuple index")
                 _ => return Err("unsupported Body IR nonconstant tuple index")
             if slot < 0:
@@ -156,6 +184,8 @@ pub def carrier_element(element: TupleElement) -> bool:
     """Report whether a tuple element carries a list, nominal value or nested tuple requiring its retained layout."""
     match element:
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(_elements) => return true
@@ -167,6 +197,8 @@ pub def owned_carrier(ty: PlanType) -> bool:
     match ty:
         PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
+        PlanType.Dict(_key, _value) => return true
+        PlanType.Set(_leaf) => return true
         PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
         _ => return false
@@ -177,6 +209,8 @@ pub def element_has_owner(element: TupleElement) -> bool:
     match element:
         TupleElement.String => return true
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(elements) =>
@@ -193,6 +227,11 @@ pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[lis
     mut owner = value
     mut layout = ty
     match ty:
+        PlanType.TupleRef(elements) =>
+            layout = PlanType.Tuple(elements)
+            if value.projection != Projection.Whole:
+                return Err("unsupported Body IR projected tuple reference")
+            owner = Place(local=value.local, projection=Projection.Deref(layout), span=span)
         PlanType.TupleMutRef(elements) =>
             layout = PlanType.Tuple(elements)
             if value.projection != Projection.Whole:

@@ -1,0 +1,10 @@
+# behavior: an import of a source module that no file defines is refused when the program is checked, instead of passing the check and failing later in compilation, and its replayed refusal names the requesting project's paths
+# expect-diagnostic: INCAN-I0001
+# check-edits:
+#   src/main.incn
+
+from missing_helpers import greeting
+
+
+def main() -> None:
+    println(greeting("check"))

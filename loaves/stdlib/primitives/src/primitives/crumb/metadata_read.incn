@@ -1,0 +1,110 @@
+"""Read complete D trees from bounded views, retaining all unknown properties as inert data."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.framing import decode_native_signed
+from crate.primitives.crumb.values import Metadata, MetadataEntry
+from crate.primitives.text import decode_utf8, encode_utf8
+from crate.primitives.views import MappedView
+
+
+pub def read_metadata(view: MappedView, origin: int, mut budget: Budget) -> Result[Metadata, BinaryError]:
+    """Require one complete metadata frame with no trailing bytes or alternative numeric spelling."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    value = read_node(cursor, budget)?
+    cursor.finished()?
+    return Ok(value)
+
+
+def read_node(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
+    """Every recursive metadata node consumes the one request's shared work and depth allowance."""
+    offset = cursor.absolute()
+    budget.charge_elements(1).map_err((e) => primitive(e, offset))?
+    budget.enter().map_err((e) => primitive(e, offset))?
+    result = read_inner(cursor, budget)
+    budget.leave().map_err((e) => primitive(e, offset))?
+    return result
+
+
+def read_inner(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
+    """The D tag is format data; it never selects executable profile behavior."""
+    offset = cursor.absolute()
+    tag = cursor.byte(budget)?
+    match tag:
+        0 => return Ok(Metadata.Null)
+        1 =>
+            flag = cursor.byte(budget)?
+            if flag > 1:
+                return Err(failure(BinaryFailure.InvalidDescription, offset))
+            return Ok(Metadata.Boolean(flag == 1))
+        2 =>
+            groups = cursor.groups(budget)?
+            return Ok(Metadata.Integer(decode_native_signed(groups, budget).map_err((e) => primitive(e, offset))?))
+        3 => return Ok(Metadata.Text(read_text(cursor, budget)?))
+        4 =>
+            framed = cursor.frame(budget)?
+            return Ok(Metadata.Binary(copied(framed, offset, budget)?))
+        5 =>
+            count = bounded_count(cursor, budget)?
+            mut items: list[Metadata] = []
+            for _ in range(count):
+                items.append(read_node(cursor, budget)?)
+            return Ok(Metadata.List(items))
+        6 => return read_map(cursor, budget)
+        7 => return Ok(Metadata.Symbol(read_text(cursor, budget)?))
+        _ => return Err(failure(BinaryFailure.InvalidDescription, offset))
+
+
+def read_map(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
+    """Encoded map keys must already be unique and in exact UTF-8 order; do not sort malformed input."""
+    count = bounded_count(cursor, budget)?
+    mut entries: list[MetadataEntry] = []
+    mut previous: bytes = b""
+    for index in range(count):
+        offset = cursor.absolute()
+        key = read_text(cursor, budget)?
+        for _ in range(8):
+            budget.charge_bytes(len(key)).map_err((e) => primitive(e, offset))?
+        ordered = encode_utf8(key)
+        if index > 0 and byte_order(ordered, previous) <= 0:
+            return Err(failure(BinaryFailure.InvalidDescription, offset))
+        previous = ordered
+        entries.append(MetadataEntry(key=key, value=read_node(cursor, budget)?))
+    return Ok(Metadata.Map(entries))
+
+
+def byte_order(left: bytes, right: bytes) -> int:
+    """Compare UTF-8 bytes lexicographically without hex encoding or list scalar operators."""
+    for index in range(min([len(left), len(right)])):
+        if left[index] < right[index]:
+            return -1
+        if left[index] > right[index]:
+            return 1
+    if len(left) < len(right):
+        return -1
+    if len(left) > len(right):
+        return 1
+    return 0
+
+
+pub def read_text(mut cursor: EncodingCursor, mut budget: Budget) -> Result[str, BinaryError]:
+    """Read a framed exact UTF-8 string without replacement or Unicode normalization."""
+    offset = cursor.absolute()
+    view = cursor.frame(budget)?
+    raw = copied(view, offset, budget)?
+    budget.charge_bytes(len(raw)).map_err((e) => primitive(e, offset))?
+    valid, text = decode_utf8(raw, false)
+    if not valid:
+        return Err(failure(BinaryFailure.InvalidUtf8, offset))
+    return Ok(text)
+
+
+pub def bounded_count(mut cursor: EncodingCursor, mut budget: Budget) -> Result[int, BinaryError]:
+    """Each metadata child needs at least one byte; reject impossible counts before reserving a list."""
+    offset = cursor.absolute()
+    count = cursor.length(budget)?
+    budget.charge_elements(count).map_err((e) => primitive(e, offset))?
+    if count > cursor.remaining():
+        return Err(failure(BinaryFailure.Truncated, cursor.absolute() + cursor.remaining()))
+    return Ok(count)

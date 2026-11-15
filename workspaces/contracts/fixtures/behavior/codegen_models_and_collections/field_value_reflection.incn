@@ -1,0 +1,136 @@
+# behavior: checked stored-type selectors preserve numeric widths and propagate absent nominal identity through containers; a model reflects its scalar field values by name and lists every field, an optional and a list-typed field included, in declaration order; through a type parameter an optional scalar field reflects as its value or None; a generic model's unread field is fine
+# expect-stdout:
+#   Ada
+#   str:Ada
+#   int:42
+#   missing
+#   name=Ada
+#   age=42
+#   label
+#   optional_label
+#   optional_label=None
+#   optional_label=x
+#   values
+#   ok
+
+model User:
+    name: str
+    age: int
+
+
+model ProbeRow:
+    label: str
+    optional_label: Option[str]
+
+
+model Batch:
+    values: list[int]
+
+
+model Box[T]:
+    value: T
+
+
+def describe_user_value(value: Option[str | int]) -> str:
+    match value:
+        str(text) => return f"str:{text}"
+        int(number) => return f"int:{number}"
+        None => return "missing"
+
+
+def describe_item(value: str | int) -> str:
+    match value:
+        str(text) => return text
+        int(number) => return f"{number}"
+
+
+def reflect_optional_label[T](row: T) -> str:
+    match row.__field_value__("optional_label"):
+        Some(value) => return f"optional_label={value}"
+        None => return "optional_label=<missing>"
+
+
+type Cents = newtype int
+
+type Labels = list[str]
+
+
+model Local:
+    value: int
+
+
+model Stored:
+    count: int
+    name: str
+    labels: list[str]
+    lookup: dict[str, Option[int]]
+    pair: tuple[int, str]
+    local: Option[Local]
+
+
+model Widths:
+    small: i8
+    signed: i128
+    unsigned: u128
+    single: f32
+    wide: f64
+    native: usize
+    nested_native: list[isize]
+    amount: decimal[10, 2]
+    unit: None
+    result: Result[int, str]
+    flags: set[bool]
+    frozen: FrozenList[str]
+    cents: Cents
+    labels: Labels
+    choice: int | str
+
+
+def selected(value: Option[FrozenStr]) -> str:
+    match value:
+        Some(text) => return str(text)
+        None => return "missing"
+
+
+def main() -> None:
+    let user = User(name="Ada", age=42)
+    println(user.name)
+    println(describe_user_value(user.__field_value__("name")))
+    println(describe_user_value(user.__field_value__("age")))
+    println(describe_user_value(user.__field_value__("missing")))
+    for name, value in user.__field_items__():
+        println(f"{name}={describe_item(value)}")
+    row = ProbeRow(label="paid", optional_label=None)
+    for name, _ in row.__field_items__():
+        println(name)
+    println(reflect_optional_label[ProbeRow](ProbeRow(label="paid", optional_label=None)))
+    println(reflect_optional_label[ProbeRow](ProbeRow(label="late", optional_label=Some("x"))))
+    let batch = Batch(values=[1, 2, 3])
+    for name, _ in batch.__field_items__():
+        println(name)
+    let box = Box[int](value=42)
+    fields = Stored.__fields__()
+    assert selected(fields[0].stored_type) == "i64"
+    assert selected(fields[1].stored_type) == "string"
+    assert selected(fields[2].stored_type) == "list<string>"
+    assert selected(fields[3].stored_type) == "map<string,option<i64>>"
+    assert selected(fields[4].stored_type) == "tuple<i64,string>"
+    assert fields[5].stored_type == None
+    widths = Widths.__fields__()
+    assert selected(widths[0].stored_type) == "i8"
+    assert selected(widths[1].stored_type) == "i128"
+    assert selected(widths[2].stored_type) == "u128"
+    assert selected(widths[3].stored_type) == "fp32"
+    assert selected(widths[4].stored_type) == "fp64"
+    assert selected(widths[5].stored_type) == "missing"
+    assert selected(widths[6].stored_type) == "missing"
+    assert selected(widths[7].stored_type) == "decimal<10,2>"
+    assert selected(widths[8].stored_type) == "tuple<>"
+    assert selected(widths[9].stored_type) == "missing"
+    assert selected(widths[10].stored_type) == "set<boolean>"
+    assert selected(widths[11].stored_type) == "list<string>"
+    assert selected(widths[12].stored_type) == "i64"
+    assert selected(widths[13].stored_type) == "list<string>"
+    assert selected(widths[14].stored_type) == "union<i64,string>"
+    assert selected(Box[int].__fields__()[0].stored_type) == "i64"
+    println("ok")

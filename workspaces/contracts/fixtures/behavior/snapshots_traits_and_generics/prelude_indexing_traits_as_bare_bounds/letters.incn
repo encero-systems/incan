@@ -1,0 +1,14 @@
+from std.traits.indexing import Index, IndexMut, Sliceable
+
+
+pub model Letters with Index[int, str], IndexMut[int, str], Sliceable[str]:
+    pub values: list[str]
+
+    def __getitem__(self, key: int) -> str:
+        return self.values[key]
+
+    def __setitem__(self, key: int, value: str) -> None:
+        println(f"set {key} {value}")
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[str]:
+        return self.values[0:2]

@@ -1,0 +1,17 @@
+# behavior: a local bound to a call that carries a view keeps its source borrowed until a `match` takes the view out; editing the source in between is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Counter:
+    pub value: int
+
+    pub def bump(mut self) -> Result[Reference[Self], str] from self:
+        self.value += 1
+        return Ok(self)
+
+
+def held(mut counter: BorrowedMut[Counter]) -> int:
+    result = counter.bump()
+    counter.value = 5
+    match result:
+        Ok(view) => return view.value
+        Err(_) => return 0

@@ -1,10 +1,13 @@
 """Execute retained numeric-newtype item projections and post-exhaustion hook-result extraction."""
 
 from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPlace
-from pub::incan_mir_plan import PlanType, SourceSpan
+from pub::incan_mir_plan import BinaryOp, PlanType, RvalueKind, SourceSpan, assign as plan_assign
 from frame import Builder, place_type, external_call
 from options import result_layout
-from lowering import argument_type, scalar_place, instantiated_external_call, fixed_arguments
+from sequence_builtins import argument_type
+from checked_values import scalar_place
+from calls import instantiated_external_call
+from call_arguments import fixed_arguments
 
 
 pub def lower_newtype_sum_add(
@@ -13,29 +16,34 @@ pub def lower_newtype_sum_add(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Add already projected integer payloads through the frozen release wrapping operation."""
+    """Add already projected integer or float payloads through the selected primitive operation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR NewtypeSumAdd arity")
     match destination:
         None => return Err("unsupported Body IR newtype sum addition without a destination")
         Some(place) =>
             output = scalar_place(builder, place, span)?
-            if place_type(builder.locals, output) != PlanType.Int:
-                return Err("unsupported Body IR newtype sum accumulator type")
+            numeric = place_type(builder.locals, output)
             for index in range(2):
-                if argument_type(builder, arguments, index, span)? != PlanType.Int:
+                if argument_type(builder, arguments, index, span)? != numeric:
                     return Err("unsupported Body IR newtype sum addition operand")
             operands = fixed_arguments(builder, arguments, span)?
-            external_call(
-                builder,
-                "incan_native_runtime::add_newtype_sum",
-                [PlanType.Int, PlanType.Int],
-                PlanType.Int,
-                operands,
-                output,
-                span,
-            )
-            return Ok(None)
+            match numeric:
+                PlanType.Int =>
+                    external_call(
+                        builder,
+                        "incan_native_runtime::add_newtype_sum",
+                        [PlanType.Int, PlanType.Int],
+                        PlanType.Int,
+                        operands,
+                        output,
+                        span,
+                    )
+                    return Ok(None)
+                PlanType.Float =>
+                    builder.emit(plan_assign(output, RvalueKind.Binary(BinaryOp.Add, operands[0], operands[1]), span))
+                    return Ok(None)
+                _ => return Err("unsupported Body IR newtype sum accumulator type")
 
 
 pub def lower_newtype_sum_extract(

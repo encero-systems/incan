@@ -1,0 +1,16 @@
+# behavior: naming a vocabulary descriptor reaches primitives without loading the facade or compiler
+# cli-commands:
+#   oven inspect dependencies src/main.incn
+# expect-stdout-contains:
+#   program `closure_of_a_vocab_descriptor` reaches 2 packages
+#   incan_native_runtime
+#   incan_stdlib_primitives
+# expect-exit: 0
+
+from std.primitives.vocab import DeclarationSurface
+
+
+def main() -> None:
+    """Name and construct a foundational descriptor through primitives alone."""
+    descriptor = DeclarationSurface.named("note")
+    println(descriptor.keyword)

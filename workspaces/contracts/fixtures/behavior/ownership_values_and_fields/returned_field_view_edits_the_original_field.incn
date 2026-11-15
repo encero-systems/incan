@@ -1,0 +1,29 @@
+# behavior: a method returning a view of one field keeps only that field borrowed: a sibling edit is accepted and the returned exclusive view writes the original nested field (#2500).
+# expect-stdout:
+#   Samuel
+#   Rotterdam
+
+class Address:
+    pub city: str
+
+    pub def set_city(mut self, city: str) -> Reference[Self] from self:
+        self.city = city
+        return self
+
+
+class Customer:
+    pub name: str
+    pub address: Address
+
+    pub def edit_address(mut self) -> Reference[Address] from self.address:
+        return self.address
+
+
+def main() -> None:
+    mut customer = Customer(name="Sam", address=Address(city="Utrecht"))
+    mut address = customer.edit_address()
+    customer.name = "Samuel"
+    address.set_city("Rotterdam")
+    assert customer.address.city == "Rotterdam"
+    println(customer.name)
+    println(customer.address.city)

@@ -1,0 +1,7 @@
+[project]
+name = "registry_item_absent_refused"
+version = "0.1.0"
+[project.scripts]
+main = "src/main.incn"
+[dependencies]
+libc = { loaf = "crates-io/libc", version = "0.2", default-features = true }

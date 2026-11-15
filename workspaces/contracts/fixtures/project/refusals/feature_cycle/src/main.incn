@@ -1,0 +1,7 @@
+# behavior: features that include each other refuse the unit, naming the cycle
+# expect-exit: 1
+# expect-stderr-contains:
+#   alpha -> beta -> alpha
+
+def main() -> None:
+    println("unreachable")

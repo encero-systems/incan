@@ -1,0 +1,115 @@
+"""Hover through an editor view: a declaration's signature from the overlay's buffer or from the view's records."""
+
+from rust::std::string import String as RustString
+from std.fs import Path
+from pub::incan_platform.store import get
+from pub::internal_models.records import encode_record_key
+from compiler_source_projection import project_source, signature_key, signature_record
+from intake import ManifestReader, read_project
+from store_path_conversion import snapshot
+
+
+pub def overlay_hover(
+    store: Path,
+    view: str,
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    line: int,
+    column: int,
+) -> Result[Option[str], str]:
+    """
+    The signature of the declaration named at one-based `line` and `column` of the document's buffer `text`.
+
+    1. A declaration of the document itself is projected from the buffer, which is newer than any record of it.
+    2. A name the buffer imports with `from MODULE import NAME` is read from that module's declaration-signature record
+       in `view`, the record a build publishes for the module.
+    """
+    name = identifier_at(text, line, column)
+    if name == "":
+        return Ok(None)
+    origin = program_origin(program, entry)?
+    # 1. The buffer's own declarations.
+    facets = declaration_facets(name)
+    projection = project_source(origin, document, text)?
+    for owner in projection.owners:
+        if owner.key.facet in facets:
+            return Ok(Some(signature_record(owner).text.strip()))
+    # 2. An imported declaration, from the editor view's records.
+    match imported_module(text, name):
+        None => return Ok(None)
+        Some(found) =>
+            path = imported_path(document, found[0])
+            selected = snapshot(store, view).map_err((error) => error.message())?
+            for facet in declaration_facets(found[1]):
+                key = encode_record_key(signature_key(origin, path, facet))?
+                match get(selected, key).map_err((error) => error.message())?:
+                    Some(value) => return Ok(Some(str(RustString.from_utf8_lossy(value).into_owned()).strip()))
+                    None => pass
+            return Ok(None)
+
+
+pub def identifier_at(text: str, line: int, column: int) -> str:
+    """The identifier covering one-based `line` and `column`, or an empty string when none does."""
+    rows = text.split("\n")
+    if line < 1 or line > len(rows):
+        return ""
+    characters = [character for character in rows[line - 1]]
+    at = column - 1
+    if at < 0 or at >= len(characters) or not identifier_character(characters[at]):
+        return ""
+    mut begin = at
+    while begin > 0 and identifier_character(characters[begin - 1]):
+        begin -= 1
+    mut end = at
+    while end < len(characters) and identifier_character(characters[end]):
+        end += 1
+    return "".join(characters[begin:end])
+
+
+pub def imported_module(text: str, name: str) -> Option[list[str]]:
+    """The module and original name of a `from MODULE import …` line that binds `name`, for a project module."""
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line.startswith("from ") or " import " not in line:
+            continue
+        parts = line[5:].split(" import ")
+        module = parts[0].strip()
+        if len(parts) != 2 or module.startswith("pub::") or module.startswith("rust::") or module.startswith("std."):
+            continue
+        for item in parts[1].replace("(", "").replace(")", "").split(","):
+            pieces = item.strip().split(" as ")
+            if pieces[len(pieces) - 1].strip() == name:
+                return Some([module, pieces[0].strip()])
+    return None
+
+
+def imported_path(document: str, module: str) -> str:
+    """The project-relative source of an imported module, beside the importing document."""
+    relative = module.replace(".", "/") + ".incn"
+    directory = Path(document).parent().0
+    if directory == "" or directory == ".":
+        return relative
+    return directory + "/" + relative
+
+
+def program_origin(program: Path, entry: Path) -> Result[str, str]:
+    """The record origin of the program: its package's name, or a manifest-free entry's file stem."""
+    if program.joinpath("loaf.toml").is_file():
+        project = read_project(program, ManifestReader()).map_err((error) => error.message())?
+        return Ok(project.intent.name)
+    return Ok(entry.stem())
+
+
+def declaration_facets(name: str) -> list[str]:
+    """The projection facets one top-level declaration named `name` can have, one per declaration kind."""
+    mut facets = [name]
+    for kind in ["model", "class", "enum", "trait", "newtype", "capability", "const", "static", "partial", "alias"]:
+        facets.append(kind + ":" + name)
+    return facets
+
+
+def identifier_character(character: str) -> bool:
+    """Whether one character can be part of an identifier."""
+    return character in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"

@@ -1,0 +1,347 @@
+"""Measure installed Incan, its pinned Rust compiler, and Python on identical benchmark workloads."""
+
+from rust::std::process import exit
+from std.environ import args, get_or
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from benchmark_support import (
+    BenchmarkToolchain,
+    Captured,
+    capture,
+    identity,
+    repository_root,
+    require,
+    select_toolchain,
+)
+
+
+pub model Benchmark:
+    """One workload, its source area, and the retained August Incan comparison in milliseconds."""
+
+    pub area: str
+    pub name: str
+    pub august_ms: int
+
+
+pub model ExecutionRow:
+    """One workload's execution timings, output status, and threshold flags."""
+
+    pub name: str
+    pub incan_ms: str
+    pub august_ms: int
+    pub rust_ms: str
+    pub python_ms: str
+    pub status: str
+    pub flags: str
+
+
+pub model BuildRow:
+    """One workload's fresh and unchanged release-build observations."""
+
+    pub name: str
+    pub cold_ms: str
+    pub warm_ms: str
+    pub status: str
+
+
+def main() -> None:
+    """Parse selected workload names, run them, and replace the two benchmark result tables."""
+    arguments = args().unwrap_or([])
+    match run(arguments[1:]):
+        Ok(_) => exit(0)
+        Err(message) =>
+            println(f"benchmarks: {message}")
+            exit(1)
+
+
+pub def run(selected: list[str]) -> Result[None, str]:
+    """
+    Measure the selected workloads and publish comparable execution and build tables.
+
+    1. Resolve the installed toolchain and create one retained evidence directory.
+    2. Build and execute each selected workload in Incan, Rust, and Python.
+    3. Write the same result files and failure semantics as the retired shell runner.
+    """
+    root = repository_root()?
+    directory = root.joinpath("workspaces/benchmarks")
+    toolchain = select_toolchain()?
+    runs = positive(get_or("RUNS", "10"), "RUNS")?
+    if runs < 10:
+        return Err("RUNS must be at least 10")
+    results = Path(get_or("RESULTS_DIR", directory.joinpath("results").0))
+    results.mkdir(true, true).map_err((error) => error.message())?
+    scratch = Path(get_or("BENCH_SCRATCH", directory.joinpath("target").0))
+    scratch.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with("run.", "", Some(scratch)).map_err((error) => error.message())?
+    evidence = temporary.persist().map_err((error) => error.message())?
+
+    # 1. The identity is shared by both result files and names the retained raw evidence.
+    report_identity = identity(root, toolchain, evidence)?
+
+    # 2. A name operand selects a smaller loop without changing any workload.
+    mut executions: list[ExecutionRow] = []
+    mut builds: list[BuildRow] = []
+    mut failures = 0
+    for benchmark in benchmarks():
+        if len(selected) == 0 or benchmark.name in selected:
+            execution, build, failed = measure(root, directory, toolchain, evidence, benchmark, runs)?
+            executions.append(execution)
+            builds.append(build)
+            failures += failed
+
+    # 3. Reports are replaced only after every selected workload has retained its evidence.
+    write_execution_report(results.joinpath("results.md"), report_identity, executions)?
+    write_build_report(results.joinpath("build_times.md"), report_identity, builds)?
+    print(read(results.joinpath("results.md"))?)
+    if failures > 0:
+        return Err(f"{failures} benchmark checks failed; evidence: {evidence.0}")
+    return Ok(None)
+
+
+def measure(
+    root: Path,
+    directory: Path,
+    toolchain: BenchmarkToolchain,
+    evidence: Path,
+    benchmark: Benchmark,
+    runs: int,
+) -> Result[tuple[ExecutionRow, BuildRow, int], str]:
+    """Build one isolated project, verify three outputs, run hyperfine, and return both report rows."""
+    source = directory.joinpath(f"{benchmark.area}/{benchmark.name}")
+    project = evidence.joinpath(benchmark.name)
+    prepare_project(source, project, benchmark.name)?
+    retain_load(root, project.joinpath("build-load.txt"))?
+    println(f"Building {benchmark.name}")
+
+    mut failures = 0
+    mut status = "verified"
+    mut cold = "refused"
+    mut warm = "unmeasured"
+    cold_build = compiler(toolchain, root, project, "cold")?
+    if cold_build.code == 0:
+        cold = str(cold_build.milliseconds)
+        warm_build = compiler(toolchain, root, project, "warm")?
+        if warm_build.code != 0:
+            status = "warm build refused"
+            failures += 1
+        else:
+            warm = str(warm_build.milliseconds)
+    else:
+        status = "build refused"
+        failures += 1
+
+    rust_binary = project.joinpath("rust")
+    rust_compile = require(
+        toolchain.rustc.0,
+        ["--edition", "2024", "-C", "opt-level=3", source.joinpath(f"{benchmark.name}.rs").0, "-o", rust_binary.0],
+        root,
+    )?
+    retain(project.joinpath("rust-build.log"), rust_compile)?
+    rust_run = require(rust_binary.0, [], project)?
+    retain(project.joinpath("rust"), rust_run)?
+    python_run = require("python3", [source.joinpath(f"{benchmark.name}.py").0], project)?
+    retain(project.joinpath("python"), python_run)?
+    if rust_run.stdout != python_run.stdout:
+        status = "Rust/Python mismatch"
+        failures += 1
+
+    binary = project.joinpath(f"target/incan/release/bin/{benchmark.name}")
+    python_source = source.joinpath(f"{benchmark.name}.py")
+    mut commands = [rust_binary.0, f"python3 {python_source.0}"]
+    mut incan_index: Option[int] = None
+    if binary.is_file() and status == "verified":
+        incan_run = capture(binary.0, [], project)?
+        retain(project.joinpath("incan"), incan_run)?
+        if incan_run.code != 0:
+            status = "Incan execution failed"
+            failures += 1
+        elif incan_run.stdout != rust_run.stdout:
+            status = "Incan output mismatch"
+            failures += 1
+        else:
+            commands = [binary.0] + commands
+            incan_index = Some(0)
+    elif status == "verified":
+        status = "missing Incan executable"
+        failures += 1
+
+    retain_load(root, project.joinpath("measurement-load.txt"))?
+    times = hyperfine(root, project, commands, runs)?
+    mut rust_index = 0
+    mut incan_ms = "refused"
+    if let Some(index) = incan_index:
+        incan_ms = mean_ms(times, index)?
+        rust_index = 1
+    rust_ms = mean_ms(times, rust_index)?
+    python_ms = mean_ms(times, rust_index + 1)?
+    flags = performance_flags(incan_ms, rust_ms, benchmark.august_ms, status)
+    execution = ExecutionRow(
+        name=benchmark.name,
+        incan_ms=incan_ms,
+        august_ms=benchmark.august_ms,
+        rust_ms=rust_ms,
+        python_ms=python_ms,
+        status=status,
+        flags=flags,
+    )
+    build = BuildRow(name=benchmark.name, cold_ms=cold, warm_ms=warm, status=status)
+    return Ok((execution, build, failures))
+
+
+def prepare_project(source: Path, project: Path, name: str) -> Result[None, str]:
+    """Create one fresh project with the benchmark's Incan source as its main program."""
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    _ = source
+        .joinpath(f"{name}.incn")
+        .copy(project.joinpath("src/main.incn"), true, true)
+        .map_err((error) => error.message())?
+    manifest = f"[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\n{name} = \"src/main.incn\"\n"
+    project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def compiler(toolchain: BenchmarkToolchain, root: Path, project: Path, label: str) -> Result[Captured, str]:
+    """Run one release build and retain its exact streams plus measured milliseconds."""
+    result = capture(
+        toolchain.incan,
+        ["build", project.joinpath("src/main.incn").0, "--profile", "release"],
+        root,
+        {"INCAN_HOME": toolchain.home.0},
+    )?
+    retain(project.joinpath(label), result)?
+    return Ok(result)
+
+
+def hyperfine(root: Path, project: Path, commands: list[str], runs: int) -> Result[JsonValue, str]:
+    """Measure the already verified commands and return hyperfine's JSON document."""
+    output = project.joinpath("times.json")
+    mut arguments = ["--shell=none", "--warmup", "2", "--runs", str(runs), "--export-json", output.0]
+    arguments += commands
+    measured = require("hyperfine", arguments, root)?
+    project
+        .joinpath("hyperfine.log")
+        .write_text(measured.stdout + measured.stderr, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return JsonValue.parse(read(output)?).map_err((error) => error.message())
+
+
+def mean_ms(times: JsonValue, index: int) -> Result[str, str]:
+    """Return one hyperfine mean in milliseconds rounded to two decimal places."""
+    mean_value = times.require_pointer(f"/results/{index}/mean").map_err((error) => error.message())?
+    return Ok(hundredths(json_float(mean_value)? * 1000.0))
+
+
+def performance_flags(incan_ms: str, rust_ms: str, august_ms: int, status: str) -> str:
+    """Return retained threshold flags only for a fully verified Incan execution."""
+    if status != "verified" or incan_ms == "refused":
+        return "none"
+    incan_value = float(incan_ms)
+    rust_value = float(rust_ms)
+    mut flags: list[str] = []
+    if incan_value > float(august_ms) * 1.1:
+        flags.append(">10% August")
+    if incan_value > rust_value * 1.25:
+        flags.append(">25% Rust")
+    if len(flags) == 0:
+        return "none"
+    return ", ".join(flags)
+
+
+def write_execution_report(path: Path, report_identity: str, rows: list[ExecutionRow]) -> Result[None, str]:
+    """Write the execution comparison with its unchanged headings and historical August column."""
+    mut lines = [
+        "# Benchmark results",
+        "",
+        report_identity.strip(),
+        "",
+        "Hyperfine: two warmups, at least ten measured runs, shell disabled. Times are means in milliseconds.",
+        "August values are the 0.5 measurements from 2026-08-21; they are historical comparisons on a different toolchain.",
+        "",
+        "| Benchmark | dev.8 ms | August Incan ms | Rust ms | Python ms | Output | Performance flags |",
+        "| --- | ---: | ---: | ---: | ---: | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row.name} | {row.incan_ms} | {row.august_ms} | {row.rust_ms} | {row.python_ms} | {row.status} | {row.flags} |",
+        )
+    return path.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def write_build_report(path: Path, report_identity: str, rows: list[BuildRow]) -> Result[None, str]:
+    """Write the fresh and unchanged release-build timing table."""
+    mut lines = [
+        "# Incan build times",
+        "",
+        report_identity.strip(),
+        "",
+        "Cold means one release build in a fresh project with installed dependencies already available. Warm is an unchanged second build. Both include CLI startup; neither measures installing a toolchain or flushing OS caches.",
+        "",
+        "| Benchmark | Cold ms | Warm ms | Status |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        lines.append(f"| {row.name} | {row.cold_ms} | {row.warm_ms} | {row.status} |")
+    return path.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def retain(prefix: Path, result: Captured) -> Result[None, str]:
+    """Retain one child's streams and status beside the measured workload."""
+    prefix.parent().mkdir(true, true).map_err((error) => error.message())?
+    Path(prefix.0 + ".stdout").write_text(result.stdout, "utf-8", "strict", None).map_err((error) => error.message())?
+    Path(prefix.0 + ".stderr").write_text(result.stderr, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Path(prefix.0 + ".status")
+        .write_text(f"{result.code}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def retain_load(root: Path, path: Path) -> Result[None, str]:
+    """Retain the host uptime/load line used to interpret a measurement."""
+    observed = require("uptime", [], root)?
+    return path.write_text(observed.stdout, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def hundredths(value: float) -> str:
+    """Format a non-negative measurement with exactly two fractional decimal digits."""
+    scaled = int(value * 100.0 + 0.5)
+    mut fraction = str(scaled % 100)
+    if len(fraction) == 1:
+        fraction = "0" + fraction
+    return f"{scaled // 100}.{fraction}"
+
+
+def positive(value: str, name: str) -> Result[int, str]:
+    """Parse one positive decimal setting."""
+    if value == "":
+        return Err(f"{name} must be a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{name} must be a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{name} must be a positive integer")
+    return Ok(parsed)
+
+
+def json_float(value: JsonValue) -> Result[float, str]:
+    """Decode one JSON number for a benchmark statistic."""
+    return value.expect_float().map_err((error) => error.message())
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read one strict UTF-8 benchmark artifact."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+def benchmarks() -> list[Benchmark]:
+    """Return the stable workload order and historical Incan comparison values."""
+    return [
+        Benchmark(area="compute", name="fib", august_ms=3),
+        Benchmark(area="compute", name="collatz", august_ms=94),
+        Benchmark(area="compute", name="gcd", august_ms=92),
+        Benchmark(area="compute", name="mandelbrot", august_ms=113),
+        Benchmark(area="compute", name="nbody", august_ms=20),
+        Benchmark(area="compute", name="primes", august_ms=141),
+        Benchmark(area="sorting", name="quicksort", august_ms=56),
+        Benchmark(area="sorting", name="mergesort", august_ms=83),
+    ]

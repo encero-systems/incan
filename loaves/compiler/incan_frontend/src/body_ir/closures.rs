@@ -153,24 +153,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // captured. The closure body resolves that source reference independently from its canonical identity,
             // yielding a global place for a `const`/`static` or an explicit unsupported operand for an identity
             // Body IR cannot represent.
-            let Some(&outer_local) = self.bindings.get(name) else {
+            // A captured `Borrowed[T]` local of an explicit body has no local of its own: the closure copies the Copy
+            // value of the place it borrows, or borrows any other value, while the checker keeps that place borrowed.
+            let Some((outer_place, outer_ty, fact, last_use, identity, previous)) =
+                self.closure_capture(name, expr_span)
+            else {
                 continue;
             };
-            let outer_ty = self.locals[outer_local.index()].ty.clone();
-            let outer_place = bir::Place::from_local(outer_local);
-            let (fact, last_use) = self.ownership_fact_for_place(&outer_place, &outer_ty);
             captured_operands.push(bir::Operand::place(outer_place, fact, last_use));
 
             let total_reads = count_reads_in_expr(name, &body_expr.node);
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, closure_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
-            if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
-                self.locals[capture_local.index()].identity = Some(identity.clone());
+            if let Some(identity) = identity {
+                self.locals[capture_local.index()].identity = Some(Box::new(identity.clone()));
                 self.identity_bindings.insert(identity, capture_local);
             }
             capture_locals.push(capture_local);
-            saved_bindings.push((name.clone(), Some(outer_local)));
+            saved_bindings.push((name.clone(), previous));
         }
 
         // ---- Bind the closure's own parameters, shadowing any outer binding of the same name ----
@@ -191,19 +192,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             saved_bindings.push((param.node.name.clone(), previous));
         }
 
-        let mut closure_params = Vec::with_capacity(params.len());
-        for (param, local) in params.iter().zip(closure_param_locals) {
-            let ty = self.locals[local.index()].ty.clone();
-            closure_params.push(bir::CallableParam {
-                local,
-                kind: parameter_types::source_parameter_kind(param.node.kind),
-                name: param.node.name.clone(),
-                ty,
-                span: hir_span(param.span),
-                default: self.lower_callable_default(param.node.default.as_ref(), closure_scope),
-                mutable: param.node.is_mut,
-            });
-        }
+        let closure_params = self.lower_closure_callable_params(params, closure_param_locals, closure_scope, expr_span);
+        self.owned_parameters.extend(
+            closure_params
+                .iter()
+                .filter(|parameter| parameter.native_owned)
+                .map(|parameter| parameter.local),
+        );
 
         // ---- Lower the body under the closure's own bindings, then restore the enclosing scope's ----
         // The closure body is deferred. Its assignments must not update the enclosing body's proof that a local
@@ -216,21 +211,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.settle_open_result_value(body_expr, &return_type);
         }
         let mut body_stmts = Vec::new();
+        // Deferred code needs its own source flow; the enclosing callable's checked loans authorize no capture.
+        let saved_input_body = std::mem::replace(&mut self.input_body, Ok(None));
         let result = self.lower_expr_to_operand(body_expr, closure_scope, &mut body_stmts);
-        for (name, previous) in saved_bindings {
-            match previous {
-                Some(local) => {
-                    self.bindings.insert(name, local);
-                }
-                None => {
-                    self.bindings.remove(&name);
-                }
-            }
-        }
+        self.input_body = saved_input_body;
+        self.restore_local_bindings(saved_bindings);
         self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;
 
         let closure_body = bir::ClosureBody {
+            native_storage: self.type_info.rust.closure_storage.get(&expr_span).cloned(),
             original_callable: None,
             function_item: false,
             consumes_environment: consumes_zip_environment(&captured_operands, &capture_locals, &body_stmts, out),
@@ -252,11 +242,102 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Resolve one free name to the enclosing place and checked ownership fact the closure captures.
+    fn closure_capture(
+        &mut self,
+        name: &str,
+        span: ast::Span,
+    ) -> Option<(
+        bir::Place,
+        IncanType,
+        bir::OwnershipFact,
+        bool,
+        Option<CanonicalSymbolId>,
+        Option<bir::LocalId>,
+    )> {
+        if let Some(outer_local) = self.bindings.get(name).copied() {
+            let ty = self.locals[outer_local.index()].ty.clone();
+            let place = bir::Place::from_local(outer_local);
+            let identity = self.locals[outer_local.index()].identity.as_deref().cloned();
+            let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
+            if identity.as_ref().is_some_and(|identity| {
+                self.input_body
+                    .as_ref()
+                    .ok()
+                    .and_then(|proof| proof.as_ref())
+                    .is_some_and(|proof| proof.closure_borrows_capture(hir_span(span), identity))
+            }) {
+                fact = bir::OwnershipFact::Borrow;
+                last_use = false;
+            }
+            return Some((place, ty, fact, last_use, identity, Some(outer_local)));
+        }
+        let (identity, place, referent) = self.closure_alias_capture(name, span)?;
+        let fact = if referent.abi_v0_facts().ownership.is_trivially_copy() {
+            bir::OwnershipFact::Copy
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        Some((place, referent, fact, false, Some(identity), None))
+    }
+
+    /// A `Borrowed[T]` local of an explicit body that the closure at `span` captures, as the body's ownership graph
+    /// records the capture: its declaration, the place it borrows and its referent type.
+    fn closure_alias_capture(&self, name: &str, span: ast::Span) -> Option<(CanonicalSymbolId, bir::Place, IncanType)> {
+        let proof = self.input_body.as_ref().ok()?.as_ref()?;
+        let identity = proof
+            .closure_captures(hir_span(span))?
+            .iter()
+            .find(|identity| identity.declaration_name == name)?;
+        let alias = self.input_alias(identity)?;
+        let referent = self.checked_type(proof.local_value_type(identity)?);
+        Some((identity.clone(), alias.place.clone(), referent))
+    }
+
+    /// Retain the checked closure parameter surface after its invocation-frame locals have been declared.
+    ///
+    /// Defaults lower in the closure scope. Native ownership is selected from the checker's parameter type rather
+    /// than inferred from a later backend representation.
+    fn lower_closure_callable_params(
+        &mut self,
+        params: &[ast::Spanned<ast::Param>],
+        parameter_locals: Vec<bir::LocalId>,
+        scope: bir::ScopeId,
+        expression: ast::Span,
+    ) -> Vec<bir::CallableParam> {
+        let checked = match self.resolve_ty(expression) {
+            IncanType::Function { params, .. } => params,
+            _ => Vec::new(),
+        };
+        let mut parameters = Vec::with_capacity(params.len());
+        for (index, (param, local)) in params.iter().zip(parameter_locals).enumerate() {
+            let ty = self.locals[local.index()].ty.clone();
+            parameters.push(bir::CallableParam {
+                local,
+                kind: parameter_types::source_parameter_kind(param.node.kind),
+                name: param.node.name.clone(),
+                ty,
+                span: hir_span(param.span),
+                default: self.lower_callable_default(param.node.default.as_ref(), scope),
+                mutable: param.node.is_mut,
+                input_access: checked
+                    .get(index)
+                    .map_or(incan_semantics_core::IncanInputAccess::Inferred, |parameter| {
+                        parameter.input_access
+                    }),
+                native_owned: self
+                    .type_info
+                    .expr_type(param.span)
+                    .is_some_and(|ty| parameter_types::native_collection_parameter(ty, self.type_info)),
+            });
+        }
+        parameters
+    }
+
     /// Resolve each of a closure literal's parameter types from the typechecker's resolved callable type at the
     /// closure's own span, falling back to [`IncanType::Unknown`] per parameter when unavailable or of mismatched
-    /// length. Mirrors the existing Rust-emission backend's own `recorded_param_types` fallback
-    /// (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`), minus that backend's additional Rust-display-exact override,
-    /// which is meaningful only for concrete Rust closure syntax, not this target-agnostic model.
+    /// length. This target-agnostic model retains checked types rather than deriving a signature from target-language
+    /// closure syntax.
     pub(super) fn closure_param_types(
         &self,
         params: &[ast::Spanned<ast::Param>],
@@ -295,9 +376,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let module_function = match &partial.target.node {
             ast::Expr::Field(receiver, _) => {
-                self.type_info
-                    .resolved_identity(receiver.span)
-                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+                self.is_module_namespace_span(receiver.span)
                     && self
                         .type_info
                         .resolved_identity(partial.target.span)

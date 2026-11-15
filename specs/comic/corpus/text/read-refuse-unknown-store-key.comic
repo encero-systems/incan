@@ -1,0 +1,3 @@
+example.Point = Record { x: i64, y: i64 }
+
+example.Point << (1, 2, ___extra="x")

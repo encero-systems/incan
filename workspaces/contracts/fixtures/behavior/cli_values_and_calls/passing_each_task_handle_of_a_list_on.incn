@@ -1,0 +1,46 @@
+# behavior: a for loop that passes each task handle of a list to an async function takes the handles out of the list, while loops that pass strings and models on leave their lists readable after the loop
+# expect-stdout:
+#   3
+#   ADA
+#   GRACE
+#   a
+#   2 1
+
+from std.async import spawn, JoinHandle
+
+
+model Item:
+    name: str
+
+
+async def work(value: int) -> int:
+    return value
+
+
+async def wait_one(handle: JoinHandle[int]) -> int:
+    match await handle:
+        Ok(value) => return value
+        Err(_) => return 0
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def describe(item: Item) -> str:
+    return item.name
+
+
+async def main() -> None:
+    handles = [spawn(work(1)), spawn(work(2))]
+    mut total = 0
+    for handle in handles:
+        total += await wait_one(handle)
+    println(total)
+    names = ["ada", "grace"]
+    for name in names:
+        println(shout(name))
+    items = [Item(name="a")]
+    for item in items:
+        println(describe(item))
+    println(f"{len(names)} {len(items)}")

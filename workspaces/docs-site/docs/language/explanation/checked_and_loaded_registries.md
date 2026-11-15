@@ -64,10 +64,10 @@ Registry inspection, codegraph export, package publication, lowering, and test b
 
 ## Tooling projections
 
-Every tooling view of a registry originates from the same compilation analysis. `incan inspect registry` prints one checked registry. [`incan inspect codegraph --format jsonl`](../../tooling/reference/codegraph_inspection.md) emits checked `registry` records with their facade paths. The LSP uses the checked facts for registry membership hover and navigation. Library builds embed the public registry metadata in the generated `.incnlib`. The generated [feature inventory](../reference/feature_inventory.md) is itself sourced from a checked registry, the `features` registry of `std.features`.
+Tooling views originate from checked compiler facts. [`incan inspect codegraph PATH --format jsonl`](../../tooling/reference/codegraph_inspection.md) emits checked `registry` records with their facade paths. Dev.8 exposes no separate registry-inspection command. Library builds publish public registry metadata with the library contract.
 
 ## What a registry does not define
 
-A registry supports four subject kinds: functions, concrete methods, compilation units and packages. It does not define a general named-module declaration, dynamic runtime-only registration, a remote registry service, a dependency injection container, an event bus, or an authority or capability grant. The design is recorded in [RFC 113: `std.registry` and declaration descriptors](../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md).
+A registry supports four subject kinds: functions, concrete methods, compilation units and packages. It does not define a general named-module declaration, dynamic runtime-only registration, a remote registry service, a dependency injection container, an event bus, or an authority or capability grant.
 
 See the [typed-registry tutorial](../tutorials/typed_registries.md) to build a catalog, the [how-to guide](../how-to/typed_registries.md) for migration and package workflows, and the [`std.registry` reference](../reference/stdlib/registry.md) for exact contracts.

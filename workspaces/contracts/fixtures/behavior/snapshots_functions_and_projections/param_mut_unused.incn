@@ -1,0 +1,16 @@
+# behavior: a list parameter that is only read is summed by a loop with a locally mutable accumulator
+# expect-stdout:
+#   6
+
+"""Ensure parameters are not marked mut when never mutated."""
+
+
+def energy(bodies: list[int]) -> int:
+    mut total: int = 0
+    for b in bodies:
+        total += b
+    return total
+
+
+def main() -> None:
+    println(energy([1, 2, 3]))

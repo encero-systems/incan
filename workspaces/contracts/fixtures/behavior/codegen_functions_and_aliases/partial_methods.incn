@@ -1,0 +1,30 @@
+# behavior: a trait partial keeps its presets and selects the adopter's target override when present
+# expect-stdout:
+#   name
+#   other
+#   override:name
+
+trait Named:
+    def label(self, prefix: str) -> str:
+        return prefix
+
+    short = partial label(prefix="name")
+
+
+model User with Named:
+    name: str
+
+
+model Override with Named:
+    def label(self, prefix: str) -> str:
+        return f"override:{prefix}"
+
+
+pub def use(user: User) -> str:
+    return user.short()
+
+
+def main() -> None:
+    println(use(User(name="Ada")))
+    println(User(name="Ada").label("other"))
+    println(Override().short())

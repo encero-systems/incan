@@ -1,0 +1,56 @@
+"""Declare `pub` methods beside unmarked helpers on a model, a class, an enum and a newtype (#2570)."""
+
+
+pub trait Describe:
+    def describe(self) -> str
+
+
+pub model Account with Describe:
+    pub owner: str
+    pub balance: int
+
+    pub def summary(self) -> str:
+        """Report the owner and the doubled balance through an unmarked helper."""
+        return f"{self.owner}: {self.doubled()}"
+
+    def doubled(self) -> int:
+        return self.balance * 2
+
+    def describe(self) -> str:
+        return "account of " + self.owner
+
+
+pub class Counter:
+    pub count: int
+
+    pub def following(self) -> int:
+        """Return the next count through an unmarked helper."""
+        return self.step(self.count)
+
+    def step(self, value: int) -> int:
+        return value + 1
+
+
+pub enum Light:
+    Red
+    Green
+
+    pub def label(self) -> str:
+        """Name the light through an unmarked helper."""
+        if self.stops():
+            return "stop"
+        return "go"
+
+    def stops(self) -> bool:
+        match self:
+            Light.Red => return true
+            Light.Green => return false
+
+
+pub type Meters = newtype int:
+    pub def doubled(self) -> int:
+        """Double the length through an unmarked helper."""
+        return self.raw() * 2
+
+    def raw(self) -> int:
+        return self.0

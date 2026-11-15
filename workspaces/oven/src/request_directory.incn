@@ -1,0 +1,40 @@
+"""
+The working directory a compilation is for: the directory its command ran in.
+
+A command run in a project is compiled in that command's directory. An engine serves commands from many directories
+and its own directory is only where it was launched, which may since have been removed; while it settles a request it
+names the client's directory here.
+"""
+
+from rust::std::env import current_dir
+
+
+model Requested:
+    """The client directory of the request being settled; empty outside a request."""
+
+    directory: str = ""
+
+    def select(mut self, directory: str) -> None:
+        """Name the directory of the request being settled, or none."""
+        self.directory = directory
+
+
+static REQUESTED: Requested = Requested()
+
+
+pub def serve_from(directory: str) -> None:
+    """Settle the next compilations for a client whose command ran in `directory`."""
+    REQUESTED.select(directory)
+
+
+pub def served() -> None:
+    """End a request's directory; later compilations use this process's own."""
+    REQUESTED.select("")
+
+
+pub def working_directory() -> Result[str, str]:
+    """The directory of the request being settled, else this process's working directory."""
+    if REQUESTED.directory != "":
+        return Ok(REQUESTED.directory)
+    working = current_dir().map_err((error) => f"native compiler working directory: {error}")?
+    return Ok(working.to_string_lossy().into_owned())

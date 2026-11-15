@@ -1,0 +1,9 @@
+[project]
+name = "rust_callback_parameter_forwarded_to_a_mut_parameter"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tiny_ui = { loaf = "tiny_ui", path = "rust/tiny_ui" }

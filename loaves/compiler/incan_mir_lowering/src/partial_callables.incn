@@ -20,7 +20,10 @@ from frame import Builder, read_place, literal, drop_owned, forget_owned, tempor
 from text_plan import clone_text, owned_literal
 from lists import list_parameter_type, list_element
 from builtins import list_call
-from lowering import call_argument_operand, lower_statement, list_borrow
+from call_arguments import call_argument_operand
+from statements import lower_statement
+from list_values import list_borrow
+from table_views import borrowed_at
 
 
 pub def default_flags(parameters: &list[RustCallableParam]) -> list[bool]:
@@ -46,7 +49,7 @@ pub def with_supplied_flags(signature: list[PlanType], flags: list[bool]) -> Res
     return Ok(expanded)
 
 
-pub def partial_flags(builder: Builder, local: int) -> Option[list[bool]]:
+pub def partial_flags(mut builder: Builder, local: int) -> Option[list[bool]]:
     """The default flags recorded for a local that holds a closure whose parameters carry defaults."""
     for entry in builder.partial_callables:
         if entry[0] == local:
@@ -271,7 +274,7 @@ def default_value(
                 _ => pass
             return Ok(read_place(source, false, span))
         CallableParamDefault.Source(computation) =>
-            for statement in computation.stmts:
-                lower_statement(module, lifted, statement)?
+            for position in range(len(computation.stmts)):
+                lower_statement(module, lifted, borrowed_at(computation.stmts, position))?
             return call_argument_operand(lifted, computation.result, ty, span, false)
         _ => return Err("unsupported Body IR partial parameter default")

@@ -1,0 +1,45 @@
+"""Build every Incan benchmark with the selected installed release toolchain."""
+
+from rust::std::process import exit
+from benchmark_support import capture, repository_root, select_toolchain
+
+
+def main() -> None:
+    """Discover benchmark sources, build each release artifact, and report the complete failure count."""
+    match check_all():
+        Ok(failures) =>
+            if failures == 0:
+                exit(0)
+            exit(1)
+        Err(message) =>
+            println(f"check benchmarks: {message}")
+            exit(2)
+
+
+pub def check_all() -> Result[int, str]:
+    """Build every compute, sorting, and collection source and return how many builds refused."""
+    root = repository_root()?
+    directory = root.joinpath("workspaces/benchmarks")
+    toolchain = select_toolchain()?
+    mut sources: list[str] = []
+    for area in ["compute", "sorting", "collections"]:
+        for source in directory.joinpath(area).rglob("*.incn").map_err((error) => error.message())?:
+            if "/target/" not in source.0:
+                sources.append(source.0)
+    mut failures = 0
+    for source in sorted(sources):
+        println(f"==> build: {source[len(directory.0) + 1:]}")
+        result = capture(
+            toolchain.incan,
+            ["build", source, "--profile", "release"],
+            root,
+            {"INCAN_HOME": toolchain.home.0},
+        )?
+        if result.stdout != "":
+            print(result.stdout)
+        if result.stderr != "":
+            print(result.stderr)
+        if result.code != 0:
+            failures += 1
+    println(f"checked: {len(sources)}; failed: {failures}")
+    return Ok(failures)

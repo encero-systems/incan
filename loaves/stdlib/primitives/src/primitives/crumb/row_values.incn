@@ -1,0 +1,222 @@
+"""Build Incan carriers from a native row read's pre-order nodes; no envelope byte is decoded here."""
+
+from rust::incan_std_primitives::crumb import RowRead
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
+from crate.primitives.crumb.values import IntegerValue, MapEntry, Metadata, MetadataEntry, Value, ValueField
+
+
+pub def settle(read: &RowRead, mut budget: Budget) -> Result[None, BinaryError]:
+    """Charge the caller exactly the allowance the native read used, then surface its positioned refusal."""
+    budget.charge_bytes(read.bytes_charged).map_err((e) => primitive(e, read.offset))?
+    budget.charge_elements(read.elements_charged).map_err((e) => primitive(e, read.offset))?
+    if read.succeeded():
+        return Ok(None)
+    return Err(refusal(read.category, read.offset, read.field, read.variant, read.cause))
+
+
+pub def refusal(
+    category: str,
+    offset: int,
+    field: Option[bytes],
+    variant: Option[bytes],
+    cause: str,
+) -> BinaryError:
+    """A native refusal as the binary error the Incan reader reports, category for category."""
+    kind = match BinaryFailure.from_value(category):
+        Some(known) => known
+        None => BinaryFailure.InvalidCell
+
+    mut original: Option[CrumbError] = None
+    if kind == BinaryFailure.LimitExceeded and len(cause) > 0:
+        original = Some(CrumbError.limit(cause))
+    return BinaryError(kind=kind, offset=offset, field=field, variant=variant, cause=original)
+
+
+pub class Nodes:
+    """A native read's nodes, walked once in pre-order; the builders share one cursor so each sees its successor."""
+
+    read: RowRead
+
+    @staticmethod
+    pub def create(read: RowRead) -> Self:
+        """Walk the nodes of one successful native read from before its first node."""
+        return Nodes(read=read)
+
+    pub def next(mut self) -> int:
+        """Advance to the next node and return its code; -1 after the last."""
+        return self.read.next()
+
+    pub def count(self) -> int:
+        """The current node's child, field, argument or entry count."""
+        return self.read.count()
+
+    pub def flag(self) -> bool:
+        """The current boolean or canonical flag."""
+        return self.read.flag()
+
+    pub def signed(self) -> i128:
+        """The current signed integer or decimal coefficient."""
+        return self.read.signed()
+
+    pub def unsigned(self) -> u128:
+        """The current unsigned integer."""
+        return self.read.unsigned()
+
+    pub def number(self) -> int:
+        """The current float width, decimal scale or decimal selector precision."""
+        return self.read.number()
+
+    pub def second(self) -> int:
+        """The current decimal selector scale."""
+        return self.read.second()
+
+    pub def data(self) -> bytes:
+        """The current bits, binary data, identity or reference target."""
+        return self.read.bytes()
+
+    pub def other(self) -> bytes:
+        """The current reference identity."""
+        return self.read.other()
+
+    pub def text(self) -> str:
+        """The current text, selector name, absent policy or metadata key."""
+        return self.read.text()
+
+
+pub def build_value(read: RowRead) -> Result[Value, BinaryError]:
+    """Build the one complete value a successful native read holds."""
+    mut nodes = Nodes.create(read)
+    return value_node(nodes)
+
+
+pub def build_metadata(read: RowRead) -> Result[Metadata, BinaryError]:
+    """Build the one complete metadata tree a successful native description read holds."""
+    mut nodes = Nodes.create(read)
+    return metadata_node(nodes)
+
+
+def value_node(mut nodes: Nodes) -> Result[Value, BinaryError]:
+    """Build the next complete value; its children follow it in pre-order."""
+    code = nodes.next()
+    if code >= 0 and code <= 9:
+        return scalar_value(code, nodes)
+    if code >= 10 and code <= 12:
+        mut values: list[Value] = []
+        for _ in range(nodes.count()):
+            values.append(value_node(nodes)?)
+        if code == 10:
+            return Ok(Value.List(values))
+        if code == 11:
+            return Ok(Value.Tuple(values))
+        return Ok(Value.Set(values))
+    if code == 13:
+        mut entries: list[MapEntry] = []
+        for _ in range(nodes.count()):
+            key = value_node(nodes)?
+            entries.append(MapEntry(key=key, value=value_node(nodes)?))
+        return Ok(Value.Map(entries))
+    if code == 14:
+        return Ok(Value.Record(build_fields(nodes, nodes.count())?))
+    if code == 15:
+        identity = nodes.data()
+        return Ok(Value.Enum(identity, build_fields(nodes, nodes.count())?))
+    if code == 16:
+        selector = build_selector(nodes)?
+        return Ok(Value.Union(selector, [value_node(nodes)?]))
+    if code == 17:
+        return Ok(Value.Reference(nodes.data(), nodes.other()))
+    return Err(failure(BinaryFailure.InvalidCell, 0))
+
+
+def scalar_value(code: int, mut nodes: Nodes) -> Result[Value, BinaryError]:
+    """Build a leaf value, or an option's one child."""
+    match code:
+        0 => return Ok(Value.NoneValue)
+        1 => return Ok(Value.Some([value_node(nodes)?]))
+        2 => return Ok(Value.Boolean(nodes.flag()))
+        3 => return Ok(Value.Integer(IntegerValue.Signed(nodes.signed())))
+        4 => return Ok(Value.Integer(IntegerValue.Unsigned(nodes.unsigned())))
+        5 => return Ok(Value.Float(nodes.number(), nodes.data()))
+        6 => return Ok(Value.Decimal(nodes.signed(), nodes.number()))
+        7 => return Ok(Value.Text(nodes.text()))
+        8 => return Ok(Value.Binary(nodes.data()))
+        _ => return Ok(Value.Withheld)
+
+
+def build_fields(mut nodes: Nodes, count: int) -> Result[list[ValueField], BinaryError]:
+    """Build `count` stored fields, each its identity, canonical flag, absent policy and value."""
+    mut fields: list[ValueField] = []
+    for _ in range(count):
+        if nodes.next() != 18:
+            return Err(failure(BinaryFailure.InvalidCell, 0))
+        identity = nodes.data()
+        canonical = nodes.flag()
+        absent = match AbsentPolicy.from_value(nodes.text()):
+            Some(policy) => policy
+            None => return Err(failure(BinaryFailure.InvalidDescription, 0))
+
+        fields.append(ValueField(identity=identity, canonical=canonical, absent=absent, value=value_node(nodes)?))
+    return Ok(fields)
+
+
+def build_selector(mut nodes: Nodes) -> Result[TypeNode, BinaryError]:
+    """Build a written union member's selector as `selectors.parse_type` builds it."""
+    code = nodes.next()
+    match code:
+        19 =>
+            match ScalarKind.from_value(nodes.text()):
+                Some(kind) => return Ok(TypeNode.Scalar(kind))
+                None => return Err(failure(BinaryFailure.InvalidSelector, 0))
+        20 => return Ok(TypeNode.Decimal(nodes.number(), nodes.second()))
+        21 =>
+            kind = match ContainerKind.from_value(nodes.text()):
+                Some(known) => known
+                None => return Err(failure(BinaryFailure.InvalidSelector, 0))
+
+            return Ok(TypeNode.Container(kind, build_selectors(nodes, nodes.count())?))
+        22 =>
+            kind = match NominalKind.from_value(nodes.text()):
+                Some(known) => known
+                None => return Err(failure(BinaryFailure.InvalidSelector, 0))
+
+            identity = nodes.data()
+            return Ok(TypeNode.Nominal(kind, "", Some(identity), build_selectors(nodes, nodes.count())?))
+        23 => return Ok(TypeNode.Reference(build_selectors(nodes, nodes.count())?))
+        _ => return Err(failure(BinaryFailure.InvalidSelector, 0))
+
+
+def build_selectors(mut nodes: Nodes, count: int) -> Result[list[TypeNode], BinaryError]:
+    """Build `count` selector arguments."""
+    mut arguments: list[TypeNode] = []
+    for _ in range(count):
+        arguments.append(build_selector(nodes)?)
+    return Ok(arguments)
+
+
+def metadata_node(mut nodes: Nodes) -> Result[Metadata, BinaryError]:
+    """Build the next complete metadata tree, keeping map entries in read order."""
+    code = nodes.next()
+    match code:
+        24 => return Ok(Metadata.Null)
+        25 => return Ok(Metadata.Boolean(nodes.flag()))
+        26 => return Ok(Metadata.Integer(nodes.signed()))
+        27 => return Ok(Metadata.Text(nodes.text()))
+        28 => return Ok(Metadata.Binary(nodes.data()))
+        29 => return Ok(Metadata.Symbol(nodes.text()))
+        30 =>
+            mut items: list[Metadata] = []
+            for _ in range(nodes.count()):
+                items.append(metadata_node(nodes)?)
+            return Ok(Metadata.List(items))
+        31 =>
+            mut entries: list[MetadataEntry] = []
+            for _ in range(nodes.count()):
+                if nodes.next() != 32:
+                    return Err(failure(BinaryFailure.InvalidDescription, 0))
+                key = nodes.text()
+                entries.append(MetadataEntry(key=key, value=metadata_node(nodes)?))
+            return Ok(Metadata.Map(entries))
+        _ => return Err(failure(BinaryFailure.InvalidDescription, 0))

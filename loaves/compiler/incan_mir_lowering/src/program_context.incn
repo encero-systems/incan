@@ -1,0 +1,130 @@
+"""Immutable program mappings shared by ordinary, instantiated, and lifted function frames."""
+
+from rust::std::sync import Arc
+from rust::std::env import var_os
+from pub::incan_mir_plan import CalleeKind
+from body_index import BodyIndex, empty_body_index, extend_body_index
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    StaticDeclaration,
+    Body as RustBody,
+    NominalDeclaration,
+    EnumDeclaration,
+    ValueEnumDeclaration,
+    DecoratedBinding,
+)
+from rust::incan_semantics_core import IncanType as RustType
+from rust::std::collections import BTreeSet
+from table_views import borrowed_at, borrowed_table
+from native_type_identity import ConstructorIndex, extend_constructor_index
+
+
+pub model DisplayFunction:
+    """One validated source body or SDK item rendering a retained nominal through a shared receiver."""
+
+    pub owner: int
+    pub callee: CalleeKind
+
+
+pub model ProgramContext:
+    """Share checked tables, body positions, arithmetic policy and diagnostic policy across ordinary and lifted frames."""
+
+    pub body_indices: BodyIndex
+    # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
+    pub display_functions: Arc[list[DisplayFunction]]
+    pub statics: Arc[list[StaticDeclaration]]
+    pub comparison_functions: Arc[list[list[str]]]
+    pub union_types: Arc[BTreeSet[RustType]]
+    # Layouts are immutable after specialization; frames retain shared owners rather than copying checked tables.
+    pub nominals: Arc[list[NominalDeclaration]]
+    # Positions borrow exactly the nominal inventory published beside them.
+    pub constructors: Arc[ConstructorIndex]
+    pub enums: Arc[list[EnumDeclaration]]
+    pub value_enums: Arc[list[ValueEnumDeclaration]]
+    pub decorated_bindings: Arc[list[DecoratedBinding]]
+    # Lifted functions share their unit's ordinary integer policy along with its checked declaration tables.
+    pub overflow_checks: bool = true
+    # Observe the diagnostic policy once per context, rather than reading the environment for every frame.
+    pub observe_work: bool = false
+
+
+pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
+    """Keep module storage but no dispatch mappings for external-only synthetic frames."""
+    functions: list[DisplayFunction] = []
+    comparisons: list[list[str]] = []
+    unions: BTreeSet[RustType] = BTreeSet.new()
+    bindings: list[DecoratedBinding] = []
+    return ProgramContext(
+        body_indices=empty_body_index(),
+        display_functions=Arc.new(functions),
+        statics=Arc.new(list(module.static_declarations)),
+        comparison_functions=Arc.new(comparisons),
+        union_types=Arc.new(unions),
+        nominals=Arc.new(list(module.nominal_declarations)),
+        constructors=constructors,
+        enums=Arc.new(list(module.enum_declarations)),
+        value_enums=Arc.new(list(module.value_enum_declarations)),
+        decorated_bindings=Arc.new(bindings),
+        observe_work=var_os("INCAN_NATIVE_TIMING").is_some(),
+    )
+
+
+pub def body_at(bodies: &list[RustBody], index: int) -> &RustBody:
+    """Close Arc.as_ref's element type at the checked body-index boundary, then borrow its selected entry."""
+    return borrowed_at(bodies, index)
+
+
+pub def nominal_at(declarations: &list[NominalDeclaration], index: int) -> &NominalDeclaration:
+    """Borrow one nominal declaration without copying its fields, methods or default frames; `index` is in range."""
+    return borrowed_at(declarations, index)
+
+
+pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule) -> Result[None, str]:
+    """
+    Publish each appended nominal-table generation before its closed frames borrow the new layouts.
+
+    Instance retention only appends to the module's table, so the shared table and its constructor index grow in
+    place by the new rows. A table that an earlier context still shares is copied once, on its first write.
+    """
+    retained = len(program.nominals.as_ref())
+    current = len(module.nominal_declarations)
+    if retained == current:
+        return Ok(None)
+    if retained > current or program.constructors.as_ref().count != retained:
+        return Err("invalid Body IR nominal table generation")
+    for position in range(retained, current):
+        Arc.make_mut(program.nominals).push(borrowed_at(module.nominal_declarations, position).clone())
+    extend_constructor_index(Arc.make_mut(program.constructors), module.nominal_declarations)
+    return Ok(None)
+
+
+pub def extend_program_context(
+    mut program: ProgramContext,
+    module: &BodyIrModule,
+    constructors: Arc[ConstructorIndex],
+    unions: &list[RustType],
+) -> Result[None, str]:
+    """Extend retained program lookup/storage generations after runtime resolution without rebuilding dispatch roots."""
+    if (
+        len(program.statics.as_ref()) > len(module.static_declarations)
+        or len(program.nominals.as_ref()) > len(module.nominal_declarations)
+        or len(program.enums.as_ref()) > len(module.enum_declarations)
+        or len(program.value_enums.as_ref()) > len(module.value_enum_declarations)
+        or len(program.decorated_bindings.as_ref()) > len(module.decorated_bindings)
+    ):
+        return Err("invalid Body IR program context generation")
+    extend_body_index(program.body_indices, module)?
+    for position in range(len(program.statics.as_ref()), len(module.static_declarations)):
+        Arc.make_mut(program.statics).push(borrowed_at(module.static_declarations, position).clone())
+    for position in range(len(program.nominals.as_ref()), len(module.nominal_declarations)):
+        Arc.make_mut(program.nominals).push(borrowed_at(module.nominal_declarations, position).clone())
+    for position in range(len(program.enums.as_ref()), len(module.enum_declarations)):
+        Arc.make_mut(program.enums).push(borrowed_at(module.enum_declarations, position).clone())
+    for position in range(len(program.value_enums.as_ref()), len(module.value_enum_declarations)):
+        Arc.make_mut(program.value_enums).push(borrowed_at(module.value_enum_declarations, position).clone())
+    for position in range(len(program.decorated_bindings.as_ref()), len(module.decorated_bindings)):
+        Arc.make_mut(program.decorated_bindings).push(borrowed_at(module.decorated_bindings, position).clone())
+    for ty in unions:
+        _ = Arc.make_mut(program.union_types).insert(ty.clone())
+    program.constructors = constructors
+    return Ok(None)

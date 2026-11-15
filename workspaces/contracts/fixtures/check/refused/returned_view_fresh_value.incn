@@ -1,0 +1,8 @@
+# behavior: a returned view cannot borrow a value created in its own body (#2500).
+# expect-diagnostic: INCAN-T0124
+
+class Address:
+    pub city: str
+
+    def view(mut self) -> Reference[Address] from self:
+        return Address(city="Utrecht")

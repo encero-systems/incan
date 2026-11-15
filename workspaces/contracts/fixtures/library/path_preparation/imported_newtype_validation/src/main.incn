@@ -1,0 +1,14 @@
+# behavior: implicit construction of a dependency newtype calls its published validation hook and rejects invalid input even when the consumer never imports the type (#2008)
+# expect-stdout:
+#   0.5
+# expect-stderr-contains:
+#   fraction rejected
+# expect-exit: 101
+
+from pub::fractions import fraction_of
+
+
+def main() -> None:
+    """Accept a valid input and then prove that the imported hook rejects an invalid one."""
+    println(fraction_of(0.5))
+    println(fraction_of(1.5))

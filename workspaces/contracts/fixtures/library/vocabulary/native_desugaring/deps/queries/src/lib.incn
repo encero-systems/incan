@@ -1,0 +1,11 @@
+"""Expose ordinary library behavior alongside a query vocabulary."""
+
+
+pub def marker() -> int:
+    """Return a value unaffected by vocabulary execution."""
+    return 7
+
+
+pub def as_text(value: int) -> str:
+    """Give the middle generated call a result type distinct from its argument and consumer."""
+    return f"nested {value}"

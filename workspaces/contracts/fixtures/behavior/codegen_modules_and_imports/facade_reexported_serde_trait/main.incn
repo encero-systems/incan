@@ -1,0 +1,13 @@
+# behavior: a std.serde.json trait re-exported by a user facade module still gives an adopting model its to_json (#1431)
+# expect-stdout:
+#   {"value":1}
+
+from facade import Serialize
+
+
+model Payload with Serialize:
+    value: int
+
+
+def main() -> None:
+    println(Payload(value=1).to_json())

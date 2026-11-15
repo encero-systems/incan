@@ -1,0 +1,89 @@
+"""`OrdinalKey` byte encodings shared by the civil date, time and offset types."""
+
+
+pub def ordinal_key_bytes(data: bytes) -> list[u8]:
+    """Return raw bytes as an ordinal-key fragment."""
+    return [data[index] for index in range(len(data))]
+
+
+pub def ordinal_key_byte(value: int) -> list[u8]:
+    """Return the low byte of an integer as an ordinal-key fragment."""
+    byte: u8 = value.wrapping_resize()
+    return [byte]
+
+
+pub def ordinal_key_u32_le(value: int) -> list[u8]:
+    """Return a non-negative 32-bit integer in little-endian byte order."""
+    byte0: u8 = (value % 256).wrapping_resize()
+    byte1: u8 = ((value // 256) % 256).wrapping_resize()
+    byte2: u8 = ((value // 65536) % 256).wrapping_resize()
+    byte3: u8 = ((value // 16777216) % 256).wrapping_resize()
+    return [byte0, byte1, byte2, byte3]
+
+
+pub def ordinal_key_signed_magnitude_i64(value: int) -> list[u8]:
+    """
+    Return a sign byte followed by a 64-bit little-endian magnitude.
+
+    Date/time ordinal encodings use this form for human-domain fields that can be negative, such as Gregorian years or
+    UTC offsets, without depending on host integer representation.
+    """
+    mut sign = 0
+    mut magnitude = value
+    if value < 0:
+        sign = 1
+        magnitude = 0 - value
+    sign_byte: u8 = sign.wrapping_resize()
+    byte0: u8 = (magnitude % 256).wrapping_resize()
+    byte1: u8 = ((magnitude // 256) % 256).wrapping_resize()
+    byte2: u8 = ((magnitude // 65536) % 256).wrapping_resize()
+    byte3: u8 = ((magnitude // 16777216) % 256).wrapping_resize()
+    byte4: u8 = ((magnitude // 4294967296) % 256).wrapping_resize()
+    byte5: u8 = ((magnitude // 1099511627776) % 256).wrapping_resize()
+    byte6: u8 = ((magnitude // 281474976710656) % 256).wrapping_resize()
+    byte7: u8 = ((magnitude // 72057594037927936) % 256).wrapping_resize()
+    return [sign_byte, byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7]
+
+
+pub def ordinal_key_read_u32_le(data: bytes, offset: int) -> int:
+    """Read a non-negative 32-bit little-endian integer from ordinal-key bytes."""
+    mut value = int(data[offset])
+    value += int(data[offset + 1]) * 256
+    value += int(data[offset + 2]) * 65536
+    value += int(data[offset + 3]) * 16777216
+    return value
+
+
+pub def ordinal_key_read_signed_magnitude_i64(data: bytes, offset: int) -> int:
+    """Read the sign-byte plus little-endian-magnitude encoding used by date/time ordinal keys."""
+    sign = int(data[offset])
+    mut value = int(data[offset + 1])
+    value += int(data[offset + 2]) * 256
+    value += int(data[offset + 3]) * 65536
+    value += int(data[offset + 4]) * 16777216
+    value += int(data[offset + 5]) * 4294967296
+    value += int(data[offset + 6]) * 1099511627776
+    value += int(data[offset + 7]) * 281474976710656
+    value += int(data[offset + 8]) * 72057594037927936
+    if sign == 1:
+        return 0 - value
+    return value
+
+
+pub def ordinal_key_signed_magnitude_i64_is_canonical(data: bytes, offset: int) -> bool:
+    """Return whether a signed-magnitude ordinal integer uses a supported sign byte and canonical zero representation."""
+    sign = int(data[offset])
+    if sign != 0 and sign != 1:
+        return false
+    if sign == 0:
+        return true
+    mut magnitude = 0
+    magnitude += int(data[offset + 1])
+    magnitude += int(data[offset + 2]) * 256
+    magnitude += int(data[offset + 3]) * 65536
+    magnitude += int(data[offset + 4]) * 16777216
+    magnitude += int(data[offset + 5]) * 4294967296
+    magnitude += int(data[offset + 6]) * 1099511627776
+    magnitude += int(data[offset + 7]) * 281474976710656
+    magnitude += int(data[offset + 8]) * 72057594037927936
+    return magnitude != 0

@@ -1,0 +1,69 @@
+# behavior: an enum's automatic Eq satisfies @derive(Eq) on containing and nested models for plain, string-valued and integer-valued enums (#2879)
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+#   true
+#   false
+#   true
+#   false
+
+"""Exercise enum-backed structural equality through derived models."""
+
+
+enum PlainKind:
+    Ready
+    Waiting
+
+
+enum TextKind(str):
+    Ready = "ready"
+    Waiting = "waiting"
+
+
+enum NumberKind(int):
+    Ready = 1
+    Waiting = 2
+
+
+@derive(Eq)
+model PlainRecord:
+    kind: PlainKind
+
+
+@derive(Eq)
+model TextRecord:
+    kind: TextKind
+
+
+@derive(Eq)
+model NumberRecord:
+    kind: NumberKind
+
+
+@derive(Eq)
+model InnerRecord:
+    kind: PlainKind
+
+
+@derive(Eq)
+model OuterRecord:
+    inner: InnerRecord
+
+
+def main() -> None:
+    """
+    Compare equal and unequal values through every required field shape.
+
+    1. Compare models holding plain, string-valued and integer-valued enums.
+    2. Compare an Eq-derived model nested in another Eq-derived model.
+    """
+    println(PlainRecord(kind=PlainKind.Ready) == PlainRecord(kind=PlainKind.Ready))
+    println(PlainRecord(kind=PlainKind.Ready) == PlainRecord(kind=PlainKind.Waiting))
+    println(TextRecord(kind=TextKind.Ready) == TextRecord(kind=TextKind.Ready))
+    println(TextRecord(kind=TextKind.Ready) == TextRecord(kind=TextKind.Waiting))
+    println(NumberRecord(kind=NumberKind.Ready) == NumberRecord(kind=NumberKind.Ready))
+    println(NumberRecord(kind=NumberKind.Ready) == NumberRecord(kind=NumberKind.Waiting))
+    println(OuterRecord(inner=InnerRecord(kind=PlainKind.Ready)) == OuterRecord(inner=InnerRecord(kind=PlainKind.Ready)))
+    println(OuterRecord(inner=InnerRecord(kind=PlainKind.Ready)) == OuterRecord(inner=InnerRecord(kind=PlainKind.Waiting)))

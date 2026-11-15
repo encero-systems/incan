@@ -1,0 +1,6 @@
+[project]
+name = "tools_metadata_api_markdown"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

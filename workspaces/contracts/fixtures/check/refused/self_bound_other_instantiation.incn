@@ -1,0 +1,14 @@
+# behavior: self in a generic trait's default method does not satisfy that trait under a different type argument (#2774)
+# expect-diagnostic: INCAN-T0001
+
+trait WrongWalk:
+    def walk[W with WrongWalker[int]](self, mut walker: W) -> None
+
+
+trait WrongWalker[E]:
+    def field[V with WrongWalk](mut self, value: V) -> None:
+        value.walk(self)
+
+
+def main() -> None:
+    println("unreachable")

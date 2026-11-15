@@ -1,0 +1,29 @@
+# behavior: a binding whose declared layout matches one declared target is refused when `--interop-target` selects another whose layout differs, by check and build alike (#3135)
+# cli-commands:
+#   oven check --interop-target aarch64-apple-darwin src/main.incn
+#   oven build --interop-target aarch64-apple-darwin src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   Clang rejected the declared signature or layout for target `arm64-apple-macos11`
+
+from std.interop import c
+
+
+binding Probe:
+    header = "interop/include/probe.h"
+    link = c.system_library("c")
+
+    struct Pair:
+        native = "struct probe_pair"
+        first: c.i32 = first
+        padding: c.i32 = padding
+        second: c.i32 = second
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def main() -> None:
+    """Call through a binding verified against the selected target's layout."""
+    unsafe:
+        println(Probe.absolute(-5))

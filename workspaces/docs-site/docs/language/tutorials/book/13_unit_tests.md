@@ -57,6 +57,8 @@ module tests:
 
 Run it:
 
+The tested dev.8 installation refuses this inline example with an unsupported collected-test-body error. The conventional test-file example below runs successfully; the inline form here illustrates the source contract and is not a verified native workflow.
+
 ```bash
 incan test src/math.incn
 ```
@@ -75,7 +77,7 @@ def test_addition() -> None:
 Run those with:
 
 ```bash
-incan test tests/
+incan test tests/test_math.incn
 ```
 
 ## Organizing tests
@@ -137,8 +139,8 @@ Async fixtures still use `@fixture`; there is no async-only decorator. The runne
 
 That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:
 
-- [Your first project](../../../tooling/tutorials/your_first_project.md) — Scaffold a project with `incan new`, split it into modules, and add tests
-- [Follow the guided project](../guided_project.md) — Combine functions, results, modules, tests, locking, and a native build
+- [Your first project](../../../tooling/tutorials/your_first_project.md) — Create a manifest, split code into modules and add tests
+- [Follow the guided project](../guided_project.md) — Combine functions, results, modules, tests and a native build
 - [Build a typed data processor](../typed_data_processor.md) — Test a typed transformation and produce a JSON report
 - [Build and consume an Incan library](../../../tooling/tutorials/build_and_consume_library.md) — Export a public API and import it through `pub::`
 - [Build an asynchronous worker pipeline](../async_worker_pipeline.md) — Spawn tasks, preserve join failures, and apply a deadline

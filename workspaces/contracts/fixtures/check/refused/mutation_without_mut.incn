@@ -1,0 +1,8 @@
+# behavior: assigning to a binding not declared `mut` is refused, and a replayed refusal names the requesting project's paths (#2481)
+# expect-diagnostic: INCAN-T0001
+# check-edits:
+#   src/main.incn
+
+def foo() -> Unit:
+    x = 1
+    x = 2

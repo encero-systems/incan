@@ -1,0 +1,9 @@
+[project]
+name = "generic_nominal_storage"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+parcels = { path = "deps/parcels" }

@@ -29,6 +29,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, `std.collections`, ...)
 - [Numeric semantics](numeric_semantics.md): numeric types and aliases, literals, assignment between numeric types, resizing methods, operators, and compound assignment
 - [Strings](strings.md): string types, formatting, and string operations
+- [Source security](source_security.md): bidirectional-control refusals, Unicode scalar escapes, confusable-identifier warnings, and tooling behavior
 - [Union types](union_types.md): anonymous closed unions, `A | B`, narrowing, and `match` type patterns
 - [Derives & traits](derives_and_traits.md): derives, trait authoring, method decorators, and generic instance methods
 - [Stdlib traits](stdlib_traits/index.md): the standard library's protocol traits (iteration, indexing, operators, conversions, and others)

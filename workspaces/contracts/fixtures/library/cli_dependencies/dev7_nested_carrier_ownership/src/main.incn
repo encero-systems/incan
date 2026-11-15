@@ -1,0 +1,32 @@
+# behavior: nested Option/union/newtype carriers retain their original owners across list get/pop and field replacement, and checked borrowed enum fields clone only the selected carrier, retaining repeated reads and initialized parents across replacement
+# expect-stdout:
+#   kind first
+#   kind first
+#   missing
+#   SECOND
+#   REPLACED
+#   kind first
+#   FIELD
+#   missing
+#   deep
+#   wrong
+#   reverse
+#   kind listed
+#   kind retained
+#   kind retained
+#   missing
+#   kind retained
+#   kind retained
+#   NESTED
+#   REPLACEMENT
+#   REPLACEMENT
+#   kind deep
+
+from nested_carriers import run_nested_carriers
+from projected_carriers import run_projected_carriers
+
+
+def main() -> None:
+    """Run each carrier observation in the order of the cases it carries."""
+    run_nested_carriers()
+    run_projected_carriers()

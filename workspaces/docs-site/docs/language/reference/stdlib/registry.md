@@ -1,6 +1,6 @@
 # `std.registry`
 
-`std.registry` declares typed catalogs. A registry associates a typed key and a descriptor with a function, a method, a compilation unit or a package. Each registry has a loaded view, `loaded_entries()`, and a checked view, `incan inspect registry`.
+`std.registry` declares typed catalogs. A registry associates a typed key and a descriptor with a function, a method, a compilation unit or a package. `loaded_entries()` provides the process-local view. Checked entries can appear in codegraph records.
 
 ## Imports
 
@@ -206,60 +206,14 @@ A registry's identity is its module and binding:
 
 A public `functions` static in `src/catalog.incn` has identity `catalog::functions`. The package identity is a separate field of the checked metadata.
 
-A registry selector is the identity, with `::` or `.` between segments, optionally prefixed by the package name:
-
-```text
-<module>::<binding>
-<module>.<binding>
-<package>::<module>::<binding>
-```
-
-```console
-incan inspect registry catalog::functions --project . --format json
-incan inspect registry catalog.functions --project . --format json
-incan inspect registry analytics-kit::catalog::functions --project . --format json
-```
-
-A package-qualified selector selects a candidate; the selected registry's `identity` field is `<module>::<binding>`.
-
 ## Checked inspection
 
-```console
-incan inspect registry IDENTITY [--project PATH] [--format json]
-```
-
-| Argument | Contract |
-| --- | --- |
-| `IDENTITY` | A registry selector. |
-| `--project PATH` | Project root or source entry. Defaults to the current directory. |
-| `--format json` | The checked JSON projection. `json` is the only value and the default. |
-
-- Inspection reads the source package and the `.incnlib` metadata of each resolved dependency, and runs no user code.
-- A selector that matches no registry fails the command, and the failure lists the available selectors and each dependency whose registry metadata is missing, unreadable or of an unsupported schema version.
-- A selector that matches more than one registry fails the command, and the failure lists the matching selectors.
-
-### JSON shape
-
-The top-level object contains:
-
-| Field | Meaning |
-| --- | --- |
-| `schema_version` | The checked registry schema version, `1`. |
-| `provenance` | `"checked"`. |
-| `package` | The package's `name` and optional `version`, or `null`. |
-| `registry` | The selected definition: `identity`, `binding`, `public`, `key_type`, `descriptor_type`, `subjects`, and `reexport_paths` when non-empty. |
-| `entries` | The registry's entries, in a deterministic order. |
-
-Each entry contains `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor` and `provenance`, and `reexport_paths` when non-empty. A subject kind is `function`, `method`, `compilation_unit` or `package`.
-
-A structural value is an object with a `kind` and, except for `none`, a `value`. The kinds are `int`, `float`, `bool`, `string`, `bytes`, `none`, `type`, `option`, `list`, `dict`, `const_ref`, `newtype` and `model`.
-
-Entry provenance is one of `checked_declaration`, `checked_compilation_unit_entry` or `checked_package_entry`.
+Checked entries appear as `registry` records in `incan inspect codegraph PATH --format jsonl`. A `registry` record carries the registry identity and visibility, structural key and descriptor, subject kind and identity, registration and subject spans, and public re-export paths when present. The complete record schema is in [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md).
 
 ## Visibility, packages and reexports
 
 - Inspecting a source package includes its private registries.
-- `incan build --lib` publishes the public registry definitions and their public entries in the library's `.incnlib`. A consumer inspects a dependency's public registries only.
+- `incan build src/lib.incn` publishes public registry definitions and public entries with the library contract. Consumers receive public registries only.
 - A public reexport adds a path to `reexport_paths`, with the facade's source anchor. The registry identity, the subject identity and the entries are unchanged.
 
 ## See also
@@ -268,4 +222,4 @@ Entry provenance is one of `checked_declaration`, `checked_compilation_unit_entr
 - [Work with typed registries](../../how-to/typed_registries.md)
 - [Checked catalogs and loaded registries](../../explanation/checked_and_loaded_registries.md)
 - [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md)
-- [`incan inspect registry` in the CLI reference](../../../tooling/reference/cli_reference.md#incan-inspect-registry)
+- [CLI reference](../../../tooling/reference/cli_reference.md)

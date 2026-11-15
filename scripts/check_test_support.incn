@@ -1,0 +1,44 @@
+"""Run repository check commands against small isolated filesystem fixtures."""
+
+from rust::std::env import var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from check_support import repository_root
+
+
+pub model Outcome:
+    """The check process's exit status and exact text streams."""
+    pub code: i32
+    pub stdout: str
+    pub stderr: str
+
+
+pub def write(root: Path, name: str, text: str) -> Result[None, str]:
+    """Create fixture parents and write strict UTF-8 without normalizing newlines."""
+    path = root.joinpath(name)
+    path.parent().mkdir(True, True).map_err((error) => error.message())?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def run_check(script: str, root: Path, arguments: list[str] = []) -> Result[Outcome, str]:
+    """
+    Run an Incan repository check on the selected isolated root.
+
+    1. Select the same installed command as the invoking test environment.
+    2. Pass the fixture root and existing checker arguments.
+    3. Capture the process status and both UTF-8 streams.
+    """
+    # 1. Select the installed toolchain command and the source script.
+    executable: str = var("INCAN").unwrap_or("incan")
+    source = repository_root()?.joinpath(f"scripts/{script}.incn")
+    mut command = Command.new(executable)
+    # 2. Select the isolated input tree.
+    command.arg("run").arg(source.0).arg("--").arg("--root").arg(root.0)
+    for argument in arguments:
+        command.arg(argument)
+    # 3. Capture the exact observable result.
+    output = command.output().map_err((error) => error.to_string())?
+    stdout = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
+    stderr = RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?
+    return Ok(Outcome(code=output.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))

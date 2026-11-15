@@ -1,0 +1,33 @@
+# behavior: empty list elements retain sibling str types, and Rust slice calls preserve nested rows (#1471, #2256)
+# expect-stdout:
+#   0
+#   1
+#   x
+#   x!
+#   2
+#   0
+#   4
+
+from rust::incan_std_primitives::collections import list_concat
+
+def count_rows(rows: list[list[str]]) -> int:
+    return len(rows)
+
+
+def run() -> None:
+    rows = [[], ["x"]]
+    println(len(rows[0]))
+    println(len(rows[1]))
+    for values in [["x"], []]:
+        for value in values:
+            println(value)
+            println(value + "!")
+    println(count_rows([[], ["x"]]))
+    deep = [[[]], [["x"]]]
+    println(len(deep[0][0]))
+    joined: list[list[str]] = list_concat(rows, rows)
+    println(len(joined))
+
+
+def main() -> None:
+    run()

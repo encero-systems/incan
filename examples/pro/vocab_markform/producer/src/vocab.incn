@@ -1,0 +1,15 @@
+"""Register markform's markup grammar without assigning rendering behavior to its fragments."""
+
+from std.vocab import DeclarationSurface, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentSubmode
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register the import-activated markup block and its owned lexical submode; no runtime hook is supplied."""
+    # Markup introduces a statement block.
+    declaration = DeclarationSurface.named("markup").with_statement_body()
+    # The markup grammar captures nodes only inside that block.
+    mut fragment = EmbeddedFragmentDescriptor.new("markup.fragment", EmbeddedFragmentSubmode.Markup, "markup_nodes")
+    fragment = fragment.in_declaration_body("markup")
+    surface = DslSurface.on_import("markform").with_declaration(declaration).with_embedded_fragment(fragment)
+    return VocabRegistration.new().with_surface(surface)

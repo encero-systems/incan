@@ -1,0 +1,23 @@
+# behavior: a nominal field of a parameter the body only reads becomes an owned union member at a union argument
+# expect-stdout:
+#   label sysroot
+
+type Label = newtype str
+
+
+model Settings:
+    label: Label
+
+
+def describe(target: Union[Label, str]) -> str:
+    match target:
+        Label(found) => return f"label {found.0}"
+        str(text) => return f"text {text}"
+
+
+def prepare(settings: Settings) -> str:
+    return describe(settings.label)
+
+
+def main() -> None:
+    println(prepare(Settings(label=Label("sysroot"))))

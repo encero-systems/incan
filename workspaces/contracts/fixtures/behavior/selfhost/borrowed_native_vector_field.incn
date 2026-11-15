@@ -1,0 +1,74 @@
+# behavior: fields keep shared views, guards end per statement and trait inputs contextually type integers (#1530)
+# expect-stdout:
+#   checked
+#   checked
+#   checked
+#   checked
+#   3
+#   1
+
+"""Retain native field contracts and observe temporary borrow lifetimes."""
+
+from rust::incan_lang::interop import RustTypeInfo, RustMethodSig
+from rust::std::cell import RefCell
+from rust::std::io import BufRead, Cursor
+from rust::std::process import Output
+
+
+def size(values: &list[RustMethodSig]) -> int:
+    """Read a list through a shared source parameter."""
+    return len(values)
+
+
+def inspect[T](value: RustTypeInfo) -> int:
+    """Borrow the native vector field at the Incan call boundary."""
+    return size(value.methods)
+
+
+def cloned_names[T](value: RustTypeInfo) -> bool:
+    """Use the cloned field as its checked source list type."""
+    names = value.type_params.clone()
+    return "T" in names
+
+
+def discard[T](mut value: Output) -> None:
+    """Clear the native byte vector through its public field."""
+    value.stdout.clear()
+
+
+def optional_target[T](value: RustTypeInfo) -> None:
+    """Borrow the optional alias through its retained Rust field type."""
+    target = value.alias_target.as_ref()
+
+
+def main() -> None:
+    """Observe native field admission and repeated borrow-guard method chains.
+
+    1. Confirm that the four native field declarations checked.
+    2. Mutate one native vector through successive temporary guards.
+    3. Contextually type a literal passed to an imported native trait method.
+    """
+    # 1. Reach execution after checking each native field declaration.
+    println("checked")
+    println("checked")
+    println("checked")
+    println("checked")
+    # 2. Release each guard before beginning the next statement's borrow.
+    repeated_borrows()
+    # 3. An unsuffixed integer takes the selected trait method's exact-width parameter type.
+    contextual_trait_input()
+
+
+def repeated_borrows() -> None:
+    """Keep the RefCell owner while each temporary guard ends after its method chain."""
+    values = RefCell.new([6])
+    values.borrow_mut().push(7)
+    values.borrow_mut().push(8)
+    println(values.borrow().len())
+
+
+def contextual_trait_input() -> None:
+    """Advance an in-memory cursor through a portable trait's usize parameter."""
+    mut cursor = Cursor.new(b"abc")
+    cursor.consume(1)
+    println(cursor.position())

@@ -1,0 +1,6 @@
+"""A module `-k alpha` selects no test of, which does not compile: selecting by keyword never compiles it."""
+
+
+def test_gamma() -> None:
+    count: int = "not a count"
+    assert count == 0

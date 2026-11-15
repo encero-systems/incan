@@ -7,7 +7,10 @@ inspection code.
 
 from std import toml
 from std.toml import TomlLocation
-from std.traits.error import Error
+from std.primitives.errors import Error
+
+# Why 0.6 has no `[sdk]` table and no `--sdk-profile`: both selected standard packages, which every unit now reaches.
+pub const NO_SDK_SELECTION: str = "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"
 
 
 pub enum IntakeErrorKind(str):
@@ -18,7 +21,7 @@ pub enum IntakeErrorKind(str):
     Unsupported = "unsupported"
     Cycle = "cycle"
 
-    def as_str(self) -> str:
+    pub def as_str(self) -> str:
         """Return the stable diagnostic category spelling."""
         return self.value()
 
@@ -36,7 +39,7 @@ pub model IntakeError with Error:
         """Render the manifest, literal key segments, category and refusal detail."""
         return f"{self.manifest}: {self.field}: {self.kind.as_str()}: {self.detail}"
 
-    def with_source(self, source: str) -> Self:
+    pub def with_source(self, source: str) -> Self:
         """Attach a literal-key source location; missing fields legitimately have no span."""
         mut location: Option[TomlLocation] = None
         match toml.locate(source, self.field):

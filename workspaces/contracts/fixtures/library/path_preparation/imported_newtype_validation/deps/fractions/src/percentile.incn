@@ -1,0 +1,8 @@
+pub type Percentile = newtype float:
+    """Keep a fraction whose published construction hook checks its range."""
+
+    def from_underlying(value: float) -> Result[Percentile, ValidationError]:
+        """Reject values outside the unit interval before they enter the API."""
+        if value < 0.0 or value > 1.0:
+            return Err(ValidationError("fraction rejected"))
+        return Ok(Percentile(value))

@@ -1,0 +1,12 @@
+# behavior: omitted defaults in two modules construct the same-named model declared by each function's own module
+# expect-stdout:
+#   1
+#   2
+
+from a import make as make_a
+from b import make as make_b
+
+
+def main() -> None:
+    println(make_a())
+    println(make_b())

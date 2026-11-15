@@ -1,0 +1,43 @@
+"""Publish structural traits on models returned by value and through native owners."""
+
+from rust::std::sync import Arc
+
+
+@derive(Display, Eq, Ord, Hash)
+pub model Record:
+    """Keep structural formatting, comparison and hashing in the owning library."""
+
+    pub value: int
+
+
+@derive(Display)
+pub model Box[T]:
+    """Publish a structural display with field-dependent Debug bounds."""
+
+    pub value: T
+
+
+pub model Opaque:
+    """Provide Debug without granting Display to a generic field."""
+
+    pub value: int
+
+
+pub def record(value: int) -> Record:
+    """Return a model whose derived traits belong to this library."""
+    return Record(value=value)
+
+
+pub def owned_record(value: int) -> Arc[Record]:
+    """Return the same source model behind a native owner."""
+    return Arc.new(Record(value=value))
+
+
+pub def boxed(value: int) -> Box[int]:
+    """Return an instantiated model with a provider-owned generic layout."""
+    return Box(value=value)
+
+
+pub def boxed_opaque() -> Box[Opaque]:
+    """Keep the generic Display requirement at Debug rather than imposing field Display."""
+    return Box(value=Opaque(value=13))

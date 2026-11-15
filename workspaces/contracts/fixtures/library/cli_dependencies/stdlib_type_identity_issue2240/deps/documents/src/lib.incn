@@ -1,0 +1,16 @@
+from std.json import JsonValue, parse
+
+
+pub def document() -> JsonValue:
+    """Return a standard-library value through a public signature."""
+    return JsonValue.array([])
+
+
+pub def object_document() -> JsonValue:
+    """Return a native object whose source values are unwrapped inside the provider."""
+    return JsonValue.object({"key": JsonValue.array([JsonValue.int(1), JsonValue.int(2)])})
+
+
+pub def parsed_document(source: str) -> Result[JsonValue, str]:
+    """Keep the same standard-library owner inside a public Result success channel."""
+    return parse(source).map_err((error) => error.message())

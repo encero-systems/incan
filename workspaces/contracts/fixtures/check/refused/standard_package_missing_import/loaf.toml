@@ -1,0 +1,6 @@
+[project]
+name = "incan_stdlib_interop"
+version = "0.6.0-dev.8"
+
+[project.scripts]
+main = "src/main.incn"

@@ -1,0 +1,124 @@
+"""
+The options of the commands that describe a unit (`run`, `check`, `test`, `build`, `describe-unit`, `owner`): one
+PATH, the profile, feature flags, substitutes, program entries and the other unit flags, read from the command line.
+"""
+
+from features import FeatureRequest
+from intake import ManifestReader
+from cli_help import refused_option
+from command_help import UNIT_VALUE_OPTIONS
+
+
+pub model Options:
+    """The options shared by the commands that describe a unit."""
+
+    pub path: str = ""
+    pub profile: str = "debug"
+    pub request: FeatureRequest = FeatureRequest()
+    pub substitutes: Dict[str, str] = {}
+    pub program_entries: list[str] = []
+    pub argv0: Option[str] = None
+    pub feature_options: bool = false
+    pub engine_report: bool = false
+    pub locked: bool = false
+    pub direct: bool = false
+    pub unattended: bool = false
+    pub codegraph: bool = false
+    # A build's OUTPUT_DIR, which also receives the program it builds; empty for none.
+    pub output: str = ""
+    # The declared `[[interop.c.targets]]` entry checked C bindings verify against instead of the host; empty for the
+    # host.
+    pub interop_target: str = ""
+    # One CLI preparation owns its source readings, including its provider callbacks.
+    pub manifests: ManifestReader = ManifestReader()
+
+
+
+pub def parse_options(arguments: list[str], default_path: str = "", outputs: bool = false) -> Result[Options, str]:
+    """The unit options: one PATH, or `default_path` when the command has one, and the profile and feature flags."""
+    mut options = Options()
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in UNIT_VALUE_OPTIONS:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            apply_option(options, argument, arguments[index + 1])?
+            if argument == "--features":
+                options.feature_options = true
+            index += 2
+            continue
+        if argument == "--engine-report":
+            options.engine_report = true
+        elif argument == "--locked":
+            options.locked = true
+        elif argument == "--release":
+            return Err("unknown option `--release`: select the release profile with `--profile release`")
+        elif argument == "--direct":
+            options.direct = true
+        elif argument == "--unattended":
+            options.unattended = true
+        elif argument == "--codegraph":
+            options.codegraph = true
+        elif argument == "--no-default-features":
+            options.feature_options = true
+            options.request.default_features = false
+        elif argument == "--all-features":
+            options.feature_options = true
+            options.request.all_features = true
+        elif argument.startswith("-"):
+            return Err(refused_option(argument))
+        elif options.path != "" and outputs and options.output == "":
+            options.output = argument
+        elif options.path != "":
+            return Err(f"one PATH is described at a time; `{argument}` is a second")
+        else:
+            options.path = argument
+        index += 1
+    if options.path == "":
+        options.path = default_path
+    if options.path == "":
+        return Err("a PATH is required")
+    return Ok(options)
+
+
+
+def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:
+    """
+    Apply one option that takes a value: the profile, features, a substitute, a program entry, `--argv0` or the
+    interop target.
+    """
+    if name == "--argv0":
+        options.argv0 = Some(value)
+    elif name == "--program-entry":
+        options.program_entries.append(value)
+    elif name == "--substitute":
+        parts = value.split("=")
+        if len(parts) != 2 or parts[0] == "" or parts[1] == "":
+            return Err(f"`--substitute` takes NAME=DIR, got `{value}`")
+        options.substitutes[parts[0]] = parts[1]
+    elif name == "--interop-target":
+        options.interop_target = value
+    elif name == "--profile":
+        options.profile = value
+    else:
+        for feature in value.split(","):
+            if feature.strip() != "":
+                options.request.features.append(feature.strip())
+    return Ok(None)
+
+
+
+pub def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
+    """Separate command options from the program's arguments without forwarding internal selectors."""
+    mut own: list[str] = []
+    mut passed: list[str] = []
+    mut after = false
+    for argument in arguments:
+        if after:
+            passed.append(argument)
+        elif argument == "--":
+            after = true
+        else:
+            own.append(argument)
+    return (own, passed)

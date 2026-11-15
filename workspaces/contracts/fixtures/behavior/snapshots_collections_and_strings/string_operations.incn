@@ -1,0 +1,112 @@
+# behavior: str methods for case, contains, split, replace, Unicode scalar escapes and indexing, bounded slicing without unused suffix scans (#2851), prefix and suffix tests, join and += concatenation give their results (#2746)
+# expect-stdout:
+#   HELLO WORLD hello world Hello World
+#   true false
+#   3 two
+#   hello python
+#   éll
+#   true true
+#   one, two, three
+#   hello world
+
+"""Test string operation code generation"""
+
+
+def test_string_methods() -> None:
+    s: str = "Hello World"
+    upper: str = s.upper()
+    lower: str = s.lower()
+    stripped: str = s.strip()
+    println(f"{upper} {lower} {stripped}")
+
+
+def test_string_contains() -> None:
+    text: str = "hello world"
+    has_hello: bool = text.contains("hello")
+    has_goodbye: bool = text.contains("goodbye")
+    println(f"{has_hello} {has_goodbye}")
+
+
+def test_string_split() -> None:
+    text: str = "one,two,three"
+    parts: list[str] = text.split(",")
+    println(f"{len(parts)} {parts[1]}")
+
+
+def test_string_replace() -> None:
+    text: str = "hello world"
+    replaced: str = text.replace("world", "python")
+    println(replaced)
+
+
+def test_string_slice() -> None:
+    text: str = "héllo"
+    mid: str = text.__slice__(1, -1)
+    println(mid)
+
+    ascii: str = "abcdef"
+    assert ascii[0] == "a"
+    assert ascii[-1] == "f"
+    assert ascii[0:1] == "a"
+    assert ascii[2:5] == "cde"
+    assert ascii[:3] == "abc"
+    assert ascii[3:] == "def"
+    assert ascii[::2] == "ace"
+    assert ascii[::-1] == "fedcba"
+    assert ascii[4:1:-2] == "ec"
+    assert ascii[-3:-1] == "de"
+    assert ascii[-99:2] == "ab"
+    assert ascii[99:100] == ""
+    assert ascii[4:2] == ""
+
+    unicode: str = "Aé🙂éZ"
+    assert unicode[1:5] == "é🙂é"
+    assert unicode[2] == "🙂"
+    assert unicode[-2] == "́"
+    assert unicode[2:3] == "🙂"
+    assert unicode[3:5] == "é"
+    assert unicode[:-1] == "Aé🙂é"
+    assert unicode[-3:] == "éZ"
+    assert unicode[1::2] == "éeZ"
+    assert unicode[::-1] == "Źe🙂éA"
+
+
+def test_unicode_scalar_escapes() -> None:
+    """Scalar escapes decode in ordinary strings, f-strings and docstrings without exposing raw source controls."""
+    control = "\u{202e}"
+    assert len(control) == 1
+    assert control == f"\u{202e}"
+    assert "left\u{1f642}right" == "left🙂right"
+
+
+def test_string_startswith_endswith() -> None:
+    text: str = "hello.txt"
+    starts: bool = text.startswith("hello")
+    ends: bool = text.endswith(".txt")
+    println(f"{starts} {ends}")
+
+
+def test_string_join() -> None:
+    sep: str = ", "
+    words: list[str] = ["one", "two", "three"]
+    joined: str = sep.join(words)
+    println(joined)
+
+
+def test_string_concatenation() -> None:
+    mut result: str = "hello"
+    result += " "
+    result += "world"
+    print(result)
+
+
+def main() -> None:
+    test_string_methods()
+    test_string_contains()
+    test_string_split()
+    test_string_replace()
+    test_string_slice()
+    test_unicode_scalar_escapes()
+    test_string_startswith_endswith()
+    test_string_join()
+    test_string_concatenation()

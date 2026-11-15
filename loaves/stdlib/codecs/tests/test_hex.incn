@@ -1,0 +1,47 @@
+"""Hexadecimal codec performance and compatibility controls."""
+
+from rust::std::time import Instant
+from std.primitives import hexlify
+from encoding._shared import EncodingError
+from encoding.base32 import b32decode, b32decode_lenient
+from encoding.base64 import b64decode, b64decode_lenient
+from encoding.bech32 import bech32_decode
+from encoding.hex import unhexlify
+
+
+pub def test_hex_decode_is_linear_and_preserves_errors() -> None:
+    """Decode multi-megabyte text within a linear bound and retain invalid-character positions."""
+    octets: bytes = list.repeat(90u8, 2 * 1024 * 1024)
+    text = hexlify(octets)
+    started = Instant.now()
+    match unhexlify(text):
+        Ok(decoded) =>
+            assert decoded == octets, "decoded bytes changed"
+        Err(_) =>
+            assert false, "valid multi-megabyte hex text was refused"
+    assert int(started.elapsed().as_millis()) < 5000, "multi-megabyte decode exceeded five seconds"
+
+    match unhexlify("0z"):
+        Ok(_) =>
+            assert false, "invalid hex text was accepted"
+        Err(error) =>
+            assert error.kind == "invalid_character", "ASCII error kind changed"
+            assert error.position == 1, "ASCII error position changed"
+    match unhexlify("é0"):
+        Ok(_) =>
+            assert false, "non-ASCII hex text was accepted"
+        Err(error) =>
+            assert error.kind == "invalid_character", "Unicode error kind changed"
+            assert error.position == 0, "Unicode error position changed"
+
+
+pub def test_byte_oriented_codec_decoders_preserve_results() -> Result[None, EncodingError]:
+    """Keep Base32, Base64, and Bech32 results while decoding their text through bytes."""
+    assert b32decode("NBSWY3DP")? == b"hello"
+    assert b32decode_lenient("nbsw y3dp")? == b"hello"
+    assert b64decode("aGVsbG8/")? == b"hello?"
+    assert b64decode_lenient("aGVs bG8/\n")? == b"hello?"
+    hrp, data = bech32_decode("a12uel5l")?
+    assert hrp == "a"
+    assert len(data) == 0
+    return Ok(None)

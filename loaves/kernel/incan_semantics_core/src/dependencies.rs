@@ -15,10 +15,26 @@ pub struct CheckedReference<'a> {
     pub owner: Option<&'a CanonicalSymbolId>,
 }
 
+/// One reachable checked dependency together with the compiler-owned subject that introduced its graph edge.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CheckedDependency {
+    /// Canonical declaration required by the reachable owner.
+    pub target: CanonicalSymbolId,
+    /// Exact checked reference or declaration subject that introduced this dependency edge.
+    pub subject: CompilerNodeId,
+}
+
+/// One direct checked dependency edge retained with its semantic-fact subject.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CheckedDependencyEdge {
+    target: CanonicalSymbolId,
+    subject: CompilerNodeId,
+}
+
 /// Canonical relationships projected from the existing semantic snapshots, without parsing or resolving source.
 #[derive(Debug, Clone, Default)]
 pub struct CheckedDependencyGraph {
-    dependencies: BTreeMap<CanonicalSymbolId, BTreeSet<CanonicalSymbolId>>,
+    dependencies: BTreeMap<CanonicalSymbolId, BTreeSet<CheckedDependencyEdge>>,
 }
 
 impl CheckedDependencyGraph {
@@ -34,7 +50,10 @@ impl CheckedDependencyGraph {
                             .dependencies
                             .entry(owner.clone())
                             .or_default()
-                            .insert(identity.clone());
+                            .insert(CheckedDependencyEdge {
+                                target: identity.clone(),
+                                subject: fact.subject.clone(),
+                            });
                     }
                 }
             }
@@ -46,7 +65,10 @@ impl CheckedDependencyGraph {
                         .dependencies
                         .entry(owner.clone())
                         .or_default()
-                        .insert(reference.requirement.clone());
+                        .insert(CheckedDependencyEdge {
+                            target: reference.requirement.clone(),
+                            subject: fact.subject.clone(),
+                        });
                 }
             }
         }
@@ -58,19 +80,47 @@ impl CheckedDependencyGraph {
         self.dependencies
             .get(owner)
             .into_iter()
-            .flat_map(|targets| targets.iter())
+            .flat_map(|edges| edges.iter().map(|edge| &edge.target))
+    }
+
+    /// Follow checked relationships while retaining the exact semantic subject that introduced every reachable edge.
+    pub fn reachable_dependencies_from(
+        &self,
+        roots: impl IntoIterator<Item = CanonicalSymbolId>,
+    ) -> BTreeSet<CheckedDependency> {
+        let mut pending = roots.into_iter().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        let mut dependencies = BTreeSet::new();
+        while let Some(identity) = pending.pop() {
+            if !visited.insert(identity.clone()) {
+                continue;
+            }
+            let Some(edges) = self.dependencies.get(&identity) else {
+                continue;
+            };
+            for edge in edges {
+                dependencies.insert(CheckedDependency {
+                    target: edge.target.clone(),
+                    subject: edge.subject.clone(),
+                });
+                pending.push(edge.target.clone());
+            }
+        }
+        dependencies
     }
 
     /// Follow declared relationships from selected roots; unknown external targets remain explicit leaves.
     pub fn reachable_from(&self, roots: impl IntoIterator<Item = CanonicalSymbolId>) -> BTreeSet<CanonicalSymbolId> {
-        let mut pending = roots.into_iter().collect::<Vec<_>>();
-        let mut visited = BTreeSet::new();
-        while let Some(identity) = pending.pop() {
-            if visited.insert(identity.clone()) {
-                pending.extend(self.dependencies(&identity).cloned());
-            }
-        }
-        visited
+        let roots = roots.into_iter().collect::<BTreeSet<_>>();
+        roots
+            .iter()
+            .cloned()
+            .chain(
+                self.reachable_dependencies_from(roots.iter().cloned())
+                    .into_iter()
+                    .map(|dependency| dependency.target),
+            )
+            .collect()
     }
 }
 

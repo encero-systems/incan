@@ -1,0 +1,58 @@
+# behavior: decorated constrained-generic and value-token overloads keep precise selection through direct and alias calls, and decorators observe the canonical source callable name rather than an alias or emitted implementation name (#1033)
+# expect-stdout:
+#   int q
+#   float p
+#   token int r
+#   token float s
+#   token int t
+
+model Col:
+    name: str
+
+
+model IntCol:
+    src: str
+
+
+model FloatCol:
+    src: str
+
+
+def registered[F](label: str) -> (F) -> F:
+    return (func) => verify_name(func)
+
+
+def verify_name[F](func: F) -> F:
+    assert func.__name__ == "cast" or func.__name__ == "token_cast"
+    return func
+
+
+@registered("cast")
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src="int " + expr.name)
+
+
+@registered("cast")
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src="float " + expr.name)
+
+
+@registered("token_cast")
+def token_cast(expr: Col, target: Type[int]) -> IntCol:
+    return IntCol(src="token int " + expr.name)
+
+
+@registered("token_cast")
+def token_cast(expr: Col, target: Type[float]) -> FloatCol:
+    return FloatCol(src="token float " + expr.name)
+
+
+safe_token_cast = alias token_cast
+
+
+def main() -> None:
+    println(cast[Int](Col(name="q")).src)
+    println(cast[Float](Col(name="p")).src)
+    println(token_cast(Col(name="r"), int).src)
+    println(token_cast(Col(name="s"), float).src)
+    println(safe_token_cast(Col(name="t"), int).src)

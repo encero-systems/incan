@@ -1,0 +1,7 @@
+from pub::stock import amount
+from rust::pricing_native import ADJUSTMENT
+
+
+pub def price() -> int:
+    """Price the amount supplied by the catalog."""
+    return amount() + ADJUSTMENT

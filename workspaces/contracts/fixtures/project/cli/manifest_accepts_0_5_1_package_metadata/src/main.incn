@@ -1,0 +1,9 @@
+# behavior: a `loaf.toml` renamed from a 0.5.1 `incan.toml` keeps every package metadata field 0.5.1 accepted, `maintainers`, `homepage`, `repository`, `documentation`, `issues`, `keywords` and `classifiers` included, and the program runs (#3144).
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+#   main
+# expect-exit: 0
+
+def main() -> None:
+    println("main")

@@ -1,0 +1,11 @@
+# behavior: 0.5.1's `incan cache inspect`, `incan cache prune`, `incan oven store inspect` and `incan oven store prune` refuse by naming the bakery command that does the same in 0.6 (#3143).
+# cli-commands:
+#   incan cache inspect
+#   incan oven store inspect --format json
+# expect-stdout:
+# expect-stderr-contains:
+#   now: run `oven bakery status`
+# expect-exit: 2
+
+def main() -> None:
+    pass

@@ -1,26 +1,65 @@
 //! Incan HIR v0 data model.
 //!
-//! HIR v0 is a typed, source-mapped middle-end handoff keyed by stable compiler IDs. This first slice is deliberately
-//! declaration-level so it can run beside the Rust-source backend while later slices add statements, expressions, and
-//! body ownership facts.
+//! HIR v0 is a typed, source-mapped middle-end handoff keyed by stable compiler IDs. It is deliberately
+//! declaration-level; executable bodies, with their statements, expressions and ownership facts, are Body IR's.
 
 use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{CanonicalSymbolId, CompilerNodeId, SemanticFactStore};
 
-/// A source byte range attached to a HIR node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// A source range and its compiler-owned expansion context. Diagnostics use only the range; checked facts use both.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct HirSourceSpan {
+    /// Inclusive original-source byte offset.
     pub start: usize,
+    /// Exclusive original-source byte offset.
     pub end: usize,
+    /// Deterministic vocabulary request and output-node identity; absent for authored syntax.
+    pub expansion: Option<[u8; 32]>,
 }
 
 impl HirSourceSpan {
     /// Build a source span from inclusive-exclusive byte offsets.
     pub const fn new(start: usize, end: usize) -> Self {
-        Self { start, end }
+        Self {
+            start,
+            end,
+            expansion: None,
+        }
+    }
+
+    /// Retain source coordinates while selecting a generated node's expansion context.
+    pub const fn with_expansion(mut self, expansion: Option<[u8; 32]>) -> Self {
+        self.expansion = expansion;
+        self
+    }
+
+    /// Whether this node came from compiler-generated syntax rather than authored source.
+    pub const fn is_generated(self) -> bool {
+        self.expansion.is_some()
+    }
+
+    /// Derive a distinct compiler-created child without changing its original-source range.
+    pub fn expansion_child(self, role: &str) -> Self {
+        let Some(parent) = self.expansion else {
+            return self;
+        };
+        let mut digest = Sha256::new();
+        digest.update(parent);
+        digest.update(role.as_bytes());
+        self.with_expansion(Some(digest.finalize().into()))
+    }
+
+    /// Enclose two source ranges, preserving the first node's expansion context through syntax rewrites.
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+            ..self
+        }
     }
 }
 

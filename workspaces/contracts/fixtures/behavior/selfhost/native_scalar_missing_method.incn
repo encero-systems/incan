@@ -1,0 +1,8 @@
+# behavior: native scalar fallback still refuses a method absent from metadata
+# expect-diagnostic: INCAN-T0001
+
+
+def main() -> None:
+    """Refuse an unknown scalar method after checking its native method surface."""
+    value: usize = 3
+    value.missing_scalar_method()

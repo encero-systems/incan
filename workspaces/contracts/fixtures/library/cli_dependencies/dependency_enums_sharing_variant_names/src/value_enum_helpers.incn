@@ -1,0 +1,16 @@
+"""A consumer calling a library value enum's generated members."""
+
+from pub::enums import selected
+from pub::enums.level_kinds import Level as Volume
+
+
+pub def run_value_enum_helpers() -> None:
+    """Call generated enum members on each library boundary surface."""
+    println(selected().value())
+    println(Volume.Quiet.value())
+    match Volume.from_value("loud"):
+        Some(level) => println(level.value())
+        None => println("unexpected")
+    match Volume.from_value("absent"):
+        Some(level) => println(level.value())
+        None => println("missing")

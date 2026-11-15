@@ -1,0 +1,13 @@
+# behavior: Index, IndexMut and Sliceable bound a generic function without an import, as the standard prelude publishes them and 0.5.1 accepted
+# expect-stdout:
+#   set 0 z
+#   a 3
+
+from bounds import first, kept, replace_first
+from letters import Letters
+
+
+def main() -> None:
+    letters = Letters(values=["a", "b", "c"])
+    replace_first(Letters(values=["a", "b", "c"]), "z")
+    println(f"{first(kept(letters))} {len(letters.values)}")

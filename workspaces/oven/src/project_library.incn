@@ -1,0 +1,121 @@
+"""
+A project's shared library unit: every module of its source root but its test modules and root entry files, compiled
+once per project and profile. Each test unit of the project links it, and the compiler reads the test's project-local
+imports of those modules as imports of the library, so the test unit compiles only its own modules.
+"""
+
+from std.fs import Path
+from files import make_directory, read, write
+from home import dependency_artifact_dir, standard_packages
+from observation import entered
+from unit import UnitDescription, UnitLoaf
+
+# The suffix that names a project's shared library, as package and dependency key, after the project's package.
+pub const LIBRARY_SUFFIX: str = "_project_library"
+# The generated root of a shared library. It imports nothing: a library unit holds every module of its source root.
+const ROOT_TEXT: str = "\"\"\"A project's shared library: its source-root modules but its tests.\"\"\"\n"
+# A source root's own entry files, which no shared library holds.
+const ROOT_ENTRIES: FrozenList[str] = ["main.incn", "lib.incn"]
+
+
+pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, str]:
+    """
+    A test unit of a project, set to link its project's shared library, and every other unit as it was.
+
+    A test unit whose entry batches further modules or registers a vocabulary keeps compiling its whole source graph,
+    as does one of a standard package or one whose source root holds no module beside its tests and root entry files.
+    """
+    if unit.kind != "test" or len(unit.test_batch) > 0 or unit.vocab_entry != None:
+        return Ok(unit)
+    if not Path(unit.project_root).joinpath("loaf.toml").is_file() or not is_test_module(Path(unit.source).name()):
+        return Ok(unit)
+    # A standard package's modules name their own `std.*` roots, which only that package may own.
+    for package in standard_packages(unit.manifests)?:
+        if package.name == unit.package:
+            return Ok(unit)
+    tests, provided = source_modules(Path(unit.source_root))?
+    if len(provided) == 0:
+        return Ok(unit)
+    mut linked = unit
+    linked.project_library = Some(library_key(unit.package))
+    linked.excluded_sources = tests
+    return Ok(linked)
+
+
+pub def library_key(package: str) -> str:
+    """The package name and dependency key of a project's shared library."""
+    return package.replace("-", "_") + LIBRARY_SUFFIX
+
+
+pub def shared_library(unit: UnitDescription, key: str) -> Result[UnitDescription, str]:
+    """
+    The shared library a test unit links: the test unit's own project, features and Loaves, described as a library
+    of the project's modules under its own package, and checked as the project's program is.
+    """
+    mut library = unit
+    library.kind = "library"
+    library.source = library_root(unit, key)?.0
+    library.package = key
+    library.project_library = None
+    library.program_checks = true
+    library.program_entries = []
+    library.test_batch = []
+    return Ok(library)
+
+
+pub def library_output(unit: UnitDescription, key: str, native_name: str) -> Path:
+    """Where a project's shared library is compiled, beside the project's path dependencies."""
+    return dependency_artifact_dir(unit.project_root, key, unit.profile).joinpath(f"lib{native_name}.rlib")
+
+
+pub def library_loaf(unit: UnitDescription, key: str, output: Path) -> UnitLoaf:
+    """The shared library as the test unit reaches it, under its key."""
+    return UnitLoaf(key=key, name=key, dir=output.parent().0, standard=false, source_root=Some(unit.source_root))
+
+
+def library_root(unit: UnitDescription, key: str) -> Result[Path, str]:
+    """The shared library's generated root, written only when it is absent or differs."""
+    directory = Path(unit.project_root).joinpath("target/incan/project-library").joinpath(key)
+    root = directory.joinpath("lib.incn")
+    if root.is_file() and read(root)? == ROOT_TEXT:
+        return Ok(root)
+    make_directory(directory)?
+    write(root, ROOT_TEXT)?
+    return Ok(root)
+
+
+pub def is_test_module(name: str) -> bool:
+    """Whether a source file is a test module, as test collection names them, or a conftest fixture module."""
+    if not name.endswith(".incn"):
+        return false
+    return name.startswith("test_") or name.endswith("_test.incn") or name == "conftest.incn"
+
+
+pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]], str]:
+    """
+    The test modules under a source root and the modules its shared library provides, each in byte order. Root
+    `main.incn` and `lib.incn` are entry files of neither; the walk enters what every source walk enters (see
+    `entered`): no hidden directory, build output or vendored packages, and no nested project.
+    """
+    mut tests: list[str] = []
+    mut provided: list[str] = []
+    if not source_root.is_dir():
+        return Ok((tests, provided))
+    mut pending = [source_root]
+    mut index = 0
+    while index < len(pending):
+        directory = pending[index]
+        at_root = index == 0
+        index += 1
+        for entry in directory.iterdir().map_err((error) => f"cannot list {directory.0}: {error.message()}")?:
+            name = entry.name()
+            if name.startswith("."):
+                continue
+            if entry.is_dir():
+                if entered(entry):
+                    pending.append(entry)
+            elif is_test_module(name):
+                tests.append(entry.0)
+            elif name.endswith(".incn") and not (at_root and name in ROOT_ENTRIES):
+                provided.append(entry.0)
+    return Ok((sorted(tests), sorted(provided)))

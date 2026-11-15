@@ -1,0 +1,15 @@
+"""Declare a model and price it through `pricing`, which is discovered after this module and imports the model back."""
+
+from pricing import price
+
+
+pub model Item:
+    """One priced item."""
+
+    pub name: str
+    pub cents: int
+
+
+pub def priced() -> int:
+    """The price `pricing` gives an item it builds itself."""
+    return price("tea")

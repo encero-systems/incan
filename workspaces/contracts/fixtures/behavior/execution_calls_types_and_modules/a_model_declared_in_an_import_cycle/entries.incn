@@ -1,0 +1,13 @@
+"""Use and construct the model `ledger` declares, closing a cycle that runs through that model."""
+
+from ledger import Entry, named
+
+
+pub def size(entry: Entry) -> int:
+    """The length of an entry's name."""
+    return len(entry.name)
+
+
+pub def counted() -> int:
+    """The sizes of an entry `ledger` builds and of one built here."""
+    return size(named("abc")) + size(Entry(name="de"))

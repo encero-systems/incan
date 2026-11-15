@@ -1,0 +1,18 @@
+# behavior: a static factory method that shares its spelling with a stored newtype field builds the model, and the field reads back the value
+# expect-stdout:
+#   -7
+
+type Days = newtype int
+
+
+model TimeDelta:
+    pub days: Days
+
+    @staticmethod
+    def days(value: Days) -> TimeDelta:
+        return TimeDelta(days=value)
+
+
+def main() -> None:
+    delta = TimeDelta.days(-7)
+    println(delta.days.0)

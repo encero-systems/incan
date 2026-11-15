@@ -1,0 +1,182 @@
+"""
+The compact Markdown reference `incan tools metadata api --format markdown` prints from checked API metadata, as
+0.5.1 rendered it: a title, the package version, then each module's declarations as signatures. Functions keep their
+docstrings, and partials name their target and presets.
+"""
+
+from std.json import JsonValue
+
+
+pub def api_markdown(api: JsonValue) -> Result[str, str]:
+    """Render one checked API metadata package (`contract_metadata.api`) as Markdown."""
+    mut title = "Checked API"
+    mut version = ""
+    if let Some(package) = api.get("package"):
+        title = text_or(package.get("name"), title)
+        version = text_or(package.get("version"), "")
+    mut output = f"# {title} API\n\n"
+    if version != "":
+        output += f"Version: `{version}`\n\n"
+    for module in items(api.get("modules"))?:
+        output += f"## Module `{"::".join(texts(module.get("module_path"))?)}`\n\n"
+        for declaration in items(module.get("declarations"))?:
+            output += declaration_markdown(declaration)?
+    return Ok(output)
+
+
+def declaration_markdown(declaration: JsonValue) -> Result[str, str]:
+    """One declaration's section; a kind without a signature contributes nothing."""
+    kind = text_or(declaration.get("kind"), "")
+    name = text_or(declaration.get("name"), "")
+    if kind == "function":
+        signature = f"pub def {name}({parameters(declaration)?}) -> {type_name(field(declaration, "return_type"))?}"
+        mut section = signature_section(name, signature)
+        docstring = text_or(declaration.get("docstring"), "").strip()
+        if docstring != "":
+            section += f"{docstring}\n\n"
+        return Ok(section)
+    if kind == "partial":
+        target = "::".join(texts(declaration.get("target_path"))?)
+        returned = type_name(field(declaration, "return_type"))?
+        signature = f"pub {name} = partial {target}({parameters(declaration)?}) -> {returned}"
+        mut section = signature_section(name, signature)
+        section += f"- Target: `{target}`\n"
+        presets = [f"`{text_or(preset.get("name"), "")}`" for preset in items(declaration.get("presets"))?]
+        if len(presets) > 0:
+            section += f"- Presets: {", ".join(presets)}\n"
+        return Ok(section + "\n")
+    match summary(kind, name, declaration)?:
+        Some(signature) => return Ok(signature_section(name, signature))
+        None => return Ok("")
+
+
+def summary(kind: str, name: str, declaration: JsonValue) -> Result[Option[str], str]:
+    """The compact signature of a declaration kind without a specialized section."""
+    if kind in ["model", "class", "trait", "enum"]:
+        return Ok(Some(f"pub {kind} {name}"))
+    if kind == "newtype":
+        mut keyword = "newtype"
+        if flag(declaration.get("is_rusttype")):
+            keyword = "rusttype"
+        return Ok(Some(f"pub {keyword} {name} = {type_name(field(declaration, "underlying"))?}"))
+    if kind == "type_alias":
+        return Ok(Some(f"pub type {name} = {type_name(field(field(declaration, "type_alias"), "target"))?}"))
+    if kind == "const":
+        return Ok(Some(f"pub const {name}: {type_name(field(declaration, "ty"))?}"))
+    if kind == "static":
+        return Ok(Some(f"pub static {name}: {type_name(field(declaration, "ty"))?}"))
+    if kind == "alias":
+        return Ok(Some(f"pub {name} = alias {"::".join(texts(declaration.get("target_path"))?)}"))
+    return Ok(None)
+
+
+def signature_section(name: str, signature: str) -> str:
+    """A declaration heading and its signature in an Incan code block."""
+    return f"### `{name}`\n\n```incan\n{signature}\n```\n\n"
+
+
+def parameters(callable: JsonValue) -> Result[str, str]:
+    """Callable parameters as a signature spells them: rest markers, `mut`, type, and `= ...` for a default."""
+    mut spelled: list[str] = []
+    for parameter in items(callable.get("params"))?:
+        mut prefix = ""
+        kind = text_or(parameter.get("kind"), "normal")
+        if kind == "rest_positional":
+            prefix = "*"
+        elif kind == "rest_keyword":
+            prefix = "**"
+        if flag(parameter.get("is_mut")):
+            prefix += "mut "
+        mut default = ""
+        if flag(parameter.get("has_default")):
+            default = " = ..."
+        name = text_or(parameter.get("name"), "")
+        spelled.append(f"{prefix}{name}: {type_name(field(parameter, "ty"))?}{default}")
+    return Ok(", ".join(spelled))
+
+
+def type_name(reference: JsonValue) -> Result[str, str]:
+    """A checked type reference as Markdown signatures spell it."""
+    if let Some(unit) = reference.as_str():
+        if unit == "SelfType":
+            return Ok("Self")
+        if unit == "Unknown":
+            return Ok("unknown")
+        return Err(f"unknown type reference `{unit}`")
+    keys = [key for key in reference.keys()]
+    if len(keys) != 1:
+        return Err("a type reference names exactly one variant")
+    variant = keys[0]
+    body = field(reference, variant)
+    if variant in ["Named", "TypeParam"]:
+        return Ok(text_or(body.get("name"), ""))
+    if variant == "Applied":
+        return Ok(f"{text_or(body.get("name"), "")}[{type_names(body.get("args"))?}]")
+    if variant == "Function":
+        return Ok(f"Callable[[{type_names(body.get("params"))?}], {type_name(field(body, "return_type"))?}]")
+    if variant == "TypeToken":
+        return Ok(f"Type[{type_name(field(body, "inner"))?}]")
+    if variant == "Tuple":
+        return Ok(f"({type_names(body.get("elements"))?})")
+    if variant == "Ref":
+        return Ok(f"&{type_name(field(body, "inner"))?}")
+    if variant == "MutParam":
+        return Ok(f"mut {type_name(field(body, "inner"))?}")
+    if variant == "RustPath":
+        return Ok(f"rust::{text_or(body.get("path"), "")}")
+    if variant == "NativeUnion":
+        return Ok(" | ".join([type_name(member)? for member in items(body.get("members"))?]))
+    if variant == "Ownership":
+        return Ok(f"{ownership_mode(text_or(body.get("mode"), ""))}[{type_name(field(body, "inner"))?}]")
+    if variant == "Trait":
+        return Ok(text_or(field(body, "identity").get("declaration_name"), ""))
+    return Err(f"unknown type reference `{variant}`")
+
+
+def type_names(references: Option[JsonValue]) -> Result[str, str]:
+    """Type references joined with commas."""
+    return Ok(", ".join([type_name(reference)? for reference in items(references)?]))
+
+
+def ownership_mode(mode: str) -> str:
+    """The prelude spelling of an ownership mode, whichever case the metadata carries."""
+    for spelling in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
+        if mode == spelling or mode.replace("_", "") == spelling.lower():
+            return spelling
+    return mode
+
+
+def field(value: JsonValue, key: str) -> JsonValue:
+    """A field, or JSON null when absent; renderers spell a missing type as `unknown`."""
+    match value.get(key):
+        Some(found) => return found
+        None => return JsonValue.string("Unknown")
+
+
+def items(value: Option[JsonValue]) -> Result[list[JsonValue], str]:
+    """An optional array; an absent or null one is empty."""
+    match value:
+        None => return Ok([])
+        Some(found) =>
+            if found.is_null():
+                return Ok([])
+            return found.expect_array().map_err((error) => error.message())
+
+
+def texts(value: Option[JsonValue]) -> Result[list[str], str]:
+    """An optional array of strings."""
+    return Ok([text_or(Some(item), "") for item in items(value)?])
+
+
+def text_or(value: Option[JsonValue], fallback: str) -> str:
+    """A string field, or `fallback` when absent, null or not a string."""
+    match value:
+        None => return fallback
+        Some(found) => return found.as_str().unwrap_or(fallback)
+
+
+def flag(value: Option[JsonValue]) -> bool:
+    """A Boolean field; an absent one is false."""
+    match value:
+        None => return false
+        Some(found) => return found.expect_bool().unwrap_or(false)

@@ -1,0 +1,20 @@
+# behavior: a function and a primitive-or-trait type-token overload set reached directly, re-exported through a facade and through aliases keep one declaration surface and precise selected result types (#1033)
+# expect-stdout:
+#   42
+#   7
+#   8
+#   trait 9
+
+"""A function reached directly, re-exported through a facade and through its alias is one declaration with one result."""
+
+from provider import compute, select_target
+from facade import compute as reexported, renamed, select_target as reexported_target, renamed_target, Selectable as FacadeSelectable
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(compute(1) + reexported(10) + renamed(28))
+    println(select_target(7, int).value)
+    println(int(reexported_target(8, float).value))
+    assert renamed_target(9, int).value == 9
+    println(renamed_target(9, FacadeSelectable).value)

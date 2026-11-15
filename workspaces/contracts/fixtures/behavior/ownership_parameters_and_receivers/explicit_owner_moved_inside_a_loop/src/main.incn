@@ -1,0 +1,91 @@
+# behavior: an explicit owner moved inside a loop is consumed on the iteration that moves it and dropped with its frame when that iteration never comes; `continue` paths keep it, and repeating both paths leaves the heap as it found it (#2500).
+# expect-stdout:
+#   consumed: first
+#   rounds 1
+#   rounds 0
+#   consumed: held
+#   drained
+#   drained
+#   consumed: countdown
+#   heap flat
+
+"""Move explicit owners inside loops that may not reach the move, and measure what each path leaves behind."""
+
+from rust::drop_probe import live_heap_bytes
+
+
+def heap() -> int:
+    return live_heap_bytes()
+
+
+def consume(text: Owned[str]) -> None:
+    println(f"consumed: {text}")
+
+
+def take(text: Owned[str]) -> None:
+    pass
+
+
+def maybe(text: Owned[str], rounds: Borrowed[list[int]]) -> None:
+    for _round in rounds:
+        consume(text)
+        break
+    println(f"rounds {len(rounds)}")
+
+
+def drain(flag: bool) -> None:
+    let held: Owned[str] = "held"
+    while flag:
+        consume(held)
+        break
+    println("drained")
+
+
+def countdown() -> None:
+    let held: Owned[str] = "countdown"
+    mut left = 3
+    loop:
+        left = left - 1
+        if left > 0:
+            continue
+        consume(held)
+        break
+
+
+def quietly(text: Owned[str], rounds: Borrowed[list[int]]) -> None:
+    for _round in rounds:
+        take(text)
+        break
+
+
+def repeated_paths() -> None:
+    """
+    Run the moving and the non-moving path a thousand times each. An owner left behind by either path grows the heap
+    by at least a thousand allocations; less than a byte a round is the allocator's own bookkeeping.
+    """
+    none: list[int] = []
+    one = [1]
+    before = heap()
+    mut left = 0
+    while left < 1000:
+        quietly(f"{left}: a payload the loop either moves or leaves for its frame to drop", none)
+        quietly(f"{left}: a payload the loop either moves or leaves for its frame to drop", one)
+        left += 1
+    grown = heap() - before
+    if grown < 1000:
+        println("heap flat")
+    else:
+        println(f"heap grew by {grown} bytes over 1000 rounds")
+
+
+def main() -> None:
+    first = "first"
+    second = "second"
+    one = [1]
+    none: list[int] = []
+    maybe(first, one)
+    maybe(second, none)
+    drain(true)
+    drain(false)
+    countdown()
+    repeated_paths()

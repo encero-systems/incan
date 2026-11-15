@@ -1,0 +1,5 @@
+"""A test module named with the suffix form."""
+
+
+def test_suffix() -> None:
+    assert 2 * 3 == 6

@@ -1,0 +1,7 @@
+"""Provide a type through a submodule namespace."""
+
+
+pub class Thing:
+    """A type constructed through direct and nested module bindings."""
+
+    pub name: str

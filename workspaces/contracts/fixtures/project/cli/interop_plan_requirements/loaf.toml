@@ -1,0 +1,26 @@
+[project]
+name = "interop_plan_requirements"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-apple-ios"
+toolchain = { capability = "apple-clang", version = ">=17" }
+sdk = { capability = "iphoneos", version = ">=18, <28" }
+platform = { kind = "ios", deployment-target = "13.0" }
+headers = ["interop/include/bridge.h"]
+definitions = ["BRIDGE_MOBILE=1"]
+
+[[interop.c.targets.artifacts]]
+name = "foundation"
+kind = "system"
+capability = "apple.framework.Foundation"
+
+[[interop.c.targets]]
+target = "aarch64-linux-android"
+sdk = { capability = "android" }
+platform = { kind = "android", api-level = 24 }

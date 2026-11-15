@@ -1,0 +1,18 @@
+# behavior: replacing a list with a live iterator reports the reader origin, replacement and path-sensitive later use exactly once (#2426)
+# cli-commands:
+#   check src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   INCAN-T0001
+#   cannot replace `xs` while `it` is still reading it
+#   `it` reads `xs` from here
+#   `xs` is replaced here
+#   `it` is used again here
+#   finish using `it` before replacing `xs`, or write `xs.clone().iter()` to iterate over a copy
+# expect-exit: 1
+
+def main() -> None:
+    mut xs = [1, 2, 3]
+    it = xs.iter()
+    xs = [4, 5, 6]
+    println(it.collect())

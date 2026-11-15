@@ -1,0 +1,4 @@
+"""Version the foundational vocabulary metadata and transformation contracts."""
+
+pub const VOCAB_METADATA_VERSION: int = 1
+pub const VOCAB_SYNTAX_VERSION: int = 3

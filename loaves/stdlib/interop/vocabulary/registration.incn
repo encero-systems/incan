@@ -1,0 +1,27 @@
+"""Register the checked C declaration surface implemented by the compiler."""
+
+from std.vocab import DeclarationSurface, DslSurface, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Register checked C declarations without a custom desugarer.
+
+    1. Describe the symbol and its outcome member.
+    2. Describe the binding and its declarative members.
+    3. Activate the surface through std.interop.
+    """
+    # 1. A symbol has a function-like signature and may declare an outcome.
+    outcome = DeclarationSurface.named("outcome").with_header_args().with_statement_body()
+    symbol = DeclarationSurface.named("symbol").with_signature_head().with_statement_body().with_declaration(outcome)
+    # 2. Bindings contain symbols, opaque resources, C enums and plain C structures.
+    descriptor = DeclarationSurface.named("binding").with_header_args().with_statement_body()
+    mut binding = descriptor.desugars_to_declarations()
+    binding = binding.with_declarations([symbol, member("resource"), member("enum"), member("struct")])
+    # 3. Registration adds syntax only; checked C semantics stay in the compiler.
+    return VocabRegistration.new().with_surface(DslSurface.on_import("std.interop").with_declaration(binding))
+
+
+def member(keyword: str) -> DeclarationSurface:
+    """Describe a header-bearing checked C member with an ordinary statement body."""
+    return DeclarationSurface.named(keyword).with_header_args().with_statement_body()

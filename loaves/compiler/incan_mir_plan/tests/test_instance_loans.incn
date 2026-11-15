@@ -1,0 +1,38 @@
+"""A closed generic instance's plan product keeps the generic loans its signature carries."""
+
+from _plan import ExternalFunction, Function, GenericLoan
+from _types import PlanType, source_span
+from _body import BasicBlock, Local, Terminator, TerminatorKind
+from function_records import decode_product, encode_product, product_nominals
+from nominal_identities import ProductNominal
+
+
+pub def test_instance_product_keeps_its_generic_loans() -> Result[None, str]:
+    """Each type parameter occurrence in a closed instance's signature survives its product with its concrete type."""
+    span = source_span(file="generic.incn", line=1, column=1)
+    instance = Function(
+        name="pick_3_105_110_116",
+        parameters=[],
+        return_type=PlanType.Int,
+        locals=[Local(ty=PlanType.Int, span=span)],
+        blocks=[
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+        generic_loans=[
+            GenericLoan(slot=0, path=[0], parameter=0, ty=PlanType.Int),
+            GenericLoan(slot=1, path=[], parameter=0, ty=PlanType.String),
+        ],
+    )
+    empty_runtime: list[ExternalFunction] = []
+    no_nominals: list[ProductNominal] = []
+    references = product_nominals(instance, empty_runtime)?
+    product = encode_product(instance, empty_runtime, no_nominals)?
+    restored, _runtime = decode_product(product, references)?
+    assert restored == instance, "the instance's generic loans did not survive its product"
+    return Ok(None)

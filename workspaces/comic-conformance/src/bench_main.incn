@@ -1,0 +1,61 @@
+"""Measure one public codec/workload in a fresh process; external sampling owns memory accounting."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from rust::std::time import Instant
+from bench_components import components
+from bench_codecs import binary, encoding, expected_sum, json, report, text
+
+
+def main() -> None:
+    """A refusal is a nonzero measurement, never a zero-time successful benchmark."""
+    arguments = [str(argument) for argument in args()][1:]
+    match run(arguments):
+        Ok(_) => exit(0)
+        Err(message) =>
+            println(f"error\t{message}")
+            exit(1)
+
+
+def run(arguments: list[str]) -> Result[None, str]:
+    """Require an explicit codec, dataset, count, seal setting and physical encoding."""
+    if len(arguments) != 5:
+        return Err("usage: benchmark row|column|text|json flat|wide|nested|strings COUNT sealed|unsealed ENCODING")
+    codec, workload, raw_count, sealing, choice = arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]
+    if codec not in ["row", "column", "text", "json", "components"] or workload not in ["flat", "wide", "nested", "strings"]:
+        return Err("unknown codec or workload")
+    if raw_count == "" or len(raw_count) > 6:
+        return Err("invalid row count")
+    for character in raw_count:
+        if character not in "0123456789":
+            return Err("invalid row count")
+    count = int(raw_count)
+    if count < 1 or count > 100000:
+        return Err("row count must be between1 and100000")
+    if sealing not in ["sealed", "unsealed"]:
+        return Err("unknown seal setting")
+    sealed = sealing == "sealed"
+    if sealed and codec in ["text", "json"]:
+        return Err("text and JSON do not have binary logical seals")
+    _ = encoding(choice)?
+    if codec != "column" and choice != "indexed":
+        return Err("physical column choices require the column codec")
+    if workload in ["nested", "strings"] and choice in ["for", "delta", "runs"]:
+        return Err("numeric encoding requires numeric columns")
+    if codec == "components":
+        return components(workload, count)
+    started = Instant.now()
+    mut observed = 0
+    if codec == "row" or codec == "column":
+        observed = binary(codec, workload, count, sealed, choice)?
+    else:
+        if codec == "text":
+            observed = text(workload, count)?
+        else:
+            observed = json(workload, count)?
+    elapsed = started.elapsed().as_secs_f64()
+    expected = expected_sum(workload, count)?
+    if observed != expected:
+        return Err(f"logical checksum mismatch: expected{expected}, observed{observed}")
+    report("complete", elapsed, count, 0, observed)
+    return Ok(None)

@@ -1,0 +1,23 @@
+# behavior: an invalid computed encoding raises ValueError before evaluating its text receiver
+# expect-stdout:
+#   encoding
+# expect-stderr-contains:
+#   supports only utf-8
+# expect-exit: 101
+
+
+def text() -> str:
+    """Make a receiver evaluated after a failed guard observable."""
+    println("unexpected receiver")
+    return "abc"
+
+
+def encoding() -> str:
+    """Return a dynamically rejected label."""
+    println("encoding")
+    return "latin-1"
+
+
+def main() -> None:
+    """Raise the codec's ordinary ValueError without evaluating its receiver."""
+    println(len(text().encode(encoding())))

@@ -1,0 +1,12 @@
+# behavior: local modules named `async`, a reserved Incan word and host-language keyword, remain valid module-path segments at the top level and below a package directory
+# expect-stdout:
+#   launched
+#   nested launched
+
+from async import launch
+from api.async import nested_launch
+
+
+def main() -> None:
+    println(launch())
+    println(nested_launch())

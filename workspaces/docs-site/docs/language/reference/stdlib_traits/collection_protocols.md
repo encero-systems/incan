@@ -29,6 +29,8 @@ A type supports a protocol's syntax by defining the protocol's hook methods; ado
 
 `Iterable[T]` and `Iterator[T]` provide `iter(self) -> Iterator[T]`. `Iterator[T]` provides these lazy adapters as default methods, and the terminals below; a `list`, `set`, frozen collection or `Iterable[T]` value provides neither, so `items.map(f)` is refused (`INCAN-T0001`) and `items.iter().map(f)` is the call. A list's own `count()` is a `list` method.
 
+`list.iter()` reads a list place in place and yields a copy of each item when polled. The iterator, its adapters and values that carry it retain a shared dependency on that place until their last dependent use. Mutation, replacement or transfer of the source during that interval is refused with `INCAN-T0001`; a terminal consumer ends the dependency when no later carrier use remains. An owned temporary or moved list transfers its storage instead. `items.clone().iter()` is the explicit independent-snapshot form.
+
 | Method | Result | Notes |
 | ------ | ------ | ----- |
 | `.map(f)` | `Iterator[U]` | Yields `f(item)` for each input item. |

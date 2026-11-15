@@ -1,0 +1,17 @@
+# behavior: a Loaf that declares rustc-internal access runs rustc's own driver from an Incan program, in a development and a release build
+# cli-commands:
+#   run src/main.incn -- --print cfg
+#   run src/main.incn --profile release -- --print cfg
+# expect-stdout-contains:
+#   panic="unwind"
+#   target_endian="little"
+
+from rust::rustc_driver import main as rustc_main
+from rust::std::process import ExitCode, exit
+
+
+def main() -> None:
+    """Run rustc with this program's arguments and keep its failure as the program's."""
+    outcome = rustc_main()
+    if not outcome.eq(ExitCode.SUCCESS):
+        exit(1i32)

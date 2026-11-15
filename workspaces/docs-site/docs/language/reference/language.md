@@ -3,7 +3,7 @@
 !!! warning "Generated file"
     Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.
 
-    Regenerate with: `cargo run -p incan_lang --bin generate_lang_reference`
+    Regenerate with: `incan build loaves/kernel/incan_lang`, then `loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_lang_reference`
 
 ## Contents
 
@@ -47,8 +47,8 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | When | `when` |  | Contextual | - | ControlFlow | Statement | RFC 114 | 0.5 | Stable |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
-| Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
+| Async | `async` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Await | `await` |  | Hard | - | Definition | Expression | RFC 000 | 0.1 | Stable |
 | Capability | `capability` |  | Contextual | - | Definition | Statement | RFC 104 | 0.6 | Draft |
 | Class | `class` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Model | `model` |  | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
@@ -84,12 +84,10 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 
 ## Soft keywords
 
-Soft keywords are only reserved when their activating `std.*` namespace is imported.
+Soft keywords are only reserved when one of their activating `std.*` namespaces is imported.
 
 | Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
 |---|---|---|---|---|---|---|---|
-| Async | `async` | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
-| Await | `await` | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 
 ## Standard library namespaces
 
@@ -101,7 +99,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.registry` | - | - | - |
 | `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.environ` | - | - | - |
-| `std.async` | `incan_std_async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `incan_std_async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | - |
 | `std.interop` | - | - | - |
 | `std.serde` | `incan_std_data` | `std.serde.json` | - |
 | `std.json` | `incan_std_data` | - | - |
@@ -126,6 +124,11 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 | `std.builtins` | - | - | - |
+| `std.features` | - | - | - |
+| `std.prelude` | - | - | - |
+| `std.this` | - | - | - |
+| `std.vocab` | - | - | - |
+| `std.primitives` | - | `std.primitives.async`, `std.primitives.async.channel`, `std.primitives.async.sync`, `std.primitives.async.task`, `std.primitives.async.time`, `std.primitives.vocab` | - |
 
 ## Builtin exceptions
 
@@ -322,6 +325,7 @@ def main() -> None:
 | Order | Stacked decorators apply bottom-up: the decorator nearest `def` receives the declared function, and each decorator above it receives the result of the one below. |
 | Factories | `@name(args)` calls `name(args)` and applies the callable that call returns as the decorator. |
 | Binding type | The declared name has the type the decorator returns for the decorated callable. Checked API metadata and imports see that type. |
+| Initialization | A nongeneric function is decorated once during module initialization. A generic function is decorated on the first call to each closed instance, once per instance, including when its signature uses type parameters. Explicit and inferred type arguments select the same instance. Concurrent calls wait for initialization; recursive initialization of the same instance is refused, and failed initialization may be retried. |
 | Generic decorators | A decorator or factory generic over the whole callable, `(F) -> F`, has `F` inferred from the decorated function, so the binding keeps the decorated function's signature. A factory call accepts explicit type arguments: `@registered[(str) -> ColumnExpr]("incql.functions.col")`. |
 | `__name__` | The callable a decorator receives has `__name__: str`, the decorated declaration's source name. |
 | Refusals | `INCAN-T0001`: a decorator that is not callable, a factory call that does not return a callable, a decorator result that is not callable, a decorated callable of a type the decorator does not accept, a type-valued factory argument such as `@name(int)`, and a user-defined decorator on a class, model, trait, enum, newtype, field, alias or module declaration. |
@@ -370,8 +374,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
 | RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
-| RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
-| RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
+| Marker | `@marker` |  | Declare checked runner semantics for a std.testing marker. | RFC 171 | 0.6 | Stable |
 | CBinding | `@c.binding` | `@std.interop.c.binding` | Declare a checked C ABI binding class. | RFC 116 | 0.5 | Stable |
 | NoImplicitCoercion | `@no_implicit_coercion` |  | Disable RFC 017 implicit newtype coercion for this type. | RFC 017 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
@@ -503,7 +506,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Str | `str` |  | Builtin UTF-8 string type. | RFC 000 | 0.1 | Stable |
+| Str | `str` | `String` | Builtin UTF-8 string type. | RFC 000 | 0.1 | Stable |
 | Bytes | `bytes` |  | Builtin byte buffer type. | RFC 000 | 0.1 | Stable |
 | FrozenStr | `frozenstr` | `FrozenStr` | Immutable/const-friendly string type. | RFC 009 | 0.1 | Stable |
 | FrozenBytes | `frozenbytes` | `FrozenBytes` | Immutable/const-friendly bytes type. | RFC 009 | 0.1 | Stable |

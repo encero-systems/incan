@@ -1,0 +1,24 @@
+# behavior: a Rust method taking a mutable reference borrows a mutable Incan binding: a tar builder appends an entry to an in-memory archive (#861)
+# expect-stdout:
+#   tar mutable reference ok
+
+"""Issue #861 regression: Rust mutable-reference parameters borrow mutable Incan bindings."""
+
+from rust::std::io import Cursor
+from rust::tar @ "0.4" import Builder, Header
+
+
+def main() -> None:
+    mut builder = Builder.new(Cursor.new(b""))
+    mut header = Header.new_gnu()
+    size: u64 = 2
+    mode: u32 = 420
+    epoch: u64 = 0
+    header.set_size(size)
+    header.set_mode(mode)
+    header.set_mtime(epoch)
+    header.set_cksum()
+
+    match builder.append_data(header, "entry.txt", Cursor.new(b"ok")):
+        Ok(_) => println("tar mutable reference ok")
+        Err(_) => return

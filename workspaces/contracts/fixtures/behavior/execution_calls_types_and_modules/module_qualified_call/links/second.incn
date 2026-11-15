@@ -1,0 +1,3 @@
+"""Republish nominal declarations through a second link."""
+
+pub from links.first import Mode, Thing

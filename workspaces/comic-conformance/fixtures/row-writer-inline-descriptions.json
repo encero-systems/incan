@@ -1,0 +1,493 @@
+{
+  "bytes-empty-inline": [
+    {
+      "kind": "map",
+      "entries": [
+        [
+          {
+            "kind": "string",
+            "value": "nominal"
+          },
+          {
+            "kind": "binary",
+            "hex": "1ddb0b3ce6d300"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "kind"
+          },
+          {
+            "kind": "string",
+            "value": "Record"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "path"
+          },
+          {
+            "kind": "string",
+            "value": "example.Value"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "fields"
+          },
+          {
+            "kind": "list",
+            "items": [
+
+            ]
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "properties"
+          },
+          {
+            "kind": "map",
+            "entries": [
+
+            ]
+          }
+        ]
+      ]
+    }
+  ],
+  "bytes-field-inline": [
+    {
+      "kind": "map",
+      "entries": [
+        [
+          {
+            "kind": "string",
+            "value": "nominal"
+          },
+          {
+            "kind": "binary",
+            "hex": "1ddb0b3ce6d300"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "kind"
+          },
+          {
+            "kind": "string",
+            "value": "Record"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "path"
+          },
+          {
+            "kind": "string",
+            "value": "example.Value"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "fields"
+          },
+          {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "binary",
+                      "hex": "013f54400c82"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "name"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "age"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "type"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "i64"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "canonical"
+                    },
+                    {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "absent"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "required"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "properties"
+                    },
+                    {
+                      "kind": "map",
+                      "entries": [
+
+                      ]
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "properties"
+          },
+          {
+            "kind": "map",
+            "entries": [
+
+            ]
+          }
+        ]
+      ]
+    }
+  ],
+  "bytes-enum-inline": [
+    {
+      "kind": "map",
+      "entries": [
+        [
+          {
+            "kind": "string",
+            "value": "nominal"
+          },
+          {
+            "kind": "binary",
+            "hex": "1ddb0b3ce6d300"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "kind"
+          },
+          {
+            "kind": "string",
+            "value": "Enum"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "path"
+          },
+          {
+            "kind": "string",
+            "value": "example.State"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "variants"
+          },
+          {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "binary",
+                      "hex": "013f54400c82"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "name"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "Ready"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "fields"
+                    },
+                    {
+                      "kind": "list",
+                      "items": [
+
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "properties"
+                    },
+                    {
+                      "kind": "map",
+                      "entries": [
+
+                      ]
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "properties"
+          },
+          {
+            "kind": "map",
+            "entries": [
+
+            ]
+          }
+        ]
+      ]
+    }
+  ],
+  "bytes-reordered-declarations": [
+    {
+      "kind": "map",
+      "entries": [
+        [
+          {
+            "kind": "string",
+            "value": "nominal"
+          },
+          {
+            "kind": "binary",
+            "hex": "1ddb0b3ce6d300"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "kind"
+          },
+          {
+            "kind": "string",
+            "value": "Record"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "path"
+          },
+          {
+            "kind": "string",
+            "value": "example.Value"
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "fields"
+          },
+          {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "binary",
+                      "hex": "82a3537ff0db"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "name"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "count"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "type"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "i8"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "canonical"
+                    },
+                    {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "absent"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "required"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "properties"
+                    },
+                    {
+                      "kind": "map",
+                      "entries": [
+
+                      ]
+                    }
+                  ]
+                ]
+              },
+              {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "id"
+                    },
+                    {
+                      "kind": "binary",
+                      "hex": "013f54400c82"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "name"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "age"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "type"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "i8"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "canonical"
+                    },
+                    {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "absent"
+                    },
+                    {
+                      "kind": "string",
+                      "value": "required"
+                    }
+                  ],
+                  [
+                    {
+                      "kind": "string",
+                      "value": "properties"
+                    },
+                    {
+                      "kind": "map",
+                      "entries": [
+
+                      ]
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "kind": "string",
+            "value": "properties"
+          },
+          {
+            "kind": "map",
+            "entries": [
+
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}

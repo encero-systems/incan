@@ -1,0 +1,6 @@
+from percentile import Percentile
+
+
+pub def fraction_of(value: Percentile) -> float:
+    """Expose the validated fraction to a consumer."""
+    return value.0

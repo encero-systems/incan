@@ -1,0 +1,84 @@
+"""Checked prefix and group directories whose final offset precedes an optional seal."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_errors import ColumnError, shared, primitive
+from crate.primitives.crumb.encoding_buffer import offset_width, offset_table_length, valid_offset_width
+from crate.primitives.crumb.encoding_cursor import EncodingCursor
+from crate.primitives.crumb.encoding_errors import BinaryFailure, failure
+from crate.primitives.crumb.encoding_index import CellIndex, offset_at
+from crate.primitives.views import MappedView
+
+
+pub model FixedTable:
+    """Internal admitted fixed-width entries with checked monotonic bounds."""
+
+    pub view: MappedView
+    pub origin: int
+    pub width: int
+    pub count: int
+    pub final: int
+
+
+pub def read_table(
+    mut cursor: EncodingCursor,
+    count: int,
+    strict: bool,
+    mut budget: Budget,
+) -> Result[FixedTable, ColumnError]:
+    """Read only table bytes; group data and any seal remain outside this parsing operation."""
+    start = cursor.absolute()
+    width = cursor.byte(budget).map_err(shared)?
+    if not valid_offset_width(width):
+        return Err(shared(failure(BinaryFailure.InvalidOffsetWidth, start)))
+    size = offset_table_length(count, width).map_err((e) => primitive(e, start))?
+    budget.charge_elements(count).map_err((e) => primitive(e, start))?
+    origin = cursor.absolute()
+    view = cursor.take(size, budget).map_err(shared)?
+    mut previous = 0
+    for index in range(count + 1):
+        current = offset_at(view, index, width, origin, budget).map_err(shared)?
+        if (index == 0 and current != 0) or current < previous or (strict and index > 0 and current == previous):
+            return Err(shared(failure(BinaryFailure.InvalidOffsets, origin + index * width)))
+        previous = current
+    minimal = offset_width(previous).map_err((e) => primitive(e, start))?
+    if width != minimal:
+        return Err(shared(failure(BinaryFailure.NonminimalOffsetWidth, start)))
+    return Ok(FixedTable(view=view, origin=origin, width=width, count=count, final=previous))
+
+
+pub def group_index(mut cursor: EncodingCursor, count: int, mut budget: Budget) -> Result[CellIndex, ColumnError]:
+    """The last group offset bounds data independently of a following seal trailer."""
+    table = read_table(cursor, count, true, budget)?
+    origin = cursor.absolute()
+    data = cursor.take(table.final, budget).map_err(shared)?
+    return Ok(
+        CellIndex(
+            table=table.view,
+            data=data,
+            table_origin=table.origin,
+            data_origin=origin,
+            width=table.width,
+            count=count,
+        ),
+    )
+
+
+pub def prefix_at(table: FixedTable, index: int, mut budget: Budget) -> Result[int, ColumnError]:
+    """One retained prefix lookup uses checked fixed-width addressing."""
+    return offset_at(table.view, index, table.width, table.origin, budget).map_err(shared)
+
+
+pub def locate(table: FixedTable, record: int, mut budget: Budget) -> Result[int, ColumnError]:
+    """Binary-search admitted strictly increasing row boundaries, rather than scanning previous groups."""
+    if record < 0 or record >= table.final:
+        return Err(shared(failure(BinaryFailure.RecordIndex, table.origin)))
+    mut low = 0
+    mut high = table.count
+    while low + 1 < high:
+        budget.charge_elements(1).map_err((e) => primitive(e, table.origin))?
+        middle = low + (high - low) // 2
+        if prefix_at(table, middle, budget)? <= record:
+            low = middle
+        else:
+            high = middle
+    return Ok(low)

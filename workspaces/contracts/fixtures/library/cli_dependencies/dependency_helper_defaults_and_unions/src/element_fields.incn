@@ -1,0 +1,19 @@
+"""A consumer reading a dependency's native union surface."""
+
+from pub::unions import exact_query, weigh
+
+
+pub def run_element_fields() -> None:
+    """Read fields and methods of a model reached only as a list or option field of a result."""
+    match exact_query(2):
+        case Ok(result):
+            println(f"{len(result.nominations)} {result.nominations[0].rank} {result.nominations[1].relevance_bps}")
+            println(result.nominations[0].score())
+            match result.best:
+                case Some(best):
+                    println(f"best {best.rank}")
+                case None:
+                    println("none")
+            println(weigh(7))
+        case Err(message):
+            println(message)

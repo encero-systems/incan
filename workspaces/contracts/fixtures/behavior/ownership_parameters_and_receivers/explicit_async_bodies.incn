@@ -1,0 +1,52 @@
+# behavior: an async body can declare explicit inputs, await calls that borrow them and return a view whose source stays borrowed until the view's last use; an exclusive input's edits reach the caller (#2500).
+# expect-stdout:
+#   16
+#   4
+#   ab
+#   changed
+
+"""Async bodies with explicit inputs."""
+
+
+
+class Buffer:
+    pub items: list[int]
+    pub label: str
+
+    pub async def size_plus(self, extra: Borrowed[int]) -> int:
+        return len(self.items) + extra
+
+    pub async def label_view(self) -> Borrowed[str] from self.label:
+        return self.label
+
+
+async def measure(buffer: Borrowed[Buffer]) -> int:
+    return len(buffer.items)
+
+
+async def label_length(label: Borrowed[str]) -> int:
+    return len(label)
+
+
+async def grow(mut buffer: BorrowedMut[Buffer], item: int) -> int:
+    buffer.items.append(item)
+    return len(buffer.items)
+
+
+async def total(mut buffer: BorrowedMut[Buffer]) -> int:
+    first = await measure(buffer)
+    grown = await grow(buffer, 4)
+    named = await label_length(buffer.label)
+    sized = await buffer.size_plus(first)
+    return first + grown + named + sized
+
+
+async def main() -> None:
+    mut buffer = Buffer(items=[1, 2, 3], label="ab")
+    println(await total(buffer))
+    println(len(buffer.items))
+    label = await buffer.label_view()
+    buffer.items.append(5)
+    println(label)
+    buffer.label = "changed"
+    println(buffer.label)

@@ -3,4 +3,4 @@ name = "markform_core"
 version = "0.1.0"
 
 [vocab]
-crate = "vocab_companion"
+entry = "src/vocab.incn"

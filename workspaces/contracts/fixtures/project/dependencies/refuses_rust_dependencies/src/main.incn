@@ -1,0 +1,13 @@
+# behavior: Oven refuses the retired Rust dependency table and shows the Loaf dependency replacement.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["rust-dependencies"]: unsupported
+#   use [dependencies] regex = { loaf = "crates-io/regex", version = "1" }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

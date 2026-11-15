@@ -1,0 +1,12 @@
+# behavior: Locked mode refuses a missing generated lock and names the command that creates it.
+# cli-commands:
+#   oven build --locked .
+# expect-stdout:
+# expect-stderr-contains:
+#   is missing; run `oven lock`
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because locked mode must refuse before compilation."""
+    pass

@@ -1,0 +1,239 @@
+"""Layered chain maps over insertion-ordered dictionaries for `std.collections`."""
+
+from rust::incan_std_primitives::errors import raise_key_error
+from rust::incan_std_primitives::collections import list_get
+from crate.collections._values import _clone_referent
+from crate.collections._maps import _MapEntry, OrderedDict
+
+
+@derive(Clone)
+pub model ChainMap[K with (Clone, Eq), V with Clone]:
+    """
+    Layered lookup across ordered mapping layers.
+
+    Earlier layers override later layers. Writes go to the first mapping layer. Model and class values participate by
+    passing their compiler-generated `__field_items__()` snapshot as a read-only field layer.
+    """
+
+    pub layers: list[OrderedDict[K, V]] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create a chain map with one empty mapping layer.
+
+        Returns:
+            A chain map ready for reads and writes.
+        """
+        return ChainMap(layers=[OrderedDict(entries=[])])
+
+    @staticmethod
+    pub def from_layers(layers: list[OrderedDict[K, V]]) -> Self:
+        """
+        Create a chain map from mapping layers.
+
+        Args:
+            layers: Layers ordered from highest precedence to lowest precedence.
+
+        Returns:
+            A chain map containing `layers`, or one empty layer when `layers` is empty.
+        """
+        if len(layers) == 0:
+            return ChainMap(layers=[OrderedDict(entries=[])])
+        return ChainMap(layers=layers)
+
+    @staticmethod
+    pub def from_field_layers(layers: list[list[Tuple[K, V]]]) -> Self:
+        """
+        Create a chain map from read-only field overlay layers.
+
+        Args:
+            layers: Field snapshots ordered from highest precedence to lowest precedence.
+
+        Returns:
+            A chain map containing each snapshot as an ordered layer.
+        """
+        return ChainMap.from_layers([OrderedDict.from_items(layer) for layer in layers])
+
+    def __len__(self) -> int:
+        """
+        Return the number of visible keys.
+
+        Returns:
+            The number of distinct keys visible through the chain.
+        """
+        return len(self.keys())
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over visible keys.
+
+        Returns:
+            Distinct keys in first-visible-layer order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key appears in any layer.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when any layer contains the key.
+        """
+        return self.contains(key)
+
+    def __getitem__(self, key: K) -> V:
+        """
+        Return the first visible value for a key.
+
+        Args:
+            key: Key to look up across layers.
+
+        Returns:
+            The value from the highest-precedence layer containing `key`.
+        """
+        for layer in self.layers:
+            match layer.get(key):
+                Some(value) => return value
+                None => pass
+        return raise_key_error("ChainMap key is not present")
+
+    def __setitem__(mut self, key: K, value: V) -> None:
+        """
+        Write a key to the highest-precedence mapping layer.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        self.set(key, value)
+
+    pub def set(mut self, key: K, value: V) -> None:
+        """
+        Write a key to the highest-precedence mapping layer.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        if len(self.layers) == 0:
+            empty: OrderedDict[K, V] = OrderedDict(entries=[])
+            self.layers.append(empty.clone())
+        mut layer = self.layers[0]
+        layer.set(key, value)
+        self.layers[0] = layer
+
+    pub def push_layer(mut self, layer: OrderedDict[K, V]) -> None:
+        """
+        Add a highest-precedence layer.
+
+        Args:
+            layer: Mapping layer to place before all existing layers.
+        """
+        self.layers.append(layer)
+        mut index = len(self.layers) - 1
+        while index > 0:
+            self.layers.swap(index, index - 1)
+            index -= 1
+
+    pub def push_field_layer(mut self, layer: list[Tuple[K, V]]) -> None:
+        """
+        Add a highest-precedence field overlay layer.
+
+        Args:
+            layer: Field snapshot such as `value.__field_items__()`.
+        """
+        self.push_layer(OrderedDict.from_items(layer))
+
+    pub def pop_layer(mut self) -> OrderedDict[K, V]:
+        """
+        Remove and return the highest-precedence layer.
+
+        Returns:
+            The removed layer, or an empty ordered dict when the chain has no layers.
+        """
+        if len(self.layers) == 0:
+            return OrderedDict(entries=[])
+        layer = self.layers[0]
+        self.layers.remove(0)
+        return layer
+
+    pub def contains(self, key: K) -> bool:
+        """
+        Check whether a key appears in any layer.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when any layer contains the key.
+        """
+        for layer in self.layers:
+            if key in layer:
+                return true
+        return false
+
+    pub def keys(self) -> list[K]:
+        """
+        Return visible keys.
+
+        Returns:
+            Distinct keys in first-visible-layer order.
+        """
+        return _chain_keys(self.layers)
+
+    pub def items(self) -> list[Tuple[K, V]]:
+        """
+        Return visible items.
+
+        Returns:
+            Distinct `(key, value)` pairs in first-visible-layer order.
+        """
+        return _chain_items(self.layers)
+
+
+def _chain_keys[K with (Clone, Eq), V with Clone](layers: &list[OrderedDict[K, V]]) -> list[K]:
+    """Collect visible keys without copying layers or values; preserve explicit comparison clones."""
+    mut out: list[K] = []
+    for layer_index in range(len(layers)):
+        layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+        for entry_index in range(len(layer.entries)):
+            entry: &_MapEntry[K, V] = list_get(layer.entries, entry_index)
+            _append_visible_key(out, entry.key)
+    return out
+
+
+def _chain_items[K with (Clone, Eq), V with Clone](layers: &list[OrderedDict[K, V]]) -> list[Tuple[K, V]]:
+    """Borrow layers while retaining visible-key order and the explicit clones in returned pairs."""
+    mut out: list[Tuple[K, V]] = []
+    mut visible: list[K] = []
+    for layer_index in range(len(layers)):
+        layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+        for entry_index in range(len(layer.entries)):
+            entry: &_MapEntry[K, V] = list_get(layer.entries, entry_index)
+            _append_visible_key(visible, entry.key)
+    for index in range(len(visible)):
+        key: &K = list_get(visible, index)
+        for layer_index in range(len(layers)):
+            layer: &OrderedDict[K, V] = list_get(layers, layer_index)
+            match layer.get(key):
+                Some(value) =>
+                    pair: Tuple[K, V] = (_clone_referent(key), value.clone())
+                    out.append(pair)
+                    break
+                None => pass
+    return out
+
+
+def _append_visible_key[K with (Clone, Eq)](mut visible: list[K], key: K) -> None:
+    """Append one independent key only when absent, preserving each explicit comparison clone."""
+    mut seen = false
+    for index in range(len(visible)):
+        existing: &K = list_get(visible, index)
+        if _clone_referent(existing) == key:
+            seen = true
+    if not seen:
+        visible.append(key.clone())

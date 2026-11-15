@@ -1,0 +1,6 @@
+from std.testing import assert_eq
+
+
+def test_beta_one(run_wide: int) -> None:
+    println("beta one")
+    assert_eq(run_wide, 10)

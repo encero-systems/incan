@@ -6,8 +6,6 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
+regex = { loaf = "crates-io/regex", version = "1" }
 stock = { path = "../catalog" }
 pricing = { path = "../pricing" }
-
-[rust-dependencies]
-regex = "1"

@@ -1,0 +1,151 @@
+"""Publish both host bundles with oras and replace the checked-in immutable build-toolchain pins."""
+
+from rust::std::env import args
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root, write_stderr
+from release_support import TOOLCHAIN_VERSION, full_sha
+
+
+pub model HostBundle:
+    """One native host target and its compiler archive, Oven, and language server."""
+
+    pub target: str
+    pub archive: Path
+    pub oven: Path
+    pub lsp: Path
+
+
+def main() -> None:
+    """Publish complete host bundles, reporting usage refusals as status 2 and publication failures as status 1."""
+    arguments = [argument for argument in args()][1:]
+    if len(arguments) != 7:
+        write_stderr(
+            "usage: publish_build_toolchain.incn COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP " + "LINUX_ARCHIVE LINUX_OVEN LINUX_LSP\n",
+        )
+        exit(2)
+    match publish(arguments):
+        Ok(path) =>
+            println(f"Published both bundles; checked-in pins: {path.0}")
+            exit(0)
+        Err(message) =>
+            write_stderr(message + "\n")
+            exit(1)
+
+
+pub def publish(arguments: list[str]) -> Result[Path, str]:
+    """Validate every input before publishing either host, then atomically replace `build-toolchain.json`."""
+    commit = str(arguments[0])
+    if not full_sha(commit):
+        return Err("COMMIT must be the full source commit every bundle is built from")
+    mac = HostBundle(
+        target="aarch64-apple-darwin",
+        archive=Path(arguments[1]),
+        oven=Path(arguments[2]),
+        lsp=Path(arguments[3]),
+    )
+    linux = HostBundle(
+        target="x86_64-unknown-linux-gnu",
+        archive=Path(arguments[4]),
+        oven=Path(arguments[5]),
+        lsp=Path(arguments[6]),
+    )
+    validate(mac)?
+    validate(linux)?
+    root = repository_root()?
+    temporary = TemporaryDirectory
+        .try_new_with("publish-toolchain.", "", Some(root))
+        .map_err((error) => error.message())?
+    mac_pin = publish_host(commit, mac, temporary.path())?
+    linux_pin = publish_host(commit, linux, temporary.path())?
+    value = JsonValue.object(
+        {"version": JsonValue.string(TOOLCHAIN_VERSION), mac.target: JsonValue.string(mac_pin), linux.target: JsonValue.string(
+            linux_pin,
+        )},
+    )
+    pins = root.joinpath("build-toolchain.json")
+    staged = root.joinpath("build-toolchain.json.next")
+    staged
+        .write_text(value.to_pretty_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    if pins.is_file():
+        pins.unlink().map_err((error) => error.message())?
+    _ = staged.move(pins).map_err((error) => error.message())?
+    return Ok(pins)
+
+
+def validate(bundle: HostBundle) -> Result[None, str]:
+    """Refuse an incomplete host bundle before any registry mutation occurs."""
+    for input in [bundle.archive, bundle.oven, bundle.lsp]:
+        if not input.is_file():
+            return Err(f"missing release input: {input.0}")
+    if not bundle.archive.0.endswith(".tar.zst"):
+        return Err(f"compiler archives must be .tar.zst: {bundle.archive.0}")
+    return Ok(None)
+
+
+def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, str]:
+    """Push one annotated OCI bundle and derive its immutable pin from that push's descriptor."""
+    directory = stage.joinpath(bundle.target)
+    directory.mkdir(true, false).map_err((error) => error.message())?
+    _ = bundle.archive.copy(directory.joinpath("toolchain.tar.zst"), true, true).map_err((error) => error.message())?
+    _ = bundle.oven.copy(directory.joinpath("incan"), true, true).map_err((error) => error.message())?
+    _ = bundle.lsp.copy(directory.joinpath("incan-lsp"), true, true).map_err((error) => error.message())?
+    reference = f"ghcr.io/encero-systems/loaves.pub/toolchain/incan:{commit}-{bundle.target}"
+    mut command = Command.new("oras")
+    command.current_dir(directory.0)
+    for argument in push_arguments(reference, commit, bundle.target):
+        command.arg(argument)
+    output = command.output().map_err((error) => f"cannot publish {bundle.target}: {error}")?
+    stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
+    stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+    directory
+        .joinpath("descriptor.json")
+        .write_text(stdout, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    directory.joinpath("publish.log").write_text(stderr, "utf-8", "strict", None).map_err((error) => error.message())?
+    if not output.status.success():
+        return Err(f"oras push failed for {bundle.target}: {stderr}")
+    descriptor = JsonValue.parse(stdout).map_err((error) => error.message())?
+    digest = descriptor.require("digest").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    if not valid_digest(digest):
+        return Err(f"oras returned an invalid manifest digest for {bundle.target}")
+    return Ok(f"{reference}@{digest}")
+
+
+def push_arguments(reference: str, commit: str, target: str) -> list[str]:
+    """Return the stable oras push arguments and release annotations for one host."""
+    return [
+        "push",
+        reference,
+        "--artifact-type",
+        "application/vnd.incan.toolchain.v1",
+        "--annotation",
+        "org.opencontainers.image.source=https://github.com/encero-systems/incan",
+        "--annotation",
+        f"org.opencontainers.image.version={TOOLCHAIN_VERSION}",
+        "--annotation",
+        f"org.opencontainers.image.revision={commit}",
+        "--annotation",
+        f"dev.incan.toolchain.commit={commit}",
+        "--annotation",
+        f"dev.incan.toolchain.target={target}",
+        "--format",
+        "json",
+        "toolchain.tar.zst:application/vnd.incan.toolchain.v1.tar+zstd",
+        "incan:application/octet-stream",
+        "incan-lsp:application/octet-stream",
+    ]
+
+
+def valid_digest(value: str) -> bool:
+    """Return whether an OCI digest is exactly `sha256:` plus 64 lowercase hexadecimal digits."""
+    if not value.startswith("sha256:") or len(value) != 71:
+        return false
+    for character in value[7:]:
+        if character not in "0123456789abcdef":
+            return false
+    return true

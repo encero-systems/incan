@@ -1,0 +1,13 @@
+# behavior: a user module's imported model named Json keeps and exposes its own value field
+# expect-stdout:
+#   5
+
+from models import Json
+
+
+def read(wrapper: Json[int]) -> int:
+    return wrapper.value
+
+
+def main() -> None:
+    println(read(Json[int](value=5)))

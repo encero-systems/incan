@@ -1,0 +1,19 @@
+# behavior: an explicit borrowed body accepts a for loop over borrowed collection storage (#2500)
+# expect-stdout:
+#   3
+
+class Graph:
+    pub values: list[int]
+
+
+def total(graph: Borrowed[Graph]) -> int:
+    """Sum values read through a borrowed graph."""
+    mut result = 0
+    for value in graph.values:
+        result += value
+    return result
+
+
+def main() -> None:
+    graph = Graph(values=[1, 2])
+    println(total(graph))

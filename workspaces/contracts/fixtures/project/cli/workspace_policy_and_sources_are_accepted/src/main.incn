@@ -1,0 +1,9 @@
+# behavior: `[workspace.policy]` and `[workspace.sources]` are accepted as 0.5.1 accepted them, raw tables reserved for later RFC 076 and RFC 077 phases that no command reads (#3141).
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+#   accepted
+# expect-exit: 0
+
+def main() -> None:
+    println("accepted")

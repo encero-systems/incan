@@ -30,7 +30,7 @@ A good first syntax change:
 
 - is local (one new statement or expression form),
 - has a simple typing rule,
-- emits Rust in an obvious way,
+- has a direct checked Body IR and native lowering representation,
 - can be covered by 1–2 regression tests.
 
 Avoid starting with a feature that requires new runtime types, new module system rules, or complex ownership behavior.

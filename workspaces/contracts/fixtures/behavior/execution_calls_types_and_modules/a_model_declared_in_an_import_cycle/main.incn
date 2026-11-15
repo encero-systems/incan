@@ -1,0 +1,25 @@
+# behavior: a model a module in an import cycle declares is constructed and unwrapped through `?` by modules outside the cycle while the entry also imports the cycle directly, a cycle that runs through a model constructs it, and the cycle member lowered first constructs a model a later member declares (#2593)
+# expect-stdout:
+#   2
+#   2
+#   5
+#   300
+
+"""Models declared inside import cycles, used outside them and across them."""
+
+from sealing import sealed
+from publishing import publish
+from facts import total
+from entries import counted
+from catalog import priced
+
+
+def main() -> None:
+    """Print models built outside, through `?`, and across cycles, whichever cycle member is lowered first."""
+    fact = sealed("x")
+    println(len(fact.name) + total())
+    match publish("x"):
+        Ok(count) => println(count)
+        Err(error) => println(error)
+    println(counted())
+    println(priced())

@@ -1,0 +1,66 @@
+name: Stack checks
+
+# A stacked PR gets only what its own diff can break, with no compiler and no pinned toolchain. Full CI runs on the
+# development line's pull request into main. The real proof of a stage is its local qualification, posted as the commit
+# status `incan/qualified`.
+
+on:
+  pull_request:
+
+concurrency:
+  group: stack-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    name: Diff checks
+    if: github.event.pull_request.base.ref != 'main' && !startsWith(github.event.pull_request.base.ref, 'release/')
+    runs-on: ubuntu-24.04
+    env:
+      BASE: ${{ github.event.pull_request.base.sha }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Install nightly rustfmt
+        uses: ./.github/actions/install-nightly-toolchain
+        with:
+          components: rustfmt
+      - name: Format the Rust files this PR changes
+        run: |
+          git diff -z --name-only --diff-filter=d "$BASE...$HEAD" -- 'loaves/*.rs' ':!:loaves/**/fixtures/**' \
+            | xargs -0 --no-run-if-empty rustfmt +nightly --edition 2024 --config skip_children=true --check
+      - name: Keep source files under 1,300 lines
+        run: |
+          status=0
+          while IFS= read -r -d '' file; do
+            lines=$(wc -l < "$file")
+            before=$(git show "$BASE:$file" 2>/dev/null | wc -l)
+            if [ "$lines" -gt 1300 ] && [ "$lines" -gt "$before" ]; then
+              echo "::error file=$file::$lines lines (was $before); split it by concern below 1,300"
+              status=1
+            fi
+          done < <(git diff -z --name-only --diff-filter=d "$BASE...$HEAD" -- '*.rs' '*.incn' \
+            ':!:workspaces/contracts/fixtures/**' ':!:**/fixtures/**')
+          exit "$status"
+      - name: Add no shell
+        run: |
+          status=0
+          while IFS= read -r -d '' file; do
+            lines=$(wc -l < "$file")
+            if ! git cat-file -e "$BASE:$file" 2>/dev/null; then
+              echo "::error file=$file::new shell script; write it in Incan"
+              status=1
+            elif [ "$lines" -gt "$(git show "$BASE:$file" | wc -l)" ]; then
+              echo "::error file=$file::shell script grew; port the new logic to Incan"
+              status=1
+            fi
+          done < <(git diff -z --name-only --diff-filter=d "$BASE...$HEAD" -- '*.sh')
+          exit "$status"
+      - name: Check whitespace
+        run: git diff --check "$BASE...$HEAD" -- ':!:workspaces/contracts/fixtures/**'

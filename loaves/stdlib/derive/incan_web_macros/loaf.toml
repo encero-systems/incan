@@ -1,6 +1,6 @@
 [project]
 name = "incan_web_macros"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.9"
 license = "Apache-2.0"
 private = true
 
@@ -17,7 +17,7 @@ proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1", features = [], de
 # Runtime consumers of the procedural macros use ordinary test dependencies.
 [envs.test.dependencies]
 axum = { loaf = "crates-io/axum", version = "0.8" }
-incan_std_web = { loaf = "incan_std_web", path = "../../web" }
+incan_std_web = { loaf = "incan_stdlib_web", path = "../../web" }
 inventory = { loaf = "crates-io/inventory", version = "0.3" }
 serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }

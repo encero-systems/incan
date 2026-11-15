@@ -1,0 +1,64 @@
+# behavior: a call whose `Result` error carries a view gives its `Err` arm a view of the caller's own value, while the `Ok` arm holds an owned success value; a local bound to the call keeps the view until a match takes it out, and an exclusive error view repairs the source (#2500).
+# expect-stdout:
+#   6
+#   sam
+#   -1
+#   5
+#   sam
+#   -2
+#   -1
+#   5
+
+"""Carry a view in a `Result` error: report through a shared one, or repair the source through an exclusive one."""
+
+
+class Account:
+    pub name: str
+    pub balance: int
+
+    pub def withdraw(mut self, amount: int) -> Result[int, Borrowed[str]] from self.name:
+        if amount > self.balance:
+            return Err(self.name)
+        self.balance -= amount
+        return Ok(self.balance)
+
+    pub def charge(mut self, amount: int) -> Result[int, Reference[Self]] from self:
+        if amount > self.balance:
+            return Err(self)
+        self.balance -= amount
+        return Ok(self.balance)
+
+
+def attempt(mut account: BorrowedMut[Account], amount: int) -> int:
+    match account.withdraw(amount):
+        Ok(left) => return left
+        Err(name) =>
+            println(name)
+            return -1
+
+
+def later(mut account: BorrowedMut[Account], amount: int) -> int:
+    result = account.withdraw(amount)
+    match result:
+        Ok(left) => return left
+        Err(name) =>
+            println(name)
+            return -2
+
+
+def charge_or_top_up(mut account: BorrowedMut[Account], amount: int) -> int:
+    match account.charge(amount):
+        Ok(left) => return left
+        Err(short) =>
+            short.balance += amount
+            return -1
+
+
+def main() -> None:
+    mut account = Account(name="sam", balance=10)
+    println(attempt(account, 4))
+    println(attempt(account, 40))
+    println(later(account, 1))
+    println(later(account, 50))
+    println(charge_or_top_up(account, 20))
+    println(charge_or_top_up(account, 20))

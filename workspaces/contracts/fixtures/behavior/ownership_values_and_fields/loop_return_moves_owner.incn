@@ -1,0 +1,49 @@
+# behavior: returning an owner wrapped in a result from inside a loop moves it without a copy, and the path after the loop still owns it
+# expect-stdout:
+#   ready at 1: false
+#   not ready
+#   ready at 0: false
+#   counted 5
+#   not ready
+
+from rust::std::sync import Mutex
+
+
+def ready_at(ready: int) -> Result[Mutex[int], str]:
+    """Return the lock on the iteration it is ready; a lock that never becomes ready stays owned after the loop."""
+    lock = Mutex.new(1)
+    for index in range(3):
+        if index == ready:
+            return Ok(lock)
+    if lock.is_poisoned():
+        return Err("poisoned")
+    return Err("not ready")
+
+
+def counted(limit: int) -> Result[Mutex[int], str]:
+    """A loop that breaks before returning keeps the owner for the statements after it."""
+    lock = Mutex.new(1)
+    mut total = 0
+    while true:
+        total += 1
+        if total == limit:
+            break
+        if total > 10:
+            return Ok(lock)
+    println(f"counted {total}")
+    if lock.is_poisoned():
+        return Err("poisoned")
+    return Err("not ready")
+
+
+def describe(label: str, result: Result[Mutex[int], str]) -> None:
+    match result:
+        Ok(lock) => println(f"{label}: {lock.is_poisoned()}")
+        Err(reason) => println(reason)
+
+
+def main() -> None:
+    describe("ready at 1", ready_at(1))
+    describe("ready at 5", ready_at(5))
+    describe("ready at 0", ready_at(0))
+    describe("counted", counted(5))

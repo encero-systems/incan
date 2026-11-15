@@ -1,0 +1,9 @@
+# behavior: rust.extern is refused with the direct-import replacement required by RFC 171
+# expect-diagnostic: INCAN-T0001
+
+"""The retired extern placeholder cannot stand in for a Rust item."""
+
+@rust.extern
+def program_result() -> int:
+    """Retain the old placeholder shape solely to prove its refusal."""
+    return 7

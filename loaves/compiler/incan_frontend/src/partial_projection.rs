@@ -17,7 +17,7 @@ pub struct PartialPresetRef<'a> {
 /// Merge partial preset keywords with call-site arguments using the runtime partial-call rule.
 ///
 /// Returns `None` for positional or unpacked call-site arguments because projection expansion needs an explicit keyword
-/// map. Runtime wrapper calls use the same merge rule before Rust emission because generated Rust has no source-level
+/// map. Runtime wrapper calls use the same merge rule before lowering because native functions have no source-level
 /// default parameters.
 pub fn merge_named_partial_args<'a>(
     presets: impl IntoIterator<Item = PartialPresetRef<'a>>,

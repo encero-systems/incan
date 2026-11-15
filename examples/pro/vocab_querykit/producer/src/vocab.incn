@@ -1,0 +1,68 @@
+"""Register querykit's scoped field paths and pipes and summarize their structured syntax in Incan."""
+
+from std.vocab import DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface, IncanExprKind
+from std.vocab import ScopedSurfaceDescriptor, ScopedSurfaceEligibility, ScopedSurfaceReceiver
+from std.vocab import VocabDeclaration, VocabRegistration, VocabScopedSurfaceKind, VocabSyntaxNode
+from pub::vocab_tools import declaration_expressions, expression_tree, format_expression, print_summary
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Register querykit's import-owned fields and pipeline syntax.
+
+    1. Declare the statement block and its declaration-body surfaces.
+    2. Add leading-dot fields in filter and select arguments with their own receiver context.
+    """
+    # 1. Every scoped surface remains local to an imported query declaration.
+    declaration = DeclarationSurface.named("query").with_statement_body()
+    # Field paths resolve against the owning query declaration.
+    mut field = ScopedSurfaceDescriptor.leading_dot_path("query.field").in_declaration_body("query")
+    field = field.with_receiver(ScopedSurfaceReceiver.OwningDeclaration)
+    # Pipes compose expressions inside the query body.
+    pipe = ScopedSurfaceDescriptor.operator("query.pipe", "|>").in_declaration_body("query").pairwise_chain()
+    # 2. Method argument ownership is separate from the enclosing query's receiver.
+    filter_argument = ScopedSurfaceEligibility.call_argument("query", "filter")
+    select_argument = ScopedSurfaceEligibility.call_argument("query", "select")
+    method_field = ScopedSurfaceDescriptor
+        .leading_dot_path("query.method_field")
+        .with_eligibilities([filter_argument, select_argument])
+        .with_receiver(ScopedSurfaceReceiver.custom("method-receiver"))
+    mut surface = DslSurface.on_import("querykit").with_declaration(declaration)
+    surface = surface.with_scoped_surfaces([field, pipe, method_field])
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Summarize a parsed query's field paths and pipes without evaluating or reparsing its input."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            if declaration.keyword == "query":
+                return Ok(print_summary(query_summary(declaration)?, declaration.span))
+        _ => pass
+    return Err(DesugarError.at(request.node.span(), "querykit expects a query declaration"))
+
+
+def query_summary(declaration: VocabDeclaration) -> Result[str, DesugarError]:
+    """Collect sorted unique fields and source-ordered pipes from descriptor-owned expression nodes."""
+    mut fields: list[str] = []
+    mut pipes: list[str] = []
+    for expression in declaration_expressions(declaration):
+        for node in expression_tree(expression):
+            match node.kind:
+                IncanExprKind.Scoped(surface) =>
+                    match surface.kind:
+                        VocabScopedSurfaceKind.LeadingDotPath(segments, _) =>
+                            if surface.descriptor_key in ["query.field", "query.method_field"]:
+                                fields.append("." + ".".join(segments))
+                        VocabScopedSurfaceKind.Glyph(_, values) =>
+                            if surface.descriptor_key == "query.pipe":
+                                left = format_expression(values[0])?
+                                right = format_expression(values[1])?
+                                pipes.append(left + " |> " + right)
+                _ => pass
+    mut summary = "querykit query fields: <none>"
+    if len(fields) > 0:
+        summary = "querykit query fields: " + ", ".join(sorted(list(set(fields))))
+    if len(pipes) > 0:
+        summary += "; pipes: " + ", ".join(pipes)
+    return Ok(summary)

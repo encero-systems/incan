@@ -1,0 +1,39 @@
+# behavior: a dict[str, int] answers get and indexing with str keys, and loop and comprehension keys survive lookups before insertion (#2256)
+# expect-stdout:
+#   the=2
+#   cat=1
+#   dog missing
+#   literal 2
+#   indexed 2
+
+def lookup(counts: dict[str, int], word: str) -> str:
+    match counts.get(word):
+        Some(count) => return f"{word}={count}"
+        None => return f"{word} missing"
+
+
+def copied(counts: dict[str, int]) -> dict[str, int]:
+    """Reuse each loop key in a value lookup and its deferred insertion."""
+    mut result: dict[str, int] = {}
+    for word in counts.keys():
+        result[word] = counts[word]
+    return result
+
+
+def incremented(counts: dict[str, int]) -> dict[str, int]:
+    """Keep a comprehension key live until its value lookup finishes."""
+    return {word: counts[word] + 1 for word in counts.keys()}
+
+
+def main() -> None:
+    counts: dict[str, int] = {"the": 2, "cat": 1}
+    println(lookup(counts, "the"))
+    words: list[str] = ["cat", "dog"]
+    for word in words:
+        println(lookup(counts, word))
+    match counts.get("the"):
+        Some(count) => println(f"literal {count}")
+        None => println("literal missing")
+    println(f"indexed {counts["the"]}")
+    assert copied(counts)["the"] == 2
+    assert incremented(counts)["cat"] == 2

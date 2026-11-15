@@ -1,0 +1,9 @@
+# behavior: `[interop.c].schema` is 1, as 0.5.1's `[oven.interop].schema` was; another value is refused (#3132)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   [interop.c].schema must be 1, found 2
+
+def main() -> None:
+    println("unreachable")

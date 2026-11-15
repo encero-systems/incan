@@ -1,0 +1,16 @@
+"""Deterministic body-weighted partitioning for ordinary and resumed lowering work."""
+
+from parallel_ranges import balanced_module_ranges
+
+
+pub def test_balanced_ranges_are_contiguous_and_cover_source_order() -> None:
+    ranges = balanced_module_ranges([8, 1, 1, 6, 2, 1], worker_limit=3)
+    assert ranges == [(0, 1), (1, 4), (4, 6)]
+
+
+pub def test_balanced_ranges_never_emit_empty_workers() -> None:
+    empty_weights: list[int] = []
+    empty_ranges: list[tuple[int, int]] = []
+    assert balanced_module_ranges(empty_weights, worker_limit=4) == empty_ranges
+    assert balanced_module_ranges([0, 0], worker_limit=4) == [(0, 1), (1, 2)]
+    assert balanced_module_ranges([3, 1], worker_limit=0) == empty_ranges

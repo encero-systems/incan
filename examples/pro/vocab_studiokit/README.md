@@ -6,12 +6,11 @@ This example shows:
 
 - A block keyword with header arguments: `workflow "daily":`.
 - Scoped workflow glyphs assembled from existing tokens: `>>`, `//`, `:=`, and `===`.
-- A Rust desugarer receiving the scoped glyph payload and lowering the block to ordinary statements.
-- A larger companion registration shape that also sketches query-like and step-like declarations for library authors.
+- An Incan entry in `producer/src/vocab.incn` receiving structured glyph operands through `std.vocab` and returning an ordinary print statement.
+- Query-like and step-like descriptor sketches alongside the exercised workflow block. They preserve the original sketch: a query references a consumer-supplied `__studiokit_query_result`, and a step emits `pass`. The workflow example summarizes syntax; it does not execute a workflow engine. Signature-head input transport is still unsupported by the current public bridge.
 
 Run it from the repository root:
 
 ```bash
-./target/debug/incan build --lib examples/pro/vocab_studiokit/producer/src/lib.incn
-./target/debug/incan run examples/pro/vocab_studiokit/consumer/src/main.incn
+incan run examples/pro/vocab_studiokit/consumer/src/main.incn
 ```

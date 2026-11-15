@@ -11,9 +11,7 @@ from std.traits.error import Error
 
 
 pub enum Codec(str):
-    """
-    Compression codec identity used by `std.compression` autodetection.
-    """
+    """Compression codec identity used by `std.compression` autodetection."""
 
     Gzip = "gzip"
     Zlib = "zlib"
@@ -24,7 +22,7 @@ pub enum Codec(str):
     Snappy = "snappy"
 
     @staticmethod
-    def all() -> list[Codec]:
+    pub def all() -> list[Codec]:
         """
         Return the stable codec order used by default autodetection filters.
 
@@ -48,9 +46,7 @@ pub model CompressionError with Error:
     pub detail: str
 
     def message(self) -> str:
-        """
-        Return the human-readable error detail.
-        """
+        """Return the human-readable error detail."""
         return self.detail
 
     def source(self) -> Option[str]:
@@ -62,10 +58,14 @@ pub model CompressionError with Error:
         return None
 
 
-pub def _level_or_default(codec: Codec, level: Option[int], default: int, minimum: int, maximum: int) -> Result[int, CompressionError]:
-    """
-    Validate a portable integer compression-level request.
-    """
+pub def _level_or_default(
+    codec: Codec,
+    level: Option[int],
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> Result[int, CompressionError]:
+    """Validate a portable integer compression-level request."""
     match level:
         Some(value) =>
             if value < minimum or value > maximum:
@@ -82,9 +82,7 @@ pub def _level_or_default(codec: Codec, level: Option[int], default: int, minimu
 
 
 pub def _reject_level(codec: Codec, level: Option[int]) -> Result[None, CompressionError]:
-    """
-    Reject a level argument for codecs without level support.
-    """
+    """Reject a level argument for codecs without level support."""
     match level:
         Some(_) =>
             return Err(
@@ -106,7 +104,15 @@ pub def _codec_error(codec: Codec, operation: str, detail: str) -> CompressionEr
     classifying the most common invalid/truncated markers and otherwise preserving the backend text as `backend`.
     """
     mut kind = "backend"
-    if detail.contains("EOF") or detail.contains("eof") or detail.contains("early") or detail.contains("truncated"):
+    if (
+        detail.contains("EOF")
+        or detail.contains("eof")
+        or detail.contains("end of file")
+        or detail.contains("early")
+        or detail.contains("fill whole buffer")
+        or detail.contains("incomplete")
+        or detail.contains("truncated")
+    ):
         kind = "truncated_input".to_string()
     elif detail.contains("invalid") or detail.contains("corrupt") or detail.contains("checksum"):
         kind = "invalid_data".to_string()
@@ -114,9 +120,7 @@ pub def _codec_error(codec: Codec, operation: str, detail: str) -> CompressionEr
 
 
 pub def _io_error(codec: Option[Codec], operation: str, detail: str) -> CompressionError:
-    """
-    Build an I/O failure.
-    """
+    """Build an I/O failure."""
     return CompressionError(kind="io", codec=codec, operation=operation, detail=detail)
 
 
@@ -161,45 +165,59 @@ pub def _write_sink_bytes(
 
 
 pub def _byte_at(data: bytes, index: int) -> int:
-    """
-    Read one byte as an integer for signature checks.
-    """
+    """Read one byte as an integer for signature checks."""
     return int(data[index])
 
 
 pub def _looks_like_gzip(data: bytes) -> bool:
-    """
-    Return whether `data` starts with the gzip magic bytes.
-    """
+    """Return whether `data` starts with the gzip magic bytes."""
     return len(data) >= 2 and _byte_at(data, 0) == 31 and _byte_at(data, 1) == 139
 
 
 pub def _looks_like_zstd(data: bytes) -> bool:
-    """
-    Return whether `data` starts with the zstd frame magic bytes.
-    """
-    return len(data) >= 4 and _byte_at(data, 0) == 40 and _byte_at(data, 1) == 181 and _byte_at(data, 2) == 47 and _byte_at(data, 3) == 253
+    """Return whether `data` starts with the zstd frame magic bytes."""
+    return (
+        len(data) >= 4
+        and _byte_at(data, 0) == 40
+        and _byte_at(data, 1) == 181
+        and _byte_at(data, 2) == 47
+        and _byte_at(data, 3) == 253
+    )
 
 
 pub def _looks_like_bz2(data: bytes) -> bool:
-    """
-    Return whether `data` starts with the bzip2 stream signature.
-    """
+    """Return whether `data` starts with the bzip2 stream signature."""
     return len(data) >= 3 and _byte_at(data, 0) == 66 and _byte_at(data, 1) == 90 and _byte_at(data, 2) == 104
 
 
 pub def _looks_like_xz(data: bytes) -> bool:
-    """
-    Return whether `data` starts with the XZ container magic bytes.
-    """
-    return len(data) >= 6 and _byte_at(data, 0) == 253 and _byte_at(data, 1) == 55 and _byte_at(data, 2) == 122 and _byte_at(data, 3) == 88 and _byte_at(data, 4) == 90 and _byte_at(data, 5) == 0
+    """Return whether `data` starts with the XZ container magic bytes."""
+    return (
+        len(data) >= 6
+        and _byte_at(data, 0) == 253
+        and _byte_at(data, 1) == 55
+        and _byte_at(data, 2) == 122
+        and _byte_at(data, 3) == 88
+        and _byte_at(data, 4) == 90
+        and _byte_at(data, 5) == 0
+    )
 
 
 pub def _looks_like_snappy_frame(data: bytes) -> bool:
-    """
-    Return whether `data` starts with the framed Snappy stream identifier.
-    """
-    return len(data) >= 10 and _byte_at(data, 0) == 255 and _byte_at(data, 1) == 6 and _byte_at(data, 2) == 0 and _byte_at(data, 3) == 0 and _byte_at(data, 4) == 115 and _byte_at(data, 5) == 78 and _byte_at(data, 6) == 97 and _byte_at(data, 7) == 80 and _byte_at(data, 8) == 112 and _byte_at(data, 9) == 89
+    """Return whether `data` starts with the framed Snappy stream identifier."""
+    return (
+        len(data) >= 10
+        and _byte_at(data, 0) == 255
+        and _byte_at(data, 1) == 6
+        and _byte_at(data, 2) == 0
+        and _byte_at(data, 3) == 0
+        and _byte_at(data, 4) == 115
+        and _byte_at(data, 5) == 78
+        and _byte_at(data, 6) == 97
+        and _byte_at(data, 7) == 80
+        and _byte_at(data, 8) == 112
+        and _byte_at(data, 9) == 89
+    )
 
 
 pub def _looks_like_zlib(data: bytes) -> bool:

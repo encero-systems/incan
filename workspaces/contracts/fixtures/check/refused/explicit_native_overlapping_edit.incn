@@ -1,0 +1,12 @@
+# behavior: editing a native owner while a signature-proven view from HashMap.get is still live is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+from rust::std::collections import HashMap
+
+
+def overlap(mut counts: BorrowedMut[HashMap[str, int]], key: str) -> int:
+    view = counts.get(key)
+    counts.insert(key, 1)
+    match view:
+        Some(value) => return value
+        None => return 0

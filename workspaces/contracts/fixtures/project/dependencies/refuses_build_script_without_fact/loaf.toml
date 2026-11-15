@@ -1,0 +1,8 @@
+[project]
+name = "refuses_build_script_without_fact"
+version = "0.1.0"
+
+[rust]
+name = "refuses_build_script_without_fact"
+type = "lib"
+build-script = true

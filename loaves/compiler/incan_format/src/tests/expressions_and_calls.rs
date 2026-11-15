@@ -645,13 +645,20 @@ fn test_format_long_constructor_call_wraps_without_trailing_comma_when_disabled(
     Ok(())
 }
 
+/// Suite-valued expressions retain every branch and reach a parseable fixed point.
 #[test]
 fn test_format_source_loop_expression_with_break_value_round_trip() -> Result<(), FormatError> {
     let source = r#"def run() -> int:
+    chosen = if true:
+        1
+    else:
+        2
+
     return loop:
-        break 42
+        break chosen
 "#;
-    let formatted = format_source(source)?;
+    let formatted = assert_format_round_trip_lex_parse(source)?;
     assert_eq!(formatted.trim_end(), source.trim_end());
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }

@@ -1,0 +1,357 @@
+"""Select newly resolved runtime modules and merge their specialized facts into retained lowering context."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, EnumDeclaration
+from rust::std::sync import Arc
+from native_type_identity import ConstructorIndex, extend_constructor_index
+from table_views import borrowed_at
+from nominal_instances import NominalInstance
+
+
+pub model ContinuationInputs:
+    """The refreshed entry and runtime modules that contribute facts the retained contexts do not contain."""
+
+    pub modules: Arc[list[BodyIrModule]]
+    pub sources: list[str]
+    pub files: list[str]
+    pub entry: int
+
+
+pub def refresh_entry_context(mut context: &mut BodyIrModule, entry: &BodyIrModule) -> None:
+    """Refresh the compact entry-owned facts the frontend can extend while resolving runtime declarations."""
+    context.runtime_callable_bindings = list(entry.runtime_callable_bindings)
+    context.loaf_callables = list(entry.loaf_callables)
+    context.entrypoint_effects = list(entry.entrypoint_effects)
+    context.program_entrypoints = list(entry.program_entrypoints)
+    context.string_conversion_contract = entry.string_conversion_contract.clone()
+    context.constant_declarations = list(entry.constant_declarations)
+    context.type_alias_declarations = list(entry.type_alias_declarations)
+
+
+pub def continuation_inputs(
+    source_context: &BodyIrModule,
+    context: &BodyIrModule,
+    owners: list[str],
+    modules: &list[BodyIrModule],
+    sources: &list[str],
+    files: &list[str],
+    entry: int,
+) -> Result[ContinuationInputs, str]:
+    """Select changed modules and their entry, preserving the entry's invocation-only contracts in the reduced slice."""
+    if len(modules) != len(sources) or len(modules) != len(files):
+        return Err("invalid Body IR continuation source provenance")
+    if entry < 0 or entry >= len(modules):
+        return Err("invalid Body IR continuation entry")
+    mut changed = false
+    for position in range(len(modules)):
+        module = borrowed_at(modules, position)
+        owner = str(module.module_id.path())
+        if owner not in owners or adds_checked_facts(source_context, context, module):
+            changed = true
+            break
+    if not changed:
+        return Ok(ContinuationInputs(modules=Arc.new([]), sources=[], files=[], entry=0))
+    mut additions: list[BodyIrModule] = []
+    mut addition_sources: list[str] = []
+    mut addition_files: list[str] = []
+    mut addition_entry = 0
+    for position in range(len(modules)):
+        module = borrowed_at(modules, position)
+        owner = str(module.module_id.path())
+        if position != entry and owners.contains(owner) and not adds_checked_facts(source_context, context, module):
+            continue
+        if position == entry:
+            addition_entry = len(additions)
+        additions.append(module.clone())
+        addition_sources.append(str(sources[position]))
+        addition_files.append(str(files[position]))
+    return Ok(
+        ContinuationInputs(
+            modules=Arc.new(additions),
+            sources=addition_sources,
+            files=addition_files,
+            entry=addition_entry,
+        ),
+    )
+
+
+pub def extend_continuation_context(
+    mut source_context: &mut BodyIrModule,
+    mut context: &mut BodyIrModule,
+    mut template_constructors: &mut ConstructorIndex,
+    mut owners: list[str],
+    mut retained_sources: list[str],
+    mut retained_files: list[str],
+    mut template_references: list[str],
+    mut retained_nominals: list[NominalInstance],
+    additions: &ContinuationInputs,
+    added_source_context: &BodyIrModule,
+    added_context: &BodyIrModule,
+    added_template_references: &list[str],
+    added_nominals: &list[NominalInstance],
+) -> Result[None, str]:
+    """
+    Extend the retained source and execution contexts from the refreshed module graph.
+
+    Existing facts keep their positions. The added context has already passed the ordinary project specialization path,
+    so raw generic receiver frames never enter the retained executable context.
+    """
+    for position in range(len(additions.modules.as_ref())):
+        module = borrowed_at(additions.modules.as_ref(), position)
+        owner = str(module.module_id.path())
+        if owner not in owners:
+            owners.append(owner)
+            retained_sources.append(str(additions.sources[position]))
+            retained_files.append(str(additions.files[position]))
+    extend_template_references(template_references, added_template_references)
+    extend_source_declarations(source_context, added_source_context)?
+    extend_execution_context(context, added_context)?
+    extend_nominal_instances(retained_nominals, added_nominals)
+    extend_constructor_index(template_constructors, source_context.nominal_declarations)
+    return Ok(None)
+
+
+def extend_template_references(mut retained: list[str], additions: &list[str]) -> None:
+    """Append newly referenced template heads without disturbing the first-selection order."""
+    for reference in additions:
+        if reference not in retained:
+            retained.append(reference)
+
+
+def extend_source_declarations(mut source: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+    """Append raw nominal and enum template authority for later instance and publication work."""
+    for position in range(len(module.nominal_declarations)):
+        mut declaration = borrowed_at(module.nominal_declarations, position).clone()
+        if len(declaration.type_parameters) == 0:
+            declaration.name = declaration.carrier_name()
+        else:
+            declaration.name = declaration.template_carrier_name()
+        if not retains_source_nominal(source.nominal_declarations, declaration)?:
+            source.nominal_declarations.push(declaration.clone())
+    for position in range(len(module.enum_declarations)):
+        mut declaration = borrowed_at(module.enum_declarations, position).clone()
+        declaration.name = declaration.carrier_name()
+        if not retains_source_enum(source.enum_declarations, declaration)?:
+            source.enum_declarations.push(declaration.clone())
+    return Ok(None)
+
+
+def extend_execution_context(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+    """Append specialized executable facts while leaving every position from the prior attempt stable."""
+    prior_body_count = len(context.bodies)
+    for body in module.bodies:
+        if not has_body_prefix(context, body, prior_body_count) and not has_body_specialization(context, body):
+            context.bodies.push(body.clone())
+    append_concrete_nominals(context, module)?
+    append_concrete_enums(context, module)?
+    for declaration in module.fieldless_enum_declarations:
+        if not context.fieldless_enum_declarations.contains(declaration):
+            context.fieldless_enum_declarations.push(declaration.clone())
+    for declaration in module.value_enum_declarations:
+        if not context.value_enum_declarations.contains(declaration):
+            context.value_enum_declarations.push(declaration.clone())
+    for declaration in module.trait_declarations:
+        if not context.trait_declarations.contains(declaration):
+            context.trait_declarations.push(declaration.clone())
+    for implementation in module.trait_implementations:
+        if not context.trait_implementations.contains(implementation):
+            context.trait_implementations.push(implementation.clone())
+    append_runtime_storage(context, module)
+    return Ok(None)
+
+
+def extend_nominal_instances(mut retained: list[NominalInstance], additions: &list[NominalInstance]) -> None:
+    """Append each newly specialized nominal key once while preserving the prior attempt's layout order."""
+    for addition in additions:
+        mut found = false
+        for instance in retained:
+            if (
+                instance.declaration.canonical == addition.declaration.canonical
+                and instance.arguments == addition.arguments
+            ):
+                found = true
+                break
+        if not found:
+            retained.append(addition.clone())
+
+
+def adds_checked_facts(source: &BodyIrModule, context: &BodyIrModule, module: &BodyIrModule) -> bool:
+    """Detect a refreshed module whose declarations, bodies, or runtime storage are absent from retained context."""
+    for declaration in module.nominal_declarations:
+        if not has_nominal(source.nominal_declarations, declaration):
+            return true
+    for declaration in module.enum_declarations:
+        if not has_enum(source.enum_declarations, declaration):
+            return true
+    for declaration in module.fieldless_enum_declarations:
+        if declaration not in context.fieldless_enum_declarations:
+            return true
+    for declaration in module.value_enum_declarations:
+        if declaration not in context.value_enum_declarations:
+            return true
+    for declaration in module.trait_declarations:
+        if declaration not in context.trait_declarations:
+            return true
+    for implementation in module.trait_implementations:
+        if implementation not in context.trait_implementations:
+            return true
+    for body in module.bodies:
+        if not has_body(context, body):
+            return true
+    for declaration in module.static_declarations:
+        if declaration not in context.static_declarations:
+            return true
+    for binding in module.decorated_bindings:
+        if binding not in context.decorated_bindings:
+            return true
+    for callable in module.loaf_callables:
+        if callable not in context.loaf_callables:
+            return true
+    for declaration in module.native_union_declarations:
+        if declaration not in context.native_union_declarations:
+            return true
+    return false
+
+
+def has_nominal(declarations: &list[NominalDeclaration], candidate: &NominalDeclaration) -> bool:
+    """Whether source authority already retains this canonical nominal declaration."""
+    for declaration in declarations:
+        if declaration.canonical == candidate.canonical:
+            return true
+    return false
+
+
+def has_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> bool:
+    """Whether source authority already retains this canonical enum declaration."""
+    for declaration in declarations:
+        if declaration.canonical == candidate.canonical:
+            return true
+    return false
+
+
+def has_body(context: &BodyIrModule, candidate: &Body) -> bool:
+    """Whether a specialized body with the refreshed body's canonical identity already occupies the context."""
+    return has_body_prefix(context, candidate, len(context.bodies))
+
+
+def has_body_prefix(context: &BodyIrModule, candidate: &Body, count: int) -> bool:
+    """Whether the context prefix predating one merge already represents the candidate's canonical body."""
+    match candidate.canonical:
+        Some(identity) =>
+            for position in range(count):
+                retained = borrowed_at(context.bodies, position)
+                if retained.canonical == Some(identity.clone()):
+                    return true
+        None =>
+            for position in range(count):
+                retained = borrowed_at(context.bodies, position)
+                if retained.canonical == None and retained.name == candidate.name:
+                    return true
+    return false
+
+
+def has_body_specialization(context: &BodyIrModule, candidate: &Body) -> bool:
+    """Whether a body with the same canonical identity and closed frame signature entered during this merge."""
+    for retained in context.bodies:
+        if retained.canonical != candidate.canonical:
+            continue
+        if retained.params != candidate.params or retained.locals != candidate.locals:
+            continue
+        if retained.return_type == candidate.return_type and retained.type_parameters == candidate.type_parameters:
+            return true
+    return false
+
+
+def append_concrete_nominals(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+    """Append only physical nominal layouts; open templates stay in the retained source context."""
+    for position in range(len(module.nominal_declarations)):
+        mut declaration = borrowed_at(module.nominal_declarations, position).clone()
+        if len(declaration.type_parameters) != 0:
+            continue
+        declaration.name = declaration.carrier_name()
+        if not retains_concrete_nominal(context.nominal_declarations, declaration)?:
+            context.nominal_declarations.push(declaration.clone())
+    return Ok(None)
+
+
+def append_concrete_enums(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+    """Append only physical enum layouts; open templates stay in the retained source context."""
+    for position in range(len(module.enum_declarations)):
+        mut declaration = borrowed_at(module.enum_declarations, position).clone()
+        if len(declaration.type_parameters) != 0:
+            continue
+        declaration.name = declaration.carrier_name()
+        if not retains_concrete_enum(context.enum_declarations, declaration)?:
+            context.enum_declarations.push(declaration.clone())
+    return Ok(None)
+
+
+def append_runtime_storage(mut context: &mut BodyIrModule, module: &BodyIrModule) -> None:
+    """Append new static, decorator, callable, and union records in refreshed module order."""
+    for declaration in module.static_declarations:
+        if not context.static_declarations.contains(declaration):
+            context.static_declarations.push(declaration.clone())
+    for binding in module.decorated_bindings:
+        if not context.decorated_bindings.contains(binding):
+            context.decorated_bindings.push(binding.clone())
+    for callable in module.loaf_callables:
+        if not context.loaf_callables.contains(callable):
+            context.loaf_callables.push(callable.clone())
+    for declaration in module.native_union_declarations:
+        if not context.native_union_declarations.contains(declaration):
+            context.native_union_declarations.push(declaration.clone())
+
+
+def retains_source_nominal(
+    declarations: &list[NominalDeclaration],
+    candidate: &NominalDeclaration,
+) -> Result[bool, str]:
+    """Reuse an exact source template and refuse one canonical declaration with conflicting facts."""
+    for declaration in declarations:
+        if declaration.canonical != candidate.canonical:
+            continue
+        if declaration != candidate:
+            return Err(f"unsupported Body IR conflicting continuation nominal records {candidate.name}")
+        return Ok(true)
+    return Ok(false)
+
+
+def retains_source_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Reuse an exact source enum template and refuse one canonical declaration with conflicting facts."""
+    for declaration in declarations:
+        if declaration.canonical != candidate.canonical:
+            continue
+        if declaration != candidate:
+            return Err(f"unsupported Body IR conflicting continuation enum records {candidate.name}")
+        return Ok(true)
+    return Ok(false)
+
+
+def retains_concrete_nominal(
+    declarations: &list[NominalDeclaration],
+    candidate: &NominalDeclaration,
+) -> Result[bool, str]:
+    """Reuse one exact concrete nominal specialization without conflating sibling argument lists."""
+    for declaration in declarations:
+        if (
+            declaration.canonical != candidate.canonical
+            or declaration.native_type_arguments != candidate.native_type_arguments
+        ):
+            continue
+        if declaration != candidate:
+            return Err(f"unsupported Body IR conflicting continuation nominal layouts {candidate.name}")
+        return Ok(true)
+    return Ok(false)
+
+
+def retains_concrete_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Reuse one exact concrete enum specialization without conflating sibling argument lists."""
+    for declaration in declarations:
+        if (
+            declaration.canonical != candidate.canonical
+            or declaration.native_type_arguments != candidate.native_type_arguments
+        ):
+            continue
+        if declaration != candidate:
+            return Err(f"unsupported Body IR conflicting continuation enum layouts {candidate.name}")
+        return Ok(true)
+    return Ok(false)

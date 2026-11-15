@@ -1,0 +1,72 @@
+"""Encode every property in the complete metadata tree without interpreting or executing it."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_native_signed
+from crate.primitives.crumb.hash_stream import HashOutput
+from crate.primitives.crumb.values import Metadata, MetadataEntry
+from crate.primitives.crumb.names import valid_name
+from crate.primitives.text import encode_utf8
+
+
+pub def emit_metadata(value: Metadata, mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
+    """D preserves list order and exact strings, while map keys have unique UTF-8 byte ordering."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = emit_inner(value, output, budget)
+    budget.leave()?
+    return result
+
+
+def emit_inner(value: Metadata, mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
+    """Unknown property semantics do not justify erasing their data from this metadata contribution."""
+    match value:
+        Metadata.Null => return output.write(b"\x00", budget)
+        Metadata.Boolean(flag) =>
+            if flag:
+                return output.write(b"\x01\x01", budget)
+            return output.write(b"\x01\x00", budget)
+        Metadata.Integer(number) =>
+            output.write(b"\x02", budget)?
+            return output.write(encode_native_signed(number, budget)?, budget)
+        Metadata.Text(text) =>
+            output.write(b"\x03", budget)?
+            return output.text(text, budget)
+        Metadata.Binary(data) =>
+            output.write(b"\x04", budget)?
+            return output.framed(data, budget)
+        Metadata.Symbol(path) =>
+            output.write(b"\x07", budget)?
+            return output.text(path, budget)
+        Metadata.List(items) =>
+            output.write(b"\x05", budget)?
+            output.unsigned(len(items), budget)?
+            for item in items:
+                emit_metadata(item, output, budget)?
+        Metadata.Map(entries) => return emit_map(entries, output, budget)
+    return Ok(None)
+
+
+def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
+    """Reject duplicate keys before emitting their table; never silently apply last-write-wins."""
+    mut keys: list[tuple[bytes, int]] = []
+    mut seen: set[str] = set()
+    for index in range(len(entries)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(16)?
+        key = entries[index].key
+        if not valid_name(key):
+            return Err(CrumbError.invalid_input("metadata map key is not a property name"))
+        for _ in range(12):
+            budget.charge_bytes(len(key))?
+        if key in seen:
+            return Err(CrumbError.invalid_input("duplicate metadata key"))
+        seen.add(key)
+        keys.append((encode_utf8(key), index))
+    output.write(b"\x06", budget)?
+    output.unsigned(len(entries), budget)?
+    for pair in sorted(keys):
+        entry = entries[pair[1]]
+        output.text(entry.key, budget)?
+        emit_metadata(entry.value, output, budget)?
+    return Ok(None)

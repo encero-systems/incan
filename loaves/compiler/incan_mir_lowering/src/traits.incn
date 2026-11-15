@@ -1,78 +1,232 @@
 """Concrete source-trait specialization and checker-selected static dispatch."""
 
+from table_views import borrowed_at, borrowed_table
 from rust::incan_semantics_core import (
+    HirSourceSpan,
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     CanonicalSymbolId,
+    SymbolOrigin,
     SemanticSourceTargetKind,
     function_type,
     generic,
+    native_array_type,
 )
 from rust::std::cmp import PartialEq
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
     MethodTarget,
     NamedCallableTarget,
     ArgumentElement,
     Operand as RustOperand,
+    Place as RustPlace,
     TraitImplementation,
     TraitTypeArgument,
-    NominalDeclaration,
+    TraitDefaultInstantiation,
 )
-from pub::incan_mir_plan import Local, SourceSpan, PlanType, EnumDeclaration
+from pub::incan_mir_plan import SourceSpan, PlanType
+from frame import Builder
+from program_context import body_at
 from classes import receiver_mode, frame_type
 from models import model_type, model_place, place_type
 from enums import enum_type
 from decls import library_item, library_enum_item
+from type_parameters import substitute
+from element_places import is_element_place, element_place_type
+from static_storage import computed_static_type
+from native_type_identity import ConstructorIndex
 
 
-pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
-    """Bind defaults to frontend-retained adopters, preserving generic owner frames for layout specialization."""
-    mut implementations: list[TraitImplementation] = []
-    append_records(implementations, module)
-    mut owners: list[NominalDeclaration] = []
-    append_owners(owners, module)
-    return specialize_for(module, implementations, owners)
-
-
-pub def specialize_project_traits(module: &BodyIrModule, modules: list[BodyIrModule]) -> Result[BodyIrModule, str]:
+pub def append_specialized_project_trait_bodies(
+    module: &BodyIrModule,
+    modules: &list[BodyIrModule],
+    mut bodies: list[Body],
+) -> Result[None, str]:
     """
     Instantiate this module's open defaults for every adopter of the project the frontend retained.
 
     An imported trait's default lives in the module that declares the trait, while its adopter's implementation records live in the adopter's module, so the records of every module are consulted. Each instance keeps the default's canonical identity, and with it the declaring module's source provenance. A generic receiver keeps its owner's ordered parameters until nominal specialization closes the checked instance.
     """
+    mut has_default = false
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
+        if is_default_body(module, body):
+            has_default = true
+            break
+    if not has_default:
+        for body_position in range(len(module.bodies)):
+            bodies.append(borrowed_at(module.bodies, body_position).clone())
+        return Ok(None)
     mut implementations: list[TraitImplementation] = []
     mut owners: list[NominalDeclaration] = []
+    mut enum_owners: list[RustEnumDeclaration] = []
     for adopter in modules:
         append_records(implementations, adopter)
-        append_owners(owners, adopter)
-    return specialize_for(module, implementations, owners)
+        append_layouts(owners, enum_owners, adopter)
+    return append_specialized_bodies(module, implementations, owners, enum_owners, bodies)
+
+
+pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
+    """Identify a retained trait method body, including receiver-free associated defaults."""
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            for protocol_position in range(len(module.trait_declarations)):
+                owner = borrowed_at(module.trait_declarations, protocol_position)
+                if (
+                    owner.origin == identity.origin
+                    and owner.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= owner.declaration_span.end
+                ):
+                    return true
+    return false
+
+
+pub def append_default_type_bindings(
+    module: &BodyIrModule,
+    body: &Body,
+    receiver: PlanType,
+    mut names: list[str],
+    mut arguments: list[RustType],
+) -> Result[None, str]:
+    """
+    Retain a concrete default's checked declaring-trait bindings beside its class and method arguments.
+
+    1. Select the receiver's canonical owner from its validated frame.
+    2. Read only that owner's implementation of this exact default body.
+    3. Close the bindings in the adopter scope before entering the default's declaring scope.
+    """
+    # 1. A non-receiver frame has no inherited trait environment.
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return Ok(None)
+    mut owner = receiver
+    match receiver:
+        PlanType.ModelRef(index, name) => owner = PlanType.Model(index, name)
+        PlanType.ModelMutRef(index, name) => owner = PlanType.Model(index, name)
+        PlanType.EnumRef(index, name) => owner = PlanType.Enum(index, name)
+        _ => pass
+    identity = owner_identity(module, owner)?
+    # 2. A default shared by several adopters keeps each adopter's own checked bindings.
+    mut selected: Option[TraitImplementation] = None
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
+        if implementation.owner != identity or Some(implementation.implementation) != body.canonical:
+            continue
+        match owner:
+            PlanType.Model(_index, _name) =>
+                if not receiver_selects_slot_arguments(module, implementation, owner):
+                    continue
+            _ => pass
+        match selected:
+            Some(previous) =>
+                if previous.type_arguments != implementation.type_arguments:
+                    return Err("unsupported Body IR conflicting default frame instantiations")
+                continue
+            None => selected = Some(implementation.clone())
+    # 3. Statement facts keep the declaring trait's scope, independently of the adopter's binder spellings.
+    match selected:
+        Some(implementation) =>
+            return merge_default_type_bindings(body, implementation.type_arguments, names, arguments)
+        None => return Ok(None)
+
+
+def merge_default_type_bindings(
+    body: &Body,
+    bindings: list[TraitTypeArgument],
+    mut names: list[str],
+    mut arguments: list[RustType],
+) -> Result[None, str]:
+    """Close every adoption argument before a declaring-trait binder shadows an adopter binder of the same name."""
+    mut closed: list[RustType] = []
+    for binding in bindings:
+        concrete: RustType = substitute(binding.argument, names, arguments)?
+        closed.append(concrete.clone())
+    for slot in range(len(bindings)):
+        parameter = str(bindings[slot].parameter)
+        mut existing = -1
+        for index in range(len(names)):
+            if names[index] == parameter:
+                existing = index
+                break
+        if existing < 0:
+            names.append(parameter)
+            arguments.append(closed[slot].clone())
+            continue
+        if arguments[existing] != closed[slot]:
+            for method_parameter in body.type_parameters:
+                if str(method_parameter) == parameter:
+                    return Err(f"unsupported Body IR shadowed trait and method type parameter {parameter}")
+        arguments[existing] = closed[slot].clone()
+    return Ok(None)
+
+
+pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
+    """
+    Keep dependency generic-owner methods governed until a call or native bridge selects them.
+
+    Discovering an imported layout does not authorize execution of every closed receiver method. Source methods keep
+    their ordinary root policy, and trait defaults retain their existing call-driven scheduling.
+    """
+    if is_default_body(module, body):
+        return true
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return false
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method:
+                return false
+            match identity.origin:
+                SymbolOrigin.Package(library=_library, module_path=_path) => pass
+                _ => return false
+            for nominal_position in range(len(module.nominal_declarations)):
+                owner = borrowed_at(module.nominal_declarations, nominal_position)
+                if (
+                    len(owner.type_parameters) != 0
+                    and owner.canonical.origin == identity.origin
+                    and owner.canonical.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= owner.canonical.declaration_span.end
+                ):
+                    return true
+    return false
 
 
 def append_records(mut records: list[TraitImplementation], module: &BodyIrModule) -> None:
     """Copy one module's implementation records through the explicit interop clone the opaque Rust type needs."""
-    for implementation in module.trait_implementations:
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
         records.append(implementation.clone())
 
 
-def append_owners(mut owners: list[NominalDeclaration], module: &BodyIrModule) -> None:
-    """Retain the checked owner frames whose parameters a default's Self must carry into layout specialization."""
-    for declaration in module.nominal_declarations:
-        owners.append(declaration.clone())
+def append_layouts(
+    mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    module: &BodyIrModule,
+) -> None:
+    """Retain each module's owner layouts once for the borrowed trait-specialization lookup tables."""
+    for nominal_position in range(len(module.nominal_declarations)):
+        owner = borrowed_at(module.nominal_declarations, nominal_position)
+        owners.append(owner.clone())
+    for enum_position in range(len(module.enum_declarations)):
+        owner = borrowed_at(module.enum_declarations, enum_position)
+        enums.append(owner.clone())
 
 
-def specialize_for(
+def append_specialized_bodies(
     module: &BodyIrModule,
     implementations: list[TraitImplementation],
-    owners: list[NominalDeclaration],
-) -> Result[BodyIrModule, str]:
+    mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut result: list[Body],
+) -> Result[None, str]:
     """Replace each open default of the module by one instance per adopter whose implementation it is."""
-    mut result = module.clone()
-    result.bodies.clear()
-    for body in module.bodies:
-        if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
-            result.bodies.push(body.clone())
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
+        if not is_default_body(module, body):
+            result.append(body.clone())
             continue
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
         # adopter still receives a single instantiation of it.
@@ -83,14 +237,14 @@ def specialize_for(
             if not first_instantiation(instantiated, implementation)?:
                 continue
             instantiated.append(implementation.clone())
-            concrete: RustType = concrete_self_type(implementation.owner, owners)?
+            concrete: RustType = concrete_self_type(implementation.owner, owners, enums)?
             # A default with overlapping owner/method scopes is not representable by the current flat binding
             # environment. Do not construct that unused instance; selecting it still refuses at method_index.
             # In particular, never substitute the adopter's U for the default's independent method U.
             if deferred_shadowed_default(body, concrete, implementation.type_arguments):
                 continue
-            result.bodies.push(specialize_body(body, concrete, implementation.type_arguments))
-    return Ok(result)
+            result.append(specialize_body(body, concrete, implementation.type_arguments))
+    return Ok(None)
 
 
 def deferred_shadowed_default(body: &Body, concrete: &RustType, arguments: list[TraitTypeArgument]) -> bool:
@@ -110,7 +264,7 @@ def deferred_shadowed_default(body: &Body, concrete: &RustType, arguments: list[
     return false
 
 
-def first_instantiation(retained: list[TraitImplementation], candidate: &TraitImplementation) -> Result[bool, str]:
+def first_instantiation(retained: list[TraitImplementation], candidate: TraitImplementation) -> Result[bool, str]:
     """Report whether this adopter has no instantiation of the default yet; a conflicting second one refuses."""
     for implementation in retained:
         if implementation.owner != candidate.owner:
@@ -124,6 +278,10 @@ def first_instantiation(retained: list[TraitImplementation], candidate: &TraitIm
 def specialize_body(body: &Body, concrete: &RustType, arguments: list[TraitTypeArgument]) -> Body:
     """Instantiate a trait default for one adopter: same statements and identities, Self and type parameters closed."""
     mut result = body.clone()
+    mut retained_arguments: list[TraitTypeArgument] = []
+    for argument in arguments:
+        retained_arguments.append(argument.clone())
+    result.set_trait_default_instantiation(concrete.clone(), retained_arguments)
     mut parameters: list[str] = []
     for parameter in body.type_parameters:
         if not is_adoption_parameter(str(parameter), arguments):
@@ -137,7 +295,41 @@ def specialize_body(body: &Body, concrete: &RustType, arguments: list[TraitTypeA
         result.params[index].ty = parameter_type
     return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
     result.return_type = return_type
+    # Adoption closes trait binders before the default's own method binders are instantiated.
+    match result.checked_input_profile:
+        Some(profile) =>
+            mut closed_profile = profile.clone()
+            mut requirements: list[tuple[HirSourceSpan, RustType]] = []
+            for requirement in profile.result_requirements:
+                anchor, required_type = requirement
+                closed_type: RustType = instantiate_type(required_type, concrete, arguments)
+                requirements.append((anchor, closed_type))
+            closed_profile.result_requirements = requirements
+            result.checked_input_profile = Some(closed_profile)
+        None => pass
     return result
+
+
+pub def close_trait_dispatch_arguments(
+    environment: Option[TraitDefaultInstantiation],
+    arguments: list[RustType],
+) -> list[RustType]:
+    """
+    Close trait-scoped dispatch facts while preserving independent method parameters.
+
+    1. Read the default's retained adoption scope, if present.
+    2. Substitute that scope through each checked dispatch argument.
+    """
+    # 1. Read the adoption scope independently of the method's own bindings.
+    match environment:
+        None => return arguments
+        Some(retained) =>
+            # 2. Close trait facts using the same substitution as the specialized frame types.
+            mut closed: list[RustType] = []
+            for argument in arguments:
+                item: RustType = instantiate_type(argument, retained.receiver_type, retained.arguments)
+                closed.append(item.clone())
+            return closed
 
 
 def is_adoption_parameter(name: str, arguments: list[TraitTypeArgument]) -> bool:
@@ -157,6 +349,15 @@ def instantiate_type(ty: &RustType, concrete: &RustType, arguments: list[TraitTy
     match ty:
         RustType.SelfType => return concrete.clone()
         RustType.TypeVar(name) => return type_argument(ty, str(name), arguments)
+        RustType.Ref(inner) =>
+            closed: RustType = instantiate_type(inner, concrete, arguments)
+            return RustType.Ref(closed)
+        RustType.RefMut(inner) =>
+            closed: RustType = instantiate_type(inner, concrete, arguments)
+            return RustType.RefMut(closed)
+        RustType.NativeArray(element=element, length=length) =>
+            closed: RustType = instantiate_type(element, concrete, arguments)
+            return native_array_type(closed, length.clone())
         RustType.Generic(base=base, args=elements) =>
             mut closed: list[RustType] = []
             for element in elements:
@@ -196,12 +397,16 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
     return RustType.Tuple(elements)
 
 
-def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaration]) -> Result[RustType, str]:
+def concrete_self_type(
+    owner: CanonicalSymbolId,
+    mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+) -> Result[RustType, str]:
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
 
-    A canonical owner lookup supplies the declared frame; the trait's arguments never stand in for independent owner
-    arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
+    An exact owner lookup supplies the nominal or enum carrier and its frame. Trait arguments never replace owner arguments.
+    Missing layouts are refused.
     """
     for declaration in owners:
         if not PartialEq.eq(declaration.canonical, owner):
@@ -212,120 +417,137 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
         for parameter in declaration.type_parameters:
             placeholder: RustType = RustType.TypeVar(str(parameter))
             arguments.append(placeholder.clone())
-        return Ok(generic(str(declaration.name), arguments))
-    if owner.kind == SemanticSourceTargetKind.Enum:
-        return Ok(RustType.Named(str(owner.declaration_name)))
+        return Ok(generic(str(declaration.template_carrier_name()), arguments))
+    for declaration in enums:
+        if PartialEq.eq(declaration.canonical, owner):
+            return Ok(RustType.Named(declaration.carrier_name()))
     return Err("unsupported Body IR trait default without retained owner layout")
 
 
 pub def receiver_fills_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
-) -> bool:
+) -> Result[bool, str]:
     """
     Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.
 
     Such a slot dispatches to that body, ahead of any behavior a standard derive gives the slot, because the adopter's
     own method is what legacy calls. A receiver that is not a retained nominal has no record.
     """
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
-        Ok(owner) =>
-            match owner_identity(module, owner):
-                Ok(identity) =>
-                    for implementation in module.trait_implementations:
-                        if implementation.owner == identity and Some(implementation.method) == target.canonical:
-                            return true
-                    return false
-                Err(_error) => return false
-        Err(_error) => return false
+    match receiver_owner(module, builder, argument, span)?:
+        None => return Ok(false)
+        Some(owner) =>
+            identity = owner_identity(module, owner)?
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
+                if implementation.owner == identity and Some(implementation.method) == target.canonical:
+                    return Ok(true)
+            return Ok(false)
 
 
 pub def receiver_fills_source_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
-) -> bool:
+) -> Result[bool, str]:
     """Keep a checked source adopter on its own slot even when its required published default is unavailable."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
-        Err(_error) => return false
-        Ok(owner) =>
-            match owner:
-                PlanType.Model(index, _name) =>
-                    if library_item(module.nominal_declarations[index]) != "":
-                        return false
-                PlanType.Enum(index, _name) =>
-                    if index >= len(module.enum_declarations):
-                        return false
-                    if library_enum_item(module.enum_declarations[index]) != "":
-                        return false
-                _ => return false
-            return receiver_fills_slot(module, target, locals, argument, span, unions, intrinsics)
+    match receiver_owner(module, builder, argument, span)?:
+        None => return Ok(false)
+        Some(owner) =>
+            if not source_owner(module, owner):
+                return Ok(false)
+            return receiver_fills_slot(module, target, builder, argument, span)
+
+
+def source_owner(module: &BodyIrModule, owner: PlanType) -> bool:
+    """Whether a receiver owner is a model or enum declared in source rather than an opaque library item."""
+    match owner:
+        PlanType.Model(index, _name) => return library_item(borrowed_at(module.nominal_declarations, index)) == ""
+        PlanType.Enum(index, _name) =>
+            if index >= len(module.enum_declarations):
+                return false
+            return library_enum_item(borrowed_at(module.enum_declarations, index)) == ""
+        _ => return false
 
 
 pub def receiver_fills_retained_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
-) -> bool:
+) -> Result[bool, str]:
     """Prefer an adopter's checked implementation only when its executable body is retained in this program."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
-        Err(_error) => return false
-        Ok(owner) =>
-            match owner_identity(module, owner):
-                Err(_error) => return false
-                Ok(identity) =>
-                    for implementation in module.trait_implementations:
-                        if implementation.owner != identity or Some(implementation.method) != target.canonical:
-                            continue
-                        for body in module.bodies:
-                            if body.canonical == Some(implementation.implementation):
-                                return true
-                    return false
+    match receiver_owner(module, builder, argument, span)?:
+        None => return Ok(false)
+        Some(owner) =>
+            identity = owner_identity(module, owner)?
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
+                if implementation.owner != identity or Some(implementation.method) != target.canonical:
+                    continue
+                for body_position in range(len(module.bodies)):
+                    body = borrowed_at(module.bodies, body_position)
+                    if body.canonical == Some(implementation.implementation):
+                        return Ok(true)
+            return Ok(false)
 
 
 pub def method_index(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
-    owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
-    return owner_method_index(module, target, owner, intrinsics)
+    match receiver_owner(module, builder, argument, span)?:
+        Some(owner) => return owner_method_index(module, target, owner, builder)
+        None => return Err(f"unsupported Body IR trait-object receiver at {span.line}:{span.column}")
 
 
-pub def owner_method_index(
+pub def receiver_method_identity(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    mut builder: Builder,
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Use the same checked adopter selection for a compiled method and a retained executable body."""
+    match receiver_owner(module, builder, argument, span)?:
+        Some(owner) => return Ok(Some(owner_method_identity(module, target, owner)?))
+        None => return Ok(target.canonical.clone())
+
+
+def owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
     owner: PlanType,
-    intrinsics: list[EnumDeclaration],
-) -> Result[int, str]:
-    """
-    Select one checked implementation for a known receiver; several trait instantiations need an explicit call-site selection.
-    A missing executable body stays refused by its selected method name; the name never selects an implementation.
-    """
-    match target.canonical:
+) -> Result[CanonicalSymbolId, str]:
+    """Select the retained implementation once for both compiled Loaf calls and locally instantiated method bodies."""
+    return owner_callable_identity(module, target.canonical, str(target.name), target.trait_arguments, owner)
+
+
+def owner_callable_identity(
+    module: &BodyIrModule,
+    checked: Option[CanonicalSymbolId],
+    name: str,
+    trait_arguments: Option[list[RustType]],
+    owner: PlanType,
+) -> Result[CanonicalSymbolId, str]:
+    """Select one concrete owner's retained implementation for instance and associated trait calls."""
+    match checked:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
     identity = owner_identity(module, owner)?
-    mut canonical = target.canonical.clone()
-    for declaration in module.nominal_declarations:
+    mut canonical = checked.clone()
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
         if declaration.canonical != identity:
             continue
         match declaration.class_inheritance:
@@ -336,24 +558,129 @@ pub def owner_method_index(
                         canonical = Some(implementation.implementation.clone())
                         break
     mut selected: Option[TraitImplementation] = None
-    for implementation in module.trait_implementations:
+    for implementation_position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, implementation_position)
         if implementation.owner == identity and Some(implementation.method) == canonical:
+            if not selected_slot_arguments(module, trait_arguments, implementation, owner):
+                continue
             match selected:
                 Some(previous) =>
-                    if previous.implementation != implementation.implementation or previous.type_arguments != implementation.type_arguments:
+                    if (
+                        previous.implementation != implementation.implementation
+                        or previous.type_arguments != implementation.type_arguments
+                    ):
                         return Err("unsupported Body IR trait method at several instantiations for one receiver")
-                None =>
-                    selected = Some(implementation.clone())
+                None => selected = Some(implementation.clone())
     match selected:
-        Some(implementation) =>
-            canonical = Some(implementation.implementation.clone())
+        Some(implementation) => canonical = Some(implementation.implementation.clone())
+        None =>
+            mut needs_declared_fallback = true
+            match canonical:
+                Some(method) => needs_declared_fallback = not method_belongs_to_owner(method, identity)
+                None => pass
+            if needs_declared_fallback:
+                match declared_owner_method(module, identity, name)?:
+                    Some(implementation) => canonical = Some(implementation)
+                    None => pass
+    match canonical:
+        Some(identity) => return Ok(identity.clone())
+        None => return Err("unsupported Body IR unproven Method")
+
+
+def declared_owner_method(
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    name: str,
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Select one retained method body declared directly by the concrete receiver when no trait record names it."""
+    mut selected: Option[CanonicalSymbolId] = None
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
+        match body.canonical:
+            Some(identity) =>
+                if (
+                    identity.origin != owner.origin
+                    or identity.kind != SemanticSourceTargetKind.Method
+                    or identity.declaration_name != name
+                    or identity.declaration_span.start < owner.declaration_span.start
+                    or identity.declaration_span.end > owner.declaration_span.end
+                ):
+                    continue
+                match selected:
+                    Some(previous) =>
+                        if previous != identity:
+                            return Err("unsupported Body IR several declared methods for one receiver slot")
+                    None => selected = Some(identity.clone())
+            None => pass
+    return Ok(selected)
+
+
+def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId) -> bool:
+    """Preserve an exact checked overload when its canonical declaration is already inside the receiver owner."""
+    return (
+        method.origin == owner.origin
+        and method.kind == SemanticSourceTargetKind.Method
+        and method.declaration_span.start >= owner.declaration_span.start
+        and method.declaration_span.end <= owner.declaration_span.end
+    )
+
+
+def selected_slot_arguments(
+    module: &BodyIrModule,
+    trait_arguments: Option[list[RustType]],
+    implementation: &TraitImplementation,
+    owner: PlanType,
+) -> bool:
+    """Match a checked trait instantiation without mixing it with a default body's independent bindings."""
+    match trait_arguments:
+        Some(arguments) => return arguments == implementation.slot_arguments
         None => pass
+    return receiver_selects_slot_arguments(module, implementation, owner)
+
+
+def receiver_selects_slot_arguments(
+    module: &BodyIrModule,
+    implementation: &TraitImplementation,
+    owner: PlanType,
+) -> bool:
+    """Select the checked adoption of one concrete receiver even when several instances share its declaration."""
+    if len(implementation.slot_arguments) == 0:
+        return true
+    selected_method: CanonicalSymbolId = implementation.method.clone()
+    match owner:
+        PlanType.Model(index, _name) =>
+            for adoption in borrowed_at(module.nominal_declarations, index).trait_adoptions:
+                if adoption.arguments != implementation.slot_arguments:
+                    continue
+                match adoption.methods:
+                    Some(methods) =>
+                        for index in range(len(methods)):
+                            method: CanonicalSymbolId = methods[index].clone()
+                            if method == selected_method:
+                                return true
+                    None => pass
+        _ => pass
+    return false
+
+
+pub def owner_method_index(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    owner: PlanType,
+    mut builder: Builder,
+) -> Result[int, str]:
+    """Find the selected body's exact receiver frame; a compiled Loaf implementation uses its callable record instead."""
+    identity = owner_identity(module, owner)?
+    selected_identity = owner_method_identity(module, target, owner)?
+    canonical = Some(selected_identity)
+    candidate_indices = builder.program.body_indices.candidates(selected_identity)
     mut selected_index = -1
-    for index in range(len(module.bodies)):
-        body = module.bodies[index]
+    for index in candidate_indices:
+        body = body_at(module.bodies, index)
         if body.canonical != canonical or len(body.params) == 0:
             continue
-        receiver = frame_type(module, body.locals[0], intrinsics)?
+        first = borrowed_at(body.locals, 0)
+        receiver = frame_type(builder.constructors, builder.nominals, builder.enums, first, builder.intrinsics)?
         if not receiver_matches(receiver, owner):
             continue
         match receiver_mode(body.locals[0].origin):
@@ -361,7 +688,7 @@ pub def owner_method_index(
             None => return Err("unsupported Body IR Method without receiver")
         if selected_index >= 0:
             # Repeated publication of the same checked body is harmless; differing executable facts are ambiguous.
-            if body != module.bodies[selected_index]:
+            if body != body_at(module.bodies, selected_index):
                 return Err("unsupported Body IR conflicting selected method executable bodies")
         else:
             selected_index = index
@@ -370,7 +697,8 @@ pub def owner_method_index(
     # Diagnose only the existing refusal path; no candidate or receiver check above changes.
     mut candidate_count = 0
     mut candidates = ""
-    for body in module.bodies:
+    for index in candidate_indices:
+        body = body_at(module.bodies, index)
         if body.canonical != canonical:
             continue
         candidate_count += 1
@@ -379,23 +707,52 @@ pub def owner_method_index(
         if len(body.locals) == 0:
             candidates += f"{body.name}(params={len(body.params)}, receiver=<no locals>); "
             continue
-        match frame_type(module, body.locals[0], intrinsics):
+        match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
             Ok(receiver) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame={receiver:?}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame={receiver:?}); "
             Err(error) =>
-                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame_error={error}); "
+                candidates += f"{body.name}(params={len(body.params)}, raw_receiver={borrowed_at(body.locals, 0).ty}, frame_error={error}); "
     return Err(
         f"unsupported Body IR nonlocal or trait-object Method; target={target.canonical:?}; owner={owner:?}; owner_identity={identity:?}; implementation={canonical:?}; canonical_candidates={candidate_count}; candidates_limit=6; candidates=[{candidates}]",
     )
 
 
+pub def receiver_method_target(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    mut builder: Builder,
+    argument: &ArgumentElement,
+    span: SourceSpan,
+) -> Result[MethodTarget, str]:
+    """Read an implementation target from a retained concrete receiver; nonnominal calls keep their original target."""
+    match receiver_owner(module, builder, argument, span)?:
+        Some(owner) => return implementation_target(module, target, owner)
+        None => return Ok(target.clone())
+
+
+pub def implementation_target(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    owner: PlanType,
+) -> Result[MethodTarget, str]:
+    """Name the retained concrete implementation rather than its trait slot when calling an already compiled method."""
+    mut selected = target.clone()
+    canonical = owner_method_identity(module, target, owner)?
+    selected.canonical = Some(canonical)
+    if selected.canonical != target.canonical:
+        # The selected item is the implementation's ordinary compiled entry, not the trait's native generic item.
+        selected.loaf_trait = None
+        selected.native_trait_delegation = None
+    return Ok(selected)
+
+
 def owner_identity(module: &BodyIrModule, owner: PlanType) -> Result[CanonicalSymbolId, str]:
     """The retained declaration identity a model or source enum receiver owner fills its trait slots under."""
     match owner:
-        PlanType.Model(index, _name) => return Ok(module.nominal_declarations[index].canonical.clone())
+        PlanType.Model(index, _name) => return Ok(borrowed_at(module.nominal_declarations, index).canonical.clone())
         PlanType.Enum(index, _name) =>
             if index < len(module.enum_declarations):
-                return Ok(module.enum_declarations[index].canonical.clone())
+                return Ok(borrowed_at(module.enum_declarations, index).canonical.clone())
         _ => pass
     return Err("unsupported Body IR trait-object receiver")
 
@@ -418,45 +775,203 @@ def receiver_matches(receiver: PlanType, owner: PlanType) -> bool:
 
 def receiver_owner(
     module: &BodyIrModule,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
-) -> Result[PlanType, str]:
-    """Read the concrete model or source enum receiver from its native place, never from a method spelling."""
+) -> Result[Option[PlanType], str]:
+    """
+    Read the receiver's retained model or source enum from the checked type of the place it reads.
+
+    `None` is only a receiver that names no retained nominal: a trait object, a primitive or a literal. A place that
+    cannot be read is an error, never a fallback to the trait's checked slot.
+    """
     match argument.as_one():
-        Some(value) =>
-            match value:
-                RustOperand.Place(read) =>
-                    place = model_place(
-                        module.nominal_declarations,
-                        locals,
-                        read.place,
-                        span,
-                        module.enum_declarations,
-                        unions,
-                        intrinsics,
-                    )?
-                    match place_type(locals, place):
-                        PlanType.Model(owner, name) => return Ok(PlanType.Model(owner, name))
-                        PlanType.Enum(owner, name) =>
-                            if owner < len(module.enum_declarations):
-                                return Ok(PlanType.Enum(owner, name))
-                        _ => pass
-                    return Err("unsupported Body IR trait-object receiver")
-                _ => return Err("unsupported Body IR Method nonplace receiver")
         None => return Err("unsupported Body IR Method spread receiver")
+        Some(RustOperand.Place(read)) =>
+            return Ok(nominal_owner(module, receiver_place_type(builder, read.place, span)?))
+        Some(_value) => return Ok(None)
 
 
-pub def validate_static_receiver(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[None, str]:
-    """Require a concrete retained model or source enum for associated calls, never execute a bare trait's default."""
+def receiver_place_type(mut builder: Builder, place: RustPlace, span: SourceSpan) -> Result[PlanType, str]:
+    """The carrier a receiver place reads: a static's selected path, a collection element, or a frame model path."""
+    match place.global():
+        Some(global) => return computed_static_type(builder, place, global)
+        None => pass
+    if is_element_place(builder, place)?:
+        return element_place_type(builder, place)
+    # Deferred defaults read only the local-offset view of the frame's locals.
+    mut path = model_place(
+        builder.constructors,
+        builder.nominals,
+        borrowed_table(builder.locals),
+        place,
+        span,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+        builder.local_offset,
+    )?
+    path.local += builder.local_offset
+    return Ok(place_type(builder.locals, path))
+
+
+def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
+    """A retained model or source enum owns trait slots, including a receiver reached through stored reference."""
+    match actual:
+        PlanType.Model(owner, name) => return Some(PlanType.Model(owner, name))
+        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) => return Some(PlanType.Model(owner, name))
+        PlanType.Enum(owner, name) =>
+            if owner < len(module.enum_declarations):
+                return Some(PlanType.Enum(owner, name))
+        PlanType.EnumRef(owner, name) =>
+            if owner < len(module.enum_declarations):
+                return Some(PlanType.Enum(owner, name))
+        _ => pass
+    return None
+
+
+pub def validate_static_receiver(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[None, str]:
+    """Close the checked receiver in its active frame; only a retained model or enum admits an associated call."""
+    _ = static_receiver_owner(constructors, module, target, environment, names, arguments)?
+    return Ok(None)
+
+
+pub def static_receiver_target(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[NamedCallableTarget, str]:
+    """
+    Select the concrete implementation of a trait associated call after closing its bounded receiver.
+
+    Body IR retains the trait slot selected by checking and the receiver template independently. Lowering first closes
+    a default's Self through its adopting trait environment, then closes the active generic frame and uses the same
+    owner/implementation records as instance dispatch. When the selected implementation has a body in this module,
+    lowering replaces the trait slot's local call identity with that body's exact identity, including when the trait
+    itself came from an imported package.
+    """
+    if not is_trait_associated_target(module, target):
+        return Ok(target.clone())
+    match static_receiver_owner(constructors, module, target, environment, names, arguments)?:
+        None => return Ok(target.clone())
+        Some(owner) =>
+            selected_identity = owner_callable_identity(module, target.canonical, str(target.name), None, owner)?
+            if Some(selected_identity) == target.canonical:
+                return Ok(target.clone())
+            mut selected = target.clone()
+            selected.canonical = Some(selected_identity)
+            selected.direct_call_id = None
+            for body_position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, body_position)
+                if body.canonical == selected.canonical:
+                    selected.direct_call_id = Some(body.direct_call_id.clone())
+                    break
+            return Ok(selected)
+
+
+def is_trait_associated_target(module: &BodyIrModule, target: &NamedCallableTarget) -> bool:
+    """Return whether a retained adoption records this associated target as its checked trait slot."""
+    match target.canonical:
+        None => return false
+        Some(identity) =>
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
+                if implementation.method == identity:
+                    return true
+            return false
+
+
+def static_receiver_owner(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[Option[PlanType], str]:
+    """Close an associated call's checked receiver and return its retained nominal owner when present."""
     match target.receiver_type:
-        Some(ty) =>
-            match enum_type(module.enum_declarations, ty):
-                Some(_owner) => return Ok(None)
+        Some(template) =>
+            mut retained: RustType = template.clone()
+            match environment:
+                Some(instantiation) =>
+                    retained = instantiate_type(template, instantiation.receiver_type, instantiation.arguments)
                 None => pass
-            match model_type(module.nominal_declarations, ty)?:
-                PlanType.Model(_owner, _name) => return Ok(None)
+            target_name = str(target.name)
+            closed: RustType = substitute(retained, names, arguments).map_err(
+                (reason) => f"{reason} in static receiver of {target_name}",
+            )?
+            match enum_type(borrowed_table(module.enum_declarations), closed):
+                Some(owner) => return Ok(Some(owner))
+                None => pass
+            match model_type(constructors, module.nominal_declarations, closed)?:
+                PlanType.Model(owner, name) => return Ok(Some(PlanType.Model(owner, name)))
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)
+
+
+pub def associated_body_index(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    mut builder: Builder,
+) -> Result[Option[int], str]:
+    """Select the adopter-specific body only for a receiver-free trait default with a shared canonical identity."""
+    if not is_trait_associated_target(module, target):
+        return Ok(None)
+    owner = static_receiver_owner(
+        builder.constructors,
+        module,
+        target,
+        builder.trait_environment,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
+    match owner:
+        None => return Ok(None)
+        Some(selected_owner) =>
+            selected_identity = owner_callable_identity(module, target.canonical, str(target.name), None, selected_owner)?
+            candidate_indices = builder.program.body_indices.candidates(selected_identity)
+            mut selected = -1
+            for index in candidate_indices:
+                body = body_at(module.bodies, index)
+                if body.canonical != Some(selected_identity):
+                    continue
+                match body.trait_default_instantiation:
+                    None => continue
+                    Some(instantiation) =>
+                        mut concrete: Option[PlanType] = enum_type(
+                            borrowed_table(module.enum_declarations),
+                            instantiation.receiver_type,
+                        )
+                        match concrete:
+                            Some(_owner) => pass
+                            None =>
+                                concrete = nominal_owner(
+                                    module,
+                                    model_type(
+                                        builder.constructors,
+                                        module.nominal_declarations,
+                                        instantiation.receiver_type,
+                                    )?,
+                                )
+                        match concrete:
+                            Some(candidate_owner) =>
+                                if candidate_owner != selected_owner:
+                                    continue
+                            None => continue
+                if selected >= 0 and body != body_at(module.bodies, selected):
+                    return Err("unsupported Body IR conflicting associated default executable bodies")
+                selected = index
+            if selected >= 0:
+                return Ok(Some(selected))
+            return Ok(None)

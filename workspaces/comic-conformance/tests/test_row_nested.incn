@@ -1,0 +1,117 @@
+"""Finite recursive values and same-shaped nominal union members retain their written meaning."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.encoding_errors import BinaryFailure
+from std.primitives.crumb.types import AbsentPolicy, NominalKind, TypeNode
+from std.primitives.crumb.values import IntegerValue, Value, ValueField, Metadata, MetadataEntry
+from encoding_test_support import description, member, encoded, admitted
+
+
+def stored(value: Value) -> Value:
+    """A final field state, with no model constructor or input normalization involved."""
+    return Value.Record([ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=value)])
+
+
+def test_recursive_nominal_values_are_finite_and_share_depth() -> Result[None, str]:
+    """A recursive description admits a finite Some/None tree, and selection keeps the depth guard."""
+    declared = description(b"record\x00", [member(b"field1", "option<record@7265636f7264>")])
+    leaf = stored(Value.NoneValue)
+    root = stored(Value.Some([leaf]))
+    rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=root)], true)?)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=16).map_err((e) => e.message())?
+    result = rows.read_field(0, b"field1", budget).map_err((e) => e.message())?
+    match result:
+        Value.Some(children) =>
+            assert len(children) == 1
+            match children[0]:
+                Value.Record(fields) =>
+                    assert len(fields) == 1
+                    match fields[0].value:
+                        Value.NoneValue => pass
+                        _ => return Err("recursive leaf changed")
+                _ => return Err("recursive nominal record changed")
+        _ => return Err("recursive presence changed")
+    mut shallow = Budget.create(bytes=65536, elements=65536, depth=1).map_err((e) => e.message())?
+    match rows.read_field(0, b"field1", shallow):
+        Ok(_) => return Err("recursive selection escaped the depth budget")
+        Err(error) =>
+            assert error.kind == BinaryFailure.LimitExceeded
+    assert shallow.leave().is_err()
+    return Ok(None)
+
+
+def test_nominal_union_discriminator_survives_equal_shapes() -> Result[None, str]:
+    """Two structurally identical records remain distinct choices in the written union."""
+    left = description(b"aaaaaa\x00", [member(b"field1", "i8")])
+    right = description(b"bbbbbb\x00", [member(b"field1", "i8")])
+    root = description(b"zzzzzz\x00", [member(b"field1", "union<record@626262626262,record@616161616161>")])
+    selected = Value.Union(
+        TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []),
+        [stored(Value.Integer(IntegerValue.Signed(7i128)))],
+    )
+    records = [RowRecord(key=b"zzzzzz\x00", value=stored(selected))]
+    rows = admitted(encoded([root, right, left], records, true)?)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=32).map_err((e) => e.message())?
+    result = rows.read_field(0, b"field1", budget).map_err((e) => e.message())?
+    match result:
+        Value.Union(node, values) =>
+            assert len(values) == 1
+            match node:
+                TypeNode.Nominal(kind, _, Some(identity), arguments) =>
+                    assert kind == NominalKind.Record
+                    assert identity == b"bbbbbb"
+                    assert len(arguments) == 0
+                _ => return Err("union lost its nominal discriminator")
+        _ => return Err("union lost its selected member")
+    return Ok(None)
+
+
+def test_enum_projection_retains_known_variant_context() -> Result[None, str]:
+    """Post-admission lookup/limit errors still identify the already selected enum payload."""
+    variant = Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(b"tagone")),
+            MetadataEntry(key="name", value=Metadata.Text("Stored")),
+            MetadataEntry(key="fields", value=Metadata.List([member(b"field1", "i8")])),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+    source = Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Enum")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(b"enumxx\x00")),
+                MetadataEntry(key="path", value=Metadata.Text("example.Choice")),
+                MetadataEntry(key="variants", value=Metadata.List([variant])),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+            ],
+        ),
+        mode=DescriptionMode.Inline,
+    )
+    value = Value.Enum(
+        b"tagone",
+        [
+            ValueField(
+                identity=b"field1",
+                canonical=true,
+                absent=AbsentPolicy.Required,
+                value=Value.Integer(IntegerValue.Signed(7i128)),
+            ),
+        ],
+    )
+    rows = admitted(encoded([source], [RowRecord(key=b"enumxx\x00", value=value)], true)?)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    match rows.field_view(0, b"absent", budget):
+        Ok(_) => return Err("unknown enum field accepted")
+        Err(error) =>
+            assert error.kind == BinaryFailure.MissingField
+            assert error.variant == Some(b"tagone")
+    mut tiny = Budget.create(bytes=0, elements=64, depth=64).map_err((e) => e.message())?
+    match rows.read_field(0, b"field1", tiny):
+        Ok(_) => return Err("enum projection escaped the byte budget")
+        Err(error) =>
+            assert error.kind == BinaryFailure.LimitExceeded
+            assert error.variant == Some(b"tagone")
+    return Ok(None)

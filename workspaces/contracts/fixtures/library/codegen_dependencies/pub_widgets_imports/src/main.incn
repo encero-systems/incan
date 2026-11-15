@@ -1,0 +1,118 @@
+# behavior: multiple public and private generic enum instances preserve scalar and nested payloads across a compiled producer, alias imports, and consumer-only instantiation (#2512); a dependency's generic declarations and exports reach its consumers: a library model stores a callback using its owner type parameters and separate instantiations preserve the callback's input and result types, a dependency publishes the generic supertrait implied by a bare generic subtrait adoption so consumers can use both contracts, and a dependency's model, function and const are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
+# expect-stdout:
+#   8
+#   v:7
+#   7
+#   9
+#   ok
+#   default
+#   aliased
+#   1
+#   one
+#   2:two
+#   4
+#   consumer-only
+#   3:three
+#   nullary
+#   5
+#   retry
+
+from pub::widgets import Catalog, DEFAULT_NAME, Mapper, OrderedCatalog, Parcel, Widget as PublicWidget, make_widget
+from pub::widgets import (
+    Outcome as ImportedOutcome,
+    outcome_number,
+    outcome_text,
+    outcome_nested,
+    outcome_length,
+    outcome_echo,
+    private_summary,
+)
+from pub::widgets import Signal, empty_signal, Envelope, wrapped_outcome
+import pub::widgets as widgets_alias
+
+
+def double(value: int) -> int:
+    """Double one callback input."""
+    return value * 2
+
+
+def label(value: int) -> str:
+    """Render one callback input."""
+    return f"v:{value}"
+
+
+def first(catalog: Catalog[int]) -> int:
+    return catalog.item()
+
+
+def ordered(catalog: OrderedCatalog[int]) -> OrderedCatalog[int]:
+    return catalog.ordered()
+
+
+def show_generic_callable_field() -> None:
+    """Use the same library model with two distinct callback result types."""
+    println(Mapper(transform=double).apply(4))
+    println(Mapper(transform=label).apply(7))
+
+
+def show_implied_supertrait() -> None:
+    println(first(Parcel(value=7)))
+    println(ordered(Parcel(value=9)).item())
+
+
+def show_import_spellings() -> None:
+    w: PublicWidget = make_widget("ok")
+    println(w.name)
+    d: PublicWidget = make_widget(DEFAULT_NAME)
+    println(d.name)
+    println(widgets_alias.make_widget("aliased").name)
+
+
+def show_generic_outcomes() -> None:
+    """Match producer values and send newly constructed values back through the same declared ADT."""
+    match outcome_number():
+        ImportedOutcome.Complete(value) => println(value)
+        ImportedOutcome.Need(_messages) =>
+            assert false
+    match outcome_text():
+        ImportedOutcome.Complete(value) => println(value)
+        ImportedOutcome.Need(_messages) =>
+            assert false
+    match outcome_nested():
+        ImportedOutcome.Complete(values) =>
+            number, text = values[0]
+            println(f"{number}:{text}")
+        ImportedOutcome.Need(_messages) =>
+            assert false
+    local: ImportedOutcome[str] = ImportedOutcome.Complete("four")
+    println(outcome_length(local))
+    unseen: ImportedOutcome[float] = ImportedOutcome.Complete(3.5)
+    match outcome_echo(unseen):
+        ImportedOutcome.Complete(value) =>
+            assert value == 3.5
+            println("consumer-only")
+        ImportedOutcome.Need(_messages) =>
+            assert false
+    println(private_summary())
+    assert empty_signal() == empty_signal()
+    match empty_signal().clone():
+        Signal.Empty => println("nullary")
+        Signal.Value(_) =>
+            assert false
+    match wrapped_outcome():
+        case Envelope.Entry(outcome):
+            match outcome:
+                case ImportedOutcome.Complete(value): println(value)
+                case ImportedOutcome.Need(_): assert false
+    failure: ImportedOutcome[int] = ImportedOutcome.Need(["retry"])
+    match outcome_echo(failure):
+        ImportedOutcome.Need(messages) => println(messages[0])
+        ImportedOutcome.Complete(_) =>
+            assert false
+
+
+def main() -> None:
+    show_generic_callable_field()
+    show_implied_supertrait()
+    show_import_spellings()
+    show_generic_outcomes()

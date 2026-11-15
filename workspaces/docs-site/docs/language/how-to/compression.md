@@ -143,6 +143,7 @@ Common categories include `invalid_data`, `truncated_input`, `unsupported_codec`
 - Use `std.encoding` after compression when bytes need a text-safe representation.
 - Use hashing after compression only when the digest must cover the compressed bytes. Hash before compression when the digest must cover the original payload.
 - Keep password hashing and encryption separate from compression. They have different security contracts.
+- Use a separate API for archive containers such as ZIP or TAR, for dictionary training and for checksums: their compatibility contracts differ from byte compression, which `std.compression` alone provides.
 - Do not use raw Snappy unless another format specifically requires block-level Snappy behavior.
 
 ## See Also

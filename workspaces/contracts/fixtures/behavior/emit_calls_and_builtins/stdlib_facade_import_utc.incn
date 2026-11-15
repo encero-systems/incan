@@ -1,0 +1,12 @@
+# behavior: a function imported through the std.datetime facade resolves to its declaring module's definition and returns the zero offset
+# expect-stdout:
+#   Z
+#   0
+
+from std.datetime import utc
+
+
+def main() -> None:
+    offset = utc()
+    println(offset.isoformat())
+    println(offset.seconds)

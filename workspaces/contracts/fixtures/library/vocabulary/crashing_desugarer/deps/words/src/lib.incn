@@ -1,0 +1,6 @@
+"""Provide an ordinary library export beside the deliberately failing vocabulary."""
+
+
+pub def marker() -> int:
+    """Return the public library value."""
+    return 7

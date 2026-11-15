@@ -1,0 +1,11 @@
+# behavior: a payload owned by a matched local cannot escape as a view of an unrelated borrowed input (#2834).
+# expect-diagnostic: INCAN-T0124
+
+enum Message:
+    Text(str)
+
+
+def invalid(message: Owned[Message], source: Borrowed[str]) -> Borrowed[str] from source:
+    match message:
+        Message.Text(text) => return text
+    return source

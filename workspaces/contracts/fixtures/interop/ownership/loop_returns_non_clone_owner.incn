@@ -1,0 +1,80 @@
+# behavior: non-Clone Rust owners transfer through terminal loop paths and reassignment, including a consumed MutexGuard replaced before the loop backedge (#2256)
+# expect-stdout:
+#   false
+#   false
+#   used
+#   handle taken over
+#   1
+
+from rust::std::io import Stdout, stdin, stdout
+from rust::std::collections import HashMap
+from rust::std::sync import Condvar, Mutex
+
+
+def make() -> Mutex[int]:
+    """Return an owned mutex without cloning it."""
+    value = Mutex.new(7)
+    while true:
+        return value
+
+
+def make_with_break() -> Mutex[int]:
+    """Move the owner through the value of a loop expression."""
+    value = Mutex.new(9)
+    return loop:
+        break value
+
+
+def use_handle(mut output: Stdout) -> str:
+    _ = output.lock()
+    return "used"
+
+
+def show_loop_returns() -> None:
+    """Observe the transferred native owner."""
+    value = make()
+    println(value.is_poisoned())
+    other = make_with_break()
+    println(other.is_poisoned())
+
+
+def show_mut_parameter() -> None:
+    println(use_handle(stdout()))
+
+
+def show_reassigned_handle() -> None:
+    input = stdin()
+    handle = input
+    _ = handle.lock()
+    println("handle taken over")
+
+
+def show_replaced_guard(wait: bool) -> None:
+    """Replace a consumed guard twice with a false wait predicate and compile the unconditional spelling too."""
+    condition = Condvar.new()
+    mut values = HashMap.new[str, int]()
+    _ = values.insert("entry", 7)
+    mutex = Mutex.new(values)
+    mut guard = match mutex.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+
+    while wait:
+        guard = match condition.wait(guard):
+            Ok(value) => value
+            Err(error) => error.into_inner()
+
+    for _ in range(2):
+        guard = match condition.wait_while(guard, (entries) => entries.is_empty()):
+            Ok(value) => value
+            Err(error) => error.into_inner()
+
+    println(guard.len())
+
+
+def main() -> None:
+    """Observe each native ownership transfer, including repeated replacement of a consumed guard."""
+    show_loop_returns()
+    show_mut_parameter()
+    show_reassigned_handle()
+    show_replaced_guard(false)

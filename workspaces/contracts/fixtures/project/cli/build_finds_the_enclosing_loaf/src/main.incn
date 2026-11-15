@@ -1,0 +1,10 @@
+# behavior: `incan build` with no PATH, or with a directory inside a Loaf, builds the enclosing Loaf's program without running it, as 0.5.1 builds the project's main script (#3143).
+# cli-commands:
+#   build
+#   build src
+#   oven build
+# expect-stdout:
+# expect-exit: 0
+
+def main() -> None:
+    println("main must not run during a build")

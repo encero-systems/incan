@@ -1,0 +1,10 @@
+# behavior: std.web.response publishes the IntoResponse name 0.5.1 published, beside Response
+# expect-stdout:
+#   reply ready
+
+from std.web.response import IntoResponse, Response
+
+
+def main() -> None:
+    _ = Response.ok()
+    println("reply ready")

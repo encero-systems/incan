@@ -1,0 +1,9 @@
+[project]
+name = "dependency_default_with_shared_native_state"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+readers = { path = "deps/readers" }

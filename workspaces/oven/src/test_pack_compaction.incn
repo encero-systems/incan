@@ -1,0 +1,198 @@
+"""Pack compaction contracts: collection rewrites mostly-dead index packs, and a stopped compaction leaves one index."""
+
+from rust::std::env import current_exe
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from pub::incan_platform.store import begin, commit, get, put
+from pub::incan_platform.store.index import read_page
+from scratch import scratch_directory
+from store_path_conversion import collect_layouts, snapshot, store_path
+
+const KEYS: int = 2048
+const EDITS: int = 24
+
+
+model PackReport:
+    """
+    The packs in a store's index directory, their bytes, how many of those bytes are pages a view reaches, and the content
+    names of the leaves the views reach, sorted.
+    """
+
+    packs: int = 0
+    size: int = 0
+    live: int = 0
+    mostly_dead: int = 0
+    leaves: list[str] = []
+
+
+pub def test_collection_keeps_no_mostly_dead_index_pack() -> Result[None, str]:
+    """
+    A commit's pack holds every index page it wrote, and later commits replace most of them, so one live page used to
+    keep a whole pack. Collection rewrites the live pages of each pack that is less than half live into a new pack and
+    drops the old one: every pack it keeps is at least half live, and every key reads as before. A leaf moves with its
+    bytes, so it keeps its content name; only the pages above a moved page change, and they get new names.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    expected = aged_store(root)?
+    before = pack_report(root)?
+    assert before.mostly_dead > 1, "the aged store has no mostly-dead packs"
+    collect_layouts(root).map_err((error) => error.message())?
+    after = pack_report(root)?
+    assert after.mostly_dead == 0, f"collection kept {after.mostly_dead} mostly-dead packs of {after.packs}"
+    assert after.size <= 2 * after.live, f"collection kept {after.size} pack bytes for {after.live} live page bytes"
+    assert after.leaves == before.leaves, "a leaf compaction moved changed its content name"
+    verify_contents(root, expected)?
+    println(
+        f"pack compaction: {before.packs} packs, {before.size} bytes, {before.live} live; kept {after.packs} packs, {after.size} bytes, {after.live} live",
+    )
+    return Ok(None)
+
+
+pub def test_a_pack_compaction_stopped_at_any_boundary_leaves_one_complete_index() -> Result[None, str]:
+    """
+    Collection publishes the compacted index through the store's one switch. A process stopped at any of the 18
+    publication boundaries leaves either the old generation, whose packs are all present, or the compacted one: every
+    key reads as before, and the next collection completes the compaction.
+    """
+    if get_or("INCAN_STORE_PROOF_CHILD", "") == "repack":
+        return repack_child()
+    boundaries = [
+        "staging-created",
+        "delta-written",
+        "delta-synced",
+        "delta-replaced",
+        "segment-installed",
+        "pages-staged",
+        "pages-installed",
+        "manifest-written",
+        "manifest-synced",
+        "manifest-replaced",
+        "manifest-directory-synced",
+        "objects-ordered",
+        "pin-acquired",
+        "current-written",
+        "current-synced",
+        "current-replaced",
+        "current-durable",
+        "root-synced",
+    ]
+    scratch = scratch_directory()?
+    mut stopped: list[str] = []
+    for boundary in boundaries:
+        root = scratch.path().joinpath(boundary)
+        expected = aged_store(root)?
+        old = snapshot(root).map_err((error) => error.message())?.generation
+        mut command = proof_command("test_a_pack_compaction_stopped_at_any_boundary_leaves_one_complete_index")?
+        command.env("INCAN_STORE_PROOF_CHILD", "repack").env("INCAN_STORE_PROOF_ROOT", root.0)
+        command.env("INCAN_STORE_CRASH_AFTER", boundary)
+        status = command.output().map_err((error) => str(error))?.status
+        exited: i32 = 86
+        if status.code() == Some(exited):
+            stopped.append(boundary)
+        else:
+            assert status.success(), f"collection failed with boundary {boundary} requested"
+        reopened = snapshot(root).map_err((error) => error.message())?.generation
+        assert reopened == old or reopened == old + 1, f"boundary {boundary} left generation {reopened} after {old}"
+        verify_contents(root, expected)?
+        collect_layouts(root).map_err((error) => error.message())?
+        assert pack_report(root)?.mostly_dead == 0, f"after boundary {boundary} collection kept a mostly-dead pack"
+        verify_contents(root, expected)?
+    # A compaction writes no record frames and takes no execution pin, so it passes every other boundary.
+    elsewhere = ["delta-written", "delta-synced", "delta-replaced", "segment-installed", "pin-acquired"]
+    on_path = [name for name in boundaries if name not in elsewhere]
+    assert stopped == on_path, f"collection stopped at {stopped}"
+    println(f"pack compaction process-exit matrix: {len(boundaries)} boundaries, {len(stopped)} on its path, 0 partial indexes")
+    return Ok(None)
+
+
+def repack_child() -> Result[None, str]:
+    """Collect the store the parent aged; the requested publication boundary terminates the process."""
+    collect_layouts(Path(get_or("INCAN_STORE_PROOF_ROOT", ""))).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def proof_command(test: str) -> Result[Command, str]:
+    """Launch this exact native test again, so a process exit cannot be mistaken for a caught store error."""
+    executable = current_exe().map_err((error) => str(error))?.to_string_lossy().into_owned()
+    mut command = Command.new(executable)
+    command.arg("--exact").arg(test).arg("--nocapture").arg("--test-threads=1")
+    return Ok(command)
+
+
+def aged_store(root: Path) -> Result[Dict[str, str], str]:
+    """
+    A store whose packs are mostly dead: 2,048 keys in 64 leaves, then 24 commits that each change one key in a leaf no
+    later commit changes and one key in each of the last 32 leaves. Each of those commits but the last keeps one live
+    leaf of the 35 pages its pack holds. Returns every key's value.
+    """
+    mut expected: Dict[str, str] = {}
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(KEYS):
+        expected[key_name(item)] = "initial"
+        transaction = put(transaction, key_name(item), b"initial")
+    commit(transaction).map_err((error) => error.message())?
+    for edit in range(EDITS):
+        mut changed = begin(snapshot(root).map_err((error) => error.message())?)
+        mut items = [32 * edit]
+        for leaf in range(32, 64):
+            items.append(32 * leaf + edit % 32)
+        for item in items:
+            expected[key_name(item)] = f"edit {edit}"
+            changed = put(changed, key_name(item), f"edit {edit}".encode("utf-8"))
+        commit(changed).map_err((error) => error.message())?
+    return Ok(expected)
+
+
+def key_name(item: int) -> str:
+    """The `item`-th key, numbered so key order is item order."""
+    return f"key-{10000 + item}"
+
+
+def verify_contents(root: Path, expected: Dict[str, str]) -> Result[None, str]:
+    """Every key reads its expected value in the store's current generation."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    for key in sorted([name for name in expected.keys()]):
+        match get(latest, key).map_err((error) => error.message())?:
+            Some(value) =>
+                assert value == expected[key].encode("utf-8"), f"{key} reads another value"
+            None => return Err(f"{key} is missing")
+    return Ok(None)
+
+
+def pack_report(root: Path) -> Result[PackReport, str]:
+    """Every pack in the index directory, with the bytes of the pages the current views reach in each."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut live: Dict[str, int] = {}
+    mut leaves: list[str] = []
+    mut seen: set[str] = set()
+    mut pending: list[str] = [entry.root for entry in latest.views]
+    mut position = 0
+    while position < len(pending):
+        reference = pending[position]
+        position += 1
+        if reference == "" or reference in seen:
+            continue
+        seen.add(reference)
+        parts = reference.split(":")
+        live[parts[0]] = live.get(parts[0]).unwrap_or(0) + int(parts[2])
+        page = read_page(store_path(root), reference).map_err((error) => error.detail)?
+        if page.level == 0:
+            leaves.append(parts[3])
+        if page.level > 0:
+            for entry in page.entries:
+                pending.append(entry.child)
+    mut report = PackReport(leaves=sorted(leaves))
+    for path in root.joinpath("indexes").iterdir().map_err((error) => error.message())?:
+        name = path.name()
+        if not name.endswith(".pack"):
+            continue
+        size = path.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?
+        used = live.get(name[:len(name) - 5]).unwrap_or(0)
+        report.packs += 1
+        report.size += size
+        report.live += used
+        if used * 2 < size:
+            report.mostly_dead += 1
+    return Ok(report)

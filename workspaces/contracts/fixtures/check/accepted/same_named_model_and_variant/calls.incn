@@ -1,0 +1,11 @@
+pub enum CalleeKind:
+    FieldMetadata(int, int)
+    Plain
+
+
+pub model FieldMetadata:
+    pub name: str
+
+
+pub def first_name(fields: list[FieldMetadata]) -> str:
+    return fields[0].name

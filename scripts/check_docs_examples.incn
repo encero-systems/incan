@@ -1,0 +1,109 @@
+"""Keep documentation snippets and source-backed tutorials accepted and canonically formatted."""
+
+from rust::std::process import Command, exit
+from std.environ import args, get_or
+from std.fs import Path
+from check_support import repository_root, write_stderr
+
+const SOURCE_VERIFIED_PROJECTS: FrozenList[str] = [
+    "examples/advanced/async_worker_pipeline.incn",
+    "examples/advanced/library_package/producer/src/lib.incn",
+    "examples/advanced/library_package/consumer/src/main.incn",
+    "examples/advanced/typed_data_processor/src/main.incn",
+    "examples/advanced/typed_data_processor/tests/test_transform.incn",
+]
+const FORMAT_ONLY_EXAMPLES: FrozenList[str] = [
+    "examples/advanced/library_package/producer/src/pricing.incn",
+    "examples/advanced/typed_data_processor/src/domain.incn",
+    "examples/advanced/typed_data_processor/src/transform.incn",
+    "examples/rust_interop_regex/main.incn",
+    "examples/web/hello_web.incn",
+]
+
+
+pub model DocsExampleOptions:
+    """Caller-selected backend verification and offline resolution choices."""
+
+    pub build_web: bool
+    pub offline: bool
+
+
+def main() -> None:
+    """Parse options, verify documentation sources, and report configuration errors separately."""
+    arguments = args().unwrap_or([])
+    match parse_options(arguments[1:]):
+        Ok(options) =>
+            match verify(repository_root().unwrap_or(Path(".")), get_or("INCAN_BIN", get_or("INCAN", "incan")), options):
+                Ok(_) => exit(0)
+                Err(message) =>
+                    write_stderr(f"docs examples: {message}\n")
+                    exit(1)
+        Err(message) =>
+            write_stderr(f"docs examples: {message}\n")
+            exit(2)
+
+
+pub def parse_options(arguments: list[str]) -> Result[DocsExampleOptions, str]:
+    """Parse explicit backend and offline choices without process-global feature settings."""
+    mut build_web = false
+    mut offline = false
+    for argument in arguments:
+        if argument == "--build-web":
+            build_web = true
+        elif argument == "--offline":
+            offline = true
+        else:
+            return Err(f"unknown option `{argument}`; usage: check_docs_examples.incn [--build-web] [--offline]")
+    if offline and not build_web:
+        return Err("--offline requires --build-web")
+    return Ok(DocsExampleOptions(build_web=build_web, offline=offline))
+
+
+pub def verify(root: Path, compiler: str, options: DocsExampleOptions) -> Result[None, str]:
+    """Check every verified snippet and tutorial source, require formatting, and optionally build web snippets."""
+    snippet_directory = root.joinpath("workspaces/docs-site/docs/_snippets/language/examples")
+    verified = sorted(
+        [path.0 for path in snippet_directory.rglob("verified_*.incn").map_err((error) => error.message())?],
+    )
+    if len(verified) == 0:
+        return Err(f"no verified documentation examples found in {snippet_directory.0}")
+
+    mut format_targets: list[str] = []
+    for source in verified:
+        require_compiler(compiler, root, ["check", source], f"check {source}")?
+        format_targets.append(source)
+    for relative in SOURCE_VERIFIED_PROJECTS:
+        source = root.joinpath(relative).0
+        require_compiler(compiler, root, ["check", source], f"check {relative}")?
+        format_targets.append(source)
+    for relative in FORMAT_ONLY_EXAMPLES:
+        format_targets.append(root.joinpath(relative).0)
+    for source in format_targets:
+        require_compiler(compiler, root, ["fmt", "--check", source], f"format {source}")?
+
+    if options.build_web:
+        web = sorted(
+            [path.0 for path in snippet_directory.rglob("verified_web_*.incn").map_err((error) => error.message())?],
+        )
+        if len(web) == 0:
+            return Err(f"no verified web documentation examples found in {snippet_directory.0}")
+        for source in web:
+            mut arguments = ["build", source]
+            if options.offline:
+                arguments.append("--offline")
+            require_compiler(compiler, root, arguments, f"build {source}")?
+    else:
+        println("Web snippets typechecked; pass --build-web with a receipt-compatible Oven Loaf for backend builds.")
+    return Ok(None)
+
+
+def require_compiler(compiler: str, root: Path, arguments: list[str], label: str) -> Result[None, str]:
+    """Run one installed compiler operation without changing process-global environment."""
+    mut command = Command.new(compiler)
+    command.current_dir(root.0).env("INCAN_NO_BANNER", "1")
+    for argument in arguments:
+        command.arg(argument)
+    status = command.status().map_err((error) => f"cannot {label}: {error}")?
+    if not status.success():
+        return Err(f"{label} failed with status {status}")
+    return Ok(None)

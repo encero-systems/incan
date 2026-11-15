@@ -67,11 +67,12 @@ impl Diagnostic for IncanDiagnostic {
 impl IncanDiagnostic {
     /// Create a new diagnostic from a CompileError and source code
     pub fn from_error(error: &CompileError, file_name: &str, source: &str) -> Self {
-        let span_start = error.span.start;
-        let span_len = (error.span.end - error.span.start).max(1);
+        let span_start = crate::source_security::escaped_offset(source, error.span.start);
+        let span_end = crate::source_security::escaped_offset(source, error.span.end);
+        let span_len = span_end.saturating_sub(span_start).max(1);
 
         // Combine hints into help text
-        let help = if error.hints.is_empty() && error.notes.is_empty() {
+        let help = if error.hints().is_empty() && error.notes().is_empty() {
             if error.related_declarations().is_empty() {
                 None
             } else {
@@ -86,7 +87,7 @@ impl IncanDiagnostic {
             }
         } else {
             let mut help_text = String::new();
-            for note in &error.notes {
+            for note in error.notes() {
                 help_text.push_str("note: ");
                 help_text.push_str(note);
                 help_text.push('\n');
@@ -98,7 +99,7 @@ impl IncanDiagnostic {
                 help_text.push_str(&related.identity.render_compact());
                 help_text.push('\n');
             }
-            for hint in &error.hints {
+            for hint in error.hints() {
                 help_text.push_str("hint: ");
                 help_text.push_str(hint);
                 help_text.push('\n');
@@ -116,12 +117,18 @@ impl IncanDiagnostic {
         };
 
         Self {
-            message: error.message.clone(),
+            message: crate::source_security::escape_bidirectional_controls(&error.message).into_owned(),
             code,
-            source: miette::NamedSource::new(file_name, source.to_string()),
+            source: miette::NamedSource::new(
+                file_name,
+                crate::source_security::escape_bidirectional_controls(source).into_owned(),
+            ),
             span: SourceSpan::new(span_start.into(), span_len),
-            label: error.kind.to_string(),
-            help,
+            label: error
+                .primary_label()
+                .map(str::to_owned)
+                .unwrap_or_else(|| error.kind.to_string()),
+            help: help.map(|text| crate::source_security::escape_bidirectional_controls(&text).into_owned()),
             related: vec![],
         }
     }

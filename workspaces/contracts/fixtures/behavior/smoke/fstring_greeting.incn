@@ -1,0 +1,10 @@
+# behavior: an f-string interpolates a str parameter between its literal pieces
+# expect-stdout:
+#   Hello, Ada!
+
+pub def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+
+def main() -> None:
+    println(greet("Ada"))

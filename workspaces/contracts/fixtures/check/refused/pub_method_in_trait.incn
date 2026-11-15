@@ -1,0 +1,9 @@
+# behavior: a method declared in a trait takes the trait's visibility, so marking it `pub` is refused (#2570)
+# expect-diagnostic: INCAN-P0001
+
+pub trait Describe:
+    pub def describe(self) -> str
+
+
+def main() -> None:
+    println("unreachable")

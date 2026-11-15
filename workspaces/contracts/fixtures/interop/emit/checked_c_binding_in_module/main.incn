@@ -1,0 +1,10 @@
+# behavior: a checked C binding declared in an imported module runs through that module's ordinary facade, whose `unsafe:` region is validated against its own module (#2256)
+# expect-stdout:
+#   9
+
+import facade
+
+
+def main() -> None:
+    """Print the facade's native absolute value."""
+    println(facade.magnitude(-9))

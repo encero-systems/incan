@@ -1,0 +1,9 @@
+# behavior: a receipt joined to a target with `--target` needs the current lock of that target's C interop contract, as 0.5.1's needed a current incan.lock (#3132)
+# cli-commands:
+#   incan inspect bindings --format receipt --target aarch64-apple-darwin
+# expect-exit: 1
+# expect-stderr-contains:
+#   oven.lock is missing; run `oven lock`
+
+def main() -> None:
+    println("not run")

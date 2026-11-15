@@ -1,0 +1,3 @@
+def test_nothing() -> None:
+    """A formatted test file."""
+    pass

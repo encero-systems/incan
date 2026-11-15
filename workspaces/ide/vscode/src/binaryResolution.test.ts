@@ -65,24 +65,58 @@ test('resolveBinary uses configured paths before workspace and PATH', () => {
     assert.deepEqual(resolution.warnings, []);
 });
 
-test('resolveBinary uses workspace binaries before PATH', () => {
+test('resolveBinary uses the LSP beside PATH incan before other PATH or workspace servers', () => {
     const root = tempRoot();
     const pathDir = path.join(root, 'path-bin');
     const workspaceBinary = path.join(root, 'target', 'debug', 'incan-lsp');
     writeExecutable(workspaceBinary);
     writePathCommand(pathDir, 'incan-lsp');
+    const releaseDir = path.join(root, 'release');
+    writePathCommand(releaseDir, 'incan');
+    const companion = writePathCommand(releaseDir, 'incan-lsp');
 
     const resolution = resolveBinary({
         binaryName: 'incan-lsp',
         settingKey: 'incan.lsp.path',
         configuredPath: '',
         workspaceFolders: [root],
-        pathEnv: pathDir,
+        pathEnv: [pathDir, releaseDir].join(path.delimiter),
     });
 
-    assert.equal(resolution.command, workspaceBinary);
-    assert.equal(resolution.source, 'workspace');
-    assert.equal(resolution.workspaceFolder, root);
+    assert.equal(resolution.command, companion);
+    assert.equal(resolution.source, 'companion');
+    assert.equal(resolution.workspaceFolder, undefined);
+
+    // A setting always selects the requested server, even beside a different PATH compiler.
+    const configured = resolveBinary({
+        binaryName: 'incan-lsp', settingKey: 'incan.lsp.path', configuredPath: workspaceBinary,
+        workspaceFolders: [root], pathEnv: releaseDir,
+    });
+    assert.equal(configured.command, workspaceBinary);
+    assert.equal(configured.source, 'setting');
+
+    // Without an executable companion, fall through to the standalone PATH server.
+    fs.unlinkSync(companion);
+    fs.mkdirSync(companion);
+    const fallback = resolveBinary({
+        binaryName: 'incan-lsp', settingKey: 'incan.lsp.path', configuredPath: '',
+        workspaceFolders: [root], pathEnv: [pathDir, releaseDir].join(path.delimiter),
+    });
+    assert.equal(fallback.command, commandCandidates(pathDir, 'incan-lsp')[0]);
+    assert.equal(fallback.source, 'path');
+
+    // A symlinked compiler can still discover its release's companion server.
+    fs.rmdirSync(companion);
+    writeExecutable(companion);
+    const linkDir = path.join(root, 'links');
+    fs.mkdirSync(linkDir);
+    fs.symlinkSync(commandCandidates(releaseDir, 'incan')[0], commandCandidates(linkDir, 'incan')[0]);
+    const linked = resolveBinary({
+        binaryName: 'incan-lsp', settingKey: 'incan.lsp.path', configuredPath: '',
+        workspaceFolders: [root], pathEnv: linkDir,
+    });
+    assert.equal(linked.command, fs.realpathSync(companion));
+    assert.equal(linked.source, 'companion');
 });
 
 test('resolveBinary falls back to PATH when no setting or workspace binary exists', () => {
@@ -120,7 +154,7 @@ test('resolveBinary reports shell syntax and missing configured paths', () => {
     assert.match(resolution.warnings.join('\n'), /path does not exist/);
 });
 
-test('formatDoctorReport includes resolved binaries and CLI counterpart', () => {
+test('formatDoctorReport includes resolved binaries and release recovery', () => {
     const compiler: BinaryResolution = {
         name: 'incan',
         command: '/tmp/incan',
@@ -142,7 +176,8 @@ test('formatDoctorReport includes resolved binaries and CLI counterpart', () => 
     const report = formatDoctorReport(compiler, lsp).join('\n');
 
     assert.match(report, /Incan toolchain doctor/);
-    assert.match(report, /incan tools doctor --format json/);
+    assert.match(report, /Install incan and incan-lsp from the same release/);
     assert.match(report, /source: setting/);
     assert.match(report, /warning: incan-lsp path does not exist/);
+    assert.doesNotMatch(report, /cargo/i);
 });

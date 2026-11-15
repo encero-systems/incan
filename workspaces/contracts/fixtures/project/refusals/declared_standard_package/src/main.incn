@@ -1,0 +1,7 @@
+# behavior: a manifest that declares a standard package is refused: standard packages are ambient, reached by use and never declared
+# expect-exit: 1
+# expect-stderr-contains:
+#   standard packages are ambient
+
+def main() -> None:
+    println("unreachable")

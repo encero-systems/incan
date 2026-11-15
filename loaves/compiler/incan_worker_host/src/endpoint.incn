@@ -1,0 +1,32 @@
+"""
+A worker's socket file and what happens when a caller leaves.
+
+The worker's socket file is the platform's `SocketFile`: the worker removes only the file it created, so a replacement
+worker's socket at the same path survives, and it retires once nothing can reach it (`reachable`), as a resident owner
+does. A caller that leaves while its activation compiles can no longer receive the result, so the worker withdraws its
+socket and exits, as the short-lived command would have been ended with it.
+"""
+
+from rust::std::process import exit
+from pub::incan_platform.ipc import SocketFile, withdraw
+from protocol import PANIC_STATUS
+
+
+pub model CallerWatch:
+    """
+    What the compiler entry watches while an activation compiles: the caller's socket descriptor, lent for the
+    activation, and the worker's socket file, which a caller that left makes the worker withdraw.
+    """
+
+    pub descriptor: int
+    pub socket: SocketFile
+
+
+pub def abandon(watch: CallerWatch) -> None:
+    """
+    End the worker whose caller left during an activation: withdraw its socket, so no later request dials it, and
+    exit with the status a panicked command reports, as the short-lived command would have ended with its caller.
+    """
+    withdraw(watch.socket)
+    status: i32 = PANIC_STATUS.wrapping_resize()
+    exit(status)

@@ -1,0 +1,29 @@
+# behavior: a failing test that uses a `yield` fixture reports its failure once, before the fixture's teardown, as 0.5.1 reports it; raising the failure again after the teardown reports nothing more (#3149).
+# expect-stdout-contains:
+#   test_failure_reported_once.incn::test_panics_with_a_fixture FAILED
+#   test_failure_reported_once.incn::test_returns_err_with_a_fixture FAILED
+# expect-stderr-once:
+#   assertion failed: left != right
+#   Error: "failing with 9"
+# expect-stderr-contains:
+#   close ledger 9
+# expect-exit: 1
+
+"""A failure caught for teardown is reported once."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture
+def ledger() -> int:
+    """A `yield` fixture whose teardown runs after the failure."""
+    yield 9
+    println("close ledger 9")
+
+
+def test_panics_with_a_fixture(ledger: int) -> None:
+    assert_eq(ledger, 8)
+
+
+def test_returns_err_with_a_fixture(ledger: int) -> Result[None, str]:
+    return Err(f"failing with {ledger}")

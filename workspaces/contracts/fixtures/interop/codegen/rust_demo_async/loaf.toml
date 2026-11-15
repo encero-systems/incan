@@ -1,0 +1,9 @@
+[project]
+name = "rust_demo_async"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+demo_async = { loaf = "demo_async", path = "rust/demo_async" }

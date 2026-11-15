@@ -24,7 +24,7 @@ restored = Config.from_json(json_str)?
 Python equivalents: `json.dumps()`, `json.loads()`.
 """
 
-rust.module("incan_std_data::serde")
+from rust::incan_std_data::json::__private import parse_or_error as native_from_json
 
 __derives__ = [Serialize, Deserialize]
 
@@ -77,5 +77,4 @@ pub trait Deserialize:
     config = Config.from_json('{"host":"localhost","port":8080}')?
     ```
     """
-    @rust.extern
-    def from_json(json_str: str) -> Result[Self, str]: ...
+    def from_json(json_str: str) -> Result[Self, str]

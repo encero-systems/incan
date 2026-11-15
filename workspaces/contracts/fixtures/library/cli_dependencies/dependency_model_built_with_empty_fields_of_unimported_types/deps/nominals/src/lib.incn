@@ -1,0 +1,86 @@
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from rust::serde_json import Error as JsonError, from_str, to_string
+from rust::std::vec import Vec
+from rust::std::clone import Clone as RuntimeClone
+from std.derives.copying import Clone
+from default_payload import DefaultPayload
+pub from records import Card
+pub from ids import EvidenceId
+pub from api import fraction_of
+
+
+pub def serialize_default() -> bool:
+    """Verify the compiled provider uses serde for the selected standard default."""
+    return DefaultPayload(value=7).encoded() == '{"value":7}'
+
+
+@rust.derive(RustSerialize, RustDeserialize)
+pub model Envelope[T]:
+    """Serialize only the authored generic field and decode it without a private marker key."""
+    pub value: T
+
+
+def decode_document(text: str) -> Result[Envelope[int], JsonError]:
+    """Give the native decoder its expected generic result and forward its fresh error without copying it."""
+    return from_str(text)
+
+
+pub def serde_roundtrip() -> bool:
+    """Use the provider's generic serde implementations for both native calls."""
+    original = Envelope(value=7)
+    match to_string(original):
+        Err(_error) => return false
+        Ok(encoded) =>
+            if encoded != "{\"value\":7}":
+                return false
+            match decode_document(encoded):
+                Ok(decoded) => return decoded.value == 7
+                Err(_error) => return false
+
+
+pub def shared_copy[T with Clone](value: &T) -> T:
+    """Resolve a shared referent's bound method with the referent as Self."""
+    return value.clone()
+
+
+pub def native_shared_copy[T with RuntimeClone](value: &T) -> T:
+    """Close a qualified native trait's Self to the shared type parameter's referent."""
+    return RuntimeClone.clone(value)
+
+
+pub def empty_values[T]() -> list[T]:
+    """Publish a governed constructor whose native call retains its declared type argument (#2256)."""
+    return Vec.new()
+
+
+pub def one_value[T](value: T) -> list[T]:
+    """Retain a native receiver's declared type parameter and default allocator in a governed body."""
+    mut values: Vec[T] = Vec.new()
+    values.push(value)
+    return values
+
+
+pub def count_values[T](values: &Vec[T]) -> int:
+    """Read a native method's length through its published governed signature."""
+    return int(values.len())
+
+
+pub model Evidence:
+    """An element whose name is private to the consumer's import scope."""
+    pub name: str
+
+
+pub model Bundle:
+    """A public container that determines an empty list's element type."""
+    pub items: list[Evidence]
+
+
+pub model Callback[T]:
+    """Store an ordinary function pointer with its declared input and output binder."""
+    pub f: (T) -> T
+
+
+pub def apply_callback(callback: Callback[int], value: int) -> int:
+    """Invoke a callback through the provider's native generic layout."""
+    invoke = callback.f
+    return invoke(value)

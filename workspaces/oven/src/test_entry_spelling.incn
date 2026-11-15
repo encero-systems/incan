@@ -1,0 +1,36 @@
+"""A unit is keyed by its sources, however its entry's path was spelled on the command line."""
+
+from std.fs import Path
+from features import FeatureRequest
+from freshness_fixtures import fixture, unit_key, write
+from scratch import scratch_directory
+from unit import describe
+
+
+pub def test_a_library_named_by_its_directory_is_keyed_as_by_its_entry() -> Result[None, str]:
+    """
+    `oven build .` names a library's entry through its project directory (`<project>/./src/lib.incn`), and a checkout
+    may be reached through a link. Either way the described entry lies under the described source root, so the unit's
+    sources are listed once and its identity is the one its plain spelling has; a refused identity is never stored.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    write(setup.root.joinpath("src/lib.incn"), "pub from shapes import side\n")?
+    write(setup.root.joinpath("src/shapes.incn"), "pub def side() -> int:\n    return 4\n")?
+    plain = describe(setup.root.joinpath("src/lib.incn"), "debug", FeatureRequest())?
+    dotted = describe(Path(setup.root.0 + "/./src/lib.incn"), "debug", FeatureRequest())?
+    assert dotted.source.startswith(dotted.source_root + "/"), f"{dotted.source} is outside {dotted.source_root}"
+    assert dotted.source == plain.source
+    mut library = setup.unit
+    library.kind = "library"
+    library.source = plain.source
+    library.source_root = plain.source_root
+    library.project_root = plain.project_root
+    built = unit_key(library, setup.toolchain)?
+    assert built.refusal == "", built.refusal
+    library.source = dotted.source
+    library.source_root = dotted.source_root
+    named = unit_key(library, setup.toolchain)?
+    assert named.refusal == "", named.refusal
+    assert named.digest == built.digest, "the entry's spelling rekeyed the library"
+    return Ok(None)

@@ -1,0 +1,26 @@
+# behavior: a method returning self hands the caller an equal value while the receiver stays usable, and a field read from a wrapper and passed to a function leaves the wrapper's field in place
+# expect-stdout:
+#   2 1
+#   1 1
+
+model Cursor:
+    position: int
+
+
+model Wrapper:
+    cursor: Cursor
+
+    def snapshot(self) -> Wrapper:
+        return self
+
+
+def advance(cursor: Cursor) -> Cursor:
+    return Cursor(position=cursor.position + 1)
+
+
+def main() -> None:
+    other = Wrapper(cursor=Cursor(position=1))
+    moved = advance(other.cursor)
+    println(f"{moved.position} {other.cursor.position}")
+    copy = other.snapshot()
+    println(f"{copy.cursor.position} {other.cursor.position}")

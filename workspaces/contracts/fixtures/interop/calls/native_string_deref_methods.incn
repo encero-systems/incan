@@ -1,0 +1,33 @@
+# behavior: a native String a call returned reaches `str`'s methods through Deref, as hees.ai's `RustString.from(text).is_char_boundary(index)` did on 0.5.1, whether the local is inferred or annotated
+# expect-stdout:
+#   true
+#   false
+#   true
+#   HÉLLO
+#   true
+
+"""Call `str` methods on native Strings held by inferred and annotated locals."""
+
+from rust::std::string import String as RustString
+
+
+def main() -> None:
+    """1. Byte boundaries on an inferred String. 2. Another `str` method. 3. The same call on an annotated local."""
+    # 1. `é` takes bytes 1 and 2, so byte 1 starts a character and byte 2 does not.
+    inferred = RustString.from("héllo")
+    one = 1
+    two = 2
+    maybe_one: Option[usize] = one.try_resize()
+    maybe_two: Option[usize] = two.try_resize()
+    match maybe_one:
+        None => print("no index")
+        Some(index) => print(inferred.is_char_boundary(index))
+    match maybe_two:
+        None => print("no index")
+        Some(index) => print(inferred.is_char_boundary(index))
+    print(inferred.is_char_boundary(0))
+    # 2. A `str` method that returns a new String.
+    print(inferred.to_uppercase())
+    # 3. An annotated local already reached `str` through its declared type.
+    annotated: RustString = RustString.from("héllo")
+    print(annotated.is_char_boundary(1))

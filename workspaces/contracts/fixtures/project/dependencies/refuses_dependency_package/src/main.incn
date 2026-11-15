@@ -1,0 +1,13 @@
+# behavior: Oven refuses a Cargo package rename and shows the Loaf identity replacement.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["dependencies", "search", "package"]: unsupported
+#   use search = { loaf = "crates-io/regex", version = "1" }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

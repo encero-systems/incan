@@ -1,0 +1,91 @@
+# behavior: an owned point read, retained batch, database-shaped reader and resumable cursor expose independent values and state that can outlive the bindings from which they were acquired (#2500, #2519, #2524).
+# expect-stdout:
+#   7:70
+#   20
+#   30
+#   40
+"""Exercise independently retained storage handles once Owned collection results are admitted."""
+
+
+model Snapshot:
+    pub revision: int
+    pub values: list[int]
+
+
+model RecordVersion:
+    pub revision: int
+    pub value: int
+
+
+def point_read(snapshot: Borrowed[Snapshot], index: int) -> Owned[RecordVersion]:
+    """Materialize one owned record version from a borrowed snapshot."""
+    return RecordVersion(revision=snapshot.revision, value=snapshot.values[index])
+
+
+class ColumnBuffer:
+    pub values: list[int]
+
+
+class RetainedBatch:
+    pub buffer: ColumnBuffer
+
+    pub def column(self) -> Borrowed[ColumnBuffer] from self.buffer:
+        """Borrow a column from independently retained batch buffers."""
+        return self.buffer
+
+
+def retain_batch(snapshot: Borrowed[Snapshot]) -> Owned[RetainedBatch]:
+    """Acquire an independent immutable batch representation."""
+    return RetainedBatch(buffer=ColumnBuffer(values=snapshot.values.clone()))
+
+
+class DatabaseReader:
+    pub revision: int
+    pub values: list[int]
+
+
+def open_database_reader(snapshot: Borrowed[Snapshot]) -> Owned[DatabaseReader]:
+    """Acquire a reader that independently retains its selected values."""
+    return DatabaseReader(revision=snapshot.revision, values=snapshot.values.clone())
+
+
+class ResumableCursor:
+    pub revision: int
+    pub values: list[int]
+    pub offset: int
+
+    pub def next_batch(mut self) -> Result[Reference[Self], str] from self:
+        """Advance within the cursor's retained revision and return continued access."""
+        if self.offset >= len(self.values):
+            return Err("complete")
+        self.offset += 1
+        return Ok(self)
+
+    pub def current(self) -> int:
+        """Read the value selected by the latest successful advance."""
+        return self.values[self.offset - 1]
+
+
+def resume_after_reader_scope() -> Owned[ResumableCursor]:
+    """Return a cursor whose owned state survives its local snapshot and reader bindings."""
+    snapshot = Snapshot(revision=9, values=[30, 40])
+    reader = open_database_reader(snapshot)
+    return ResumableCursor(revision=reader.revision, values=reader.values.clone(), offset=0)
+
+
+def main() -> Result[None, str]:
+    """Use retained handles after their source bindings have ended."""
+    mut point_snapshot = Snapshot(revision=7, values=[70, 80])
+    record = point_read(point_snapshot, 0)
+    point_snapshot = Snapshot(revision=8, values=[90, 100])
+    println(f"{record.revision}:{record.value}")
+
+    retained = retain_batch(Snapshot(revision=1, values=[20, 30]))
+    println(retained.column().values[0])
+
+    mut cursor = resume_after_reader_scope()
+    mut first = cursor.next_batch()?
+    println(first.current())
+    mut second = first.next_batch()?
+    println(second.current())
+    return Ok(None)

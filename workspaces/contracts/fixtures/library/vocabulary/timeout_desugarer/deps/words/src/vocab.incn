@@ -1,0 +1,19 @@
+"""Exercise the provider invocation deadline without consulting ambient inputs."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface, VocabRegistration,
+)
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register a query whose provider deliberately never completes."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("words").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Keep executing until the owning compiler enforces its invocation deadline."""
+    while true:
+        pass
+    return Err(DesugarError.at(request.node.span(), "unreachable after endless loop"))

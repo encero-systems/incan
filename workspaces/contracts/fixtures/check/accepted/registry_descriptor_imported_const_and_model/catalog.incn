@@ -1,0 +1,19 @@
+@derive(Clone, Eq)
+pub type ProbeId = newtype str:
+    """The identity of one probe."""
+
+
+pub enum ProbeKind:
+    Stable
+    Beta
+
+
+@derive(Descriptor)
+pub model ProbeDescriptor:
+    pub id: ProbeId
+    pub kind: ProbeKind
+    pub summary: str
+
+
+pub const SUMMARY: str = "probe"
+pub const FORMS: FrozenList[str] = ["a", "b"]

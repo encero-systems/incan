@@ -1,0 +1,45 @@
+# behavior: Adjacent imports stay adjacent, top-level declarations are separated by two blank lines, docstrings keep their triple quotes, and model fields receive canonical annotation spacing.
+# expect-formatted:
+#   from std.collections import Dict
+#   from std.fs import Path
+#
+#
+#   def value() -> int:
+#       """The stored value."""
+#       return 1
+#
+#
+#   def first() -> int:
+#       """Return the first value."""
+#       return 1
+#
+#
+#   def second() -> int:
+#       """Return the second value."""
+#       return 2
+#
+#
+#   model Point:
+#       """A point with two integer coordinates."""
+#
+#       x: int
+#       y [renamed_from=["vertical", "ordinate"], canonical=false] as "wireY": int
+#       legacy [made_private { since="0.6", message="Use x", replacement=Point.x }]: int
+
+from std.collections import Dict
+from std.fs import Path
+def value()->int:
+    """The stored value."""
+    return 1
+def first()->int:
+    """Return the first value."""
+    return 1
+def second()->int:
+    """Return the second value."""
+    return 2
+model Point:
+    """A point with two integer coordinates."""
+
+    x:int
+    y [canonical=false, renamed_from=["vertical","ordinate"]] as "wireY":int
+    legacy [made_private { replacement=Point.x,message="Use x",since="0.6" }]:int

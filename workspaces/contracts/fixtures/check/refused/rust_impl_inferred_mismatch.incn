@@ -1,0 +1,12 @@
+# behavior: an inferred Rust associated function result rejects an incompatible owner argument
+# expect-diagnostic: INCAN-T0001
+
+"""Rust owner inference preserves the allocation's concrete type."""
+
+from rust::std::rc import Rc
+
+
+def main() -> None:
+    """Refuse an integer allocation used as a string allocation."""
+    inferred = Rc.new(7)
+    value: Rc[str] = inferred

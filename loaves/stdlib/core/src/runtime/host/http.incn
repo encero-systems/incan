@@ -1,6 +1,0 @@
-"""
-`host.http` authority for `std.runtime`.
-"""
-
-pub capability request:
-    description = "Make an outbound HTTP request"

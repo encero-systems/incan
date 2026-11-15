@@ -44,13 +44,14 @@ This page specifies binding and assignment statements.
 | Any | A target is an element of a tuple or a `str` | `INCAN-T0001` |
 | Any | A declared name is `print` or `println` | `INCAN-T0001` |
 | `target.field = value` | `target`'s type declares no field `field`, or `target` is a tuple | `INCAN-T0001` |
+| `target = value`, `target.field = value`, `target[index] = value` | Inside a `for` loop that iterates a `list` held at a place, the target is that place or its parent | `INCAN-T0121` |
 | `target.field = value`, `target[index] = value` | The name the write goes through (`p` in `p.x` and in `p.rows[0]`) is a local declared without `mut`, by `let` or a first plain assignment, or a parameter not marked `mut`; an element write only when it writes a `list` element or a `dict` entry | `INCAN-T0001` |
 | `target.method(...)` | The method changes its receiver, and the name the call goes through (`p` in `p.rows.append(x)`) is a local declared without `mut` or a parameter not marked `mut` | `INCAN-T0001` |
 | `for item in iterable:`, `[... for item in iterable]`, `{...: ... for item in iterable}` | The body, element, key, value or filter changes `item`, by a write, a changing method call or advancing a `Generator` item, and the loop reads its items in place from a binding declared without `mut`, a parameter not marked `mut`, a static or a local bound to one, or `self` in a plain `self` method | `INCAN-T0001` |
 | `(... for item in iterable)` | The element or a later clause changes `item`, and the generator iterates the items of a place: a binding, a field or element of one, `enumerate` or `zip` over one, or `values()` of a dict | `INCAN-T0001` |
 | `target.method(...)`, `target.field = value`, `target[index] = value` | Inside a closure, the name the change goes through is a local the closure reads from an enclosing function | `INCAN-T0001` |
 | `target[index] = value` | `target` is a `str` or a tuple, the index is not an `int` for a `list` or not a key for a `dict`, or `target`'s type has no `__setitem__` | `INCAN-T0001` |
-| `a, b = value` | `value` is not a tuple, or the tuple's length differs from the number of targets | `INCAN-T0001` |
+| `a, b = value` | `value` is not a tuple, a Rust value whose shape cannot be read as a tuple, or a tuple whose length differs from the number of targets | `INCAN-T0001` |
 | `a, b = value` | A target is not a name, a field or an element | `INCAN-T0001` |
 | `a, b = value` | The first target is a name and a later target is not | `INCAN-P0001` |
 | `a = b = value` | The targets have different types, and the value has no fully known type and is not built only from literals and empty constructors (`None`, `[]`, `{}`, `list()`, a number) | `INCAN-T0001` |

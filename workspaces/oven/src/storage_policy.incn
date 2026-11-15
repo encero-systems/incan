@@ -1,0 +1,146 @@
+"""
+Oven's storage policy (RFC 145): where the bakery is, the free-space reserve that write admission leaves untouched,
+how long an ended attempt's private state is kept for inspection, and the automatic diagnostic-history window.
+
+The policy is user and host configuration, never project source: the optional `[storage]` table of `config.toml` in
+the Incan home. Omitting the file, the table or a key selects that key's default. A malformed file, an unknown key or
+an invalid value is an error naming the file, the key and the accepted form; it never falls back to another value.
+There is no key for a store size or an idle expiry of reusable units: free space bounds every write, and collection
+is explicit.
+
+This module reads a configuration file it is given. Choosing the home's file, and letting `INCAN_BAKERY` override
+`root`, belong to `home_paths`, which resolves the bakery once for every command.
+"""
+
+from std.fs import Path
+from std.toml import TomlValue
+from files import read
+
+# 6 GiB: room for the operating system's own needs, such as swap and updates, and for other programs on the disk.
+pub const DEFAULT_MIN_FREE_BYTES: int = 6442450944
+pub const DEFAULT_ATTEMPT_TTL: int = 86400
+pub const DEFAULT_HISTORY_TTL: int = 86400
+const DEFAULT: str = "default"
+const KEYS: str = "root, min-free-bytes, failed-attempt-ttl and history-ttl"
+const DURATION_FORM: str = "a nonnegative integer followed by s, m, h or d, such as \"24h\""
+# A duration's digits are bounded so that its seconds stay far inside a 64-bit integer.
+const MAX_DURATION_DIGITS: int = 12
+
+
+pub model StoragePolicy:
+    """The effective storage policy, with the source of each value: `default` or the configuration file."""
+
+    # The bakery location `root` selects, resolved against the configuration file's directory; `bakery` there by
+    # default. Empty only when there is no home to hold a configuration file.
+    pub root: str = ""
+    pub min_free_bytes: int = DEFAULT_MIN_FREE_BYTES
+    pub failed_attempt_ttl: int = DEFAULT_ATTEMPT_TTL
+    pub history_ttl: int = DEFAULT_HISTORY_TTL
+    # The configuration file that was read, or empty when the home has none.
+    pub file: str = ""
+    pub root_source: str = DEFAULT
+    pub min_free_source: str = DEFAULT
+    pub attempt_source: str = DEFAULT
+    pub history_source: str = DEFAULT
+
+
+pub def policy_file(directory: Path) -> Path:
+    """The configuration file of the Incan home at `directory`."""
+    return directory.joinpath("config.toml")
+
+
+pub def read_policy(file: Path) -> Result[StoragePolicy, str]:
+    """
+    The policy `file` selects.
+
+    1. A missing file selects every default; the default root is `bakery` beside the file, in the Incan home.
+    2. A present file must parse, and its `storage` entry, when present, must be a table of known keys.
+    3. Each key present replaces its default and names the file as its source.
+    """
+    # 1. A home without configuration has the documented defaults.
+    mut policy = StoragePolicy(root=file.parent().joinpath("bakery").0)
+    if not file.is_file():
+        return Ok(policy)
+    policy.file = file.0
+    # 2. Only the `[storage]` table belongs to this policy; other tables keep their own owners.
+    parsed = TomlValue.parse(read(file)?).map_err((error) => f"{file.0}: {error.message()}")?
+    document = parsed.as_table().map_err((error) => f"{file.0}: {error.message()}")?
+    if "storage" not in document:
+        return Ok(policy)
+    table = document["storage"].as_table().map_err((_) => f"{file.0}: `storage` must be a table")?
+    for key in table.keys():
+        if key not in ["root", "min-free-bytes", "failed-attempt-ttl", "history-ttl"]:
+            return Err(f"{file.0}: unknown key `storage.{key}`; [storage] accepts {KEYS}")
+    # 3. A present key is the user's choice and is reported with its file.
+    if "root" in table:
+        policy.root = root_path(file, table["root"])?.0
+        policy.root_source = file.0
+    if "min-free-bytes" in table:
+        policy.min_free_bytes = byte_count(file, table["min-free-bytes"])?
+        policy.min_free_source = file.0
+    if "failed-attempt-ttl" in table:
+        policy.failed_attempt_ttl = duration(file, "failed-attempt-ttl", table["failed-attempt-ttl"])?
+        policy.attempt_source = file.0
+    if "history-ttl" in table:
+        policy.history_ttl = duration(file, "history-ttl", table["history-ttl"])?
+        policy.history_source = file.0
+    return Ok(policy)
+
+
+def root_path(file: Path, value: TomlValue) -> Result[Path, str]:
+    """A nonempty path string; a relative one is resolved against the configuration file's directory."""
+    directory = file.parent()
+    refusal = f"{file.0}: `storage.root` must be a nonempty path string, absolute or relative to {directory.0}"
+    match value.as_str():
+        Err(_) => return Err(refusal)
+        Ok(text) =>
+            if text == "":
+                return Err(refusal)
+            return directory
+                .joinpath(text)
+                .absolute()
+                .map_err((error) => f"{file.0}: `storage.root`: {error.message()}")
+
+
+def byte_count(file: Path, value: TomlValue) -> Result[int, str]:
+    """A nonnegative integer number of bytes."""
+    refusal = f"{file.0}: `storage.min-free-bytes` must be a nonnegative integer number of bytes"
+    match value.as_int():
+        Err(_) => return Err(refusal)
+        Ok(bytes) =>
+            if bytes < 0:
+                return Err(refusal)
+            return Ok(bytes)
+
+
+def duration(file: Path, key: str, value: TomlValue) -> Result[int, str]:
+    """A duration string's seconds: digits, then `s`, `m`, `h` or `d` for seconds, minutes, hours or 24-hour days."""
+    refusal = f"{file.0}: `storage.{key}` must be {DURATION_FORM}"
+    match value.as_str():
+        Err(_) => return Err(refusal)
+        Ok(text) =>
+            match parse_duration(text):
+                None => return Err(refusal)
+                Some(seconds) => return Ok(seconds)
+
+
+pub def parse_duration(text: str) -> Option[int]:
+    """The seconds a duration string names, or `None` when it is not one."""
+    if len(text) < 2 or len(text) > MAX_DURATION_DIGITS + 1:
+        return None
+    digits = text[:len(text) - 1]
+    mut seconds = 0
+    for character in digits:
+        if character not in "0123456789":
+            return None
+        seconds = seconds * 10 + int(character)
+    unit = text[len(text) - 1:]
+    if unit == "s":
+        return Some(seconds)
+    if unit == "m":
+        return Some(seconds * 60)
+    if unit == "h":
+        return Some(seconds * 3600)
+    if unit == "d":
+        return Some(seconds * 86400)
+    return None

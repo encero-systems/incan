@@ -1,0 +1,9 @@
+# behavior: a value enum variant that carries a payload is refused at parse time
+# expect-diagnostic: INCAN-P0001
+
+enum Bad(int):
+    Payload(int) = 1
+
+
+def main() -> None:
+    println("unreachable")

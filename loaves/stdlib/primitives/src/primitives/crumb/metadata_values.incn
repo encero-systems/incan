@@ -1,0 +1,121 @@
+"""Complete description metadata access with explicit copy budgets and exact D encoding."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.hash_stream import HashOutput, OutputMode
+from crate.primitives.crumb.metadata import emit_metadata
+from crate.primitives.crumb.values import Metadata, MetadataEntry
+
+
+pub def get(value: Metadata, name: str, mut budget: Budget) -> Result[Metadata, CrumbError]:
+    """Require one named property from an already uniqueness-checked metadata map."""
+    match value:
+        Metadata.Map(entries) =>
+            for entry in entries:
+                budget.charge_elements(1)?
+                if entry.key == name:
+                    charge_copy(entry.value, budget)?
+                    return Ok(entry.value)
+        _ => return Err(CrumbError.invalid_input("description map"))
+    return Err(CrumbError.invalid_input("missing description property"))
+
+
+pub def without(value: Metadata, name: str, mut budget: Budget) -> Result[Metadata, CrumbError]:
+    """Remove only the named member-list property, preserving all other metadata and its read order."""
+    match value:
+        Metadata.Map(entries) =>
+            mut retained: list[MetadataEntry] = []
+            for entry in entries:
+                budget.charge_elements(1)?
+                if entry.key != name:
+                    charge_text(entry.key, budget)?
+                    charge_copy(entry.value, budget)?
+                    retained.append(entry)
+            return Ok(Metadata.Map(retained))
+        _ => return Err(CrumbError.invalid_input("description map"))
+
+
+pub def text(value: Metadata) -> Result[str, CrumbError]:
+    """Require a textual core property; profile symbols are not guessed from arbitrary metadata."""
+    match value:
+        Metadata.Text(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("text description property"))
+
+
+pub def symbol(value: Metadata) -> Result[str, CrumbError]:
+    """Require an unquoted property path without conflating it with a string."""
+    match value:
+        Metadata.Symbol(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("symbol description property"))
+
+
+pub def binary(value: Metadata) -> Result[bytes, CrumbError]:
+    """Require exact binary identity bytes, never a display-name fallback."""
+    match value:
+        Metadata.Binary(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("binary description property"))
+
+
+pub def items(value: Metadata) -> Result[list[Metadata], CrumbError]:
+    """Require an ordered member list so declaration order remains recoverable."""
+    match value:
+        Metadata.List(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("description member list"))
+
+
+pub def boolean(value: Metadata) -> Result[bool, CrumbError]:
+    """Core flags are explicit booleans, never truthy strings or integers."""
+    match value:
+        Metadata.Boolean(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("boolean description property"))
+
+
+pub def properties(value: Metadata) -> Result[None, CrumbError]:
+    """Core property storage is a complete map, whose uninterpreted contents are retained."""
+    match value:
+        Metadata.Map(_) => return Ok(None)
+        _ => return Err(CrumbError.invalid_input("description properties map"))
+
+
+pub def encode(value: Metadata, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode D itself, without the description-hash domain prefix; reuse exact key/number rules."""
+    mut output = HashOutput.create(OutputMode.Capture)
+    emit_metadata(value, output, budget)?
+    captured = output.captured(budget)?
+    match captured:
+        Some(encoded) => return Ok(encoded)
+        None => return Err(CrumbError.invalid_input("metadata capture mode"))
+
+
+def charge_text(value: str, mut budget: Budget) -> Result[None, CrumbError]:
+    """Reserve a UTF-8 upper bound before retaining one metadata name or text value."""
+    for _ in range(4):
+        budget.charge_bytes(len(value))?
+    return Ok(None)
+
+
+pub def charge_copy(value: Metadata, mut budget: Budget) -> Result[None, CrumbError]:
+    """Bound the complete retained subtree before copying it; nested work shares the request limits."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = charge_inner(value, budget)
+    budget.leave()?
+    return result
+
+
+def charge_inner(value: Metadata, mut budget: Budget) -> Result[None, CrumbError]:
+    """Visit retained metadata only; no property invokes or authorizes application behavior."""
+    match value:
+        Metadata.Null | Metadata.Boolean(_) => budget.charge_bytes(1)?
+        Metadata.Integer(_) => budget.charge_bytes(16)?
+        Metadata.Text(content) | Metadata.Symbol(content) => charge_text(content, budget)?
+        Metadata.Binary(content) => budget.charge_bytes(len(content))?
+        Metadata.List(children) =>
+            for child in children:
+                charge_copy(child, budget)?
+        Metadata.Map(entries) =>
+            for entry in entries:
+                budget.charge_elements(1)?
+                charge_text(entry.key, budget)?
+                charge_copy(entry.value, budget)?
+    return Ok(None)

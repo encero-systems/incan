@@ -1,0 +1,105 @@
+"""Expand the repository's explicit spelling families without guessing suffix rules for unrelated words."""
+
+
+pub def spellings() -> Dict[str, str]:
+    """
+    Return the same lowercase spelling table used by the US English gate.
+
+    1. Expand the explicitly listed ise and our families.
+    2. Expand regular spellings and replace their irregular forms.
+    """
+    mut table: Dict[str, str] = {}
+    # 1. Expand only the named spelling families.
+    mut ise = "anonymise authorise canonicalise capitalise categorise centralise characterise customise deserialise "
+    ise += "digitise emphasise finalise formalise generalise harmonise initialise internalise itemise linearise "
+    ise += "localise materialise maximise memoise minimise modernise modularise monomorphise normalise optimise "
+    ise += "organise parameterise parenthesise prioritise quantise randomise rationalise realise recognise "
+    ise += "reinitialise reorganise reserialise sanitise scrutinise serialise specialise stabilise standardise "
+    ise += "summarise synchronise "
+    ise += "synthesise systematise tokenise trivialise uninitialise unrecognise unauthorise unoptimise unnormalise "
+    ise += "unsynchronise unserialise utilise vectorise virtualise visualise"
+    suffixes = (
+        "ise=ize ises=izes ised=ized ising=izing iser=izer isers=izers isation=ization "
+        + "isations=izations isable=izable isably=izably"
+    )
+    for stem in ise.split_whitespace():
+        for pair in suffixes.split_whitespace():
+            add_suffix(table, stem[:-3], pair)
+    mut our = "armour behaviour candour clamour colour decolour demeanour discolour dishonour endeavour favour fervour "
+    our += "flavour harbour honour humour labour misbehaviour neighbour odour parlour recolour rigour rumour saviour "
+    our += "savour splendour uncolour valour vapour vigour"
+    for stem in our.split_whitespace():
+        for pair in "our=or ours=ors oured=ored ouring=oring".split_whitespace():
+            add_suffix(table, stem[:-3], pair)
+
+    # 2. Expand regular pairs, then override irregular forms.
+    for pair in regular_pairs().split_whitespace():
+        fields = pair.split("=")
+        uk = fields[0]
+        us = fields[1]
+        table[uk] = us
+        if uk != "analyse":
+            table[uk + "s"] = us + "s"
+        if uk.endswith("y"):
+            continue
+        table[without_final_e(uk) + "ed"] = without_final_e(us) + "ed"
+        table[without_final_e(uk) + "ing"] = without_final_e(us) + "ing"
+    for pair in irregular_pairs().split_whitespace():
+        fields = pair.split("=")
+        table[fields[0]] = fields[1]
+    return table
+
+
+def add_suffix(mut table: Dict[str, str], stem: str, pair: str) -> None:
+    """Expand one explicitly paired suffix under the chosen family stem."""
+    suffix = pair.split("=")
+    table[stem + suffix[0]] = stem + suffix[1]
+
+
+def without_final_e(word: str) -> str:
+    """Remove all final e characters using the original regular-inflection rule."""
+    mut end = len(word)
+    while end > 0 and word[end - 1] == "e":
+        end -= 1
+    return word[:end]
+
+
+def regular_pairs() -> str:
+    """Return the explicit regular spelling pairs; the cancel family is intentionally absent."""
+    mut text = "catalogue=catalog analogue=analog centre=center metre=meter litre=liter fibre=fiber calibre=caliber "
+    text += "kilometre=kilometer millimetre=millimeter datacentre=datacenter centimetre=centimeter artefact=artifact "
+    text += "judgement=judgment acknowledgement=acknowledgment abridgement=abridgment defence=defense offence=offense "
+    text += "pretence=pretense licence=license practise=practice grey=gray analyse=analyze paralyse=paralyze "
+    text += "catalyse=catalyze encyclopaedia=encyclopedia sceptic=skeptic enquire=inquire enquiry=inquiry "
+    text += "aluminium=aluminum speciality=specialty cosy=cozy mould=mold plough=plow tyre=tire"
+    return text
+
+
+def irregular_pairs() -> str:
+    """Return explicit irregular pairs, keeping analyses as a word shared by both dialects."""
+    mut text = "programme=program programmes=programs whilst=while amongst=among anticlockwise=counterclockwise "
+    text += "ageing=aging learnt=learned spelt=spelled enquiries=inquiries specialities=specialties greys=grays "
+    text += "manoeuvre=maneuver manoeuvres=maneuvers manoeuvred=maneuvered manoeuvring=maneuvering labelled=labeled "
+    text += "labelling=labeling unlabelled=unlabeled relabelled=relabeled relabelling=relabeling "
+    text += "mislabelled=mislabeled "
+    text += "modelled=modeled modelling=modeling modeller=modeler remodelled=remodeled signalled=signaled "
+    text += "signalling=signaling unsignalled=unsignaled travelled=traveled travelling=traveling traveller=traveler "
+    text += "totalled=totaled totalling=totaling marshalled=marshaled marshalling=marshaling unmarshalled=unmarshaled "
+    text += "unmarshalling=unmarshaling channelled=channeled channelling=channeling levelled=leveled "
+    text += "levelling=leveling "
+    text += "fuelled=fueled fuelling=fueling tunnelled=tunneled tunnelling=tunneling dialled=dialed dialling=dialing "
+    text += "equalled=equaled equalling=equaling funnelled=funneled funnelling=funneling spiralled=spiraled "
+    text += "spiralling=spiraling panelled=paneled pencilled=penciled counsellor=counselor jewellery=jewelry "
+    text += "enrol=enroll "
+    text += "enrols=enrolls enrolment=enrollment enrolments=enrollments fulfil=fulfill fulfils=fulfills "
+    text += "fulfilment=fulfillment fulfilments=fulfillments instalment=installment instalments=installments "
+    text += "skilful=skillful wilful=willful distil=distill instil=instill maths=math favourite=favorite "
+    text += "favourites=favorites favourable=favorable favourably=favorably honourable=honorable honourably=honorably "
+    text += "unhonourable=unhonorable colourful=colorful colourless=colorless multicoloured=multicolored "
+    text += "neighbourhood=neighborhood neighbourhoods=neighborhoods behavioural=behavioral behaviourally=behaviorally "
+    text += "labourer=laborer labourers=laborers humourless=humorless recognisable=recognizable "
+    text += "serialisable=serializable customisable=customizable optimiser=optimizer organiser=organizer "
+    text += "tokeniser=tokenizer synthesiser=synthesizer analyser=analyzer analysers=analyzers centred=centered "
+    text += "centring=centering practising=practicing greyed=grayed "
+    text += "greying=graying greyscale=grayscale sceptical=skeptical scepticism=skepticism"
+    return text

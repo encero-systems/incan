@@ -1,0 +1,33 @@
+"""Publish primitive and builtin UTF-8 callers from a separately compiled Loaf."""
+
+from std.primitives.native_strings import nul_terminated_utf8
+from std.primitives.text import decode_utf8
+
+const FROZEN_SOURCE: FrozenBytes = b"frozen caf\xc3\xa9"
+
+
+pub def decode_source(data: bytes, replace_invalid: bool) -> str:
+    """Decode source bytes strictly or with replacement and expose a stable refusal marker."""
+    accepted, text_or_detail = decode_utf8(data, replace_invalid)
+    if accepted:
+        return text_or_detail
+    return "refused"
+
+
+pub def decode_builtin(data: bytes) -> str:
+    """Call the ordinary generated-program decoder from a published provider body."""
+    match data.decode():
+        Ok(text) => return text
+        Err(_) => return "refused"
+
+
+pub def decode_frozen() -> str:
+    """Call the frozen generated-program decoder from a published provider body."""
+    match FROZEN_SOURCE.decode():
+        Ok(text) => return text
+        Err(_) => return "refused"
+
+
+pub def terminated(value: str) -> Result[list[u8], str]:
+    """Return independently owned terminated UTF-8 storage through a published caller."""
+    return nul_terminated_utf8(value)

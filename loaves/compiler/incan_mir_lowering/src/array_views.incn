@@ -1,0 +1,62 @@
+"""Materialize checked native array-to-slice borrows through the canonical core view traits."""
+
+from rust::incan_semantics_core::body_ir import OwnershipFact
+from pub::incan_mir_plan import (
+    CalleeKind, ExternalFunction, Operand, Place, PlanType, Projection, RvalueKind, SourceSpan,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, read_place, temporary, terminate_call
+
+
+pub def borrow_array_slice(
+    mut builder: Builder,
+    source: Place,
+    elements: list[PlanType],
+    mutable: bool,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Borrow only an exact checked array element carrier, retaining exclusive authority for mutable views."""
+    actual = place_type(builder.locals, source)
+    mut items: list[PlanType] = []
+    mut count = 0
+    mut owner = source
+    mut already_shared = false
+    match actual:
+        PlanType.NativeArray(array_items, length) =>
+            items = array_items
+            count = length
+        PlanType.NativeArrayRef(array_items, length) =>
+            if mutable:
+                return Err("unsupported Body IR mutable slice through a shared array reference")
+            items = array_items
+            count = length
+            already_shared = true
+        PlanType.NativeArrayMutRef(array_items, length) =>
+            items = array_items
+            count = length
+            owner = Place(local=source.local, projection=Projection.Deref(PlanType.NativeArray(items, count)), span=span)
+        _ => return Ok(None)
+    if items != elements:
+        return Err("unsupported Body IR native array slice element mismatch")
+    if mutable and fact != OwnershipFact.MutBorrow:
+        return Err("unsupported Body IR native array slice without exclusive authority")
+    mut parameter = PlanType.NativeArrayRef(items, count)
+    mut result = PlanType.SliceRef(elements)
+    mut method = "core::convert::AsRef::as_ref"
+    mut operation = RvalueKind.Borrow(owner)
+    if mutable:
+        parameter = PlanType.NativeArrayMutRef(items, count)
+        result = PlanType.SliceMutRef(elements)
+        method = "core::convert::AsMut::as_mut"
+        operation = RvalueKind.MutBorrow(owner)
+    mut reference = read_place(source, false, span)
+    if not already_shared:
+        borrowed = temporary(builder, parameter, span)
+        builder.emit(plan_assign(borrowed, operation, span))
+        reference = read_place(borrowed, mutable, span)
+    output = temporary(builder, result, span)
+    arguments = [PlanType.NativeArray(items, count), PlanType.NativeSlice(elements)]
+    builder.externals.append(ExternalFunction(path=method, type_arguments=arguments, parameters=[parameter], return_type=result, span=span))
+    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    return Ok(Some(read_place(output, mutable, span)))

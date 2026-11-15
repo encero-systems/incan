@@ -1,0 +1,27 @@
+# behavior: gen, a reserved word in Rust 2024, is an ordinary identifier for a module, a function, a parameter, a keyword argument and a field, and a module named gen is reached from another module as written
+# expect-stdout:
+#   7
+#   1
+#   6
+#   2
+#   8
+
+import gen
+from gen import produce
+
+
+model Batch:
+    gen: int
+
+
+def twice(gen: int) -> int:
+    return gen * 2
+
+
+def main() -> None:
+    println(produce())
+    println(gen.gen())
+    println(twice(gen=3))
+    batch = Batch(gen=2)
+    println(batch.gen)
+    println(gen.produce() + 1)

@@ -1,0 +1,4 @@
+# behavior: the former graph edge storage record is private and names EdgeId as its replacement (#2524)
+# expect-diagnostic: INCAN-T0133
+
+from std.graph import GraphEdge

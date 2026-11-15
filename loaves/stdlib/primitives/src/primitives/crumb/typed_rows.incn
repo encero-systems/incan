@@ -1,0 +1,156 @@
+"""Direct RFC 173 row encoding and reconstruction under caller-supplied Crumb descriptions."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary, slot
+from crate.primitives.crumb.description_read import read_dictionary
+from crate.primitives.crumb.descriptions import Description, encode_entry
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.typed_cells import TypedCellSource, TypedCellWriter
+from crate.primitives.reflection import ShapeInfo
+from crate.primitives.text import copy_frozen_bytes
+from crate.primitives.views import MappedView
+
+
+model TypedRowCell:
+    """One root cell paired with the admitted description slot selected by its completed walker."""
+
+    description: int
+    data: bytes
+
+
+model TypedStoredRow:
+    """One structurally admitted retained root frame awaiting caller-owned typed reconstruction."""
+
+    description: int
+    data: MappedView
+    origin: int
+
+
+pub class TypedRowWriter:
+    """Collect completed root walkers and emit the ordinary unsealed row envelope."""
+
+    dictionary: Dictionary
+    rows: list[TypedRowCell]
+    budget: Budget
+
+    @staticmethod
+    pub def create(
+        descriptions: list[Description],
+        registry: KindRegistry,
+        sealed: bool,
+        budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Admit caller descriptions before accepting any typed root walker."""
+        if sealed:
+            return Err(CrumbError.invalid_input("typed row seals are not available"))
+        mut owned_budget = budget.snapshot()
+        dictionary = admit_dictionary(descriptions, registry, owned_budget)?
+        return Ok(
+            TypedRowWriter(dictionary=dictionary, rows=[], budget=owned_budget.snapshot()),
+        )
+
+    pub def root(self, shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]:
+        """Return a Walker bound to one exact caller-supplied root description."""
+        mut budget = self.budget.snapshot()
+        description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot()))
+
+    pub def append(mut self, writer: TypedCellWriter) -> Result[None, CrumbError]:
+        """Retain one completed root walker after rechecking its key against this dictionary."""
+        key, data = writer.finish_root()?
+        description = slot(self.dictionary, key, self.budget)?
+        self.rows.append(TypedRowCell(description=description, data=data))
+        return Ok(None)
+
+    pub def finish(self) -> Result[bytes, CrumbError]:
+        """Emit descriptions and completed rows with the Value writer's exact physical framing."""
+        mut budget = self.budget
+        mut body = EncodingBuffer.create()
+        body.count(len(self.dictionary.entries), budget)?
+        for admitted in self.dictionary.entries:
+            body.append(encode_entry(admitted, budget)?, budget)?
+        body.count(len(self.rows), budget)?
+        for row in self.rows:
+            budget.charge_elements(1)?
+            body.count(row.description, budget)?
+            body.frame(row.data, budget)?
+        mut envelope = EncodingBuffer.create()
+        envelope.append(b"CRMB\x01\x01\x00", budget)?
+        envelope.frame(body.finish(budget)?, budget)?
+        return envelope.finish(budget)
+
+
+pub class TypedRowReader:
+    """Retain an unsealed row envelope and vend description-bound Source objects by row."""
+
+    dictionary: Dictionary
+    rows: list[TypedStoredRow]
+    budget: Budget
+
+    @staticmethod
+    pub def create(
+        view: MappedView,
+        supplied: list[Description],
+        registry: KindRegistry,
+        require_sealed: bool,
+        budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Admit framing, descriptions and every root range before exposing typed sources."""
+        mut owned_budget = budget.snapshot()
+        mut cursor = EncodingCursor.create(view).map_err(binary_error)?
+        magic = copied(cursor.take(4, owned_budget).map_err(binary_error)?, 0, owned_budget).map_err(binary_error)?
+        if magic != b"CRMB" or cursor.length(owned_budget).map_err(binary_error)? != 1:
+            return Err(CrumbError.invalid_input("typed row profile"))
+        if cursor.length(owned_budget).map_err(binary_error)? != 1:
+            return Err(CrumbError.invalid_input("typed row profile"))
+        flags = cursor.byte(owned_budget).map_err(binary_error)?
+        if flags != 0 or require_sealed:
+            return Err(CrumbError.invalid_input("typed row seal or flags"))
+        payload = cursor.frame(owned_budget).map_err(binary_error)?
+        origin = cursor.absolute() - payload.len()
+        cursor.finished().map_err(binary_error)?
+        mut body = EncodingCursor.create(payload, origin).map_err(binary_error)?
+        dictionary = read_dictionary(body, supplied, registry, owned_budget).map_err(binary_error)?
+        count = body.length(owned_budget).map_err(binary_error)?
+        owned_budget.charge_elements(count)?
+        mut rows: list[TypedStoredRow] = []
+        for _ in range(count):
+            description = body.length(owned_budget).map_err(binary_error)?
+            if description >= len(dictionary.entries):
+                return Err(CrumbError.invalid_input("typed row description"))
+            raw = body.frame(owned_budget).map_err(binary_error)?
+            rows.append(TypedStoredRow(description=description, data=raw, origin=body.absolute() - raw.len()))
+        body.finished().map_err(binary_error)?
+        return Ok(
+            TypedRowReader(dictionary=dictionary, rows=rows, budget=owned_budget.snapshot()),
+        )
+
+    pub def len(self) -> int:
+        """Return the retained structural row count."""
+        return len(self.rows)
+
+    pub def source(self, index: int, shape: ShapeInfo) -> Result[TypedCellSource, CrumbError]:
+        """Return one Source after matching the caller's root shape to the written description."""
+        if index < 0 or index >= len(self.rows):
+            return Err(CrumbError.invalid_input("typed row index"))
+        mut budget = self.budget.snapshot()
+        expected = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        if self.rows[index].description != expected:
+            return Err(CrumbError.invalid_input("typed row description"))
+        return Ok(
+            TypedCellSource.create_root(
+                self.dictionary.entries[expected],
+                self.rows[index].data,
+                self.rows[index].origin,
+                self.dictionary,
+                budget.snapshot(),
+            ),
+        )
+
+def binary_error(error: BinaryError) -> CrumbError:
+    """Retain a binary refusal message in the typed Crumb failure channel."""
+    return CrumbError.invalid_input(error.message())

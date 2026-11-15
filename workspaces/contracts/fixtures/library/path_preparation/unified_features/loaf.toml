@@ -1,0 +1,10 @@
+[project]
+name = "unified_features"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+pricing = { path = "deps/pricing" }
+catalog = { path = "deps/catalog", default-features = false, features = ["extra"] }

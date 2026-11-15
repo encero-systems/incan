@@ -1,0 +1,121 @@
+"""Share structured-syntax traversal and diagnostic summaries across the runnable vocabulary examples."""
+
+from std.json import JsonValue
+from std.vocab import DesugarError, DesugarOutput, DesugarResponse, IncanExpr, IncanExprKind
+from std.vocab import IncanStatement, IncanStatementKind
+from std.vocab import Span, VocabBodyItem, VocabClauseBody, VocabDeclaration, VocabScopedSurfaceKind
+
+
+pub def print_summary(summary: str, span: Span) -> DesugarResponse:
+    """Return an ordinary print call at the input block's real source range."""
+    text = IncanExpr(span=span, kind=IncanExprKind.Str(summary))
+    call = IncanExpr.call(IncanExpr.path("print", span), [text])
+    statement = IncanStatement(span=span, kind=IncanStatementKind.Expr(call))
+    return DesugarResponse(output=DesugarOutput.Statements([statement]))
+
+
+pub def declaration_expressions(declaration: VocabDeclaration) -> list[IncanExpr]:
+    """Return the declaration's host expressions in authored order, retaining every expression's source range."""
+    mut expressions: list[IncanExpr] = []
+    for item in declaration.body:
+        expressions = expressions + body_expressions(item)
+    return expressions
+
+
+pub def expression_tree(expression: IncanExpr) -> list[IncanExpr]:
+    """Return an expression and its recursive children in prefix order, without interpreting scoped syntax."""
+    mut expressions = [expression]
+    for child in expression_children(expression):
+        expressions = expressions + expression_tree(child)
+    return expressions
+
+
+pub def format_expression(expression: IncanExpr) -> Result[str, DesugarError]:
+    """Format the examples' name, text, member and scoped expressions for display only; never for interchange."""
+    match expression.kind:
+        IncanExprKind.Path(path) => return Ok(".".join(path))
+        IncanExprKind.Str(value) =>
+            return JsonValue
+                .string(value)
+                .to_json()
+                .map_err((error) => DesugarError.at(expression.span, error.message()))
+        IncanExprKind.Attribute(values, field) =>
+            base = format_expression(values[0])?
+            return Ok(base + "." + field)
+        IncanExprKind.Scoped(surface) =>
+            match surface.kind:
+                VocabScopedSurfaceKind.LeadingDotPath(segments, _) => return Ok("." + ".".join(segments))
+                VocabScopedSurfaceKind.Glyph(glyph, values) =>
+                    left = format_expression(values[0])?
+                    right = format_expression(values[1])?
+                    return Ok(left + " " + glyph + " " + right)
+        _ => pass
+    return Ok("<expr>")
+
+
+def body_expressions(item: VocabBodyItem) -> list[IncanExpr]:
+    """Retain expression ownership across ordinary statements, nested declarations and structured clauses."""
+    match item:
+        VocabBodyItem.Statement(statement) => return statement_expressions(statement)
+        VocabBodyItem.Declaration(declaration) => return declaration_expressions(declaration)
+        VocabBodyItem.Clause(clause) =>
+            mut expressions = clause.head
+            match clause.body:
+                VocabClauseBody.Expression(value) => expressions.append(value)
+                VocabClauseBody.ExpressionList(items) =>
+                    for entry in items:
+                        expressions.append(entry.expr)
+                        for modifier in entry.modifiers:
+                            expressions.append(modifier.value)
+                VocabClauseBody.Items(items) =>
+                    for nested in items:
+                        expressions = expressions + body_expressions(nested)
+                _ => pass
+            return expressions
+    return []
+
+
+def statement_expressions(statement: IncanStatement) -> list[IncanExpr]:
+    """Collect ordinary statement values without reparsing or evaluating source text."""
+    match statement.kind:
+        IncanStatementKind.Expr(value) => return [value]
+        IncanStatementKind.Return(Some(value)) => return [value]
+        IncanStatementKind.Assign(_, value) => return [value]
+        IncanStatementKind.Let(_, _, value) => return [value]
+        IncanStatementKind.If(condition, then_body, else_body) =>
+            return [condition] + statements_expressions(then_body + else_body)
+        IncanStatementKind.While(condition, body) => return [condition] + statements_expressions(body)
+        IncanStatementKind.For(_, iterable, body) => return [iterable] + statements_expressions(body)
+        IncanStatementKind.Unsafe(body) => return statements_expressions(body)
+        _ => return []
+
+
+def statements_expressions(statements: list[IncanStatement]) -> list[IncanExpr]:
+    """Combine each nested statement's expressions once."""
+    mut expressions: list[IncanExpr] = []
+    for statement in statements:
+        expressions = expressions + statement_expressions(statement)
+    return expressions
+
+
+def expression_children(expression: IncanExpr) -> list[IncanExpr]:
+    """Expose recursive syntax children while preserving the provider's owned scoped payloads."""
+    match expression.kind:
+        IncanExprKind.List(values) => return values
+        IncanExprKind.Tuple(values) => return values
+        IncanExprKind.Call(values) => return values
+        IncanExprKind.Attribute(values, _) => return values
+        IncanExprKind.Index(values) => return values
+        IncanExprKind.Binary(_, values) => return values
+        IncanExprKind.Unary(_, values) => return values
+        IncanExprKind.Dict(entries) =>
+            mut values: list[IncanExpr] = []
+            for key, value in entries:
+                values = values + [key, value]
+            return values
+        IncanExprKind.Scoped(surface) =>
+            match surface.kind:
+                VocabScopedSurfaceKind.Glyph(_, values) => return values
+                _ => return []
+        _ => return []
+    return []

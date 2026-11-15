@@ -1,0 +1,9 @@
+# behavior: a project whose main script sits beside its `loaf.toml`, as 0.5.1's `rust_interop_regex` example lays it out, builds and runs from the project directory by its relative path, as it does on 0.5.1 (#3144).
+# cli-commands:
+#   run main.incn
+# expect-stdout:
+#   beside the manifest
+# expect-exit: 0
+
+def main() -> None:
+    println("the fixture header program, which this case does not run")

@@ -1,0 +1,32 @@
+"""A case command traces only when its case reads the trace, so tracing costs no other case its time."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from run import invoke, trace_file, traced_setting
+
+
+def environment_of(project: Path, environment: list[str]) -> str:
+    """The environment a case command started in `project` with these settings sees, as `env` prints it."""
+    match invoke("/usr/bin/env", [], project, environment):
+        Ok(outcome) => return outcome.stdout
+        Err(reason) => return f"cannot start env: {reason}"
+
+
+def test_a_case_command_runs_untraced_unless_its_case_reads_the_trace() -> None:
+    """An ordinary case command has the channel off and gets no channel directory, whatever the runner inherited."""
+    scratch = TemporaryDirectory.try_new().unwrap()
+    project = scratch.path().joinpath("case")
+    project.mkdir(true, true).unwrap()
+    seen = environment_of(project, [])
+    assert "\nINCAN_ENGINE_TRACE=\n" in f"\n{seen}"
+    assert not trace_file(project).is_dir()
+
+
+def test_a_case_that_reads_the_trace_traces_into_its_channel() -> None:
+    """A command of a case that reads the trace traces into the case's channel, which exists before it starts."""
+    scratch = TemporaryDirectory.try_new().unwrap()
+    project = scratch.path().joinpath("case")
+    project.mkdir(true, true).unwrap()
+    seen = environment_of(project, traced_setting(project).unwrap())
+    assert f"\nINCAN_ENGINE_TRACE={trace_file(project).0}\n" in f"\n{seen}"
+    assert trace_file(project).is_dir()

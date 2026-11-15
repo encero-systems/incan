@@ -1,0 +1,96 @@
+"""
+Test batches: under one job, the test modules that share a plain session-scoped `conftest.incn` fixture compile into
+one test unit and run in one process, so the fixture is set up once for all of them, as 0.5.1's single worker does.
+"""
+
+from std.fs import Path
+from testing import TestCase
+
+
+pub def batch_groups(found: list[list[TestCase]]) -> list[list[int]]:
+    """
+    The modules, by position, that share a plain session conftest fixture, in module order, two or more to a batch.
+
+    1. A module's fixtures are the ones its cases report sharing.
+    2. A module joins every batch it shares a fixture with; batches it joins become one.
+    """
+    mut groups: list[list[int]] = []
+    mut keys: list[list[str]] = []
+    for position in range(len(found)):
+        # 1. The module's shared fixtures.
+        mut mine: list[str] = []
+        for test_case in found[position]:
+            for key in test_case.sessions:
+                if key not in mine:
+                    mine.append(key)
+        if len(mine) == 0:
+            continue
+        # 2. Every batch it shares a fixture with, joined.
+        mut members: list[int] = [position]
+        mut shared = mine
+        mut kept_groups: list[list[int]] = []
+        mut kept_keys: list[list[str]] = []
+        for index in range(len(groups)):
+            if overlaps(keys[index], mine):
+                members = in_order(groups[index], members)
+                for key in keys[index]:
+                    if key not in shared:
+                        shared.append(key)
+            else:
+                kept_groups.append(groups[index])
+                kept_keys.append(keys[index])
+        kept_groups.append(members)
+        kept_keys.append(shared)
+        groups = kept_groups
+        keys = kept_keys
+    mut batches: list[list[int]] = []
+    for position in range(len(found)):
+        for group in groups:
+            if len(group) > 1 and group[0] == position:
+                batches.append(group)
+    return batches
+
+
+def in_order(left: list[int], right: list[int]) -> list[int]:
+    """Two ascending position lists merged into one, ascending."""
+    mut merged: list[int] = []
+    mut at_left = 0
+    mut at_right = 0
+    while at_left < len(left) or at_right < len(right):
+        if at_right >= len(right) or (at_left < len(left) and left[at_left] < right[at_right]):
+            merged.append(left[at_left])
+            at_left += 1
+        else:
+            merged.append(right[at_right])
+            at_right += 1
+    return merged
+
+
+def overlaps(left: list[str], right: list[str]) -> bool:
+    """Whether two lists share an item."""
+    for item in left:
+        if item in right:
+            return true
+    return false
+
+
+pub def batch_of(batches: list[list[int]], position: int) -> Option[list[int]]:
+    """The batch a module's position belongs to, if any."""
+    for batch in batches:
+        if position in batch:
+            return Some(batch)
+    return None
+
+
+pub def module_of(test_case: TestCase, members: list[Path], project_root: Path) -> Option[Path]:
+    """The batch member a batch case's module names, below the project root, by its resolved path."""
+    match project_root.joinpath(test_case.module).resolve():
+        Err(_) => return None
+        Ok(reported) =>
+            for member in members:
+                match member.resolve():
+                    Ok(resolved) =>
+                        if resolved.0 == reported.0:
+                            return Some(member)
+                    Err(_) => pass
+    return None

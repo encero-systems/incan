@@ -1,0 +1,16 @@
+"""Family workers start the families that run longest first, so the short ones fill the slots behind them."""
+
+from families import FAMILIES, work_order
+
+
+def test_family_workers_start_graph_cases_then_the_longest_families() -> None:
+    """
+    Each graph case is one sequential protocol, and one of them runs about as long as the project family, so every
+    graph case starts first. The other families follow longest first: a long family that starts last outlasts the
+    whole set however early the others finish.
+    """
+    graph_cases = ["graph/cli/invalid", "graph/incan/relationships", "graph/rust/relationships"]
+    order = work_order([family for family in FAMILIES], graph_cases)
+    expected = graph_cases + ["project", "behavior", "interop", "library", "check", "testing", "format"]
+    assert order == expected, ", ".join(order)
+    assert work_order(["check", "behavior"], []) == ["behavior", "check"]

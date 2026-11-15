@@ -1,0 +1,9 @@
+"""Tests a traced run must report as an untraced one does."""
+
+
+def test_sum() -> None:
+    assert 2 + 3 == 5
+
+
+def test_join() -> None:
+    assert "tr" + "ace" == "trace"

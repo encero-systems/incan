@@ -6,9 +6,9 @@
 //! - `IncanReflect`: Alias for IncanClass (for clarity in generated code)
 //! - `IncanJson`: Generates JSON serialization helpers
 //!
-//! This crate is a toolchain-locked implementation companion to the standard library facets (`incan_std_core` and the
-//! others) and compiler-generated Rust. Its macros are public only because Rust requires proc macros to be exported
-//! from a proc-macro crate; downstream code should not treat them as an independent stable macro toolkit.
+//! This crate is a toolchain-locked implementation companion to the standard library facets (`incan_std_primitives` and
+//! the others) and the compiler's native declarations. Its macros are public only because Rust requires proc macros to
+//! be exported from a proc-macro crate; downstream code should not treat them as an independent stable macro toolkit.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -100,8 +100,8 @@ pub fn derive_incan_reflect(input: TokenStream) -> TokenStream {
 
 /// Generates the `HasFieldInfo` trait implementation for reflection.
 ///
-/// This derive macro implements the `incan_std_core::HasFieldInfo` trait, providing static methods to query field names
-/// and types at runtime.
+/// This derive macro implements the `incan_std_primitives::HasFieldInfo` trait, providing static methods to query field
+/// names and types at runtime.
 ///
 /// # Example
 /// ```ignore
@@ -160,7 +160,7 @@ pub fn derive_field_info(input: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-        impl #impl_generics incan_std_core::HasFieldInfo for #name #type_generics #where_clause {
+        impl #impl_generics incan_std_primitives::HasFieldInfo for #name #type_generics #where_clause {
             fn field_names() -> Vec<&'static str> {
                 vec![#(#field_names),*]
             }
@@ -192,7 +192,7 @@ pub fn derive_incan_json(input: TokenStream) -> TokenStream {
             /// Serializes this instance to a JSON string
             pub fn to_json(&self) -> String {
                 serde_json::to_string(self).unwrap_or_else(|_| {
-                    incan_std_core::errors::raise_json_serialization_error(stringify!(#name))
+                    incan_std_primitives::errors::raise_json_serialization_error(stringify!(#name))
                 })
             }
 
@@ -204,7 +204,7 @@ pub fn derive_incan_json(input: TokenStream) -> TokenStream {
             /// Serializes this instance to a pretty-printed JSON string
             pub fn to_json_pretty(&self) -> String {
                 serde_json::to_string_pretty(self).unwrap_or_else(|_| {
-                    incan_std_core::errors::raise_json_serialization_error(stringify!(#name))
+                    incan_std_primitives::errors::raise_json_serialization_error(stringify!(#name))
                 })
             }
         }

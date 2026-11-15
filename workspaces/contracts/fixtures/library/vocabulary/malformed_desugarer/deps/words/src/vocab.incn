@@ -1,0 +1,18 @@
+"""Exercise malformed framing without depending on compiler-private syntax."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarRequest, DesugarResponse, DslSurface, VocabRegistration,
+)
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register a query whose provider corrupts its protocol stream."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("words").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Emit invalid protocol text before the generated adapter writes its structured reply."""
+    println("not a JSON response")
+    return Err(DesugarError.at(request.node.span(), "provider also returned an error"))

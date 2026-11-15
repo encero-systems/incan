@@ -1,0 +1,28 @@
+# behavior: Formatting prepares a dependency's registered syntax before parsing, handles import-activated and always-on surfaces, and needs no desugarer to preserve them.
+# expect-formatted:
+#   """Format registered declarations and expressions."""
+#
+#   from pub::words import marker
+#
+#
+#   note Example, 38, 39:
+#       VALUE OF:
+#           7
+#
+#
+#   def main() -> None:
+#       """Use an always-on expression after an import-activated declaration."""
+#       value = query {
+#           FROM 42
+#       }
+#       println(value)
+
+"""Format registered declarations and expressions."""
+from pub::words import marker
+note Example,38,39:
+    VALUE OF  7
+def main()->None:
+    """Use an always-on expression after an import-activated declaration."""
+    value=query:
+        FROM  42
+    println( value )

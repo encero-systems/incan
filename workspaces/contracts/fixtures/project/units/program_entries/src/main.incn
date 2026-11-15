@@ -1,0 +1,18 @@
+# behavior: selecting several program entries does not copy a borrowed native parameter into the process main
+# cli-commands:
+#   build src/main.incn --program-entry src/second.incn
+# expect-exit: 0
+
+from rust::std::string import String as NativeString
+from second import main as second_main
+
+
+def length(value: NativeString) -> int:
+    """Read a native parameter whose call signature carries its shared loan."""
+    return value.len()
+
+
+def main() -> None:
+    """Keep the borrowed native helper before the program entry in source order."""
+    value = NativeString.from("first")
+    println(length(value))

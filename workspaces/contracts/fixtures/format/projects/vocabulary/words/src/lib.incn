@@ -1,0 +1,6 @@
+"""A vocabulary provider used by formatting without semantic expansion."""
+
+
+pub def marker() -> int:
+    """Return a value exported beside the vocabulary registration."""
+    return 7

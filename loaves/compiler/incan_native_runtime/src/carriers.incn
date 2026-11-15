@@ -2,7 +2,7 @@
 
 from std.derives.string import Debug
 from std.derives.copying import Clone
-from rust::std::clone import Clone as RuntimeClone
+from native_copying import clone_native
 
 
 pub def format_carrier[T with Debug](value: &T) -> str:
@@ -12,4 +12,4 @@ pub def format_carrier[T with Debug](value: &T) -> str:
 
 pub def clone_carrier_payload[T with Clone](value: &T) -> T:
     """Clone a borrowed active payload using its native Clone implementation."""
-    return RuntimeClone.clone(value)
+    return clone_native(value)

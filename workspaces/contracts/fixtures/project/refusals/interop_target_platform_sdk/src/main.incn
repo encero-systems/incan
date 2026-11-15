@@ -1,0 +1,9 @@
+# behavior: an iOS simulator target requires the `iphonesimulator` SDK capability, as in 0.5 (#3135)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   iOS target `aarch64-apple-ios-sim` requires the `iphonesimulator` SDK capability, found `iphoneos`
+
+def main() -> None:
+    println("unreachable")

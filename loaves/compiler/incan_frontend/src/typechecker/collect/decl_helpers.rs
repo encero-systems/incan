@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
+use crate::symbols::{CallableParam, FieldInfo, MethodInfo, MethodScope, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::typechecker::{BodyIrPropertyBindingInfo, FunctionBindingInfo, TypeChecker};
 use incan_lang::lang::derives::{self, DeriveId};
-use incan_semantics_core::SemanticSourceTargetKind;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 /// Build the resolved surface type for a declaration owner while that owner is still being collected.
 ///
@@ -55,6 +55,7 @@ fn resolve_owner_self_reference(
                 .map(|param| CallableParam {
                     name: param.name,
                     ty: resolve_owner_self_reference(param.ty, Some(owner_name), Some(owner_self_ty)),
+                    surface_type_name: param.surface_type_name,
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
@@ -139,6 +140,7 @@ fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<Stri
                 .map(|param| CallableParam {
                     name: param.name,
                     ty: shadow_declared_type_params(param.ty, type_param_names),
+                    surface_type_name: param.surface_type_name,
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
@@ -191,6 +193,7 @@ fn method_info_from_decl(
     owner_name: Option<&str>,
     owner_type_params: &[TypeParam],
     owner_self_ty: Option<&ResolvedType>,
+    members_type_private: bool,
 ) -> MethodInfo {
     let active_type_params = type_param_name_set(owner_type_params, &method.node.type_params);
     let type_params: Vec<String> = method.node.type_params.iter().map(|tp| tp.name.clone()).collect();
@@ -240,11 +243,12 @@ fn method_info_from_decl(
         .params
         .iter()
         .map(|p| {
+            let surface_type_name = checker.alias_surface_type_name(&p.node.ty.node);
             let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
-            checker.record_mutable_rust_parameter_projection(&p.node);
             let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
             CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                 .with_mut(is_mut)
+                .with_surface_type_name(surface_type_name)
         })
         .collect();
     let return_type = resolve_declared_type(
@@ -274,6 +278,8 @@ fn method_info_from_decl(
     checker.record_caller_visible_mut_params(Some(&identity), &method.node.params, &params);
     MethodInfo {
         identity: Some(identity),
+        scope: MethodScope::written(method.node.visibility, members_type_private),
+        owner: owner_name.map(str::to_string),
         type_params,
         type_param_bounds,
         type_param_bound_details,
@@ -284,15 +290,18 @@ fn method_info_from_decl(
         is_async: method.node.is_async(),
         has_body: method.node.body.is_some(),
         alias_of: None,
+        made_private: crate::symbols::made_private_from_decorators(&method.node.decorators),
     }
 }
 
-/// Collect methods from method declarations into grouped overloads, preserving same-name declarations.
+/// Collect methods from method declarations into grouped overloads, preserving same-name declarations. An unmarked
+/// method is private to its type when the type's unmarked members are ([`crate::symbols::members_are_type_private`]).
 pub(super) fn collect_method_overloads(
     methods: &[Spanned<MethodDecl>],
     checker: &mut TypeChecker,
     owner_name: Option<&str>,
     owner_type_params: &[TypeParam],
+    members_type_private: bool,
 ) -> HashMap<String, Vec<MethodInfo>> {
     let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
     let mut overloads: HashMap<String, Vec<MethodInfo>> = HashMap::new();
@@ -309,6 +318,7 @@ pub(super) fn collect_method_overloads(
                 owner_name,
                 owner_type_params,
                 owner_self_ty.as_ref(),
+                members_type_private,
             ));
     }
     overloads
@@ -390,7 +400,7 @@ pub(super) fn collect_fields(
     checker: &mut TypeChecker,
     owner: &str,
     owner_type_params: &[TypeParam],
-    private_fields_are_type_private: bool,
+    members_type_private: bool,
 ) -> HashMap<String, FieldInfo> {
     let owner_self_ty = owner_resolved_type(owner, owner_type_params);
     let active_type_params = type_param_name_set(owner_type_params, &[]);
@@ -416,14 +426,25 @@ pub(super) fn collect_fields(
                         SemanticSourceTargetKind::Field,
                         f.span,
                     )),
+                    record_identity: crate::symbols::field_record_identity(&f.node),
+                    record_canonical: crate::symbols::field_record_canonical(&f.node),
+                    renamed_from: crate::symbols::field_renamed_from(&f.node),
+                    renamed_from_lifecycle: crate::symbols::field_renamed_from_lifecycle(&f.node),
+                    default_is_empty: crate::symbols::field_default_is_empty(&f.node),
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&f.node.ty.node, &ty)),
                     ty,
                     visibility: f.node.visibility,
-                    is_type_private: crate::symbols::field_is_type_private(&f.node, private_fields_are_type_private),
+                    is_type_private: crate::symbols::field_is_type_private(&f.node, members_type_private),
                     owner: Some(owner.to_string()),
                     has_default: f.node.default.is_some(),
                     alias: f.node.metadata.alias.clone(),
                     description: f.node.metadata.description.clone(),
+                    made_private: f
+                        .node
+                        .metadata
+                        .made_private
+                        .as_ref()
+                        .map(crate::symbols::MadePrivateInfo::from_field),
                 },
             )
         })
@@ -464,7 +485,7 @@ pub(super) fn collect_properties(
                 has_body: property.node.body.is_some(),
             };
             checker.type_info.declarations.body_ir_property_bindings.insert(
-                (property.span.start, property.span.end),
+                property.span,
                 BodyIrPropertyBindingInfo {
                     callable: FunctionBindingInfo {
                         is_async: false,
@@ -485,33 +506,33 @@ pub(super) fn collect_properties(
         .collect()
 }
 
-/// Inject a `TypeName.new(...) -> Result[TypeName, E]` constructor for `@derive(Validate)` models.
+/// Inject the checked `TypeName.new(...) -> Result[TypeName, E]` surface for `@derive(Validate)` models.
 ///
-/// This is a *typechecker-only* method injection to allow `User.new(...)` calls to typecheck even though the backend
-/// generates the actual Rust implementation.
+/// The exact generated identity crosses into Body IR with the owning model's validated-construction fact. Runtime
+/// lowering therefore selects this semantic constructor without dispatching on the source spelling.
 pub(super) fn inject_validate_methods(
     methods: &mut HashMap<String, MethodInfo>,
     overloads: &mut HashMap<String, Vec<MethodInfo>>,
-    _type_name: &str,
+    owner: &CanonicalSymbolId,
     fields: &HashMap<String, FieldInfo>,
     field_order: &[Ident],
     derives: &[String],
-) {
+) -> Option<CanonicalSymbolId> {
     let has_validate = derives
         .iter()
         .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
     if !has_validate {
-        return;
+        return None;
     }
 
     // Only inject if the user didn't already define it.
-    if methods.contains_key("new") {
-        return;
+    if methods.contains_key(incan_lang::lang::conventions::NEW_METHOD) {
+        return None;
     }
 
     // Use the return type of validate() if present; otherwise use Unknown (second pass will report a better error).
     let return_type = methods
-        .get("validate")
+        .get(incan_lang::lang::conventions::VALIDATE_METHOD)
         .map(|m| m.return_type.clone())
         .unwrap_or(ResolvedType::Unknown);
 
@@ -529,12 +550,18 @@ pub(super) fn inject_validate_methods(
         }
     }
 
+    let identity = owner.generated_member(
+        incan_lang::lang::conventions::NEW_METHOD,
+        SemanticSourceTargetKind::Method,
+    );
     insert_injected_method(
         methods,
         overloads,
-        "new",
+        incan_lang::lang::conventions::NEW_METHOD,
         MethodInfo {
-            identity: None,
+            identity: Some(identity.clone()),
+            scope: MethodScope::Public,
+            owner: None,
             type_params: Vec::new(),
             type_param_bounds: HashMap::new(),
             type_param_bound_details: HashMap::new(),
@@ -545,6 +572,8 @@ pub(super) fn inject_validate_methods(
             is_async: false,
             has_body: true,
             alias_of: None,
+            made_private: None,
         },
     );
+    Some(identity)
 }

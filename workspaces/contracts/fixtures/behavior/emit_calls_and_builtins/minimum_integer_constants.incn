@@ -1,0 +1,66 @@
+# behavior: Minimum integer constants agree with returns and preserve overflow ValueError checks
+# expect-stdout:
+#   -9223372036854775808
+#   -9223372036854775808
+#   -9223372036854775808
+#   -9223372036854775808
+#   18446744073709551615
+#   -170141183460469231731687303715884105728
+#   abs overflow raised
+#   sum overflow raised
+#   negative sum overflow raised
+
+"""Keep the signed minimum intact through constant evaluation and checked builtins."""
+
+from std.testing import assert_raises
+
+const DIRECT: int = -9223372036854775808
+const COMPUTED: int = -9223372036854775807 - 1
+const COMPUTED_FROM_MINIMUM: int = -9223372036854775808 + 0
+const MAXIMUM: int = 9223372036854775807
+const WIDE: u64 = 18446744073709551615u64
+const WIDEST_MINIMUM: i128 = -170141183460469231731687303715884105728i128
+
+
+def main() -> None:
+    """
+    Prove constants and ordinary expressions preserve the signed minimum.
+
+    1. Print direct and computed constants beside an ordinary return.
+    2. Verify builtin overflow still raises ValueError at both bounds.
+    """
+    # 1. Constants with either spelling agree with ordinary expressions.
+    println(DIRECT)
+    println(COMPUTED)
+    println(COMPUTED_FROM_MINIMUM)
+    println(minimum())
+    println(WIDE)
+    println(WIDEST_MINIMUM)
+
+    # 2. Both integer bounds retain their existing error behavior.
+    assert_raises[ValueError](absolute_minimum)
+    println("abs overflow raised")
+    assert_raises[ValueError](sum_above_maximum)
+    println("sum overflow raised")
+    assert_raises[ValueError](sum_below_minimum)
+    println("negative sum overflow raised")
+
+
+def minimum() -> int:
+    """Return the minimum directly from an ordinary expression."""
+    return -9223372036854775808
+
+
+def absolute_minimum() -> None:
+    """Taking the absolute value of the minimum must raise ValueError."""
+    abs(DIRECT)
+
+
+def sum_above_maximum() -> None:
+    """Adding one above the maximum must raise ValueError."""
+    sum([MAXIMUM, 1])
+
+
+def sum_below_minimum() -> None:
+    """Subtracting one below the minimum must raise ValueError."""
+    sum([DIRECT, -1])

@@ -1,0 +1,5 @@
+# behavior: async is reserved and cannot be declared as a function name
+# expect-diagnostic: INCAN-P0001
+
+def async() -> int:
+    return 1

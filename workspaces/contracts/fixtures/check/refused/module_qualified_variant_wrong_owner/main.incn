@@ -1,0 +1,16 @@
+# behavior: a module-qualified variant pattern is refused when its enum is not the matched subject's declaration (#2713)
+# expect-diagnostic: INCAN-T0001
+
+import expected
+import other
+
+
+def decision_code(decision: expected.Decision) -> int:
+    """Refuse the equal-spelled variant owned by another module."""
+    match decision:
+        other.Decision.Approved(code) => return code
+        _ => return 0
+
+
+def main() -> None:
+    pass

@@ -1,0 +1,11 @@
+"""Attempt to activate the very vocabulary this entry provides."""
+
+from helper import marker
+from std.vocab import DeclarationSurface, DslSurface, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Describe the surface whose activation would require this unit itself."""
+    return VocabRegistration
+        .new()
+        .with_surface(DslSurface.on_import("pub.self_vocab").with_declaration(DeclarationSurface.named("note")))

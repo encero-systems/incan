@@ -4,7 +4,10 @@ from rust::incan_semantics_core::body_ir import ArgumentElement, Place as RustPl
 from pub::incan_mir_plan import PlanType, SourceSpan
 from frame import Builder, place_type
 from options import result_layout
-from lowering import argument_type, fixed_arguments, scalar_place, instantiated_external_call
+from sequence_builtins import argument_type
+from call_arguments import fixed_arguments
+from checked_values import scalar_place
+from calls import instantiated_external_call
 
 
 pub def lower_newtype_hook_result(

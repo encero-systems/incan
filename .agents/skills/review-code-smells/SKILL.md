@@ -50,8 +50,7 @@ Do not write to the canonical `.agents/state/review-report.md`.
 
 ## Slice report shape
 
-Keep slice reports findings-first. Only list clean surfaces when that clean call is non-obvious or useful for the
-orchestrator.
+Keep slice reports findings-first. Only list clean surfaces when that clean call is non-obvious or useful for the orchestrator.
 
 ```md
 # Review Slice Report
@@ -70,7 +69,7 @@ orchestrator.
   `--bin` is exposed publicly but has no effect.
 
 ## Reviewed Clean Surfaces
-- loaves/toolchain/incan-cli/src/commands/init.rs — maintainability reviewed; no findings
+- workspaces/oven/src/main.incn — maintainability reviewed; no findings
 ```
 
 If there are no findings, say so explicitly.

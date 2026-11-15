@@ -1,0 +1,10 @@
+# behavior: an explicit body refuses a native borrowed result whose Rust signature has no admitted Incan owner, and names the temporary-producing call (#2500).
+# expect-diagnostic: INCAN-T0123
+
+from rust::std::io import Cursor, Read
+
+
+def borrow_temporary(marker: Borrowed[int]) -> None:
+    reader = Read.by_ref(Cursor.new(b"abc"))
+    println(marker)
+    reader.take(1u64)

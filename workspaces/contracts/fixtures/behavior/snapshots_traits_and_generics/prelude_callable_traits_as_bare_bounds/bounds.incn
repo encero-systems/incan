@@ -1,0 +1,13 @@
+"""Generic functions bounded by the prelude's callable traits, with no import: the prelude makes them ambient."""
+
+
+pub def call0[F with Callable0[int]](f: F) -> int:
+    return f()
+
+
+pub def call1[F with Callable1[int, int]](f: F, x: int) -> int:
+    return f(x)
+
+
+pub def call2[F with Callable2[int, int, int]](f: F, x: int, y: int) -> int:
+    return f(x, y)

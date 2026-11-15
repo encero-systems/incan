@@ -391,7 +391,6 @@ pub fn materialize_contract_models(
         message: format!("{errors:?}"),
     })?;
     synthetic_program.declarations.append(&mut program.declarations);
-    synthetic_program.rust_module_path = program.rust_module_path.take();
     synthetic_program.warnings.append(&mut program.warnings);
     *program = synthetic_program;
     Ok(())

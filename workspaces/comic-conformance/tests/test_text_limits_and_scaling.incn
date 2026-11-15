@@ -1,0 +1,81 @@
+"""Exact refusal positions and proportional charged work for repeated COMIC records."""
+
+from std.primitives.crumb import Budget, TextContext, TextFailure, read_comic
+from std.primitives.text import encode_utf8
+
+
+def test_depth_failures_keep_the_current_token_position() -> Result[None, str]:
+    """A budget refusal reports the cursor at the refused operation, not a cached earlier token."""
+    source = "Point = Record { x: i64 }\n"
+    assert_depth_refusal(source, 0, 1, 1)?
+    assert_depth_refusal(source, 1, 1, 21)?
+    nested = "Point = Record { x: list<i64> }\n"
+    assert_depth_refusal(nested, 2, 1, 26)?
+    properties = "Point = Record { note = { author = \"Ada\" }, x: i64 }\n"
+    assert_depth_refusal(properties, 2, 1, 36)?
+    return Ok(None)
+
+
+def test_element_exhaustion_reports_the_last_span() -> Result[None, str]:
+    """The final streaming-token charge refuses at its position while an exact allowance succeeds."""
+    source = "Point = Record { x: i64 }\nPoint << [(1), (2)]\n"
+    used = charged_elements(source, 2)?
+    mut short = Budget.create(bytes=65536, elements=used - 1, depth=64).map_err((error) => error.message())?
+    context = TextContext.core(short).map_err((error) => error.message())?
+    match read_comic(encode_utf8(source), context, short):
+        Ok(_) => return Err("last span exceeded the element allowance")
+        Err(error) =>
+            assert error.kind == TextFailure.Limit
+            assert error.position.line == 3
+            assert error.position.column == 1
+    mut exact = Budget.create(bytes=65536, elements=used, depth=64).map_err((error) => error.message())?
+    exact_context = TextContext.core(exact).map_err((error) => error.message())?
+    document = read_comic(encode_utf8(source), exact_context, exact).map_err((error) => error.message())?
+    assert len(document.values) == 2
+    return Ok(None)
+
+
+def test_repeated_rows_charge_proportional_work() -> Result[None, str]:
+    """Tenfold record growth adds tenfold token/value work, excluding the fixed declaration."""
+    small = charged_elements(rows(10), 10)?
+    medium = charged_elements(rows(100), 100)?
+    large = charged_elements(rows(1000), 1000)?
+    assert medium > small
+    assert large - medium == 10 * (medium - small)
+    # Allocation/copy work needs the separate native-profile contract in README.md:
+    # successful Budget operations do not count hidden callback-capture copies.
+    return Ok(None)
+
+
+def rows(count: int) -> str:
+    """Build a fixed-width recordset without a growing-string append loop."""
+    entries = ["(1, 2)" for _ in range(count)]
+    return "Point = Record { x: i64, y: i64 }\nPoint << [" + ", ".join(entries) + "]\n"
+
+
+def charged_elements(source: str, count: int) -> Result[int, str]:
+    """Observe the remaining public allowance after a successful complete parse."""
+    allowance = 50000
+    mut budget = Budget.create(bytes=1048576, elements=allowance, depth=64).map_err((error) => error.message())?
+    context = TextContext.core(budget).map_err((error) => error.message())?
+    document = read_comic(encode_utf8(source), context, budget).map_err((error) => error.message())?
+    assert len(document.values) == count
+    mut remaining = 0
+    loop:
+        match budget.charge_elements(1):
+            Ok(_) => remaining += 1
+            Err(_) => break
+    return Ok(allowance - remaining)
+
+
+def assert_depth_refusal(source: str, depth: int, line: int, column: int) -> Result[None, str]:
+    """Check exact token coordinates without parsing a rendered diagnostic string."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=depth).map_err((error) => error.message())?
+    context = TextContext.core(budget).map_err((error) => error.message())?
+    match read_comic(encode_utf8(source), context, budget):
+        Ok(_) => return Err("depth allowance was ignored")
+        Err(error) =>
+            assert error.kind == TextFailure.Limit
+            assert error.position.line == line
+            assert error.position.column == column
+    return Ok(None)

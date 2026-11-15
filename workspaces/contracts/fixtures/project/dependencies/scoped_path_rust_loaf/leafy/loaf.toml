@@ -1,0 +1,8 @@
+[project]
+name = "crates-io/leafy"
+version = "1.0.0"
+
+[rust]
+name = "leafy"
+type = "lib"
+build-script = false

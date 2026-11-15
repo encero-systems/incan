@@ -1,0 +1,60 @@
+"""Gregorian calendar constants and leap-year rules for `std.datetime.civil`."""
+
+pub const _DAYS_PER_YEAR: int = 365
+pub const _DAYS_PER_LEAP_YEAR: int = 366
+pub const _DAYS_PER_WEEK: int = 7
+pub const _MONTHS_PER_YEAR: int = 12
+pub const _HOURS_PER_DAY: int = 24
+pub const _MINUTES_PER_HOUR: int = 60
+pub const _SECONDS_PER_MINUTE: int = 60
+pub const _SECONDS_PER_HOUR: int = _MINUTES_PER_HOUR * _SECONDS_PER_MINUTE
+pub const _SECONDS_PER_DAY: int = _HOURS_PER_DAY * _SECONDS_PER_HOUR
+const _NANOS_PER_MICROSECOND: int = 1_000
+const _NANOS_PER_MILLISECOND: int = 1_000_000
+pub const _NANOS_PER_SECOND: int = 1_000_000_000
+pub const _NANOS_PER_DAY: int = _SECONDS_PER_DAY * _NANOS_PER_SECOND
+pub const _UNIX_EPOCH_YEAR: int = 1970
+
+
+pub def is_leap_year(year: int) -> bool:
+    """
+    Check whether a Gregorian year is a leap year.
+
+    Args:
+        year: Gregorian year.
+
+    Returns:
+        `true` for leap years.
+    """
+    if year % 400 == 0:
+        return true
+    if year % 100 == 0:
+        return false
+    return year % 4 == 0
+
+
+pub def days_in_month(year: int, month: int) -> int:
+    """
+    Return the number of days in a Gregorian month.
+
+    Args:
+        year: Gregorian year.
+        month: Month in `1..12`.
+
+    Returns:
+        Day count for the month. Invalid month values are treated as 31-day months by this low-level helper; checked
+        constructors validate month ranges before calling it.
+    """
+    match month:
+        2 =>
+            if is_leap_year(year):
+                return 29
+            return 28
+        4 | 6 | 9 | 11 => return 30
+        _ => return 31
+
+
+pub def _min_int(left: int, right: int) -> int:
+    if left < right:
+        return left
+    return right

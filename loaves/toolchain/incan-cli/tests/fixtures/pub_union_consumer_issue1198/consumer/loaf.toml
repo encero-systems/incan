@@ -1,6 +1,0 @@
-[project]
-name = "issue1198_union_consumer"
-version = "0.1.0"
-
-[dependencies]
-issue1198_union_provider = { path = "../provider" }

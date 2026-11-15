@@ -1,0 +1,15 @@
+# behavior: Comments before a module docstring and between it and the first import keep their positions and gaps.
+# expect-formatted:
+#   # A leading comment.
+#
+#   """Module documentation."""
+#
+#   # Import comment.
+#   import rust::std::fmt
+
+# A leading comment.
+
+"""Module documentation."""
+
+# Import comment.
+import rust::std::fmt

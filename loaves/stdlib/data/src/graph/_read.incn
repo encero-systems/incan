@@ -1,0 +1,1162 @@
+"""Capability-sealed storage-independent graph reads and indexed memory graphs."""
+
+from crate.graph._ids import (
+    EdgeId,
+    GraphError,
+    NodeId,
+    duplicate_edge,
+    insert_sorted_node,
+    missing_edge,
+    unknown_edge,
+    unknown_node,
+    wrong_graph_scope,
+)
+
+const NODE_STREAM: int = 0
+const OUT_EDGE_STREAM: int = 1
+const IN_EDGE_STREAM: int = 2
+const WHOLE_SELECTION: int = 0
+const INSERTION_ORDERING: int = 0
+
+
+static next_scope_id: int = 1
+
+
+@derive(Clone, Copy, Eq, Hash, Ord)
+model _ScopeToken:
+    """Capability naming one in-memory graph instance."""
+
+    value: int
+
+    @staticmethod
+    pub def fresh() -> _ScopeToken:
+        """Construct one package-owned scope capability from the module counter."""
+        value = next_scope_id
+        next_scope_id += 1
+        return _ScopeToken(value=value)
+
+    pub def id(self) -> int:
+        """Return the private capability identity inside the graph package."""
+        return self.value
+
+
+@derive(Clone, Copy, Eq, Hash, Ord)
+pub model ScopedNodeId:
+    """Node identity carrying its issuing graph instance."""
+
+    _scope: int
+    _local: NodeId
+
+    @staticmethod
+    pub def issue(token: _ScopeToken, local: NodeId) -> ScopedNodeId:
+        """Construct one node key from its package-owned capability and local id."""
+        return ScopedNodeId(_scope=token.id(), _local=local)
+
+    pub def to_int(self) -> int:
+        """Return the graph-local numeric representation for diagnostics."""
+        return self._local.to_int()
+
+    pub def belongs_to(self, token: _ScopeToken) -> bool:
+        """Return whether this key was issued by `token`."""
+        return self._scope == token.id()
+
+    pub def local_id(self, token: _ScopeToken) -> Option[NodeId]:
+        """Return the local id only when `token` issued this key."""
+        if not self.belongs_to(token):
+            return None
+        return Some(self._local)
+
+
+@derive(Clone, Copy, Eq, Hash, Ord)
+pub model ScopedEdgeId:
+    """Edge identity carrying its issuing graph instance."""
+
+    _scope: int
+    _local: EdgeId
+
+    @staticmethod
+    pub def issue(token: _ScopeToken, local: EdgeId) -> ScopedEdgeId:
+        """Construct one edge key from its package-owned capability and local id."""
+        return ScopedEdgeId(_scope=token.id(), _local=local)
+
+    pub def to_int(self) -> int:
+        """Return the graph-local numeric representation for diagnostics."""
+        return self._local.to_int()
+
+    pub def belongs_to(self, token: _ScopeToken) -> bool:
+        """Return whether this key was issued by `token`."""
+        return self._scope == token.id()
+
+    pub def local_id(self, token: _ScopeToken) -> Option[EdgeId]:
+        """Return the local id only when `token` issued this key."""
+        if not self.belongs_to(token):
+            return None
+        return Some(self._local)
+
+
+def fresh_scope() -> _ScopeToken:
+    """Issue a capability for one newly created graph instance."""
+    return _ScopeToken.fresh()
+
+
+def issue_node(token: _ScopeToken, local: NodeId) -> ScopedNodeId:
+    """Bind one local node id to its graph capability."""
+    return ScopedNodeId.issue(token, local)
+
+
+def issue_edge(token: _ScopeToken, local: EdgeId) -> ScopedEdgeId:
+    """Bind one local edge id to its graph capability."""
+    return ScopedEdgeId.issue(token, local)
+
+
+@derive(Eq)
+pub enum GraphProvider:
+    """Backend family serving one graph read scope."""
+
+    Memory
+
+
+@derive(Eq)
+pub enum GraphSelection:
+    """Finite graph selection fixed by one read scope."""
+
+    Whole
+
+
+@derive(Eq)
+pub enum GraphOrdering:
+    """Stable ordering profile used by one graph read scope."""
+
+    Insertion
+
+
+@derive(Clone, Eq)
+pub model GraphScope:
+    """Provider, selection, revision and ordering fixed for graph reads."""
+
+    pub provider: GraphProvider
+    pub selection: GraphSelection
+    pub revision: int
+    pub ordering: GraphOrdering
+
+
+@derive(Clone, Copy, Eq)
+pub model GraphPageBudget:
+    """Maximum structural records returned by one page, or no record limit."""
+
+    _max_records: Option[int]
+
+    @staticmethod
+    pub def records(max_records: int) -> GraphPageBudget:
+        """Request at most `max_records` structural records."""
+        return GraphPageBudget(_max_records=Some(max_records))
+
+    @staticmethod
+    pub def unbounded() -> GraphPageBudget:
+        """Request every remaining structural record."""
+        return GraphPageBudget(_max_records=None)
+
+    pub def is_full(self, count: int) -> bool:
+        """Return whether `count` has reached this page's record bound."""
+        match self._max_records:
+            Some(limit) => return count >= limit
+            None => return false
+
+    pub def is_empty_request(self) -> bool:
+        """Return whether this budget cannot admit one record."""
+        match self._max_records:
+            Some(limit) => return limit <= 0
+            None => return false
+
+
+@derive(Clone, Copy, Eq)
+pub model GraphPageToken:
+    """Opaque continuation for one compatible structural page stream."""
+
+    _scope: int
+    _revision: int
+    _selection: int
+    _ordering: int
+    _stream: int
+    _subject: int
+    _position: int
+
+    @staticmethod
+    pub def issue(
+        scope: _ScopeToken,
+        revision: int,
+        selection: int,
+        ordering: int,
+        stream: int,
+        subject: int,
+        position: int,
+    ) -> GraphPageToken:
+        """Construct one package-owned structural continuation."""
+        return GraphPageToken(
+            _scope=scope.id(),
+            _revision=revision,
+            _selection=selection,
+            _ordering=ordering,
+            _stream=stream,
+            _subject=subject,
+            _position=position,
+        )
+
+    pub def scope_id(self) -> int:
+        """Return the issuing graph scope for compatibility checks."""
+        return self._scope
+
+    pub def revision(self) -> int:
+        """Return the issuing graph revision for compatibility checks."""
+        return self._revision
+
+    pub def selection_id(self) -> int:
+        """Return the issuing selection identity for compatibility checks."""
+        return self._selection
+
+    pub def ordering_id(self) -> int:
+        """Return the issuing ordering profile for compatibility checks."""
+        return self._ordering
+
+    pub def stream_id(self) -> int:
+        """Return the issuing page-stream kind for compatibility checks."""
+        return self._stream
+
+    pub def subject_id(self) -> int:
+        """Return the issuing adjacency subject for compatibility checks."""
+        return self._subject
+
+    pub def position(self) -> int:
+        """Return the next physical position in the page stream."""
+        return self._position
+
+
+@derive(Clone, Copy, Eq)
+pub model PageCounters:
+    """Physical work and materialization counters for one structural page."""
+
+    pub index_seeks: int
+    pub node_slots_examined: int
+    pub adjacency_entries_examined: int
+    pub live_entries: int
+    pub tombstones_examined: int
+    pub payloads_materialized: int
+    pub bytes_copied: int
+
+
+@derive(Clone)
+pub model NodePage[K]:
+    """Bounded node keys plus an optional compatible continuation."""
+
+    pub values: list[K]
+    pub next: Option[GraphPageToken]
+    pub counters: PageCounters
+
+
+@derive(Clone)
+pub model GraphEdgeItem[K, I]:
+    """One structural edge identity and its directed endpoints."""
+
+    pub id: I
+    pub source: K
+    pub target: K
+
+
+@derive(Clone)
+pub model EdgePage[K, I]:
+    """Bounded structural edges plus an optional compatible continuation."""
+
+    pub values: list[GraphEdgeItem[K, I]]
+    pub next: Option[GraphPageToken]
+    pub counters: PageCounters
+
+
+pub model MemoryGraphFailure:
+    """Unconstructible source failure reserved for infallible memory reads."""
+
+    _detail: str
+
+
+@derive(Clone, Copy, Eq)
+pub enum GraphReadErrorKind:
+    """Inspectable category of one storage-independent graph read failure."""
+
+    UnknownNode
+    UnknownEdge
+    ScopeMismatch
+    StaleCursor
+    IncompatibleCursor
+    UnsupportedSelection
+    Resource
+    Cancelled
+    Source
+
+
+pub class GraphReadError[F]:
+    """Typed, inspectable failure from a storage-independent structural read."""
+
+    pub kind: GraphReadErrorKind
+    pub unknown_id: Option[int]
+    pub resource_detail: Option[str]
+    pub source: Option[F]
+
+    @staticmethod
+    pub def UnknownNode(node: int) -> GraphReadError[F]:
+        """Construct an unknown-node failure for one scoped local identity."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.UnknownNode,
+            unknown_id=Some(node),
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def UnknownEdge(edge: int) -> GraphReadError[F]:
+        """Construct an unknown-edge failure for one scoped local identity."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.UnknownEdge,
+            unknown_id=Some(edge),
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def ScopeMismatch() -> GraphReadError[F]:
+        """Construct a failure for a key issued by another graph scope."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.ScopeMismatch,
+            unknown_id=None,
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def StaleCursor() -> GraphReadError[F]:
+        """Construct a failure for a cursor issued at another graph revision."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.StaleCursor,
+            unknown_id=None,
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def IncompatibleCursor() -> GraphReadError[F]:
+        """Construct a failure for a cursor from another page stream or profile."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.IncompatibleCursor,
+            unknown_id=None,
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def UnsupportedSelection() -> GraphReadError[F]:
+        """Construct a failure for a selection the reader cannot serve."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.UnsupportedSelection,
+            unknown_id=None,
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def Resource(detail: str) -> GraphReadError[F]:
+        """Construct a resource failure with an inspectable explanation."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.Resource,
+            unknown_id=None,
+            resource_detail=Some(detail),
+            source=None,
+        )
+
+    @staticmethod
+    pub def Cancelled() -> GraphReadError[F]:
+        """Construct a failure for a caller-cancelled read."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.Cancelled,
+            unknown_id=None,
+            resource_detail=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def Source(failure: F) -> GraphReadError[F]:
+        """Construct a failure that preserves its source-specific value."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.Source,
+            unknown_id=None,
+            resource_detail=None,
+            source=Some(failure),
+        )
+
+
+def issue_page_token(
+    scope: _ScopeToken,
+    revision: int,
+    selection: int,
+    ordering: int,
+    stream: int,
+    subject: int,
+    position: int,
+) -> GraphPageToken:
+    """Issue an opaque page continuation inside the graph package."""
+    return GraphPageToken.issue(scope, revision, selection, ordering, stream, subject, position)
+
+
+pub trait GraphRead[K, I, F]:
+    """Read one fixed graph scope through bounded structural pages."""
+
+    def scope(self) -> GraphScope
+    def contains_node(self, key: K) -> Result[bool, GraphReadError[F]]
+    def nodes(self, budget: GraphPageBudget, cursor: Option[GraphPageToken]) -> Result[NodePage[K], GraphReadError[F]]
+    def out_edges(
+        self,
+        key: K,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[K, I], GraphReadError[F]]
+    def in_edges(
+        self,
+        key: K,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[K, I], GraphReadError[F]]
+    def edge(self, key: I) -> Result[GraphEdgeItem[K, I], GraphReadError[F]]
+
+
+model _NodeSlot[T]:
+    """One never-reused node slot and its adjacency accounting."""
+
+    pub payload: T
+    pub active: bool
+    pub outgoing: list[EdgeId]
+    pub incoming: list[EdgeId]
+    pub outgoing_by_target: list[EdgeId]
+    pub outgoing_live: int
+    pub incoming_live: int
+    pub outgoing_tombstones: int
+    pub incoming_tombstones: int
+
+
+model _EdgeSlot:
+    """One never-reused edge slot."""
+
+    pub from_: NodeId
+    pub to: NodeId
+    pub active: bool
+
+
+pub model _GraphStore[T]:
+    """Indexed storage with dense id slots and local adjacency lists."""
+
+    next_node_id: int = 0
+    next_edge_id: int = 0
+    nodes: list[_NodeSlot[T]] = []
+    edges: list[_EdgeSlot] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Create an empty indexed store."""
+        return _GraphStore(next_node_id=0, next_edge_id=0, nodes=[], edges=[])
+
+    pub def add_node(mut self, payload: T) -> NodeId:
+        """Append one dense node slot and return its never-reused id."""
+        id = NodeId(self.next_node_id)
+        self.next_node_id += 1
+        self.nodes.append(
+            _NodeSlot(
+                payload=payload,
+                active=true,
+                outgoing=[],
+                incoming=[],
+                outgoing_by_target=[],
+                outgoing_live=0,
+                incoming_live=0,
+                outgoing_tombstones=0,
+                incoming_tombstones=0,
+            ),
+        )
+        return id
+
+    pub def remove_node(mut self, node: NodeId) -> Result[None, GraphError]:
+        """Tombstone `node` and every incident edge."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        mut incident = self.nodes[index].outgoing
+        for edge in self.nodes[index].incoming:
+            incident.append(edge)
+        for edge in incident:
+            self.remove_edge_if_live(edge)
+        self.nodes[index].active = false
+        return Ok(None)
+
+    pub def contains_node(self, node: NodeId) -> bool:
+        """Return whether `node` names a live dense slot."""
+        return self.node_index(node) >= 0
+
+    pub def node_payload(self, node: NodeId) -> Result[T, GraphError]:
+        """Return the payload value stored for `node`."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(self.nodes[index].payload)
+
+    pub def replace_node(mut self, node: NodeId, payload: T) -> Result[None, GraphError]:
+        """Replace the payload stored for one live node."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        self.nodes[index].payload = payload
+        return Ok(None)
+
+    pub def insert_edge(mut self, from_: NodeId, to: NodeId, allow_parallel: bool) -> Result[EdgeId, GraphError]:
+        """Append one edge and index it in both endpoint adjacency lists."""
+        if not self.contains_node(from_):
+            return Err(unknown_node(from_))
+        if not self.contains_node(to):
+            return Err(unknown_node(to))
+        if not allow_parallel and self.contains_pair(from_, to):
+            return Err(duplicate_edge(from_, to))
+        edge = EdgeId(self.next_edge_id)
+        self.next_edge_id += 1
+        self.edges.append(_EdgeSlot(from_=from_, to=to, active=true))
+        if not allow_parallel:
+            self.index_simple_edge(from_, edge)
+        self.attach_outgoing(from_, edge)
+        self.attach_incoming(to, edge)
+        return Ok(edge)
+
+    pub def remove_pair(mut self, from_: NodeId, to: NodeId) -> Result[None, GraphError]:
+        """Remove the first live edge connecting `from_ -> to`."""
+        from_index = self.node_index(from_)
+        if from_index < 0:
+            return Err(unknown_node(from_))
+        if self.node_index(to) < 0:
+            return Err(unknown_node(to))
+        edge = self.simple_edge(from_, to)
+        if self.edge_index(edge) >= 0:
+            return self.remove_edge(edge)
+        return Err(missing_edge(from_, to))
+
+    pub def remove_edge(mut self, edge: EdgeId) -> Result[None, GraphError]:
+        """Tombstone one edge and update both endpoint adjacency lists."""
+        if self.edge_index(edge) < 0:
+            return Err(unknown_edge(edge))
+        self.remove_edge_if_live(edge)
+        return Ok(None)
+
+    pub def contains_pair(self, from_: NodeId, to: NodeId) -> bool:
+        """Return whether a live edge connects `from_ -> to`."""
+        if self.node_index(from_) < 0 or self.node_index(to) < 0:
+            return false
+        return self.edge_index(self.simple_edge(from_, to)) >= 0
+
+    pub def contains_edge(self, edge: EdgeId) -> bool:
+        """Return whether `edge` names a live edge slot."""
+        return self.edge_index(edge) >= 0
+
+    pub def edge_endpoints(self, edge: EdgeId) -> Result[Tuple[NodeId, NodeId], GraphError]:
+        """Return the endpoints stored for one live edge."""
+        index = self.edge_index(edge)
+        if index < 0:
+            return Err(unknown_edge(edge))
+        slot = self.edges[index]
+        return Ok((slot.from_, slot.to))
+
+    pub def read_nodes(
+        self,
+        scope: _ScopeToken,
+        revision: int,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[NodePage[ScopedNodeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one insertion-order page of live scoped node keys without materializing payloads."""
+        if budget.is_empty_request():
+            return Err(GraphReadError.Resource("page budget must admit at least one record"))
+        position = page_position(scope, revision, cursor, NODE_STREAM, -1)?
+        mut values: list[ScopedNodeId] = []
+        mut examined = 0
+        mut tombstones = 0
+        mut next_position = position
+        while next_position < self.node_slot_count() and not budget.is_full(len(values)):
+            match self.node_at(next_position):
+                Some(node) => values.append(issue_node(scope, node))
+                None => tombstones += 1
+            examined += 1
+            next_position += 1
+        return Ok(
+            NodePage(
+                values=values,
+                next=next_token(scope, revision, NODE_STREAM, -1, next_position, self.node_slot_count()),
+                counters=page_counters(examined, 0, len(values), tombstones, len(values) * 16),
+            ),
+        )
+
+    pub def read_out_edges(
+        self,
+        scope: _ScopeToken,
+        revision: int,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one insertion-order page of outgoing structural edges without materializing payloads."""
+        local = self.read_node(scope, key)?
+        return self.read_adjacency(scope, revision, local, budget, cursor, OUT_EDGE_STREAM)
+
+    pub def read_in_edges(
+        self,
+        scope: _ScopeToken,
+        revision: int,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one insertion-order page of incoming structural edges without materializing payloads."""
+        local = self.read_node(scope, key)?
+        return self.read_adjacency(scope, revision, local, budget, cursor, IN_EDGE_STREAM)
+
+    pub def read_edge(
+        self,
+        scope: _ScopeToken,
+        key: ScopedEdgeId,
+    ) -> Result[GraphEdgeItem[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one live structural edge identity and its scoped endpoints."""
+        match key.local_id(scope):
+            Some(local) =>
+                if self.contains_edge(local):
+                    return self.read_edge_item(scope, local)
+                return Err(GraphReadError.UnknownEdge(local.to_int()))
+            None => return Err(GraphReadError.ScopeMismatch())
+
+    def read_node(self, scope: _ScopeToken, key: ScopedNodeId) -> Result[NodeId, GraphReadError[MemoryGraphFailure]]:
+        """Resolve a live scoped node for one shared structural read."""
+        match key.local_id(scope):
+            Some(local) =>
+                if self.contains_node(local):
+                    return Ok(local)
+                return Err(GraphReadError.UnknownNode(local.to_int()))
+            None => return Err(GraphReadError.ScopeMismatch())
+
+    def read_adjacency(
+        self,
+        scope: _ScopeToken,
+        revision: int,
+        node: NodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+        stream: int,
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Read one bounded incoming or outgoing adjacency page without allocating a complete neighbor list."""
+        if budget.is_empty_request():
+            return Err(GraphReadError.Resource("page budget must admit at least one record"))
+        end = self.read_adjacency_count(node, stream)?
+        mut position = page_position(scope, revision, cursor, stream, node.to_int())?
+        mut values: list[GraphEdgeItem[ScopedNodeId, ScopedEdgeId]] = []
+        mut examined = 0
+        mut tombstones = 0
+        while position < end and not budget.is_full(len(values)):
+            match self.read_adjacency_edge(node, position, stream)?:
+                Some(edge) => values.append(self.read_edge_item(scope, edge)?)
+                None => tombstones += 1
+            examined += 1
+            position += 1
+        return Ok(
+            EdgePage(
+                values=values,
+                next=next_token(scope, revision, stream, node.to_int(), position, end),
+                counters=page_counters(0, examined, len(values), tombstones, len(values) * 48),
+            ),
+        )
+
+    def read_adjacency_count(self, node: NodeId, stream: int) -> Result[int, GraphReadError[MemoryGraphFailure]]:
+        """Return the physical adjacency length for one structural page direction."""
+        mut result = self.outgoing_entry_count(node)
+        if stream == IN_EDGE_STREAM:
+            result = self.incoming_entry_count(node)
+        match result:
+            Ok(count) => return Ok(count)
+            Err(_) => return Err(GraphReadError.UnknownNode(node.to_int()))
+
+    def read_adjacency_edge(
+        self,
+        node: NodeId,
+        position: int,
+        stream: int,
+    ) -> Result[Option[EdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one live adjacency entry without materializing the surrounding list."""
+        mut result = self.outgoing_edge_at(node, position)
+        if stream == IN_EDGE_STREAM:
+            result = self.incoming_edge_at(node, position)
+        match result:
+            Ok(edge) => return Ok(edge)
+            Err(_) => return Err(GraphReadError.UnknownNode(node.to_int()))
+
+    def read_edge_item(
+        self,
+        scope: _ScopeToken,
+        edge: EdgeId,
+    ) -> Result[GraphEdgeItem[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Translate one local structural edge into graph-scoped identities."""
+        match self.edge_endpoints(edge):
+            Ok((source, target)) =>
+                return Ok(
+                    GraphEdgeItem(
+                        id=issue_edge(scope, edge),
+                        source=issue_node(scope, source),
+                        target=issue_node(scope, target),
+                    ),
+                )
+            Err(_) => return Err(GraphReadError.UnknownEdge(edge.to_int()))
+
+    pub def node_slot_count(self) -> int:
+        """Return the number of allocated node slots, including tombstones."""
+        return len(self.nodes)
+
+    pub def node_at(self, position: int) -> Option[NodeId]:
+        """Return the live node at one physical position, if present."""
+        if position < 0 or position >= len(self.nodes) or not self.nodes[position].active:
+            return None
+        return Some(NodeId(position))
+
+    pub def outgoing_entry_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the physical outgoing adjacency length for `node`."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(len(self.nodes[index].outgoing))
+
+    pub def incoming_entry_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the physical incoming adjacency length for `node`."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(len(self.nodes[index].incoming))
+
+    pub def outgoing_edge_at(self, node: NodeId, position: int) -> Result[Option[EdgeId], GraphError]:
+        """Return the live outgoing edge at one physical adjacency position."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        if position < 0 or position >= len(self.nodes[index].outgoing):
+            return Ok(None)
+        edge = self.nodes[index].outgoing[position]
+        if self.edge_index(edge) < 0:
+            return Ok(None)
+        return Ok(Some(edge))
+
+    pub def incoming_edge_at(self, node: NodeId, position: int) -> Result[Option[EdgeId], GraphError]:
+        """Return the live incoming edge at one physical adjacency position."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        if position < 0 or position >= len(self.nodes[index].incoming):
+            return Ok(None)
+        edge = self.nodes[index].incoming[position]
+        if self.edge_index(edge) < 0:
+            return Ok(None)
+        return Ok(Some(edge))
+
+    pub def edges_between(self, from_: NodeId, to: NodeId) -> Result[list[EdgeId], GraphError]:
+        """Return live parallel edges in insertion order."""
+        from_index = self.node_index(from_)
+        if from_index < 0:
+            return Err(unknown_node(from_))
+        if self.node_index(to) < 0:
+            return Err(unknown_node(to))
+        mut found: list[EdgeId] = []
+        for edge in self.nodes[from_index].outgoing:
+            if self.edge_connects(edge, from_, to):
+                found.append(edge)
+        return Ok(found)
+
+    pub def successors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return distinct live targets in ascending `NodeId` order."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        mut found: list[NodeId] = []
+        for edge in self.nodes[index].outgoing:
+            edge_index = self.edge_index(edge)
+            if edge_index >= 0:
+                insert_sorted_node(found, self.edges[edge_index].to)
+        return Ok(found)
+
+    pub def predecessors(self, node: NodeId) -> Result[list[NodeId], GraphError]:
+        """Return distinct live sources in ascending `NodeId` order."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        mut found: list[NodeId] = []
+        for edge in self.nodes[index].incoming:
+            edge_index = self.edge_index(edge)
+            if edge_index >= 0:
+                insert_sorted_node(found, self.edges[edge_index].from_)
+        return Ok(found)
+
+    pub def active_node_ids(self) -> list[NodeId]:
+        """Return live node ids in ascending allocation order."""
+        mut ids: list[NodeId] = []
+        for index in range(len(self.nodes)):
+            if self.nodes[index].active:
+                ids.append(NodeId(index))
+        return ids
+
+    pub def active_edge_ids(self) -> list[EdgeId]:
+        """Return live edge ids in ascending allocation order."""
+        mut ids: list[EdgeId] = []
+        for index in range(len(self.edges)):
+            if self.edges[index].active:
+                ids.append(EdgeId(index))
+        return ids
+
+    pub def adjacency_physical_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of physical outgoing adjacency entries."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(len(self.nodes[index].outgoing))
+
+    pub def adjacency_live_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of live outgoing adjacency entries."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(self.nodes[index].outgoing_live)
+
+    pub def adjacency_tombstone_count(self, node: NodeId) -> Result[int, GraphError]:
+        """Return the number of tombstoned outgoing adjacency entries."""
+        index = self.node_index(node)
+        if index < 0:
+            return Err(unknown_node(node))
+        return Ok(self.nodes[index].outgoing_tombstones)
+
+    pub def node_index(self, node: NodeId) -> int:
+        """Return the dense live node slot, or `-1`."""
+        index = node.to_int()
+        if index < 0 or index >= len(self.nodes) or not self.nodes[index].active:
+            return -1
+        return index
+
+    pub def edge_index(self, edge: EdgeId) -> int:
+        """Return the dense live edge slot, or `-1`."""
+        index = edge.to_int()
+        if index < 0 or index >= len(self.edges) or not self.edges[index].active:
+            return -1
+        return index
+
+    def edge_connects(self, edge: EdgeId, from_: NodeId, to: NodeId) -> bool:
+        """Return whether one live edge has the requested endpoints."""
+        index = self.edge_index(edge)
+        if index < 0:
+            return false
+        slot = self.edges[index]
+        return slot.from_ == from_ and slot.to == to
+
+    def simple_edge(self, from_: NodeId, to: NodeId) -> EdgeId:
+        """Find a simple edge by target through the source node's sorted local index."""
+        index = self.node_index(from_)
+        if index < 0:
+            return EdgeId(-1)
+        mut left = 0
+        mut right = len(self.nodes[index].outgoing_by_target)
+        while left < right:
+            middle = (left + right) // 2
+            candidate = self.nodes[index].outgoing_by_target[middle]
+            target = self.edges[candidate.to_int()].to
+            if target == to:
+                return candidate
+            if target.to_int() < to.to_int():
+                left = middle + 1
+            else:
+                right = middle
+        return EdgeId(-1)
+
+    def index_simple_edge(mut self, from_: NodeId, edge: EdgeId) -> None:
+        """Insert or replace one edge in the source node's target-sorted local index."""
+        index = from_.to_int()
+        target = self.edges[edge.to_int()].to
+        mut left = 0
+        mut right = len(self.nodes[index].outgoing_by_target)
+        while left < right:
+            middle = (left + right) // 2
+            existing = self.nodes[index].outgoing_by_target[middle]
+            existing_target = self.edges[existing.to_int()].to
+            if existing_target == target:
+                self.nodes[index].outgoing_by_target[middle] = edge
+                return
+            if existing_target.to_int() < target.to_int():
+                left = middle + 1
+            else:
+                right = middle
+        self.nodes[index].outgoing_by_target.append(edge)
+        mut position = len(self.nodes[index].outgoing_by_target) - 1
+        while position > left:
+            self.nodes[index].outgoing_by_target.swap(position - 1, position)
+            position -= 1
+
+    def attach_outgoing(mut self, node: NodeId, edge: EdgeId) -> None:
+        """Append one outgoing adjacency entry."""
+        index = node.to_int()
+        self.nodes[index].outgoing.append(edge)
+        self.nodes[index].outgoing_live += 1
+
+    def attach_incoming(mut self, node: NodeId, edge: EdgeId) -> None:
+        """Append one incoming adjacency entry."""
+        index = node.to_int()
+        self.nodes[index].incoming.append(edge)
+        self.nodes[index].incoming_live += 1
+
+    def remove_edge_if_live(mut self, edge: EdgeId) -> None:
+        """Tombstone a live edge once and update endpoint counters."""
+        index = self.edge_index(edge)
+        if index < 0:
+            return
+        mut stored = self.edges[index]
+        stored.active = false
+        self.edges[index] = stored
+        self.record_outgoing_tombstone(stored.from_)
+        self.record_incoming_tombstone(stored.to)
+
+    def record_outgoing_tombstone(mut self, node: NodeId) -> None:
+        """Update outgoing degree and compact when tombstones outnumber live entries."""
+        index = node.to_int()
+        self.nodes[index].outgoing_live -= 1
+        self.nodes[index].outgoing_tombstones += 1
+        if self.nodes[index].outgoing_tombstones > self.nodes[index].outgoing_live:
+            self.compact_outgoing(index)
+
+    def record_incoming_tombstone(mut self, node: NodeId) -> None:
+        """Update incoming degree and compact when tombstones outnumber live entries."""
+        index = node.to_int()
+        self.nodes[index].incoming_live -= 1
+        self.nodes[index].incoming_tombstones += 1
+        if self.nodes[index].incoming_tombstones > self.nodes[index].incoming_live:
+            self.compact_incoming(index)
+
+    def compact_outgoing(mut self, index: int) -> None:
+        """Discard outgoing tombstone references in insertion order."""
+        mut compacted: list[EdgeId] = []
+        for edge in self.nodes[index].outgoing:
+            if self.edge_index(edge) >= 0:
+                compacted.append(edge)
+        self.nodes[index].outgoing = compacted
+        self.nodes[index].outgoing_tombstones = 0
+
+    def compact_incoming(mut self, index: int) -> None:
+        """Discard incoming tombstone references in insertion order."""
+        mut compacted: list[EdgeId] = []
+        for edge in self.nodes[index].incoming:
+            if self.edge_index(edge) >= 0:
+                compacted.append(edge)
+        self.nodes[index].incoming = compacted
+        self.nodes[index].incoming_tombstones = 0
+
+
+def page_position(
+    scope: _ScopeToken,
+    revision: int,
+    cursor: Option[GraphPageToken],
+    stream: int,
+    subject: int,
+) -> Result[int, GraphReadError[MemoryGraphFailure]]:
+    """Validate a page continuation against one graph scope, revision and structural stream."""
+    match cursor:
+        None => return Ok(0)
+        Some(token) =>
+            if token.scope_id() != scope.id():
+                return Err(GraphReadError.ScopeMismatch())
+            if token.revision() != revision:
+                return Err(GraphReadError.StaleCursor())
+            if token.selection_id() != WHOLE_SELECTION or token.ordering_id() != INSERTION_ORDERING:
+                return Err(GraphReadError.IncompatibleCursor())
+            if token.stream_id() != stream or token.subject_id() != subject:
+                return Err(GraphReadError.IncompatibleCursor())
+            return Ok(token.position())
+
+
+def next_token(
+    scope: _ScopeToken,
+    revision: int,
+    stream: int,
+    subject: int,
+    position: int,
+    end: int,
+) -> Option[GraphPageToken]:
+    """Return a continuation only when the physical structural stream has more entries."""
+    if position >= end:
+        return None
+    return Some(issue_page_token(scope, revision, WHOLE_SELECTION, INSERTION_ORDERING, stream, subject, position))
+
+
+def page_counters(
+    node_slots: int,
+    adjacency_entries: int,
+    live: int,
+    tombstones: int,
+    bytes_copied: int,
+) -> PageCounters:
+    """Record structural page work without claiming payload materialization."""
+    return PageCounters(
+        index_seeks=1,
+        node_slots_examined=node_slots,
+        adjacency_entries_examined=adjacency_entries,
+        live_entries=live,
+        tombstones_examined=tombstones,
+        payloads_materialized=0,
+        bytes_copied=bytes_copied,
+    )
+
+
+pub model RelationGraph[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryGraphFailure], Clone:
+    """Directed graph with graph-scoped identities and typed node and edge payloads."""
+
+    store: _GraphStore[N]
+    edge_values: list[E]
+    scope_token: _ScopeToken
+    revision: int
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """Create an empty relation graph with a fresh identity scope."""
+        return RelationGraph(store=_GraphStore[N](), edge_values=[], scope_token=fresh_scope(), revision=0)
+
+    pub def clone(self) -> Self:
+        """Clone values and structure into a fresh graph identity scope."""
+        return RelationGraph(
+            store=self.store.clone(),
+            edge_values=self.edge_values.clone(),
+            scope_token=fresh_scope(),
+            revision=self.revision,
+        )
+
+    pub def add_node(mut self, value: N) -> ScopedNodeId:
+        """Add one typed node and return its graph-scoped identity."""
+        local = self.store.add_node(value)
+        self.revision += 1
+        return issue_node(self.scope_token, local)
+
+    pub def add_edge(
+        mut self,
+        source: ScopedNodeId,
+        target: ScopedNodeId,
+        value: E,
+    ) -> Result[ScopedEdgeId, GraphError]:
+        """Add one directed typed edge after validating both scoped endpoints."""
+        source_local = self.require_node(source)?
+        target_local = self.require_node(target)?
+        local = self.store.insert_edge(source_local, target_local, true)?
+        self.edge_values.append(value)
+        self.revision += 1
+        return Ok(issue_edge(self.scope_token, local))
+
+    pub def remove_node(mut self, node: ScopedNodeId) -> Result[None, GraphError]:
+        """Remove a node and every incoming and outgoing edge."""
+        local = self.require_node(node)?
+        self.store.remove_node(local)?
+        self.revision += 1
+        return Ok(None)
+
+    pub def remove_edge(mut self, edge: ScopedEdgeId) -> Result[None, GraphError]:
+        """Remove one edge without affecting parallel edges."""
+        local = self.require_edge(edge)?
+        self.store.remove_edge(local)?
+        self.revision += 1
+        return Ok(None)
+
+    pub def replace_node(mut self, node: ScopedNodeId, value: N) -> Result[None, GraphError]:
+        """Replace one node payload by identity."""
+        local = self.require_node(node)?
+        self.store.replace_node(local, value)?
+        self.revision += 1
+        return Ok(None)
+
+    pub def replace_edge(mut self, edge: ScopedEdgeId, value: E) -> Result[None, GraphError]:
+        """Replace one edge payload by identity without changing parallel edges."""
+        local = self.require_edge(edge)?
+        self.edge_values[local.to_int()] = value
+        self.revision += 1
+        return Ok(None)
+
+    pub def node_value(self, node: ScopedNodeId) -> Result[N, GraphError]:
+        """Return the typed payload stored for one node identity."""
+        return self.store.node_payload(self.require_node(node)?)
+
+    pub def edge_value(self, edge: ScopedEdgeId) -> Result[E, GraphError]:
+        """Return the typed payload stored for one edge identity."""
+        local = self.require_edge(edge)?
+        return Ok(self.edge_values[local.to_int()])
+
+    pub def contains_edge(self, edge: ScopedEdgeId) -> bool:
+        """Return whether `edge` is live in this graph instance."""
+        match edge.local_id(self.scope_token):
+            Some(local) => return self.store.contains_edge(local)
+            None => return false
+
+    def scope(self) -> GraphScope:
+        """Return this graph's whole-selection insertion-order read scope."""
+        return GraphScope(
+            provider=GraphProvider.Memory,
+            selection=GraphSelection.Whole,
+            revision=self.revision,
+            ordering=GraphOrdering.Insertion,
+        )
+
+    def contains_node(self, key: ScopedNodeId) -> Result[bool, GraphReadError[MemoryGraphFailure]]:
+        """Return scoped node membership without scanning payloads."""
+        match key.local_id(self.scope_token):
+            Some(local) => return Ok(self.store.contains_node(local))
+            None => return Err(GraphReadError.ScopeMismatch())
+
+    def nodes(
+        self,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[NodePage[ScopedNodeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one insertion-order page of live scoped node keys."""
+        return self.store.read_nodes(self.scope_token, self.revision, budget, cursor)
+
+    def out_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one edge-insertion-order page of outgoing structural edges."""
+        return self.store.read_out_edges(self.scope_token, self.revision, key, budget, cursor)
+
+    def in_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one edge-insertion-order page of incoming structural edges."""
+        return self.store.read_in_edges(self.scope_token, self.revision, key, budget, cursor)
+
+    def edge(
+        self,
+        key: ScopedEdgeId,
+    ) -> Result[GraphEdgeItem[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
+        """Return one live structural edge identity and its endpoints."""
+        return self.store.read_edge(self.scope_token, key)
+
+    def require_node(self, key: ScopedNodeId) -> Result[NodeId, GraphError]:
+        """Resolve a live node key for a mutating or payload operation."""
+        match key.local_id(self.scope_token):
+            Some(local) =>
+                if self.store.contains_node(local):
+                    return Ok(local)
+                return Err(unknown_node(local))
+            None => return Err(wrong_graph_scope())
+
+    def require_edge(self, key: ScopedEdgeId) -> Result[EdgeId, GraphError]:
+        """Resolve a live edge key for a mutating or payload operation."""
+        match key.local_id(self.scope_token):
+            Some(local) =>
+                if self.store.contains_edge(local):
+                    return Ok(local)
+                return Err(unknown_edge(local))
+            None => return Err(wrong_graph_scope())

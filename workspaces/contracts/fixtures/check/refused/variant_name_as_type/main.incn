@@ -1,0 +1,21 @@
+# behavior: an enum variant is not a type, so an annotation naming an imported or a local variant is refused as an unknown type (#2594)
+# expect-diagnostic: INCAN-T0001
+
+from shapes import Shape, Circle
+
+
+enum Fill:
+    Solid
+    Hatched(int)
+
+
+def area(shape: Circle) -> float:
+    return 0.0
+
+
+def shade(fills: list[Hatched]) -> int:
+    return len(fills)
+
+
+def main() -> None:
+    println("refused before it runs")

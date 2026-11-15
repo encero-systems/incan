@@ -1,0 +1,245 @@
+"""
+Parse a Loaf manifest into its declared intent: the project, features, dependencies, facets and requests.
+
+Each concern's reader is its own module: `manifest_fields`, `manifest_dependencies`, `manifest_environments`,
+`manifest_features`, `manifest_tables` and `manifest_tool`; the intent's models are `manifest_models`.
+"""
+
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+from std import toml
+from std.toml import TomlValue
+from std.hash import sha256
+from rust::std::str import from_utf8
+from manifest_errors import NO_SDK_SELECTION, IntakeError, IntakeErrorKind
+from loaf_identity import crate_name, validate_project_identity, validate_registry_identity
+from toolchain_access import BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
+from pub::incan_platform.trace import Operation
+from jec import begin, record, text_size
+from c_facet import parse_c_facet
+from c_interop import parse_c_targets
+from manifest_fields import allowed, flag, required, requirement
+from manifest_dependencies import parse_dependencies, parse_providers
+from manifest_environments import parse_environment_dependencies
+from manifest_features import parse_features
+from manifest_tables import parse_c_headers, parse_vocab_entry, refuse_moved_tables, validate_facets, validate_workspace
+from manifest_tool import parse_contract_models
+from rust_lints import declared_lints
+pub from manifest_fields import refusal, table
+pub from manifest_models import (
+    FeatureDeclaration,
+    LocalDependency,
+    ManifestDocument,
+    ManifestEvidence,
+    ManifestSnapshot,
+    ProjectIntent,
+    ProviderRequirement,
+    RustInputRequest,
+)
+
+# The manifest's tables.
+const ROOT_TABLES: FrozenList[str] = [
+    "project",
+    "dependencies",
+    # Retained only so intake can issue the table's migration-specific refusal.
+    "rust-dependencies",
+    "build",
+    "rust",
+    "vocab",
+    "tool",
+    "interop",
+    "c",
+    "envs",
+    "workspace",
+]
+# The keys of `[project]`.
+const PROJECT_KEYS: FrozenList[str] = [
+    "name",
+    "version",
+    "scripts",
+    "features",
+    "description",
+    "authors",
+    "license",
+    "license-files",
+    "readme",
+    "requires-incan",
+    "private",
+    "registry-id",
+    # 0.5.1's further package metadata, accepted as authored; like the fields above, it does not reach a unit.
+    "maintainers",
+    "homepage",
+    "repository",
+    "documentation",
+    "issues",
+    "keywords",
+    "classifiers",
+]
+
+
+pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Parse effective intent and retain source spans for literal diagnostic key paths."""
+    clock = begin()
+    result = parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+    record(Operation.ManifestParse, manifest, clock, text_size(source, clock))
+    return result
+
+
+pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, IntakeError]:
+    """
+    Decode one immutable manifest snapshot and separate evidence from normalized intent.
+
+        Raw bytes, their digest and the source location describe what was read. They do not become an action or unit
+        identity. The normalized intent contains supported declarations only; unknown semantic fields refuse explicitly.
+
+        Args:
+            raw: Exact UTF-8 manifest bytes, including original comments and line endings.
+            manifest: Diagnostic provenance path, not a selected package identity.
+
+        Returns:
+            The source evidence and normalized intent, or a structured decoding/schema refusal.
+
+        Example:
+            document = parse_document(b"[project]
+    name='catalog'
+    version='0.1.0'
+    ", "loaf.toml")?
+            assert document.intent.name == "catalog"
+    """
+    snapshot = decoded_manifest(raw, manifest)?
+    rust_source_root = snapshot.parsed
+        .get_optional[str]("rust.source.root")
+        .map_err(
+            (error) => refusal(manifest, ["rust", "source", "root"], IntakeErrorKind.Invalid, error.message()).with_source(
+                snapshot.evidence.source,
+            ),
+        )?
+    intent = intent_from_snapshot(snapshot)?
+    return Ok(ManifestDocument(intent=intent, evidence=snapshot.evidence, rust_source_root=rust_source_root))
+
+
+pub def decoded_manifest(raw: bytes, manifest: str) -> Result[ManifestSnapshot, IntakeError]:
+    """Parse and hash one immutable byte snapshot once, retaining provenance for every later view."""
+    source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
+    mut clock = begin()
+    parsed = toml.parse(source)
+    record(Operation.ManifestParse, manifest, clock, len(raw))
+    document = parsed.map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    clock = begin()
+    digest = sha256.digest(raw)
+    record(Operation.FileHash, manifest, clock, len(raw))
+    evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)
+    return Ok(ManifestSnapshot(evidence=evidence, parsed=document))
+
+
+pub def intent_from_snapshot(snapshot: ManifestSnapshot) -> Result[ProjectIntent, IntakeError]:
+    """Validate an already parsed source generation, attaching errors to the exact bytes that produced it."""
+    return intent_from_document(snapshot.parsed, snapshot.evidence.path).map_err(
+        (error) => error.with_source(snapshot.evidence.source),
+    )
+
+
+def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Validate every supported table before projecting effective local intent."""
+    parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    return intent_from_document(parsed, manifest)
+
+
+def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Project effective intent from an existing parse without rereading or reinterpreting source bytes."""
+    root = table(parsed, manifest, [])?
+    if "sdk" in root:
+        return Err(
+            refusal(
+                manifest,
+                ["sdk"],
+                IntakeErrorKind.Unsupported,
+                NO_SDK_SELECTION,
+            ),
+        )
+    refuse_moved_tables(root, manifest)?
+    allowed(root, list(ROOT_TABLES), manifest, [])?
+    validate_workspace(root, manifest)?
+    if "project" not in root and "workspace" in root:
+        detail = "a virtual workspace is not a project: select its members with --workspace or --member"
+        return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, detail))
+    if "project" not in root:
+        return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
+    project = table(root["project"], manifest, ["project"])?
+    allowed(project, list(PROJECT_KEYS), manifest, ["project"])?
+    name = required(project, "name", manifest, ["project", "name"])?
+    validate_project_identity(name).map_err(
+        (error) => refusal(manifest, ["project", "name"], IntakeErrorKind.Invalid, error),
+    )?
+    version = required(project, "version", manifest, ["project", "version"])?
+    if "requires-incan" in project:
+        requirement(project["requires-incan"], manifest, ["project", "requires-incan"])?
+    mut registry_id: Option[str] = None
+    if "registry-id" in project:
+        declared_registry = required(project, "registry-id", manifest, ["project", "registry-id"])?
+        validate_registry_identity(declared_registry).map_err(
+            (error) => refusal(manifest, ["project", "registry-id"], IntakeErrorKind.Invalid, error),
+        )?
+        registry_id = Some(declared_registry)
+    mut scripts: Dict[str, str] = {}
+    if "scripts" in project:
+        values = table(project["scripts"], manifest, ["project", "scripts"])?
+        for key in sorted([key for key in values.keys()]):
+            scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
+    dependencies, rust_inputs = parse_dependencies(root, manifest)?
+    features = parse_features(project, dependencies, manifest, rust_inputs)?
+    validate_facets(root, manifest, name)?
+    environment_rust_inputs = parse_environment_dependencies(root, rust_inputs, manifest)?
+    mut edition = "2024"
+    mut rust_name = crate_name(name)
+    mut rust_type = ""
+    mut rust_build_script = false
+    mut source_root: Option[str] = None
+    mut access = ToolchainAccess()
+    if "build" in root:
+        build = table(root["build"], manifest, ["build"])?
+        keys = ["target", "profile", "rust-edition", "source-root"] + access_keys(BUILD_SEPARATOR)
+        allowed(build, keys, manifest, ["build"])?
+        access = read_access(build, BUILD_SEPARATOR, manifest, ["build"])?
+        if "target" in build:
+            required(build, "target", manifest, ["build", "target"])?
+        if "profile" in build:
+            required(build, "profile", manifest, ["build", "profile"])?
+        if "rust-edition" in build:
+            edition = required(build, "rust-edition", manifest, ["build", "rust-edition"])?
+        if "source-root" in build:
+            source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
+    if "rust" in root:
+        rust_facet = table(root["rust"], manifest, ["rust"])?
+        if "name" in rust_facet:
+            rust_name = required(rust_facet, "name", manifest, ["rust", "name"])?
+        if "type" in rust_facet:
+            rust_type = required(rust_facet, "type", manifest, ["rust", "type"])?
+        rust_build_script = flag(rust_facet, "build-script", false, manifest, ["rust"])?
+        if "edition" in rust_facet:
+            edition = required(rust_facet, "edition", manifest, ["rust", "edition"])?
+    return Ok(
+        ProjectIntent(
+            name=name,
+            version=version,
+            scripts=scripts,
+            dependencies=dependencies,
+            rust_inputs=rust_inputs,
+            rust_edition=edition,
+            registry_id=registry_id,
+            rust_name=rust_name,
+            rust_type=rust_type,
+            rust_build_script=rust_build_script,
+            environment_rust_inputs=environment_rust_inputs,
+            features=features,
+            source_root=source_root,
+            contract_models=parse_contract_models(root, manifest)?,
+            c_headers=parse_c_headers(root, manifest)?,
+            c_facet=parse_c_facet(root, manifest)?,
+            c_targets=parse_c_targets(root, manifest)?,
+            vocab_entry=parse_vocab_entry(root, manifest)?,
+            toolchain_access=access,
+            rust_lints=declared_lints(root, manifest)?,
+            providers=parse_providers(root, manifest)?,
+        ),
+    )

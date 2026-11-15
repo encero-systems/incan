@@ -1,0 +1,18 @@
+[project]
+name = "registry_alias"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["math"]
+math = ["dep:foreign_math"]
+
+[dependencies]
+foreign_math = { loaf = "crates-io/libm", version = "0.2", optional = true }
+unused = { loaf = "crates-io/libm", version = "999", optional = true }
+checksum = { loaf = "crates-io/crc32fast", version = "1" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = ["raw_value", "unbounded_depth"] }
+libc = { loaf = "crates-io/libc", version = "0.2", default-features = true }

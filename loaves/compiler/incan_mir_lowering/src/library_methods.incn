@@ -1,0 +1,361 @@
+"""Lower calls to library methods with their receivers, arguments, and results."""
+
+from pub::incan_mir_plan import CalleeKind, Place, PlanType, RvalueKind, SourceSpan, assign as plan_assign
+from layout_types import shared_receiver_type, native_source_type
+from derived_methods import (
+    comparison_dunder,
+    is_derived_clone,
+    is_derived_display,
+    lower_comparison_dunder,
+    lower_derived_clone,
+    receiver_declares_method,
+    slot_name,
+)
+from rust::incan_semantics_core import IncanType as RustType, generic
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    Place as RustPlace,
+    LoafCallable as RustLoafCallable,
+    MethodTarget,
+)
+from nominal_instances import instance_arguments, template_base
+from table_views import borrowed_at, borrowed_table
+from traits import receiver_fills_slot, receiver_method_identity
+from fallible_factories import fallible_factory
+from element_places import is_element_place
+from element_borrows import mutable_element_reference
+from models import model_place
+from model_values import is_json_serialize_method
+from unions import require_native_union_signature
+from frame import place_type, Builder, temporary, read_place
+from async_ import construct_boxed_future
+from type_parameters import substitute
+from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
+from shared_callables import shared_sdk_operands
+from closures import return_representation
+from lowering import BodyIrModule
+from checked_values import scalar_place
+from calls import instantiated_external_call, library_call_operands, native_delegation
+from callable_calls import checked_type_arguments, lower_callable_bound_call
+from call_arguments import call_parameter_type
+from builtin_calls import lower_model_json_builtin
+from model_construction import clone_nominal_operand
+from operand_borrows import lower_display_str
+from list_methods import call_destination, materialized_receiver
+
+
+pub def lower_library_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call a stdlib method in the SDK crate that compiled it.
+
+    Borrow the retained receiver as the compiled crate declares it, then bind remaining arguments as for a local method.
+    The driver validates the complete signature against that crate's metadata.
+
+    An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
+    The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
+    """
+    if len(target.type_args) != 0 and target.loaf_trait == None:
+        return Err("unsupported Body IR type arguments on a stdlib method")
+    if len(delegation.parameters) == 0 or len(arguments) == 0:
+        return Err("unsupported Body IR stdlib method without a receiver")
+    receiver_type = delegation.parameters[0]
+    mut names: list[str] = []
+    for name in delegation.type_parameters:
+        names.append(str(name))
+    reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
+    closed = library_method_arguments(module, builder, delegation, target, reference, names)?
+    mut parameters = [place_type(builder.locals, reference)]
+    mut ordinary_types: list[PlanType] = []
+    for index in range(1, len(delegation.parameters)):
+        parameter: RustType = substitute(delegation.parameters[index], names, closed)?
+        _ = require_native_union_signature(parameter, builder.intrinsics, native_delegation(delegation))?
+        match delegation.declaration_frame():
+            Some(frame) => ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
+            None =>
+                ordinary_types.append(
+                    native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        parameter,
+                        builder.intrinsics,
+                    )?,
+                )
+    owned = sdk_owned_callable_bindings(builder, delegation, target.binding, arguments, ordinary_types)?
+    if delegation.declaration_frame == None:
+        for index in range(len(ordinary_types)):
+            ordinary_types[index] = sdk_callable_type(builder, delegation.parameters[index + 1], names, closed, owned)?
+    parameters.extend(ordinary_types)
+    mut argument_types = ordinary_types.clone()
+    for index in range(len(argument_types)):
+        match argument_types[index]:
+            PlanType.SharedCallable(signature) => argument_types[index] = PlanType.Closure(signature)
+            _ => pass
+    result = library_method_result(builder, delegation, target, destination, names, closed, span)?
+    boxed_operands = library_call_operands(
+        module,
+        builder,
+        delegation,
+        target.binding,
+        arguments,
+        argument_types,
+        span,
+        1,
+        false,
+    )?
+    ordinary = shared_sdk_operands(builder, ordinary_types, boxed_operands, span)?
+    mut operands = [read_place(reference, true, span)]
+    operands.extend(ordinary)
+    type_arguments = sdk_callable_type_arguments(builder, delegation, names, closed, owned)?
+    output = call_destination(builder, destination, result, span)?
+    constructors = builder.program.constructors.as_ref()
+    match fallible_factory(constructors, module, target, result, builder.intrinsics)?:
+        Some(factory) =>
+            match place_type(builder.locals, reference):
+                PlanType.ModelRef(owner, name) =>
+                    source = PlanType.Model(owner, name)
+                    if factory.arguments[2] != source:
+                        return Err("unsupported Body IR standard factory source ABI")
+                    parameters[0] = source
+                    operands[0] = clone_nominal_operand(builder, reference, span)?
+                    return instantiated_external_call(
+                        builder,
+                        factory.path,
+                        factory.arguments,
+                        parameters,
+                        result,
+                        operands,
+                        output,
+                        span,
+                    )
+                _ => return Err("unsupported Body IR standard factory borrowed source")
+        None => pass
+    match delegation.rust_path():
+        None => return Err("unsupported Body IR stdlib method native identity")
+        Some(path) =>
+            match result:
+                PlanType.Future(outputs) =>
+                    if len(outputs) != 1:
+                        return Err("the standard library method future requires exactly one output type")
+                    if target.loaf_trait != None:
+                        return Err("a standard library trait method cannot return this future type")
+                    # A compiled source method is exported as a crate-root function whose first argument is the
+                    # receiver loan. Only a native inherent method keeps the owner on the callable path.
+                    mut callee = CalleeKind.FutureMethod(path, type_arguments)
+                    match delegation.declaration_frame():
+                        Some(_frame) => callee = CalleeKind.Instantiated(path, type_arguments)
+                        None => pass
+                    return construct_boxed_future(builder, callee, parameters, outputs[0], operands, output, span)
+                _ => pass
+            # Like a source method's, an owned result (text, an enum, a model, a collection) gets an owner in the
+            # caller, so a discarded or matched result is dropped as well.
+            return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
+
+
+def library_method_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    target: &MethodTarget,
+    reference: Place,
+    names: list[str],
+) -> Result[list[RustType], str]:
+    """Close native Self from the concrete nominal frame or checked scalar receiver, then checked trait and method binders."""
+    match target.loaf_trait:
+        None => return library_receiver_arguments(builder, reference, names)
+        Some(selected) =>
+            if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
+                return Err("the selected standard library trait method differs from its checked call target")
+            mut closed: list[RustType] = []
+            match place_type(builder.locals, reference):
+                PlanType.ModelRef(_owner, _name) => closed = library_receiver_arguments(builder, reference, ["Self"])?
+                PlanType.ModelMutRef(_owner, _name) =>
+                    closed = library_receiver_arguments(builder, reference, ["Self"])?
+                _ =>
+                    match selected.receiver_type:
+                        Some(receiver) => closed = checked_type_arguments(builder, [receiver.clone()])?
+                        None => return Err("the standard library scalar receiver has no checked Self type")
+            # A selected native signature has already closed its trait binders; only Self remains a source binder.
+            # Its complete native argument vector is still substituted and validated at the external call boundary.
+            if names == ["Self"] and len(delegation.native_type_arguments) != 0:
+                return Ok(closed)
+            for argument in checked_type_arguments(builder, selected.type_arguments)?:
+                closed.append(argument.clone())
+            for argument in checked_type_arguments(builder, target.type_args)?:
+                closed.append(argument.clone())
+            if len(closed) != len(names):
+                return Err("the standard library trait method type argument count is unsupported")
+            return Ok(closed)
+
+
+def library_method_result(
+    mut builder: Builder,
+    delegation: &RustLoafCallable,
+    target: &MethodTarget,
+    destination: &Option[RustPlace],
+    names: list[str],
+    closed: list[RustType],
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Use the frontend-retained concrete SDK factory result, with native metadata still checking the exact return carrier."""
+    if target.loaf_trait != None:
+        match destination:
+            Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
+            None => pass
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    _ = require_native_union_signature(returned, builder.intrinsics, native_delegation(delegation))?
+    result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        returned,
+        builder.intrinsics,
+    )?
+    # A published method's declaration frame represents its result as a function's does: a direct returned view is
+    # a reference to its source place.
+    match delegation.declaration_frame():
+        Some(frame) => return return_representation(frame, result)
+        None => return Ok(result)
+
+
+def library_receiver_arguments(builder: &Builder, receiver: Place, names: list[str]) -> Result[list[RustType], str]:
+    """Close SDK owner binders from the retained receiver; a trait's Self binder takes that entire concrete owner."""
+    if len(names) == 0:
+        return Ok([])
+    mut owner = -1
+    match place_type(builder.locals, receiver):
+        PlanType.ModelRef(index, _name) => owner = index
+        PlanType.ModelMutRef(index, _name) => owner = index
+        _ => return Err("the standard library method receiver type arguments are unsupported")
+    declaration = borrowed_at(builder.nominals, owner)
+    arguments = instance_arguments(declaration)?
+    if names == ["Self"]:
+        if len(arguments) == 0:
+            return Ok([RustType.Named(str(declaration.name))])
+        concrete: RustType = generic(template_base(declaration), arguments)
+        return Ok([concrete])
+    if len(arguments) == len(names):
+        return Ok(arguments)
+    return Err("the standard library method owner type arguments are unsupported")
+
+
+def library_receiver(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    declared: &RustType,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow the receiver place as the stdlib method declares it, shared or exclusive, never moving its owner."""
+    match argument.as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    if is_element_place(builder, read.place)?:
+                        match declared:
+                            RustType.RefMut(_inner) => return mutable_element_reference(builder, read.place, span)
+                            RustType.Ref(_inner) =>
+                                copied = materialized_receiver(builder, read.place, span)?
+                                match place_type(builder.locals, copied):
+                                    PlanType.Model(owner, name) =>
+                                        reference = temporary(builder, PlanType.ModelRef(owner, name), span)
+                                        builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
+                                        return Ok(reference)
+                                    _ => return Err("the standard library element receiver requires a nominal layout")
+                            _ => return Err("the standard library method cannot consume this element receiver")
+                    declarations = borrowed_table(module.nominal_declarations)
+                    enums = borrowed_table(module.enum_declarations)
+                    mut receiver = model_place(
+                        builder.constructors,
+                        declarations,
+                        borrowed_table(builder.locals),
+                        read.place,
+                        span,
+                        enums,
+                        builder.unions,
+                        builder.intrinsics,
+                        builder.local_offset,
+                    )?
+                    receiver.local += builder.local_offset
+                    source = place_type(builder.locals, receiver)
+                    match declared:
+                        RustType.Ref(_inner) =>
+                            reference = temporary(builder, shared_receiver_type(source)?, span)
+                            builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                            return Ok(reference)
+                        RustType.RefMut(_inner) =>
+                            match source:
+                                PlanType.Model(owner, name) =>
+                                    reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
+                                    builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
+                                    return Ok(reference)
+                                _ =>
+                                    return Err(
+                                        f"the mutable standard library receiver requires a nominal layout; body={builder.name}; receiver={source:?}; at={span.file}:{span.line}:{span.column}",
+                                    )
+                        _ => return Err("unsupported Body IR by-value stdlib method receiver")
+                _ => return Err("unsupported Body IR stdlib method nonplace receiver")
+        None => return Err("unsupported Body IR stdlib method spread receiver")
+
+
+pub def lower_standard_slot(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Lower a standard-library slot through the behavior a derive or a held callable gives the receiver.
+
+    A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls. A
+    receiver type that declares a method of the slot's name without such a record also uses ordinary dispatch. A checked
+    Serialize default that still names the protocol itself keeps the canonical JSON implementation; retaining that
+    default is not an override.
+    """
+    mut json_default = false
+    if receiver_fills_slot(module, target, builder, arguments[0], span)?:
+        if not is_json_serialize_method(target):
+            return Ok(false)
+        selected = receiver_method_identity(module, target, builder, arguments[0], span)?
+        if selected != target.canonical:
+            return Ok(false)
+        # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
+        json_default = true
+    mut standard_slot = is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target)
+    match comparison_dunder(target):
+        Some(_operator) => standard_slot = true
+        None => pass
+    if (
+        standard_slot
+        and not json_default
+        and receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?
+    ):
+        return Ok(false)
+    if is_json_serialize_method(target):
+        lower_model_json_builtin(builder, arguments, destination, span)?
+        return Ok(true)
+    if is_derived_clone(target):
+        lower_derived_clone(builder, arguments, destination, span)?
+        return Ok(true)
+    match comparison_dunder(target):
+        Some(operator) =>
+            lower_comparison_dunder(module, builder, operator, arguments, destination, span)?
+            return Ok(true)
+        None => pass
+    if is_derived_display(target):
+        lower_display_str(builder, arguments, destination, span)?
+        return Ok(true)
+    return lower_callable_bound_call(builder, target, arguments, destination, span)

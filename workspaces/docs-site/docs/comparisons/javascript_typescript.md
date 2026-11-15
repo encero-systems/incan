@@ -30,7 +30,7 @@ Choose Incan when the code is new, application-shaped, and should ship as a nati
 - CLIs, services, workflows, and domain packages that should deploy without a JavaScript runtime.
 - Application code where errors, optionality, and mutability should stay visible in source review.
 - Agent-generated code where a smaller typed surface is easier to inspect than a large framework stack.
-- Native artifacts with Rust ecosystem boundaries and generated Rust that can be inspected.
+- Native artifacts with Rust ecosystem boundaries and compiler facts that can be inspected.
 - Toolchains that need stable diagnostics, build reports, and compiler-owned project facts.
 
 ## The honest tradeoff

@@ -1,0 +1,18 @@
+[project]
+name = "manifest_accepts_0_5_1_package_metadata"
+version = "0.1.0"
+description = "Every package metadata field 0.5.1's incan.toml accepted."
+authors = ["A. Author <author@example.com>"]
+maintainers = ["M. Maintainer <maintainer@example.com>"]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+homepage = "https://example.com"
+repository = "https://example.com/repository"
+documentation = "https://example.com/documentation"
+issues = "https://example.com/issues"
+keywords = ["probe", "manifest"]
+classifiers = ["Development Status :: 3 - Alpha"]
+
+[project.scripts]
+main = "src/main.incn"

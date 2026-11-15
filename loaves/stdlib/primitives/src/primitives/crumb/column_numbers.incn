@@ -1,0 +1,70 @@
+"""Exact widened coefficients shared by column packing and numeric dictionaries."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.native_numbers import integer_wide
+from crate.primitives.crumb.scalar_cells import decimal_coefficient, scalar_cell
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.values import IntegerValue, Value
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+pub def numeric_type(node: TypeNode) -> bool:
+    """Only fixed integers and decimal coefficients admit numeric column encodings."""
+    match node:
+        TypeNode.Scalar(kind) => return kind.integer_facts().is_some()
+        TypeNode.Decimal(_, _) => return true
+        _ => return false
+
+
+pub def coefficient(node: TypeNode, value: Value, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+    """Validate the stored range and scale before widening its mathematical coefficient."""
+    match (node, value):
+        (TypeNode.Scalar(kind), Value.Integer(number)) =>
+            if not numeric_type(node):
+                return Err(CrumbError.invalid_input("numeric column type"))
+            scalar_cell(kind, value, budget)?
+            return Ok(integer_wide(number))
+        (TypeNode.Decimal(precision, scale), Value.Decimal(_, _)) =>
+            return Ok(WideInteger.from_signed(decimal_coefficient(precision, scale, value, budget)?))
+        _ => return Err(CrumbError.invalid_input("numeric column value"))
+
+
+pub def from_coefficient(node: TypeNode, number: WideInteger, mut budget: Budget) -> Result[Value, CrumbError]:
+    """Narrow only to the declared logical carrier and recheck its storage range."""
+    match node:
+        TypeNode.Scalar(kind) =>
+            if not numeric_type(node):
+                return Err(CrumbError.invalid_input("numeric column type"))
+            mut integer = IntegerValue.Signed(0i128)
+            match kind.integer_facts():
+                Some((true, _)) =>
+                    match number.to_signed():
+                        Some(value) => integer = IntegerValue.Signed(value)
+                        None => return Err(CrumbError.invalid_input("signed column coefficient"))
+                Some((false, _)) =>
+                    match number.to_unsigned():
+                        Some(value) => integer = IntegerValue.Unsigned(value)
+                        None => return Err(CrumbError.invalid_input("unsigned column coefficient"))
+                None => return Err(CrumbError.invalid_input("numeric column type"))
+            value = Value.Integer(integer)
+            scalar_cell(kind, value, budget)?
+            return Ok(value)
+        TypeNode.Decimal(precision, scale) =>
+            match number.to_signed():
+                Some(coefficient) =>
+                    value = Value.Decimal(coefficient, scale)
+                    decimal_coefficient(precision, scale, value, budget)?
+                    return Ok(value)
+                None => return Err(CrumbError.invalid_input("decimal column coefficient"))
+        _ => return Err(CrumbError.invalid_input("numeric column type"))
+
+
+pub def zigzag(value: WideInteger, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+    """Return Z's exact unsigned magnitude for PACK."""
+    return value.zigzag(budget)
+
+
+pub def unzigzag(value: WideInteger, mut budget: Budget) -> Result[WideInteger, CrumbError]:
+    """Recover an exact signed delta from its packed unsigned magnitude."""
+    return value.unzigzag(budget)

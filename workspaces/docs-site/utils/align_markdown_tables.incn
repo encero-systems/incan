@@ -1,0 +1,309 @@
+"""Align Markdown pipe tables in place while preserving fenced code and literal pipes."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.regex import Regex
+
+
+model Options:
+    """Input paths and repository-relative exclusion prefixes."""
+    paths: list[str] = []
+    excludes: list[str] = []
+
+
+def main() -> Result[None, str]:
+    """
+    Align the requested Markdown files and report how many changed.
+
+    1. Read input paths and exclusion prefixes.
+    2. Visit each selected Markdown file and align its tables.
+    3. Print the changed-file count.
+    """
+    # 1. Read the command's inputs.
+    arguments: list[str] = [argument for argument in args()]
+    options = command_options(arguments[1:])
+    mut excludes: list[str] = []
+    for text in options.excludes:
+        excludes.append(exclusion_prefix(Path(text))?)
+
+    # 2. Align every selected file.
+    mut changed = 0
+    for text in options.paths:
+        for file in markdown_files(Path(text))?:
+            resolved = file.resolve().map_err((error) => error.message())?
+            if excluded(resolved.0, excludes):
+                continue
+            if process_file(file)?:
+                changed += 1
+
+    # 3. Report the number of rewritten files.
+    println(f"Aligned tables in {changed} file(s).")
+    return Ok(None)
+
+
+def command_options(arguments: list[str]) -> Options:
+    """Report argument errors using the original utility's usage text and exit status."""
+    match parse_options(arguments):
+        Ok(options) => return options
+        Err(message) =>
+            mut err = stderr()
+            usage = "usage: align_markdown_tables.py [-h] [--exclude EXCLUDE] paths [paths ...]"
+            text = f"{usage}\nalign_markdown_tables.py: error: {message}\n"
+            _ = err.write_all(RustString.from(text).into_bytes())
+            exit(2)
+
+
+def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """Read positional paths and repeatable --exclude values."""
+    mut options = Options()
+    mut index = 0
+    mut positional = False
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            positional = True
+        elif not positional and argument == "--exclude":
+            index += 1
+            if index == len(arguments):
+                return Err("argument --exclude: expected one argument")
+            options.excludes.append(arguments[index])
+        elif not positional and argument.startswith("--exclude="):
+            options.excludes.append(argument[len("--exclude="):])
+        elif not positional and (argument == "--help" or argument == "-h"):
+            println("usage: align_markdown_tables.py [-h] [--exclude EXCLUDE] paths [paths ...]")
+            println("")
+            println("positional arguments:")
+            println("  paths              Files/directories to process")
+            println("")
+            println("options:")
+            println("  -h, --help         show this help message and exit")
+            println("  --exclude EXCLUDE  Path prefix (relative) to exclude")
+            exit(0)
+        elif not positional and argument.startswith("-"):
+            return Err(f"unrecognized arguments: {argument}")
+        else:
+            options.paths.append(argument)
+        index += 1
+    if len(options.paths) == 0:
+        return Err("the following arguments are required: paths")
+    return Ok(options)
+
+
+def markdown_files(path: Path) -> Result[list[Path], str]:
+    """List Markdown files in walk order, or select a single existing Markdown file."""
+    mut files: list[Path] = []
+    if path.is_dir():
+        children = path.iterdir().map_err((error) => error.message())?
+        for child in children:
+            if child.is_file() and child.suffix().lower() == ".md":
+                files.append(child)
+        for child in children:
+            if child.is_dir():
+                for file in markdown_files(child)?:
+                    files.append(file)
+    elif path.is_file() and path.suffix().lower() == ".md":
+        files.append(path)
+    return Ok(files)
+
+
+def excluded(path: str, prefixes: list[str]) -> bool:
+    """Match the original utility's literal absolute path prefixes."""
+    for prefix in prefixes:
+        if path.startswith(prefix):
+            return True
+    return False
+
+
+def exclusion_prefix(path: Path) -> Result[str, str]:
+    """Resolve an existing ancestor and retain missing tail components, matching Python's non-strict resolve."""
+    mut directory = path.absolute().map_err((error) => error.message())?
+    mut missing: list[str] = []
+    while not directory.exists() and directory.parent().0 != directory.0:
+        missing.append(directory.name())
+        directory = directory.parent()
+    mut resolved = directory.resolve().map_err((error) => error.message())?
+    for index in range(len(missing) - 1, -1, -1):
+        component = missing[index]
+        if component == "..":
+            resolved = resolved.parent()
+        elif component != ".":
+            resolved = resolved.joinpath(component)
+    return Ok(resolved.0)
+
+
+pub def process_file(path: Path) -> Result[bool, str]:
+    """Align tables and write a final newline only when table contents change."""
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    original = source_lines(source)?
+    aligned = align_lines(original)
+    if aligned == original:
+        return Ok(False)
+    path.write_text("\n".join(aligned) + "\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(True)
+
+
+pub def align_lines(lines: list[str]) -> list[str]:
+    """Align contiguous pipe tables outside matching backtick or tilde fences."""
+    mut result: list[str] = []
+    mut index = 0
+    mut fence = ""
+    while index < len(lines):
+        line = lines[index]
+        marker = fence_marker(line)
+        if marker != "":
+            if fence == "":
+                fence = marker
+            elif fence == marker:
+                fence = ""
+        if fence != "" or "|" not in line or index + 1 >= len(lines) or not delimiter_row(lines[index + 1]):
+            result.append(line)
+            index += 1
+            continue
+        mut rows: list[list[str]] = []
+        while index < len(lines) and lines[index].strip() != "" and "|" in lines[index]:
+            if fence_marker(lines[index]) != "":
+                break
+            rows.append(split_row(lines[index]))
+            index += 1
+        for aligned in align_rows(rows):
+            result.append(aligned)
+    return result
+
+
+def fence_marker(line: str) -> str:
+    """Identify the opening or closing marker the original utility recognizes."""
+    stripped = line.strip()
+    if stripped.startswith("```"):
+        return "```"
+    if stripped.startswith("~~~"):
+        return "~~~"
+    return ""
+
+
+pub def split_row(line: str) -> list[str]:
+    """Split pipe cells while retaining escaped pipes and matched runs of code-span backticks."""
+    mut text = line.strip()
+    if text.startswith("|"):
+        text = text[1:]
+    if text.endswith("|"):
+        text = text[:-1]
+    mut cells: list[str] = []
+    mut buffer = ""
+    mut ticks = 0
+    mut index = 0
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text) and text[index + 1] == "|":
+            buffer += "\\|"
+            index += 2
+            continue
+        if character == "`":
+            mut end = index
+            while end < len(text) and text[end] == "`":
+                end += 1
+            count = end - index
+            buffer += repeated("`", count)
+            if ticks == 0:
+                ticks = count
+            elif ticks == count:
+                ticks = 0
+            index = end
+            continue
+        if character == "|" and ticks == 0:
+            cells.append(buffer.strip())
+            buffer = ""
+        else:
+            buffer += character
+        index += 1
+    cells.append(buffer.strip())
+    return cells
+
+
+def delimiter_row(line: str) -> bool:
+    """Require at least two cells containing three dashes and optional alignment colons."""
+    if "|" not in line:
+        return False
+    cells = split_row(line)
+    if len(cells) < 2:
+        return False
+    for cell in cells:
+        if not delimiter_cell(cell):
+            return False
+    return True
+
+
+def delimiter_cell(cell: str) -> bool:
+    """Recognize one delimiter cell without treating interior colons as alignment markers."""
+    mut core = cell.strip()
+    if core.startswith(":"):
+        core = core[1:]
+    if core.endswith(":"):
+        core = core[:-1]
+    core = core.strip()
+    if len(core) < 3:
+        return False
+    for character in core:
+        if character != "-":
+            return False
+    return True
+
+
+def align_rows(rows: list[list[str]]) -> list[str]:
+    """Pad body cells to their column width and retain delimiter alignment markers."""
+    mut columns = 0
+    for row in rows:
+        columns = max([columns, len(row)])
+    mut widths: list[int] = [3 for column in range(columns)]
+    for index in range(len(rows)):
+        if index == 1:
+            continue
+        for column in range(len(rows[index])):
+            widths[column] = max([widths[column], len(rows[index][column])])
+    mut output: list[str] = []
+    for index in range(len(rows)):
+        mut cells: list[str] = []
+        for column in range(columns):
+            cell = cell_at(rows[index], column)
+            if index == 1:
+                cells.append(aligned_delimiter(cell_at(rows[1], column), widths[column]))
+            else:
+                cells.append(cell + repeated(" ", widths[column] - len(cell)))
+        output.append("| " + " | ".join(cells) + " |")
+    return output
+
+
+def cell_at(row: list[str], column: int) -> str:
+    """Supply the empty padding cell for a short table row."""
+    if column < len(row):
+        return row[column]
+    return ""
+
+
+def aligned_delimiter(cell: str, width: int) -> str:
+    """Retain both alignment markers within the chosen delimiter width."""
+    mut value = repeated("-", width)
+    if cell.strip().startswith(":"):
+        value = ":" + value[1:]
+    if cell.strip().endswith(":"):
+        value = value[:-1] + ":"
+    return value
+
+
+def repeated(text: str, count: int) -> str:
+    """Repeat a cell-padding string using the language's list and join operations."""
+    return "".join([text for index in range(count)])
+
+
+def source_lines(source: str) -> Result[list[str], str]:
+    """Split the same Unicode line boundaries as Python, without a final empty line."""
+    if source == "":
+        return Ok([])
+    separator = Regex("\\r\\n|[\\n\\r\\x0b\\x0c\\x1c-\\x1e\\u0085\\u2028\\u2029]")
+        .map_err((error) => error.message())?
+    mut lines: list[str] = [line for line in separator.split(source)]
+    if len(lines) > 0 and lines[len(lines) - 1] == "":
+        lines = lines[:-1]
+    return Ok(lines)

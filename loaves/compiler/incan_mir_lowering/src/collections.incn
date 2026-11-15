@@ -21,12 +21,21 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     OwnershipFact,
 )
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, NumericTypeId
+from rust::incan_lang::lang::surface::dict_methods import DictMethodId as RustDictMethodId
 from tuples import tuple_type, generic_tuple_type
+from models import runtime_storage_marker
+from table_views import borrowed_at
+from text_plan import clone_text_reference
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
-    """Admit primitive leaves and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    """Admit primitive leaves, owned byte buffers and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    match runtime_storage_marker(ty):
+        Some(PlanType.Decimal) => return Ok(ListLeaf.Decimal)
+        _ => pass
+    if native_byte_buffer(ty):
+        return Ok(ListLeaf.List([ListLeaf.U8], 1))
     match ty:
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(ListLeaf.Decimal)
         RustType.Primitive(primitive) =>
@@ -35,6 +44,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
                 Primitive.FrozenStr => return Ok(ListLeaf.FrozenStr)
+                Primitive.Bytes => return Ok(ListLeaf.List([ListLeaf.U8], 1))
                 Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:
@@ -50,6 +60,19 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                     Err(_reason) => pass
         _ => pass
     return Err(f"unsupported Body IR collection leaf {ty}")
+
+
+def native_byte_buffer(ty: &RustType) -> bool:
+    """Recognize the byte buffer's native storage after a governed argument preserves Vec[u8] rather than bytes."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "List" or len(arguments) != 1:
+                return false
+            match arguments[0]:
+                RustType.Primitive(Primitive.Numeric(NumericTypeId.U8)) => return true
+                _ => pass
+        _ => pass
+    return false
 
 
 def hashed_tuple_leaf(ty: PlanType) -> Result[ListLeaf, str]:
@@ -138,17 +161,38 @@ pub def collection_call(
     kind = undisplayed_key(ty, operation)
     if kind != "":
         return Err(f"unsupported Body IR keyed lookup in a dictionary with {kind} keys")
+    mut admitted: list[Operand] = []
     for index in range(len(operands)):
-        if value_type(builder, operands[index])? != parameters[index]:
-            return Err("unsupported Body IR collection runtime argument coercion")
+        match owned_runtime_operand(builder, operands[index], parameters[index], span)?:
+            Some(operand) => admitted.append(operand)
+            None => return Err("unsupported Body IR collection runtime argument coercion")
     arguments = collection_arguments(ty)
     path = f"incan_native_runtime::{collection_name(ty, operation)?}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, arguments), operands, destination, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, arguments), admitted, destination, span)
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def owned_runtime_operand(
+    mut builder: Builder,
+    operand: Operand,
+    parameter: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """
+    Pass one evaluated value at its runtime carrier, or nothing when the carriers differ. Text an inferred-shared
+    parameter lends reaches an owned runtime slot, such as a dictionary default or a stored entry, as its shared
+    reference; that runtime call is the owned use, so it receives an independent copy.
+    """
+    actual = value_type(builder, operand)?
+    if actual == parameter:
+        return Ok(Some(operand))
+    if actual == PlanType.StringRef and parameter == PlanType.String:
+        return Ok(Some(read_place(clone_text_reference(builder, operand, span)?, true, span)))
     return Ok(None)
 
 
@@ -199,21 +243,23 @@ pub def insert_collection(
     types = collection_arguments(ty)
     if len(values) != len(types):
         return Err("unsupported Body IR collection insert arity")
+    mut admitted: list[Operand] = []
     for index in range(len(values)):
-        if value_type(builder, values[index])? != types[index]:
-            return Err("unsupported Body IR collection element coercion")
+        match owned_runtime_operand(builder, values[index], types[index], span)?:
+            Some(operand) => admitted.append(operand)
+            None => return Err("unsupported Body IR collection element coercion")
     reference = borrow_collection(builder, receiver, true, span)?
     mut parameters = [collection_reference(ty, true)]
     parameters.extend(collection_arguments(ty))
     mut operands = [reference]
-    operands.extend(values)
+    operands.extend(admitted)
     unit = temporary(builder, PlanType.Unit, span)
     return collection_call(builder, ty, "insert", parameters, PlanType.Unit, operands, unit, span)
 
 
 pub def begin_collection(mut builder: Builder, destination: Place, span: SourceSpan) -> Result[Place, str]:
     """Allocate a typed owner for a checked literal without overwriting a live destination."""
-    ty = builder.locals[destination.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
     owned = collection_owned(ty)
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
@@ -237,7 +283,7 @@ pub def transfer_collection(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Transfer an already materialized owned collection, preserving the drop ledger."""
-    ty = builder.locals[destination.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
     owned = collection_owned(ty)
     if ty != owned:
         return Err("unsupported Body IR whole borrowed collection assignment")
@@ -252,24 +298,24 @@ pub def transfer_collection(
 
 pub def dictionary_method_signature(
     ty: PlanType,
-    member: str,
+    method: RustDictMethodId,
     arity: int,
 ) -> Result[tuple[str, list[PlanType], PlanType], str]:
-    """Select canonical dictionary methods without extending the source method registry."""
+    """Project one typed dictionary operation onto its native runtime signature."""
     match collection_owned(ty):
         PlanType.Dict(key, value) =>
-            if member == "Dict.get":
+            if method == RustDictMethodId.Get:
                 if arity != 3:
-                    return Err(f"unsupported Body IR dictionary method arity {member}")
+                    return Err(f"unsupported Body IR dictionary method arity {method:?}")
                 return Ok(("default", collection_arguments(ty), leaf_type(value)))
             if arity != 1:
-                return Err(f"unsupported Body IR dictionary method arity {member}")
-            if member == "Dict.keys":
+                return Err(f"unsupported Body IR dictionary method arity {method:?}")
+            if method == RustDictMethodId.Keys:
                 return Ok(("keys", [], PlanType.List(key, 1)))
-            if member == "Dict.values":
+            if method == RustDictMethodId.Values:
                 return Ok(("values", [], PlanType.List(value, 1)))
-            return Err(f"unsupported Body IR dictionary Method {member}")
-        _ => return Err(f"unsupported Body IR set Method {member}")
+            return Err(f"unsupported Body IR dictionary Method {method:?}")
+        _ => return Err(f"unsupported Body IR dictionary Method {method:?} on non-dictionary")
 
 
 pub def require_mutable_receiver(arguments: &list[RustArgumentElement]) -> Result[None, str]:
@@ -296,11 +342,10 @@ pub def extend_collection(
     """Splice one checked owner into a set constructor or dictionary literal, then consume that owner."""
     mut source_place = destination
     match source.kind:
-        OperandKind.Move(place) =>
-            source_place = place
+        OperandKind.Move(place) => source_place = place
         _ => return Err("unsupported Body IR collection spread without owned source")
-    ty = builder.locals[destination.local].ty
-    source_type = builder.locals[source_place.local].ty
+    ty = borrowed_at(builder.locals, destination.local).ty
+    source_type = borrowed_at(builder.locals, source_place.local).ty
     mut operation = "extend"
     mut source_reference_type = collection_reference(source_type, false)
     if source_type != collection_owned(ty):

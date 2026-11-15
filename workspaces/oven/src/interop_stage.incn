@@ -1,0 +1,313 @@
+"""
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]`: copy a
+declared target's bundled runtime libraries, as the project's `oven.lock` records them, into the fixed layout a platform
+packager consumes, as 0.5's `incan oven interop stage` did. Android stages each at `jniLibs/arm64-v8a/<runtime-name>`,
+iOS at `Frameworks/<runtime-name>`, beside an `incan-interop-adapter.json` manifest. It never starts Gradle, Xcode or a
+signing tool, and never replaces an existing output directory.
+"""
+
+from rust::std::process import id
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
+from c_interop_requirements import CPlatformKind
+from files import json_text, write
+from features import FeatureRequest
+from intake import LocalProject, ManifestReader, intake
+from lock_format import OvenLock, lock_path, read_lock
+from project_lock import ensure_project_lock
+from unit import discovered_project
+
+const MANIFEST_NAME: str = "incan-interop-adapter.json"
+const MANIFEST_SCHEMA: int = 1
+const ANDROID_TARGET: str = "aarch64-linux-android"
+const ANDROID_LAYOUT: str = "jniLibs/arm64-v8a"
+const IOS_LAYOUT: str = "Frameworks"
+
+
+pub enum StageAdapter(str):
+    """The fixed layouts a platform packager consumes."""
+
+    Android = "android"
+    Ios = "ios"
+
+
+pub model StageOptions:
+    """The selected project, target, adapter and new output directory."""
+
+    pub path: str = "."
+    pub target: str = ""
+    pub adapter: StageAdapter = StageAdapter.Android
+    pub output: str = ""
+    # Refuse a missing lock, or one that would change, instead of refreshing it.
+    pub locked: bool = false
+    # The report: text lines, or 0.5.1's JSON report.
+    pub format: str = "text"
+
+
+model StagedFile:
+    """One bundled artifact as staged: its declaration, digest and output-relative path."""
+
+    pub artifact: CInteropArtifact
+    pub digest: str
+    pub staged_path: str
+
+
+pub def stage_options(arguments: list[str]) -> Result[StageOptions, str]:
+    """
+    Read `--target TRIPLE`, `--adapter android|ios`, `--output PATH`, `--locked`, `--format text|json` and one project
+    path, given as PATH or as 0.5.1's `--project PATH`. 0.5.1's receipt and store options are refused by name.
+    """
+    mut options = StageOptions()
+    mut adapter = ""
+    mut index = 0
+    mut path_given = false
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--base-receipt", "--store"]:
+            return Err(
+                f"`{argument}` is not needed: 0.6 stages the bundled files oven.lock records, from this home's store; drop it",
+            )
+        if argument in ["--target", "--adapter", "--output", "--project", "--format"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            value = arguments[index + 1]
+            if argument == "--target":
+                options.target = value
+            elif argument == "--adapter":
+                adapter = value
+            elif argument == "--output":
+                options.output = value
+            elif argument == "--format":
+                options.format = value
+            else:
+                if path_given:
+                    return Err(f"one PATH is staged at a time; `{value}` is a second")
+                options.path = value
+                path_given = true
+            index += 2
+            continue
+        if argument == "--locked":
+            options.locked = true
+            index += 1
+            continue
+        if argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        if path_given:
+            return Err(f"one PATH is staged at a time; `{argument}` is a second")
+        options.path = argument
+        path_given = true
+        index += 1
+    for name, value in [("--target", options.target), ("--adapter", adapter), ("--output", options.output)]:
+        if value == "":
+            return Err(f"`{name}` is required")
+    if options.format not in ["text", "json"]:
+        return Err(f"`--format` is text or json, got `{options.format}`")
+    if adapter == StageAdapter.Android.value():
+        options.adapter = StageAdapter.Android
+    elif adapter == StageAdapter.Ios.value():
+        options.adapter = StageAdapter.Ios
+    else:
+        return Err(f"`--adapter` is android or ios, got `{adapter}`")
+    return Ok(options)
+
+
+pub def stage_interop(options: StageOptions) -> Result[i32, str]:
+    """
+    Stage the selected target's bundled artifacts for the adapter.
+
+    1. Select the project and its declared target, and require the adapter's platform.
+    2. Refresh the project's lock, or with `--locked` prove it needs no change, so it records what is staged.
+    3. Refuse an existing output before writing anything.
+    4. Copy each bundled artifact into a private directory beside the output, each copy the bytes the lock records.
+    5. Write the manifest, then move the directory into place.
+    """
+    # 1. The project at or above PATH declares the target, with the adapter's platform facts.
+    project = staged_project(Path(options.path))?
+    target = declared_target(project, options.target)?
+    adapter_fits(options.adapter, target)?
+    # 2. The lock covers the target's contract and every bundled file's digest.
+    root = Path(project.root)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), options.locked)?
+    lock = read_lock(lock_path(root))?
+    # 3. A caller-owned output is never replaced.
+    output = Path(options.output)
+    if output.exists() or output.is_symlink():
+        return Err(f"staging output `{options.output}` already exists and will not be replaced")
+    parent = output.absolute().map_err((error) => f"{options.output}: {error.message()}")?.parent()
+    parent.mkdir(true, true).map_err((error) => f"{parent.0}: {error.message()}")?
+    staging = parent.joinpath(f".incan-interop-stage-{output.name()}-{id()}")
+    if staging.exists():
+        staging.remove_tree().map_err((error) => f"{staging.0}: {error.message()}")?
+    staging.mkdir(false, false).map_err((error) => f"{staging.0}: {error.message()}")?
+    # 4. Each copy is the declared file's bytes, which the lock records.
+    match locked_files(project, target, options.adapter, staging, lock):
+        Ok(files) =>
+            # 5. The manifest names output-relative paths only; the directory appears whole.
+            manifest = staging.joinpath(MANIFEST_NAME)
+            write(manifest, json_text(adapter_manifest(options.adapter, target, files, lock.graph))? + "\n")?
+            if output.exists() or output.is_symlink():
+                _ = staging.remove_tree()
+                return Err(f"staging output `{options.output}` already exists and will not be replaced")
+            staging.rename(output.absolute().map_err((error) => f"{options.output}: {error.message()}")?).map_err(
+                (error) => f"{options.output}: {error.message()}",
+            )?
+            if options.format == "json":
+                println(json_text(stage_report(options, target, len(files), lock.graph))?)
+                return Ok(0)
+            println(f"staged {target.target} for the {options.adapter.value()} adapter in {options.output}")
+            for file in files:
+                println(f"  {file.staged_path} {file.digest}")
+            println(f"  {MANIFEST_NAME}")
+            return Ok(0)
+        Err(reason) =>
+            _ = staging.remove_tree()
+            return Err(reason)
+
+
+def locked_files(
+    project: LocalProject,
+    target: CInteropTarget,
+    adapter: StageAdapter,
+    staging: Path,
+    lock: OvenLock,
+) -> Result[list[StagedFile], str]:
+    """The staged files, each the digest `oven.lock` records for its artifact."""
+    files = staged_files(project, target, adapter, staging)?
+    for file in files:
+        mut recorded = ""
+        for entry in lock.interop:
+            if entry.target == target.target:
+                for artifact in entry.artifacts:
+                    if artifact.name == file.artifact.name:
+                        recorded = artifact.digest
+        if recorded != file.digest:
+            return Err(
+                f"bundled artifact `{file.artifact.name}` is {file.digest}, but oven.lock records `{recorded}`; run `oven lock`",
+            )
+    return Ok(files)
+
+
+def staged_project(path: Path) -> Result[LocalProject, str]:
+    """The project at or above `path`."""
+    mut root = path
+    if not path.joinpath("loaf.toml").is_file():
+        match discovered_project(path.joinpath("loaf.toml"))?:
+            Some(found) => root = found
+            None => return Err(f"{path.0}: no owning loaf.toml")
+    resolved = root.resolve().map_err((error) => f"{root.0}: {error.message()}")?
+    graph = intake(root).map_err((error) => error.message())?
+    for project in graph.projects:
+        if project.root == resolved.0:
+            return Ok(project)
+    return Err(f"{root.0}: the project is not in its own graph")
+
+
+def declared_target(project: LocalProject, triple: str) -> Result[CInteropTarget, str]:
+    """The project's `[[interop.c.targets]]` entry for `triple`, refused by name when it declares none."""
+    for target in project.intent.c_targets:
+        if target.target == triple:
+            return Ok(target)
+    mut declared = "none"
+    if len(project.intent.c_targets) > 0:
+        declared = ", ".join([target.target for target in project.intent.c_targets])
+    return Err(
+        f"`--target {triple}` is not a target `{project.intent.name}` declares; its `[[interop.c.targets]]` are {declared}",
+    )
+
+
+def adapter_fits(adapter: StageAdapter, target: CInteropTarget) -> Result[None, str]:
+    """Android stages the Android arm64 target and iOS an iOS device or simulator target, each with its platform."""
+    mut platform = ""
+    if let Some(declared) = target.platform:
+        platform = declared.kind.value()
+    match adapter:
+        StageAdapter.Android =>
+            if target.target != ANDROID_TARGET or platform != CPlatformKind.Android.value():
+                return Err(
+                    f"Android adapter staging requires the `{ANDROID_TARGET}` target with Android platform facts, found `{target.target}`",
+                )
+        StageAdapter.Ios =>
+            if platform != CPlatformKind.Ios.value():
+                return Err(
+                    f"iOS adapter staging requires an iOS device or simulator target with iOS platform facts, found `{target.target}`",
+                )
+    return Ok(None)
+
+
+def staged_files(
+    project: LocalProject,
+    target: CInteropTarget,
+    adapter: StageAdapter,
+    staging: Path,
+) -> Result[list[StagedFile], str]:
+    """Copy each bundled artifact, by name, to its adapter path, and verify the copy's bytes."""
+    mut prefix = ANDROID_LAYOUT
+    if adapter == StageAdapter.Ios:
+        prefix = IOS_LAYOUT
+    bundled = [artifact for artifact in target.artifacts if artifact.kind == CArtifactKind.Bundled]
+    mut files: list[StagedFile] = []
+    for name in sorted([artifact.name for artifact in bundled]):
+        for artifact in bundled:
+            if artifact.name != name:
+                continue
+            source = Path(project.root).joinpath(artifact.path)
+            if not source.is_file() or source.is_symlink():
+                return Err(f"bundled artifact `{artifact.name}`: `{artifact.path}` is not a regular file in {project.root}")
+            raw = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
+            digest = "sha256:" + hexlify(sha256.digest(raw))
+            staged_path = f"{prefix}/{artifact.runtime_name}"
+            if staged_path in [file.staged_path for file in files]:
+                return Err(f"bundled artifacts of `{target.target}` stage two files at `{staged_path}`")
+            destination = staging.joinpath(staged_path)
+            directory = destination.parent()
+            directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+            destination.write_bytes(raw).map_err((error) => f"{destination.0}: {error.message()}")?
+            copied = destination.read_bytes().map_err((error) => f"{destination.0}: {error.message()}")?
+            if "sha256:" + hexlify(sha256.digest(copied)) != digest:
+                return Err(f"staged bundled artifact `{artifact.name}` does not match its source digest")
+            files.append(StagedFile(artifact=artifact, digest=digest, staged_path=staged_path))
+    return Ok(files)
+
+
+def adapter_manifest(adapter: StageAdapter, target: CInteropTarget, files: list[StagedFile], graph: str) -> JsonValue:
+    """
+    The adapter manifest: the target, the lock's graph, each staged file's declaration, digest and path, and the system
+    capabilities.
+    """
+    mut bundles: list[JsonValue] = []
+    for file in files:
+        bundles.append(
+            JsonValue.object(
+                {"name": JsonValue.string(file.artifact.name), "runtime-name": JsonValue.string(
+                    file.artifact.runtime_name,
+                ), "declared-placement": JsonValue.string(file.artifact.placement), "minimum-platform": JsonValue.string(
+                    file.artifact.minimum_platform,
+                ), "digest": JsonValue.string(file.digest), "staged-path": JsonValue.string(file.staged_path)},
+            ),
+        )
+    capabilities = sorted(
+        [artifact.capability for artifact in target.artifacts if artifact.kind == CArtifactKind.System],
+    )
+    return JsonValue.object(
+        {"schema-version": JsonValue.int(MANIFEST_SCHEMA), "adapter": JsonValue.string(adapter.value()), "lock": JsonValue.string(
+            graph,
+        ), "target": JsonValue.string(
+            target.target,
+        ), "bundles": JsonValue.array(bundles), "system-capabilities": JsonValue.array(
+            [JsonValue.string(capability) for capability in capabilities],
+        )},
+    )
+
+
+def stage_report(options: StageOptions, target: CInteropTarget, staged: int, graph: str) -> JsonValue:
+    """0.5.1's JSON stage report, with the lock's graph identity where 0.5.1 named its receipt and plan."""
+    return JsonValue.object(
+        {"target": JsonValue.string(target.target), "adapter": JsonValue.string(options.adapter.value()), "manifest": JsonValue.string(
+            Path(options.output).joinpath(MANIFEST_NAME).0,
+        ), "lock": JsonValue.string(graph), "bundled_files": JsonValue.int(staged), "cargo_process_started": JsonValue.bool(
+            false,
+        ), "platform_build_process_started": JsonValue.bool(false)},
+    )

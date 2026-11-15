@@ -128,6 +128,35 @@ jobs:
               }
             }
 
+      - name: Set a PR's milestone from its release line
+        if: github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'reopened')
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const pr = context.payload.pull_request;
+            // An explicit milestone is never replaced.
+            if (pr.milestone) return;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // A release line branch such as `0.6.0-dev.8` names its milestone (`0.6 Release`); a stacked PR takes the
+            // milestone of the open PR whose head is its base. A PR against the default branch keeps none.
+            let title = null;
+            const line = /^(\d+)\.(\d+)\./.exec(pr.base.ref);
+            if (line) {
+              title = `${line[1]}.${line[2]} Release`;
+            } else {
+              const below = await github.rest.pulls.list({ owner, repo, state: "open", head: `${owner}:${pr.base.ref}` });
+              title = below.data[0]?.milestone?.title ?? null;
+            }
+            if (!title) return;
+
+            const milestones = await github.paginate(github.rest.issues.listMilestones, { owner, repo, state: "open" });
+            const milestone = milestones.find((m) => m.title === title);
+            if (!milestone) return;
+            await github.rest.issues.update({ owner, repo, issue_number: pr.number, milestone: milestone.number });
+
       - name: Sync issue labels and Issue Type (Area -> labels, title prefix -> type)
         if: github.event_name == 'issues'
         uses: actions/github-script@v8

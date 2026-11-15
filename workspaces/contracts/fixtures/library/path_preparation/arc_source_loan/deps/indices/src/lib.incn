@@ -1,0 +1,13 @@
+"""Publish the source index and its borrowed observation."""
+
+from rust::std::sync import Arc
+from rust::std::convert import AsRef
+from index_owner import Index as SourceIndex, borrowed_index
+from index_consumer import observes_positions
+
+pub Index = SourceIndex
+
+
+pub def check_view(owner: &Arc[SourceIndex]) -> bool:
+    """Observe a source model through its owner's retained loan."""
+    return observes_positions(borrowed_index(owner)) and observes_positions(owner.as_ref())

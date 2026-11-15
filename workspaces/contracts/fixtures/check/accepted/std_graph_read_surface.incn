@@ -1,0 +1,40 @@
+# behavior: the scoped relation graph and storage-independent page-reading surface check (#2524)
+# expect-accepted:
+
+from std.graph import (
+    EdgePage,
+    GraphEdgeItem,
+    GraphPageBudget,
+    GraphPageToken,
+    GraphRead,
+    GraphReadError,
+    GraphScope,
+    MemoryGraphFailure,
+    NodePage,
+    RelationGraph,
+    ScopedEdgeId,
+    ScopedNodeId,
+)
+
+
+def exercise() -> None:
+    mut graph = RelationGraph[str, str]()
+    source: ScopedNodeId = graph.add_node("source")
+    target: ScopedNodeId = graph.add_node("target")
+    match graph.add_edge(source, target, "reads"):
+        Ok(edge) =>
+            scope: GraphScope = graph.scope()
+            match graph.nodes(GraphPageBudget.records(1), None):
+                Ok(nodes) => page: NodePage[ScopedNodeId] = nodes
+                Err(_) => pass
+            match graph.out_edges(source, GraphPageBudget.unbounded(), None):
+                Ok(outgoing) => page: EdgePage[ScopedNodeId, ScopedEdgeId] = outgoing
+                Err(_) => pass
+            match graph.edge(edge):
+                Ok(item) => value: GraphEdgeItem[ScopedNodeId, ScopedEdgeId] = item
+                Err(_) => pass
+        Err(_) => pass
+
+
+def main() -> None:
+    exercise()

@@ -1,0 +1,97 @@
+"""A plan product carries the generic instance requests its lowering made, authenticated with its function."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from pub::incan_mir_plan import (
+    BasicBlock,
+    ExternalFunction,
+    Function,
+    Local,
+    PlanType,
+    ProductNominal,
+    SourceSpan,
+    Terminator,
+    TerminatorKind,
+    source_span,
+    unit_nominals,
+)
+from scalar_store import record_scalar_inputs, retain_scalar, retained_scalar
+
+
+pub def test_a_caller_product_returns_its_instance_requests() -> Result[None, str]:
+    """A reused caller still schedules the instances its lowering requested, in request order."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products = scratch.path().joinpath("products")
+    products.mkdir(true, true).map_err((error) => error.message())?
+    owner = source_span(file="requests.incn", line=10, column=1)
+    function = entry_function("main", owner)
+    nodes = [(0, 1), (1, 5)]
+    inputs = record_scalar_inputs("checked-meaning", function.name, owner, false, "reads", len(nodes))
+    requests = ["{\"declaration\":\"pick[int]\"}", "{\"declaration\":\"pick[str]\"}"]
+    empty_runtime: list[ExternalFunction] = []
+    empty_nominals: list[ProductNominal] = []
+    no_frames: list[Function] = []
+    retain_scalar(products.0, inputs, function, empty_runtime, empty_nominals, nodes, no_frames, requests)?
+    no_models: list[ProductNominal] = []
+    no_names: list[str] = []
+    unit = unit_nominals(no_models, list(no_models), no_names, list(no_names))
+    match retained_scalar(products.0, inputs, unit, Some(owner), nodes):
+        None => assert false, "a caller product with instance requests was a miss"
+        Some(product) =>
+            _function, _runtime, _references, _frames, restored = product
+            assert restored == requests, "the reused caller lost or reordered its instance requests"
+    return Ok(None)
+
+
+pub def test_an_altered_instance_request_makes_the_product_a_miss() -> Result[None, str]:
+    """A product's requests are authenticated with its function, so an edited request is never scheduled."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products = scratch.path().joinpath("products")
+    products.mkdir(true, true).map_err((error) => error.message())?
+    owner = source_span(file="requests.incn", line=10, column=1)
+    function = entry_function("main", owner)
+    nodes = [(0, 1), (1, 5)]
+    inputs = record_scalar_inputs("checked-meaning", function.name, owner, false, "reads", len(nodes))
+    empty_runtime: list[ExternalFunction] = []
+    empty_nominals: list[ProductNominal] = []
+    no_frames: list[Function] = []
+    retain_scalar(products.0, inputs, function, empty_runtime, empty_nominals, nodes, no_frames, ["pick[int]"])?
+    path = only_product(products)?
+    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    path.write_text(text.replace("pick[int]", "pick[str]"), "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    no_models: list[ProductNominal] = []
+    no_names: list[str] = []
+    unit = unit_nominals(no_models, list(no_models), no_names, list(no_names))
+    assert retained_scalar(products.0, inputs, unit, Some(owner), nodes) is None, "an edited request was trusted"
+    return Ok(None)
+
+
+def entry_function(name: str, owner: SourceSpan) -> Function:
+    """A unit function whose block and return sit on the owner's first two body lines."""
+    block_span = source_span(file="requests.incn", line=11, column=5)
+    exit_span = source_span(file="requests.incn", line=11, column=5)
+    return Function(
+        name=name,
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=owner)],
+        blocks=[
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=exit_span),
+                cleanup=false,
+                span=block_span,
+            ),
+        ],
+        span=owner,
+    )
+
+
+def only_product(products: Path) -> Result[Path, str]:
+    """Name the single retained product record."""
+    for path in products.iterdir().map_err((error) => error.message())?:
+        if path.name().endswith(".incnfunction"):
+            return Ok(path)
+    return Err("no plan product was retained")

@@ -1,6 +1,7 @@
 """Compiled provider entrypoint for Incan collections, data, text, time, UUID, and serialization support."""
 
 import collections
+import ordinal_adapters
 import graph
 import hash._core as hash_core
 import hash._streaming

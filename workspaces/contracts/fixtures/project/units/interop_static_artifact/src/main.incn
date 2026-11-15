@@ -1,0 +1,21 @@
+# behavior: a package-owned static archive declared for the host target under `[[interop.c.targets.artifacts]]`, and named by the binding's `[[interop.c.targets.bindings]]` relation, is linked as a static library by an ordinary run; without it, `-lbridge` has no library to find (#3136)
+# cli-commands:
+#   oven run src/main.incn
+# expect-stdout:
+#   5
+
+from std.interop import c
+
+
+binding Bridge:
+    header = "interop/include/bridge.h"
+    link = c.system_library("bridge")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def main() -> None:
+    """Call through the binding whose declared archive the program links."""
+    unsafe:
+        println(Bridge.absolute(-5))

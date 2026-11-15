@@ -1,0 +1,16 @@
+[project]
+name = "equals_source"
+version = "0.1.0"
+
+[project.scripts]
+main = "code/main.incn"
+
+[build]
+source-root = "code"
+rust-edition = "2015"
+
+[rust]
+edition = "2024"
+
+[dependencies]
+child_alias = { loaf = "child-package", path = "../deps/child" }

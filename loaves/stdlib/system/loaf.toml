@@ -4,9 +4,6 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
-[sdk]
-profile = "minimal"
-
 [dependencies]
 byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
 encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }

@@ -1,0 +1,383 @@
+"""A relink re-admits every home whose installation it rewrites, so relinking into one home works any number of times."""
+
+from rust::std::process import Command
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
+from relink_driver import install_driver, prepare_compiler_home, readmit, withdraw_installed_providers
+from release_support import TOOLCHAIN_DIRECTORY
+
+# The fields of an installed manifest every compiler home needs, before its registry fields.
+const MANIFEST_HEAD: str = "{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[],"
+
+
+def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
+    """
+    The compiler home's manifest is rewritten exactly when the installation selects another driver.
+
+    1. The first preparation writes the manifest.
+    2. Preparing again for the same installation changes nothing.
+    3. A relink that installs another driver changes it again, so its admitted page must be replaced.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    manifest = toolchain.joinpath("toolchain.json")
+    manifest
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    # 1. A new compiler home has no manifest yet.
+    assert prepare_compiler_home(installed, compiler)?
+    # 2. The same installation leaves it as it is.
+    assert not prepare_compiler_home(installed, compiler)?
+    # 3. Another driver is another manifest.
+    manifest
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-b\",\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    assert prepare_compiler_home(installed, compiler)?
+    return Ok(None)
+
+
+def test_the_compiler_home_reads_an_installed_registry_through_its_own_link() -> Result[None, str]:
+    """
+    An installed toolchain keeps its registry closure and its producer selection inside its own `registry` tree. The
+    compiler home names both through its own `registry` link, the spelling a packed Loaf's native closure names
+    registry artifacts by, so its re-admission admits each artifact where its builds read it.
+
+    1. The closure and lock the installed manifest names inside `registry/` resolve under the compiler home's link.
+    2. The closure read there is the installed one.
+    3. A registry the installation names by an absolute path elsewhere stays as written.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("registry/closure.json").write_bytes(b"installed closure").map_err((error) => error.message())?
+    registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry/selected.json\"}"
+    write_manifest(toolchain, MANIFEST_HEAD + registry)?
+    _ = prepare_compiler_home(installed, compiler)?
+    # 1. Both resolve against the compiler home's own toolchain directory, inside its `registry` link.
+    selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    units = manifest_path(selected, "registry_units")?
+    assert units == selected.joinpath("registry/closure.json").0, units
+    lock = manifest_path(selected, "registry_lock")?
+    assert lock == selected.joinpath("registry/selected.json").0, lock
+    # 2. The link selects the installed tree, not a copy.
+    assert Path(units).read_bytes().map_err((error) => error.message())? == b"installed closure"
+    # 3. An absolute registry outside the installation is not the compiler home's to rename.
+    write_manifest(toolchain, MANIFEST_HEAD + "\"registry_units\":\"/elsewhere/closure.json\"}")?
+    _ = prepare_compiler_home(installed, compiler)?
+    elsewhere = manifest_path(selected, "registry_units")?
+    assert elsewhere == "/elsewhere/closure.json", elsewhere
+    return Ok(None)
+
+
+def test_the_compiler_home_reads_a_release_candidates_registry_where_the_candidate_names_it() -> Result[None, str]:
+    """
+    A release's candidate home writes its own registry closure over another producer's entries, and names that
+    producer's selection outside `registry/`, under `registry-producer/`. Its Loaves are built in the candidate home,
+    so they name registry artifacts under the candidate's own toolchain directory. The compiler home names the closure
+    and the selection there too, by absolute path, so its builds find each artifact admitted where they read it.
+
+    1. The closure resolves in the candidate's toolchain directory, not under the compiler home's link.
+    2. The producer's selection resolves in the candidate's toolchain directory too.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    producer = temporary.path().joinpath("seed/registry")
+    producer.joinpath("entries").mkdir(true, true).map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("build-home")
+    compiler = candidate.joinpath("compiler-build")
+    toolchain = candidate.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("registry/closure.json").write_bytes(b"candidate closure").map_err((error) => error.message())?
+    toolchain.joinpath("registry/entries").symlink_to(producer.joinpath("entries")).map_err((error) => error.message())?
+    toolchain.joinpath("registry-producer").symlink_to(producer).map_err((error) => error.message())?
+    registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry-producer/selected.json\"}"
+    write_manifest(toolchain, MANIFEST_HEAD + registry)?
+    _ = prepare_compiler_home(candidate, compiler)?
+    selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    named = candidate.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    # 1. The candidate's own closure, where the candidate's Loaves name its units.
+    units = manifest_path(selected, "registry_units")?
+    assert units == named.joinpath("registry/closure.json").0, units
+    # 2. The producer's selection, as the candidate names it.
+    lock = manifest_path(selected, "registry_lock")?
+    assert lock == named.joinpath("registry-producer/selected.json").0, lock
+    return Ok(None)
+
+
+def write_manifest(toolchain: Path, text: str) -> Result[None, str]:
+    """Write an installed toolchain's `toolchain.json`."""
+    manifest = toolchain.joinpath("toolchain.json")
+    return manifest.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def manifest_path(toolchain: Path, key: str) -> Result[str, str]:
+    """A path the manifest in `toolchain` names, as a builder selecting that directory reads it."""
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    path: str = manifest.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    if path.startswith("/"):
+        return Ok(path)
+    return Ok(toolchain.joinpath(path).0)
+
+
+def test_readmission_asks_the_builder_for_the_rewritten_home() -> Result[None, str]:
+    """
+    Re-admission runs the builder's explicit entry with the rewritten home selected, and reports its refusal.
+
+    1. A builder that accepts the request is run once, with `--internal-readmit`, that home and the removed files.
+    2. A builder that refuses fails the relink with its message.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    record = temporary.path().joinpath("requests")
+    # 1. The stub records what it was asked and for which home.
+    accepting = temporary.path().joinpath("accepting")
+    script = "#!/bin/sh\nprintf '%s %s\\n' \"$INCAN_HOME\" \"$*\" >> " + record.0 + "\necho re-admitted\n"
+    executable(accepting, script)?
+    readmit(accepting.0, home, ["/old/bin/incan-rustc-driver-a"])?
+    requests = record.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert requests == f"{home.0} --internal-readmit /old/bin/incan-rustc-driver-a\n", requests
+    # 2. A refusal names the home and keeps the builder's reason.
+    refusing = temporary.path().joinpath("refusing")
+    executable(refusing, "#!/bin/sh\necho 'unknown command' >&2\nexit 1\n")?
+    match readmit(refusing.0, home, []):
+        Ok(_) =>
+            assert false, "a refused re-admission must fail the relink"
+        Err(reason) =>
+            assert home.0 in reason and "unknown command" in reason, reason
+    return Ok(None)
+
+
+def test_a_relinked_manifest_names_its_driver_from_the_toolchain() -> Result[None, str]:
+    """
+    A relinked installation names its driver and Rust ABI cache relative to the toolchain, as an installed one does, so
+    a copied or moved home uses and packs its own driver, never the one in the home it was relinked in.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    name = f"incan-rustc-driver-{digest[:12]}"
+    # The standard ABI cache already exists, so the stub driver is never run.
+    toolchain.joinpath(f"rust-abi/std-{name}.rustabi").write_bytes(b"abi").map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    driver = manifest.require("driver").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert driver == f"bin/{name}", driver
+    caches: list[JsonValue] = manifest
+        .require("rust_abi")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    assert len(caches) == 1
+    cache = caches[0].expect_str().map_err((error) => error.message())?
+    assert cache == f"rust-abi/std-{name}.rustabi", cache
+    return Ok(None)
+
+
+def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
+    """
+    The bundle's compiler records describe the Loaves its own compiler built, so the relinked compiler keeps no pin to
+    them, as a release candidate home keeps none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(
+            "{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[],"
+            + "\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"cf96ccd9\"}}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    # The standard ABI cache already exists, so the stub driver is never run.
+    toolchain
+        .joinpath(f"rust-abi/std-incan-rustc-driver-{digest[:12]}.rustabi")
+        .write_bytes(b"abi")
+        .map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    assert manifest.get("compiler_records") == None, text
+    return Ok(None)
+
+
+def test_a_standard_relink_withdraws_the_installed_providers_before_it_builds_support() -> Result[None, str]:
+    """
+    A standard relink builds the support crates as a release does, in a home whose manifest names no support,
+    runtime or standard provider and which holds no standard Loaf: an edited support crate's dependents are then
+    built against it, never left naming the installed one. Every other manifest field stays.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    library = toolchain.joinpath("loaves/incan_stdlib_primitives/release")
+    library.mkdir(true, true).map_err((error) => error.message())?
+    library.joinpath("libincan_stdlib_primitives.rlib").write_bytes(b"rlib").map_err((error) => error.message())?
+    home.joinpath("native-support/earlier").mkdir(true, true).map_err((error) => error.message())?
+    installed = "{\"name\":\"incan_std_primitives\",\"path\":\"native/a/libincan_std_primitives-0.rlib\"}"
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(
+            MANIFEST_HEAD.replace("\"externs\":[]", f"\"externs\":[{installed}]")
+            + "\"search\":[\"native/a\"],\"registry_units\":\"registry/units.json\"}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    withdraw_installed_providers(home)?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    externs = manifest.require("externs").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    search = manifest.require("search").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    units = manifest.require("registry_units").and_then((value) => value.expect_str()).map_err((e) => e.message())?
+    assert len(externs) == 0, text
+    assert len(search) == 0, text
+    assert units == "registry/units.json", text
+    assert not toolchain.joinpath("loaves").exists()
+    assert not home.joinpath("native-support").exists()
+    return Ok(None)
+
+
+def test_a_standard_relink_builds_its_helper_again_in_the_same_lane() -> Result[None, str]:
+    """
+    A lane relinks into one home many times, and each standard relink builds the support helper first, so preparing
+    the helper's private project again over the previous one must succeed.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    repo = temporary.path().joinpath("repo")
+    sources = repo.joinpath("workspaces/oven/src")
+    sources.mkdir(true, true).map_err((error) => error.message())?
+    repo.joinpath("loaves").mkdir(true, true).map_err((error) => error.message())?
+    repo
+        .joinpath("workspaces/oven/loaf.toml")
+        .write_text("[project]\nname = \"oven\"\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    sources
+        .joinpath("toolchain_native.incn")
+        .write_text("def main() -> None:\n    pass\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    # The stub builder writes the helper where a release build of the private project puts it.
+    builder = temporary.path().joinpath("builder")
+    executable(builder, "#!/bin/sh\nmkdir -p target/incan/release/bin\necho helper > target/incan/release/bin/oven\n")?
+    lane = temporary.path().joinpath("lane")
+    evidence = lane.joinpath("evidence")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    context = NativeContext(
+        repo=repo,
+        lane=lane,
+        home=temporary.path().joinpath("home"),
+        builder=builder.0,
+        stdlib="",
+        evidence=evidence,
+        timings=evidence.joinpath("timings.tsv"),
+        jobs=1,
+        memory=4294967296,
+        timeout_seconds=60,
+    )
+    first = build_support_tool(context, context.home)?
+    second = build_support_tool(context, context.home)?
+    assert first.0 == second.0, f"{first.0} != {second.0}"
+    return Ok(None)
+
+
+def executable(path: Path, text: str) -> Result[None, str]:
+    """Write a stub program the test runs in place of an Oven."""
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    status = Command.new("chmod").arg("755").arg(path.0).status().map_err((error) => error.to_string())?
+    if not status.success():
+        return Err(f"cannot make {path.0} executable")
+    return Ok(None)
+
+
+def test_a_relinked_driver_ships_its_development_linker_and_retires_the_earlier_one() -> Result[None, str]:
+    """
+    The development linker built beside the driver is installed beside it under the driver's digest, where the driver
+    looks for it, and the linker an earlier relinked driver shipped is removed with that driver.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("bin/incan-rustc-driver-a").write_bytes(b"earlier").map_err((error) => error.message())?
+    toolchain.joinpath("bin/incan-link-a").write_bytes(b"earlier linker").map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    temporary.path().joinpath("incan-link").write_bytes(b"linker").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    toolchain
+        .joinpath(f"rust-abi/std-incan-rustc-driver-{digest[:12]}.rustabi")
+        .write_bytes(b"abi")
+        .map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    installed = toolchain.joinpath(f"bin/incan-link-{digest[:12]}")
+    assert installed.read_bytes().map_err((error) => error.message())? == b"linker"
+    assert not toolchain.joinpath("bin/incan-link-a").exists(), "the earlier driver's linker stayed installed"
+    assert not toolchain.joinpath("bin/incan-rustc-driver-a").exists()
+    return Ok(None)
+
+
+def test_a_candidate_home_installs_its_runtime_where_an_installed_home_has_it() -> Result[None, str]:
+    """
+    A release's builder and the home its bundle installs into share one bakery during installed verification. A unit
+    the builder compiled names the runtime from the toolchain directory (`toolchain:<directory>/<generation>/…`), and
+    the installed home resolves that reference against its own toolchain directory, where a packed runtime generation
+    is a directory of `native/`. The builder therefore installs each runtime generation under `native/` too.
+    """
+    toolchain = Path("/home").joinpath(TOOLCHAIN_DIRECTORY)
+    assert runtime_root(toolchain).0 == toolchain.joinpath("native").0, runtime_root(toolchain).0
+    return Ok(None)
+
+
+def test_a_candidate_home_adds_a_generation_beside_the_seeds_without_writing_into_the_seed() -> Result[None, str]:
+    """
+    A release's candidate home reads the seed's native generations and installs its own runtime generation beside
+    them. The seed is immutable, so the candidate owns the directory and links each of the seed's generations into it.
+
+    1. Each generation the seed publishes is read through the candidate's directory.
+    2. A generation the candidate installs there exists in the candidate only.
+    3. A seed that publishes no such tree gives the candidate none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    seed.joinpath("native/a").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("native/a/libsupport.rlib").write_bytes(b"support").map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("candidate")
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    share_seed_generations(seed, candidate, "native")?
+    # 1. The seed's generation, by the candidate's own path.
+    shared = candidate.joinpath("native/a/libsupport.rlib").read_bytes().map_err((error) => error.message())?
+    assert shared == b"support"
+    # 2. The candidate's runtime generation never reaches the seed.
+    runtime_root(candidate).joinpath("b").mkdir(true, true).map_err((error) => error.message())?
+    assert candidate.joinpath("native/b").is_dir()
+    assert not seed.joinpath("native/b").exists(), "the candidate's generation was written into the seed"
+    # 3. Nothing to share is not an error.
+    share_seed_generations(seed, candidate, "absent")?
+    assert not candidate.joinpath("absent").exists()
+    return Ok(None)

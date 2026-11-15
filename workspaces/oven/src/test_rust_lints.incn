@@ -1,0 +1,81 @@
+"""`[rust.lints]` contracts: levels and priorities become ordered lint flags, and an undefined key is refused by name."""
+
+from std.testing import fail
+from manifest_errors import IntakeErrorKind
+from manifest_intent import parse_intent
+
+
+def manifest(lints: str) -> str:
+    """A Rust library Loaf whose manifest carries `lints` after its `[rust]` table."""
+    return "[project]\nname='app'\nversion='0.1.0'\n[rust]\ntype='lib'\n" + lints
+
+
+def refused_at(lints: str, field: list[str], kind: IntakeErrorKind) -> None:
+    """Require the manifest carrying `lints` to be refused at exactly `field`, with `kind`."""
+    match parse_intent(manifest(lints), "loaf.toml"):
+        Ok(_) => fail(f"accepted: {lints}")
+        Err(error) =>
+            assert error.field == field, error.message()
+            assert error.kind == kind, error.message()
+
+
+pub def test_rust_lints_become_flags_lowest_priority_first() -> Result[None, str]:
+    """
+    A `[rust.lints]` table is part of the Loaf's intent, and its flags apply in Cargo's `[lints]` order.
+
+    1. Levels are strings or `{ level, priority }` tables, for rustc's lints and clippy's.
+    2. A lower priority applies first, then lint names in order, so a member overrides its group.
+    3. A Loaf without the table has no lint flags.
+    """
+    # 1. Both tools, both entry forms and the `warnings` group.
+    rustc_table = "[rust.lints.rust]\nwarnings='deny'\nunsafe_code={level='forbid'}\n"
+    clippy_table = "[rust.lints.clippy]\npedantic={level='warn', priority=-1}\nneedless_return='allow'\n"
+    intent = parse_intent(manifest(rustc_table + clippy_table), "loaf.toml").map_err((error) => error.message())?
+    # 2. The group at priority -1 comes first; the rest by the name the compiler sees.
+    expected = ["-W", "clippy::pedantic", "-A", "clippy::needless_return", "-F", "unsafe_code", "-D", "warnings"]
+    assert intent.rust_lints.flags() == expected, ", ".join(intent.rust_lints.flags())
+    # 3. No table, no flags.
+    plain = parse_intent(manifest(""), "loaf.toml").map_err((error) => error.message())?
+    assert len(plain.rust_lints.flags()) == 0
+    return Ok(None)
+
+
+pub def test_rust_lints_refuse_unknown_keys_by_name() -> None:
+    """
+    Each key the table does not define is refused at its own field, never ignored.
+
+    1. A tool table other than `rust` and `clippy`, and an entry key other than `level` and `priority`.
+    2. An entry without a level, an unknown level, a tool-prefixed name and a priority that is not an integer.
+    """
+    # 1. Unknown keys are named.
+    lints = ["rust", "lints"]
+    pedantic = lints + ["clippy", "pedantic"]
+    refused_at("[rust.lints.rustdoc]\nbroken_intra_doc_links='warn'\n", lints + ["rustdoc"], IntakeErrorKind.Unsupported)
+    refused_at(
+        "[rust.lints.clippy]\npedantic={level='warn', priorty=-1}\n",
+        pedantic + ["priorty"],
+        IntakeErrorKind.Unsupported,
+    )
+    # 2. Malformed entries are refused at the entry or its field.
+    refused_at("[rust.lints.clippy]\npedantic={priority=-1}\n", pedantic + ["level"], IntakeErrorKind.Missing)
+    refused_at("[rust.lints.rust]\nunsafe_code='expect'\n", lints + ["rust", "unsafe_code"], IntakeErrorKind.Invalid)
+    refused_at(
+        "[rust.lints.rust]\n'clippy::pedantic'='warn'\n",
+        lints + ["rust", "clippy::pedantic"],
+        IntakeErrorKind.Invalid,
+    )
+    refused_at(
+        "[rust.lints.clippy]\npedantic={level='warn', priority='low'}\n",
+        pedantic + ["priority"],
+        IntakeErrorKind.Invalid,
+    )
+
+
+pub def test_expect_is_refused_because_it_is_a_source_attribute() -> None:
+    """`expect` has no command-line flag, so the table refuses it by name and says where it belongs."""
+    match parse_intent(manifest("[rust.lints.clippy]\npedantic='expect'\n"), "loaf.toml"):
+        Ok(_) => fail("`expect` was accepted as a lint level")
+        Err(error) =>
+            assert error.field == ["rust", "lints", "clippy", "pedantic"], error.message()
+            assert "`expect` has no command-line form" in error.detail, error.message()
+            assert "#[expect(...)]" in error.detail, error.message()

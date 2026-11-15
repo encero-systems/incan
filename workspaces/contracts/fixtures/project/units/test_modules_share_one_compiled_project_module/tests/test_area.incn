@@ -1,0 +1,7 @@
+"""The area of a square from the project's shapes module."""
+
+from shapes import Square, area
+
+
+def test_area_of_a_square() -> None:
+    assert area(Square(side=2)) == 4

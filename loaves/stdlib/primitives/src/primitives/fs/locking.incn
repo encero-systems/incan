@@ -1,0 +1,98 @@
+"""OS-backed advisory file locks with owned release guards."""
+
+from rust::std::fs import File as RustFile, OpenOptions
+from rust::std::io import ErrorKind
+from rust::std::os::fd import AsFd
+from rust::std::path import Path as RustPath
+from rust::rustix::fs import FlockOperation, flock
+from rust::incan_std_primitives::locking import LockGuard as NativeLockGuard
+from crate.primitives.locking import LockGuard
+from crate.primitives.fs.path import PrimitivePath
+
+
+pub type FileLock = newtype LockGuard:
+    """A filesystem lock guard retaining the descriptor that owns the operating-system lock."""
+
+    pub def placement_guard(self) -> LockGuard:
+        """Move this filesystem guard into the placement-neutral platform contract."""
+        return self.0
+
+
+pub def shared(path: PrimitivePath) -> Result[FileLock, str]:
+    """Acquire a blocking shared advisory lock for a primitive path."""
+    return _shared(f"{path.value}")
+
+
+pub def exclusive(path: PrimitivePath) -> Result[FileLock, str]:
+    """Acquire a blocking exclusive advisory lock for a primitive path."""
+    return _exclusive(f"{path.value}")
+
+
+pub def try_shared(path: PrimitivePath) -> Result[Option[FileLock], str]:
+    """Attempt a shared advisory lock without blocking."""
+    return _try_shared(f"{path.value}")
+
+
+pub def try_exclusive(path: PrimitivePath) -> Result[Option[FileLock], str]:
+    """Attempt an exclusive advisory lock without blocking."""
+    return _try_exclusive(f"{path.value}")
+
+
+def _shared(path: str) -> Result[FileLock, str]:
+    """Acquire a shared lock through an independently owned path string."""
+    file = _open_lock(path)?
+    match flock(file.as_fd(), FlockOperation.LockShared):
+        Ok(_) => return Ok(FileLock(LockGuard(NativeLockGuard.file(file))))
+        Err(error) => return Err(f"{error}")
+
+
+def _exclusive(path: str) -> Result[FileLock, str]:
+    """Acquire an exclusive lock through an independently owned path string."""
+    file = _open_lock(path)?
+    match flock(file.as_fd(), FlockOperation.LockExclusive):
+        Ok(_) => return Ok(FileLock(LockGuard(NativeLockGuard.file(file))))
+        Err(error) => return Err(f"{error}")
+
+
+def _try_shared(path: str) -> Result[Option[FileLock], str]:
+    """Attempt a shared lock and classify expected contention."""
+    file = _open_lock(path)?
+    match flock(file.as_fd(), FlockOperation.NonBlockingLockShared):
+        Ok(_) => return Ok(Some(FileLock(LockGuard(NativeLockGuard.file(file)))))
+        Err(error) =>
+            if error.kind() == ErrorKind.WouldBlock:
+                return Ok(None)
+            return Err(f"{error}")
+
+
+def _try_exclusive(path: str) -> Result[Option[FileLock], str]:
+    """Attempt an exclusive lock and classify expected contention."""
+    file = _open_lock(path)?
+    match flock(file.as_fd(), FlockOperation.NonBlockingLockExclusive):
+        Ok(_) => return Ok(Some(FileLock(LockGuard(NativeLockGuard.file(file)))))
+        Err(error) =>
+            if error.kind() == ErrorKind.WouldBlock:
+                return Ok(None)
+            return Err(f"{error}")
+
+
+def _open_lock(path: str) -> Result[RustFile, str]:
+    """Open or create the persistent sibling descriptor that owns one lock identity."""
+    lock_path = _lock_path(path)?
+    mut options = OpenOptions.new()
+    options.read(true).write(true).create(true).truncate(false)
+    match options.open(RustPath.new(lock_path)):
+        Ok(file) => return Ok(file)
+        Err(error) => return Err(f"{error}")
+
+
+def _lock_path(path: str) -> Result[str, str]:
+    """Derive the stable sibling entry used as the lock identity for one logical path."""
+    protected = RustPath.new(path)
+    match protected.file_name():
+        Some(name) =>
+            lock_name = f".{name.to_string_lossy().into_owned()}.incan.lock"
+            match protected.parent():
+                Some(parent) => return Ok(parent.join(lock_name).to_string_lossy().into_owned())
+                None => return Ok(lock_name)
+        None => return Err("file locks require a path with a final component")

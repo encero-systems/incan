@@ -87,6 +87,9 @@ pub struct SurfaceTypeOwnership {
     pub owner: SurfaceTypeOwner,
     pub category: SurfaceTypeCategory,
     pub stdlib_module_path: Option<&'static str>,
+    pub compatibility_module_paths: &'static [&'static str],
+    pub runtime_rust_module_path: Option<&'static [&'static str]>,
+    pub runtime_rust_compatibility_module_paths: &'static [&'static [&'static str]],
     pub rationale: &'static str,
 }
 
@@ -106,26 +109,36 @@ pub struct SurfaceTypeInfo {
 }
 
 const RUNTIME_ASYNC_SYNC: SurfaceTypeOwnership = runtime(
-    "std.async.sync",
+    "std.primitives.async.sync",
+    &["std.primitives.async", "std.async.sync", "std.async"],
+    &[facets::PRIMITIVES, "sync"],
+    &[&[facets::ASYNC, "sync"]],
     SurfaceTypeCategory::AsyncSync,
-    "Runtime-backed synchronization primitive re-exported through `std.async.sync`; it is not a language builtin.",
+    "Runtime-backed synchronization primitive owned by `std.primitives.async` and re-exported through `std.async`; it is not a language builtin.",
 );
 const RUNTIME_ASYNC_TASK: SurfaceTypeOwnership = runtime(
-    "std.async.task",
+    "std.primitives.async.task",
+    &["std.primitives.async", "std.async.task", "std.async"],
+    &[facets::PRIMITIVES, "task"],
+    &[&[facets::ASYNC, "task"]],
     SurfaceTypeCategory::AsyncTask,
-    "Runtime task vocabulary surfaced through `std.async.task`; name lookup requires the stdlib module import.",
+    "Runtime task vocabulary owned by `std.primitives.async` and re-exported through `std.async`; name lookup requires one of those imports.",
 );
 const RUNTIME_ASYNC_RACE: SurfaceTypeOwnership = runtime(
     "std.async.race",
+    &["std.async"],
+    &[facets::ASYNC, "race"],
+    &[],
     SurfaceTypeCategory::AsyncRace,
     "Runtime race helper vocabulary surfaced through `std.async.race`; name lookup requires the stdlib module import.",
 );
-const STDLIB_ASYNC_CHANNEL: SurfaceTypeOwnership = stdlib(
-    "std.async.channel",
+const STDLIB_ASYNC_CHANNEL: SurfaceTypeOwnership = stdlib_with_compatibility(
+    "std.primitives.async.channel",
+    &["std.primitives.async", "std.async.channel", "std.async"],
     SurfaceTypeCategory::AsyncChannel,
-    "Channel handle declared by `std.async.channel` as a newtype over its runtime type, the type `channel()` and \
-     `oneshot()` return; core records the spelling so compiler passes share it, and name lookup requires the stdlib \
-     module import.",
+    "Channel handle declared by `std.primitives.async.channel` as a newtype over its runtime type, the type \
+     `channel()` and `oneshot()` return; core records the spelling so compiler passes share it, and the compatibility \
+     facade re-exports it through `std.async`.",
 );
 const INTEROP_RUST: SurfaceTypeOwnership = interop(
     SurfaceTypeCategory::RustInterop,
@@ -145,6 +158,9 @@ const STDLIB_VALIDATION: SurfaceTypeOwnership = SurfaceTypeOwnership {
     owner: SurfaceTypeOwner::Stdlib,
     category: SurfaceTypeCategory::Validation,
     stdlib_module_path: None,
+    compatibility_module_paths: &[],
+    runtime_rust_module_path: None,
+    runtime_rust_compatibility_module_paths: &[],
     rationale: "Globally available validated-newtype error type owned by the validation stdlib/runtime surface.",
 };
 
@@ -395,6 +411,38 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
     info_for(id).ownership.stdlib_module_path
 }
 
+/// Whether `module_path` is a canonical or compatibility import surface for this type.
+#[must_use]
+pub fn is_exported_from_module(id: SurfaceTypeId, module_path: &str) -> bool {
+    let ownership = info_for(id).ownership;
+    ownership.stdlib_module_path == Some(module_path) || ownership.compatibility_module_paths.contains(&module_path)
+}
+
+/// Whether a standard package and module path provide this type through its canonical or compatibility surface.
+#[must_use]
+pub fn is_exported_from_package(id: SurfaceTypeId, package: &str, module_path: &[String]) -> bool {
+    let ownership = info_for(id).ownership;
+    std::iter::once(ownership.stdlib_module_path)
+        .flatten()
+        .chain(ownership.compatibility_module_paths.iter().copied())
+        .any(|surface| {
+            let Some(namespace) = surface.split('.').nth(1) else {
+                return false;
+            };
+            crate::lang::stdlib::find_namespace(namespace).and_then(|entry| entry.package) == Some(package)
+                && surface.split('.').skip(1).eq(module_path.iter().map(String::as_str))
+        })
+}
+
+/// Return the native runtime facet crate for a runtime-owned surface type.
+#[must_use]
+pub fn runtime_facet(id: SurfaceTypeId) -> Option<&'static str> {
+    info_for(id)
+        .ownership
+        .runtime_rust_module_path
+        .and_then(|segments| segments.first().copied())
+}
+
 /// Whether this surface type is globally available without an explicit import.
 pub fn is_global(id: SurfaceTypeId) -> bool {
     stdlib_module_path(id).is_none()
@@ -431,35 +479,45 @@ pub fn is_not_cloneable(id: SurfaceTypeId) -> bool {
 /// Return the runtime-owned surface type whose runtime Rust type `rust_path` names, generic arguments allowed.
 ///
 /// A stdlib provider's checked API names a runtime type by its Rust path where source spells the surface type:
-/// `spawn` returns `incan_std_async::task::JoinHandle<T>` for `JoinHandle[T]`. The runtime type of a surface type
-/// declared in `std.<namespace>.<rest>` lives at `<facet>[::<namespace>]::<rest>::<Name>`, the location runtime
-/// re-exports use, so a path names the surface type exactly when it spells that location.
+/// `spawn` returns `incan_std_primitives::task::JoinHandle<T>` for `JoinHandle[T]`. The runtime type of a surface type
+/// declared in `std.<namespace>.<rest>` lives at `<facet>[::<namespace>]::<rest>::<Name>`. Compatibility facet paths
+/// remain recognized while their re-exports preserve the same Rust declaration.
 #[must_use]
 pub fn from_runtime_rust_path(rust_path: &str) -> Option<SurfaceTypeId> {
     let path = rust_path.strip_prefix("::").unwrap_or(rust_path);
     let base = path.split_once('<').map_or(path, |(base, _)| base).trim_end();
     let id = from_str(base.rsplit("::").next()?)?;
-    runtime_rust_path_segments(id)?
-        .into_iter()
-        .eq(base.split("::"))
-        .then_some(id)
+    runtime_rust_path_matches(id, base).then_some(id)
 }
 
-/// Return the segments of the Rust path a runtime-owned surface type's runtime type lives at.
-fn runtime_rust_path_segments(id: SurfaceTypeId) -> Option<Vec<&'static str>> {
+/// Return the canonical Rust declaration path for a canonical or compatibility runtime surface path.
+///
+/// Generic arguments are deliberately omitted: metadata and callable admission operate on the nominal item, while
+/// the checked receiver retains its instantiated arguments separately.
+#[must_use]
+pub fn canonical_runtime_rust_path(rust_path: &str) -> Option<String> {
+    let id = from_runtime_rust_path(rust_path)?;
+    let mut segments = info_for(id).ownership.runtime_rust_module_path?.to_vec();
+    segments.push(as_str(id));
+    Some(segments.join("::"))
+}
+
+/// Return whether `base` is the canonical or compatibility Rust path of a runtime-owned surface type.
+fn runtime_rust_path_matches(id: SurfaceTypeId, base: &str) -> bool {
     let ownership = info_for(id).ownership;
     if ownership.owner != SurfaceTypeOwner::Runtime {
-        return None;
+        return false;
     }
-    let mut module = ownership.stdlib_module_path?.split('.').skip(1);
-    let namespace = module.next()?;
-    let mut segments = vec![facets::for_namespace(namespace)];
-    if !facets::namespace_is_facet_root(namespace) {
-        segments.push(namespace);
-    }
-    segments.extend(module);
-    segments.push(as_str(id));
-    Some(segments)
+    std::iter::once(ownership.runtime_rust_module_path)
+        .flatten()
+        .chain(ownership.runtime_rust_compatibility_module_paths.iter().copied())
+        .any(|segments| {
+            segments
+                .iter()
+                .copied()
+                .chain(std::iter::once(as_str(id)))
+                .eq(base.split("::"))
+        })
 }
 
 /// What the compiler records about one surface type's implementation of a builtin derive.
@@ -654,6 +712,9 @@ const fn not_cloneable(entry: SurfaceTypeInfo) -> SurfaceTypeInfo {
 /// Build ownership metadata for a runtime-backed type exposed through a stdlib module.
 const fn runtime(
     stdlib_module_path: &'static str,
+    compatibility_module_paths: &'static [&'static str],
+    runtime_rust_module_path: &'static [&'static str],
+    runtime_rust_compatibility_module_paths: &'static [&'static [&'static str]],
     category: SurfaceTypeCategory,
     rationale: &'static str,
 ) -> SurfaceTypeOwnership {
@@ -661,11 +722,14 @@ const fn runtime(
         owner: SurfaceTypeOwner::Runtime,
         category,
         stdlib_module_path: Some(stdlib_module_path),
+        compatibility_module_paths,
+        runtime_rust_module_path: Some(runtime_rust_module_path),
+        runtime_rust_compatibility_module_paths,
         rationale,
     }
 }
 
-/// Build ownership metadata for a stdlib-owned type that core keeps as shared vocabulary.
+/// Build ownership metadata for a stdlib-owned type that primitives keep as shared vocabulary.
 const fn stdlib(
     stdlib_module_path: &'static str,
     category: SurfaceTypeCategory,
@@ -675,6 +739,27 @@ const fn stdlib(
         owner: SurfaceTypeOwner::Stdlib,
         category,
         stdlib_module_path: Some(stdlib_module_path),
+        compatibility_module_paths: &[],
+        runtime_rust_module_path: None,
+        runtime_rust_compatibility_module_paths: &[],
+        rationale,
+    }
+}
+
+/// Build ownership metadata for a stdlib type with compatibility re-export surfaces.
+const fn stdlib_with_compatibility(
+    stdlib_module_path: &'static str,
+    compatibility_module_paths: &'static [&'static str],
+    category: SurfaceTypeCategory,
+    rationale: &'static str,
+) -> SurfaceTypeOwnership {
+    SurfaceTypeOwnership {
+        owner: SurfaceTypeOwner::Stdlib,
+        category,
+        stdlib_module_path: Some(stdlib_module_path),
+        compatibility_module_paths,
+        runtime_rust_module_path: None,
+        runtime_rust_compatibility_module_paths: &[],
         rationale,
     }
 }
@@ -685,6 +770,9 @@ const fn interop(category: SurfaceTypeCategory, rationale: &'static str) -> Surf
         owner: SurfaceTypeOwner::Interop,
         category,
         stdlib_module_path: None,
+        compatibility_module_paths: &[],
+        runtime_rust_module_path: None,
+        runtime_rust_compatibility_module_paths: &[],
         rationale,
     }
 }
@@ -723,15 +811,25 @@ mod tests {
     #[test]
     fn runtime_rust_path_names_the_surface_type_at_its_facet_location() {
         for path in [
+            "incan_std_primitives::task::JoinHandle<T>",
+            "incan_std_primitives::task::JoinHandle<i64>",
+            "::incan_std_primitives::task::JoinHandle",
             "incan_std_async::task::JoinHandle<T>",
-            "incan_std_async::task::JoinHandle<i64>",
-            "::incan_std_async::task::JoinHandle",
         ] {
             assert_eq!(from_runtime_rust_path(path), Some(SurfaceTypeId::JoinHandle), "{path}");
         }
         assert_eq!(
-            from_runtime_rust_path("incan_std_async::sync::Mutex<i64>"),
+            from_runtime_rust_path("incan_std_primitives::sync::Mutex<i64>"),
             Some(SurfaceTypeId::Mutex)
+        );
+        assert_eq!(
+            from_runtime_rust_path("incan_std_async::sync::Mutex<i64>"),
+            Some(SurfaceTypeId::Mutex),
+            "the compatibility facet re-exports the primitive declaration"
+        );
+        assert_eq!(
+            canonical_runtime_rust_path("incan_std_async::task::JoinHandle<i64>").as_deref(),
+            Some("incan_std_primitives::task::JoinHandle")
         );
         assert_eq!(
             from_runtime_rust_path("incan_std_async::channel::Sender<String>"),
@@ -742,15 +840,15 @@ mod tests {
             "incan_std_async::sync::JoinHandle<T>",
             "incan_std_async::JoinHandle<T>",
             "tokio::task::JoinHandle<T>",
-            "incan_std_core::task::JoinHandle<T>",
+            "third_party::task::JoinHandle<T>",
             "incan_std_async::task::Unknown<T>",
         ] {
             assert_eq!(from_runtime_rust_path(path), None, "{path}");
         }
     }
 
-    /// `std.async.channel` declares each channel handle as a newtype over its runtime type and `channel()` returns the
-    /// newtype, so an import of the handle binds the newtype rather than re-exporting the runtime type.
+    /// `std.primitives.async.channel` declares each channel handle as a newtype over its runtime type and `channel()`
+    /// returns the newtype, so an import of the handle binds the newtype rather than re-exporting the runtime type.
     #[test]
     fn channel_handles_are_the_stdlib_newtypes_channel_returns() {
         for id in [
@@ -760,7 +858,24 @@ mod tests {
             SurfaceTypeId::OneshotReceiver,
         ] {
             assert_eq!(owner(id), SurfaceTypeOwner::Stdlib, "{}", as_str(id));
-            assert_eq!(stdlib_module_path(id), Some("std.async.channel"), "{}", as_str(id));
+            assert_eq!(
+                stdlib_module_path(id),
+                Some("std.primitives.async.channel"),
+                "{}",
+                as_str(id)
+            );
+            assert!(is_exported_from_module(id, "std.primitives.async"));
+            assert!(is_exported_from_module(id, "std.async"));
+            assert!(is_exported_from_package(
+                id,
+                "incan_stdlib_primitives",
+                &["primitives".to_string(), "async".to_string(), "channel".to_string()],
+            ));
+            assert!(is_exported_from_package(
+                id,
+                "incan_stdlib_async",
+                &["async".to_string(), "channel".to_string()],
+            ));
         }
     }
 

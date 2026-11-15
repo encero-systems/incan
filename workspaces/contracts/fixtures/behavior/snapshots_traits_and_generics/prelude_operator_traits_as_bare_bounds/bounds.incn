@@ -1,0 +1,25 @@
+"""Generic functions bounded by the prelude's operator traits, with no import: the prelude makes them ambient."""
+
+
+pub def plus[T with Add[T, T]](a: T, b: T) -> T:
+    return a + b
+
+
+pub def minus[T with Sub[T, T]](a: T, b: T) -> T:
+    return a - b
+
+
+pub def times[T with Mul[T, T]](a: T, b: T) -> T:
+    return a * b
+
+
+pub def over[T with Div[T, T]](a: T, b: T) -> T:
+    return a / b
+
+
+pub def negated[T with Neg[T]](a: T) -> T:
+    return -a
+
+
+pub def modulo[T with Mod[T, T]](a: T, b: T) -> T:
+    return a % b

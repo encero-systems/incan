@@ -1,0 +1,21 @@
+# behavior: set() over a generator collects the values the generator yields, keeping one of each distinct value
+# expect-stdout:
+#   3
+#   true
+#   2
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def parities(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value % 2
+
+
+def main() -> None:
+    unique = set(numbers(3))
+    println(len(unique))
+    println(2 in unique)
+    println(len(set(parities(6))))

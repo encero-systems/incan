@@ -1,0 +1,123 @@
+"""Warm graph pages carried by the graph cases: an unchanged repeat prepares nothing, on the CLI and through MCP."""
+
+from rust::std::fs import File
+from rust::std::process import Command
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from std.json import JsonValue
+from files import make_directory, parse_json, read, remove, required_text
+from run import invoke
+
+# The categories of preparation work: describing a unit, parsing a manifest, resolving or exporting a graph, starting
+# the compiler, and hashing a file.
+const PREPARATION: FrozenList[str] = [
+    "unit_description",
+    "manifest_parse",
+    "graph_resolution",
+    "graph_export",
+    "driver_spawn",
+    "driver_request",
+    "file_hash",
+]
+
+
+pub def check_warm_pages(incan: str, project: Path) -> Result[None, str]:
+    """
+    A warm graph request, on an Incan or a Rust project, answers from its page in the bakery: it prepares nothing and
+    hashes no file.
+
+    1. Make the check's own working directory first, so no later file of the check changes the project's entries.
+    2. Ask twice, a settle period apart, so the answer is paged under settled inputs.
+    3. Trace an identical third request: it does no preparation work and answers the same.
+    4. An MCP session's `graph_query` for the same selection reads the same page, and a second session's
+       `context_for_task` reads the page the first session's left.
+    """
+    # 1. Traces and MCP requests stay in this one directory.
+    work_directory = project.joinpath(".page-work")
+    traces = work_directory.joinpath("traces")
+    make_directory(traces)?
+    # 2. The first answer may come before its inputs have settled; the second is paged.
+    arguments = ["inspect", "codegraph", ".", "--query", "refs", "helper"]
+    first = invoke(incan, arguments, project)?
+    sleep(Duration.from_secs(3))
+    _ = invoke(incan, arguments, project)?
+    # 3. The warm request is traced alone.
+    warm = invoke(incan, arguments, project, [f"INCAN_ENGINE_TRACE={traces.0}"])?
+    mut work = preparation_work(traces)?
+    if warm.code != Some(0) or warm.stdout != first.stdout:
+        return Err("a warm graph request answered differently from the cold one")
+    if work != "":
+        return Err(f"a warm graph request did preparation work: {work}")
+    # 4. MCP reads the same records, the CLI's and its own earlier session's.
+    query = call(1, "graph_query", JsonValue.object({"kind": JsonValue.string("refs"), "term": JsonValue.string("helper")}))
+    context = call(
+        2,
+        "context_for_task",
+        JsonValue.object({"task": JsonValue.string("helper"), "budget": JsonValue.int(4096)}),
+    )
+    serve(incan, project, work_directory, [context], "")?
+    serve(incan, project, work_directory, [query, context], traces.0)?
+    work = preparation_work(traces)?
+    traces.rmdir().map_err((error) => error.message())?
+    work_directory.rmdir().map_err((error) => error.message())?
+    if work != "":
+        return Err(f"a warm MCP session did preparation work: {work}")
+    return Ok(None)
+
+
+def preparation_work(directory: Path) -> Result[str, str]:
+    """The preparation work traced in `directory`, as `category=count` pairs; the trace files are removed."""
+    mut counts: Dict[str, int] = {}
+    for path in directory.iterdir().map_err((error) => error.message())?:
+        for line in read(path)?.split("\n"):
+            if line == "":
+                continue
+            category = required_text(parse_json(line)?, "operation")?
+            if category in PREPARATION:
+                counts[category] = counts.get(category).unwrap_or(0) + 1
+        remove(path)?
+    return Ok(", ".join([f"{name}={counts[name]}" for name in sorted([name for name in counts.keys()])]))
+
+
+def serve(incan: str, project: Path, work_directory: Path, calls: list[JsonValue], trace: str) -> Result[None, str]:
+    """Run one MCP session over `calls`, traced into `trace` when it is not empty; every call must succeed."""
+    initialize = JsonValue.object(
+        {
+            "jsonrpc": JsonValue.string("2.0"),
+            "id": JsonValue.int(0),
+            "method": JsonValue.string("initialize"),
+            "params": JsonValue.object(
+                {
+                    "protocolVersion": JsonValue.string("2025-11-25"),
+                    "capabilities": JsonValue.object({}),
+                    "clientInfo": JsonValue.object({"name": JsonValue.string("page-contract"), "version": JsonValue.string("1")}),
+                },
+            ),
+        },
+    )
+    requests = work_directory.joinpath("requests")
+    lines = [item.to_json().map_err((error) => error.message())? for item in [initialize] + calls]
+    requests.write_text("\n".join(lines) + "\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    mut command = Command.new(incan)
+    command.arg("mcp").arg(".").current_dir(project.0)
+    if trace != "":
+        command.env("INCAN_ENGINE_TRACE", trace)
+    command.stdin(File.open(requests.0).map_err((error) => str(error))?)
+    output = command.output().map_err((error) => str(error))?
+    requests.unlink().map_err((error) => error.message())?
+    if not output.status.success():
+        return Err("MCP server failed instead of serving graph pages")
+    return Ok(None)
+
+
+def call(identifier: int, name: str, arguments: JsonValue) -> JsonValue:
+    """A standard MCP tool invocation."""
+    return JsonValue.object(
+        {
+            "jsonrpc": JsonValue.string("2.0"),
+            "id": JsonValue.int(identifier),
+            "method": JsonValue.string("tools/call"),
+            "params": JsonValue.object({"name": JsonValue.string(name), "arguments": arguments}),
+        },
+    )

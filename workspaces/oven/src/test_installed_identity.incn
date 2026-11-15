@@ -1,0 +1,68 @@
+"""A home installed from a pack keys each unit as the home it was packed from, so it reuses what that home compiled."""
+
+from std.fs import Path
+from std.json import JsonValue
+from compiler_record_admission import CompilerRecordPin
+from compiler_worker import generation_for
+from files import json_text, read_json
+from freshness_fixtures import compiler_fingerprint, fixture, unit_key, write
+from observation import file_digest
+from scratch import scratch_directory
+from unit_freshness import fingerprint
+from unit_publication import LOAF_FACTS_SCHEMA, facts_path, import_publication, record_path, record_payload
+
+
+pub def test_a_compiler_record_pin_leaves_unit_identities_alone() -> Result[None, str]:
+    """
+    Packing pins the standard Loaves' compiler records, and every pack seals a set of its own, so a unit keeps its
+    identity whether its home has no pin, as a builder home has, or any pin, as a home installed from a pack has. A
+    compiler worker keeps reading the set it was launched with, so each set has workers of its own.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    built = unit_key(setup.unit, setup.toolchain)?.digest
+    mut installed = setup.toolchain
+    installed.compiler_records = Some(CompilerRecordPin(root="compiler-records", digest=fingerprint(["one set"])?))
+    assert unit_key(setup.unit, installed)?.digest == built, "a compiler-record pin rekeyed the unit"
+    mut repacked = installed
+    repacked.compiler_records = Some(CompilerRecordPin(root="compiler-records", digest=fingerprint(["another set"])?))
+    assert unit_key(setup.unit, repacked)?.digest == built, "another pack's record set rekeyed the unit"
+    compiler = compiler_fingerprint(installed)?
+    assert generation_for(installed, compiler)? != generation_for(repacked, compiler)?, "two record sets share workers"
+    assert generation_for(installed, compiler)? != generation_for(setup.toolchain, compiler)?
+    return Ok(None)
+
+
+pub def test_a_transported_loaf_keys_its_consumers_as_where_it_was_built() -> Result[None, str]:
+    """
+    A standard Loaf's consumers are keyed on its semantic facts where it was built, and so after a pack ships it.
+
+    1. Publish the standard Loaf's manifest with its compiler's semantic facts, and key the program and a library.
+    2. Ship its record as `toolchain pack` stages it, without the builder's file observation, and admit it as
+       `toolchain install` does.
+    3. Neither consumer is rekeyed.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    manifest = Path(setup.unit.loaves[1].dir).joinpath("std.incnlib")
+    mut library = setup.unit
+    library.kind = "library"
+    # 1. Where the Loaf was built.
+    write(manifest, "{\"fixture\":\"standard\"}")?
+    schema = JsonValue.string(LOAF_FACTS_SCHEMA)
+    digest = JsonValue.string(file_digest(manifest)?)
+    semantic = JsonValue.string(fingerprint(["standard facts"])?)
+    document = JsonValue.object({"schema": schema, "manifest_digest": digest, "semantic_facts": semantic})
+    write(facts_path(manifest), json_text(document)?)?
+    record_payload(manifest, fingerprint(["standard"])?)?
+    built_program = unit_key(setup.unit, setup.toolchain)?.digest
+    built_library = unit_key(library, setup.toolchain)?.digest
+    # 2. The pack keeps the producer identity and payload proof, and drops the observation of the builder's file.
+    mut shipped = read_json(record_path(manifest))?.expect_object().map_err((error) => error.message())?
+    shipped["observation"] = JsonValue.string("")
+    write(record_path(manifest), json_text(JsonValue.object(shipped))?)?
+    import_publication(manifest)?
+    # 3. The installed Loaf keys its consumers as the built one did.
+    assert unit_key(setup.unit, setup.toolchain)?.digest == built_program, "the installed Loaf rekeyed the program"
+    assert unit_key(library, setup.toolchain)?.digest == built_library, "the installed Loaf rekeyed a library"
+    return Ok(None)

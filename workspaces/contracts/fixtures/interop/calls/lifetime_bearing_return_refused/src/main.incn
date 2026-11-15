@@ -1,0 +1,31 @@
+# behavior: a source return type naming a lifetime-bearing Rust type is refused before Body IR, while borrowed and by-value parameters of that type stay accepted (rust-6, #2368)
+# expect-diagnostic: INCAN-T0120
+
+"""A returned native value that borrows its input needs a lifetime contract the source signature cannot state."""
+
+from rust::regex import Captures, Regex
+
+
+def observe(value: &Captures) -> bool:
+    """Accept a borrowed lifetime-bearing parameter."""
+    return value.len() > 0
+
+
+def take(value: Captures) -> bool:
+    """Accept a lifetime-bearing parameter by value."""
+    return value.len() > 0
+
+
+def first(pattern: &Regex, text: str) -> Option[Captures]:
+    """Return a value whose lifetime ties it to `text`: refused."""
+    return pattern.captures(text)
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    match Regex.new("a"):
+        Ok(pattern) =>
+            match first(pattern, "a"):
+                Some(found) => println(observe(found))
+                None => pass
+        Err(_error) => pass

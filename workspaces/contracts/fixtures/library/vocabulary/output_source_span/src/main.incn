@@ -1,0 +1,14 @@
+# behavior: a type error inside vocabulary output points at the original clause expression
+# expect-exit: 1
+# expect-stderr-contains:
+#   Assignment to 'value' has type mismatch: expected 'Int', found 'Str'
+#   main.incn:13:14
+
+from pub::queries import marker
+
+
+def main() -> None:
+    """Point the consumer's assignment mismatch at the authored string, not the query keyword."""
+    value: int = query:
+        FROM "wrong type"
+    println(marker())

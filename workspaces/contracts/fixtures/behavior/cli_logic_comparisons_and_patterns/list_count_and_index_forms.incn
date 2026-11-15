@@ -1,0 +1,20 @@
+# behavior: on a list, count() counts the items, for any element type, count(value) counts the items equal to the value, and index(value) finds its first position
+# expect-stdout:
+#   4
+#   2
+#   2
+#   4
+#   2
+
+
+def size[T](items: list[T]) -> int:
+    return items.count()
+
+
+def main() -> None:
+    items: list[int] = [4, 9, 2, 9]
+    println(items.count())
+    println(items.count(9))
+    println(items.index(2))
+    println(len(items))
+    println(size(["a", "b"]))

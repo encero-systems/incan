@@ -11,7 +11,7 @@ pub model Point:
     pub y: int
     secret: int = 0
 
-    def secret_value(self) -> int:
+    pub def secret_value(self) -> int:
         return self.secret
 
 pub def origin() -> Point:

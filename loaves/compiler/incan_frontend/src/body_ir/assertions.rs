@@ -61,6 +61,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// The successful path must neither evaluate the message nor initialize its temporaries. Existing Body-IR blocks
     /// express this deferred execution, so consumers need no source-expression reconstruction or extra vocabulary.
+    /// An owner read only by the message remains live on the successful path that skips it.
     fn lower_condition_message(
         &mut self,
         cond: bir::Operand,
@@ -70,8 +71,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let failure_scope = self.new_scope(Some(scope), span);
+        let subjects = self.input_subject_locals();
+        let continuing_moves = self.input_move_state(&subjects);
         let mut failure = Vec::new();
+        self.conditional_scopes.push(failure_scope);
+        self.input_if_scopes.push(failure_scope);
         let message = self.lower_expr_to_operand(message, failure_scope, &mut failure);
+        self.input_if_scopes.pop();
+        self.conditional_scopes.pop();
         failure.push(bir::Statement {
             kind: bir::StatementKind::Assert {
                 kind: bir::AssertionKind::Condition {
@@ -83,6 +90,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
         });
         self.insert_scope_drops(&mut failure, failure_scope);
+        self.restore_input_move_state(&subjects, &continuing_moves);
         self.panic_facts.push(bir::PanicFact {
             span,
             reason: bir::PanicReason::AssertFailure,
@@ -208,7 +216,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .resolved_identity(callee.span)
                 .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
         {
-            let key = (callee.span.start, callee.span.end);
+            let key = callee.span;
             let signature = IncanType::Function {
                 params: Vec::new(),
                 return_type: Box::new(self.resolve_ty(call.span)),
@@ -240,7 +248,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let identity = self.type_info.resolved_identity(callee.span)?;
-        if !is_testing_raises_helper(identity, self.type_info) {
+        if !is_testing_raises_helper(identity) {
             return None;
         }
         let [error_type] = type_args else {
@@ -293,13 +301,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Some(bir::Operand::Constant(bir::Constant::Unit))
     }
 
-    /// Read the selected helper's inert source default; deferred statements and non-string results grant no message.
+    /// Read the selected helper's message default from its declaration record among the linked Loaves' declarations;
+    /// deferred statements and non-string results grant no message.
     fn testing_raises_default_message(&self, identity: &CanonicalSymbolId) -> Option<String> {
-        let published = super::library_nominals::sdk_identity(identity)?;
-        let default = super::library_calls::collect(self.type_info)
-            .into_iter()
-            .find(|call| call.canonical == published)
-            .and_then(|call| call.parameter_defaults.get(1).cloned())?;
+        let default = self.published_callable_defaults.get(identity)?.get(1)?.clone();
         let bir::CallableParamDefault::Source(default) = default else {
             return None;
         };
@@ -313,24 +318,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 }
 
-/// Require the selected stdlib declaration's full source identity, so aliases work and same-spelled user calls do not.
-fn is_testing_raises_helper(identity: &CanonicalSymbolId, info: &TypeCheckInfo) -> bool {
-    let Some(published) = super::library_nominals::sdk_identity(identity) else {
+/// Require the selected standard declaration's full identity, so aliases work and same-spelled user calls do not.
+fn is_testing_raises_helper(identity: &CanonicalSymbolId) -> bool {
+    let SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return false;
     };
-    let SymbolOrigin::Package { module_path, .. } = &published.origin else {
+    if incan_lang::lang::standard_packages::standard_package_namespace_policy(library).is_none() {
         return false;
-    };
+    }
     let path = std::iter::once("std".to_owned())
         .chain(module_path.iter().cloned())
-        .chain(std::iter::once(published.declaration_name.clone()))
+        .chain(std::iter::once(identity.declaration_name.clone()))
         .collect::<Vec<_>>();
-    published.kind == SemanticSourceTargetKind::Function
+    identity.kind == SemanticSourceTargetKind::Function
         && testing::is_assert_helper_std_path(&path, TestingAssertHelperId::AssertRaises)
-        && info
-            .body_ir_stdlib_cache()
-            .callable_source_identity(&published)
-            .is_some()
 }
 
 /// Resolve the type named after `raises` to its builtin-exception identity, or `None` when it is not one.

@@ -1,0 +1,10 @@
+[project]
+name = "crc_multi_artifacts_issue2244"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+crc-fast = { loaf = "crates-io/crc-fast", version = "1" }
+encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }

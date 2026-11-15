@@ -1,0 +1,29 @@
+"""A reader whose field default and parameter default both call native constructors."""
+
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+
+
+pub model Store:
+    """The shared state."""
+
+    pub count: int = 0
+
+
+pub model Reader:
+    """A handle on shared state, constructed with a fresh store by default."""
+
+    pub state: Rc[RefCell[Store]] = Rc.new(RefCell.new(Store()))
+
+
+pub def handles(reader: Reader = Reader()) -> int:
+    """
+    Count the handles that share a reader's state.
+
+    Args:
+        reader: The reader to ask; a fresh one when omitted.
+
+    Returns:
+        How many handles share the reader's state.
+    """
+    return Rc.strong_count(reader.state)

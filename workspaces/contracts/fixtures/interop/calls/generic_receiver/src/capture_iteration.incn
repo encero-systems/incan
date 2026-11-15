@@ -1,0 +1,18 @@
+"""Exercise native iterator protocols without importing their Rust traits."""
+
+from rust::regex import Regex
+from rust::std::string import String as RustString
+
+
+pub def show_capture_slices() -> None:
+    """Copy each participating capture slice into native owned text (#2455)."""
+    match Regex.new("(?P<word>ab)(c)?"):
+        Ok(pattern) =>
+            match pattern.captures("ab"):
+                Some(captures) =>
+                    for maybe_found in captures.iter():
+                        match maybe_found:
+                            Some(found) => println(RustString.from(found.as_str()))
+                            None => pass
+                None => assert false
+        Err(_error) => assert false

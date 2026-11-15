@@ -6,8 +6,8 @@
 //! either by a `{name}` segment of the route path or by a typed extractor. A program that broke either rule checked
 //! and then failed in the build, at the registration. This module makes both rules checker diagnostics.
 //!
-//! What crosses this boundary: the checker recognizes the route decorator the same way lowering does (a stdlib
-//! `@rust.extern` function bound to the web macros crate, [`stdlib::STDLIB_WEB_MACROS_CRATE`]), reads the path
+//! What crosses this boundary: the checker recognizes the route decorator the same way lowering does (an inspected
+//! Rust attribute macro imported from [`stdlib::STDLIB_WEB_MACROS_CRATE`]), reads the path
 //! literal the same way the macro does ([`route_capture_names`]), and classifies the declared types by what it can
 //! prove. A type it cannot classify, such as a Rust-origin type, is left to the build: the diagnostics here refuse only
 //! shapes that are certainly wrong, never shapes that are merely unknown.
@@ -16,15 +16,14 @@
 //! parameter decodes the request into `T`, and a `Json[T]` return encodes `T`, so a declared `T` with no JSON form of
 //! its own is refused rather than left to fail the registration.
 
-use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned};
+use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned, Type};
 use crate::diagnostics::errors;
-use crate::symbols::{ResolvedType, TypeInfo};
+use crate::symbols::{ResolvedType, TypeInfo, resolve_type};
 use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
-use super::collect::decorators::resolve_decorator_path;
 use super::helpers::collection_type_id;
 use super::json_member_requirements::builtin_type_without_json_form;
 
@@ -149,25 +148,30 @@ fn combine_part_shapes(parts: impl Iterator<Item = RouteTypeShape>, all_fit_mean
 impl TypeChecker {
     /// Return the function's `@route` decorator when it carries one.
     ///
-    /// The decorator is recognized by what it resolves to, not by how it was imported: a stdlib function named
-    /// [`stdlib::STDLIB_WEB_ROUTE_DECORATOR`] that is `@rust.extern` and bound to
-    /// [`stdlib::STDLIB_WEB_MACROS_CRATE`]. That is the same test lowering applies before emitting the passthrough
-    /// attribute, so the checker and the emitter agree on which functions are route handlers.
+    /// The decorator is recognized by its inspected canonical Rust macro path, not by its local import spelling.
     fn route_decorator<'a>(&mut self, decorators: &'a [Spanned<Decorator>]) -> Option<&'a Spanned<Decorator>> {
         decorators.iter().find(|decorator| {
-            let resolved = resolve_decorator_path(&decorator.node, &self.symbols);
-            let Some((name, module)) = resolved.split_last() else {
-                return false;
-            };
-            if name != stdlib::STDLIB_WEB_ROUTE_DECORATOR || module.is_empty() {
-                return false;
-            }
-            self.stdlib_cache
-                .lookup_function_meta(module, name)
-                .is_some_and(|meta| {
-                    meta.is_rust_extern && meta.rust_module_path.as_deref() == Some(stdlib::STDLIB_WEB_MACROS_CRATE)
-                })
+            self.imported_attribute_macro_path(&decorator.node).as_deref() == Some("incan_web_macros::route")
         })
+    }
+
+    /// The declared type as the route checks read it.
+    ///
+    /// A web wrapper the program imports as a Rust item (`Query[T]`, `Json[T]`) resolves to a Rust path display, which
+    /// carries no payload to inspect. The written annotation applying a name the active surface import binds still
+    /// does, so the wrapper is rebuilt from it with its payload resolved as written; any other type is kept as is.
+    fn route_declared_type(&self, resolved: &ResolvedType, written: &Spanned<Type>) -> ResolvedType {
+        let (ResolvedType::RustPath(_), Type::Generic(name, arguments)) = (resolved, &written.node) else {
+            return resolved.clone();
+        };
+        if self.active_surface_type_import(name).is_none() {
+            return resolved.clone();
+        }
+        let payloads = arguments
+            .iter()
+            .map(|argument| resolve_type(&argument.node, &self.symbols))
+            .collect();
+        ResolvedType::Generic(name.clone(), payloads)
     }
 
     /// Check a function's signature against the route registration it declares (#1721, #1722).
@@ -175,7 +179,7 @@ impl TypeChecker {
     /// Nothing happens for a function without the route decorator. For a handler, the declared return type must have
     /// a response form, and every ordinary parameter must be bound by a `{name}` capture of the path or supplied by
     /// an extractor type. `return_type` and `param_types` are the resolved annotations `check_function` already
-    /// computed, so the classification here never resolves a type a second time.
+    /// computed; only a Rust-item web wrapper is rebuilt from its written annotation.
     pub(super) fn check_route_handler_signature(
         &mut self,
         func: &FunctionDecl,
@@ -185,6 +189,13 @@ impl TypeChecker {
         let Some(decorator) = self.route_decorator(&func.decorators) else {
             return;
         };
+        let return_type = &self.route_declared_type(return_type, &func.return_type);
+        let param_types = &func
+            .params
+            .iter()
+            .zip(param_types)
+            .map(|(param, resolved)| self.route_declared_type(resolved, &param.node.ty))
+            .collect::<Vec<_>>();
 
         // ---- Return type: the response the route sends ----
         if self.route_type_shape(return_type, RouteRole::Response) == RouteTypeShape::DoesNotFit {
@@ -276,6 +287,7 @@ impl TypeChecker {
             ResolvedType::Generic(name, args) => self.generic_route_type_shape(name, args, role),
             ResolvedType::Named(name) => self.named_route_type_shape(name, role),
             ResolvedType::TypeVar(_)
+            | ResolvedType::Trait(_)
             | ResolvedType::SelfType
             | ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)

@@ -1,0 +1,23 @@
+# behavior: separately compiled hashers share canonical identity across std.hash and std.primitives (RFC 168)
+# expect-stdout:
+#   hmac-identity-ok
+
+"""Use a provider-created signer through both public type annotations."""
+
+from pub::signers import finish, finish_sha256, forward, forward_sha256, start, start_sha256
+from std.primitives import Sha256Hasher, sha256
+from std.primitives.hmac import HmacSha256Signer, hmac_sha256
+from std.hash import HmacSha256Signer as LegacySigner, Sha256Hasher as LegacySha256Hasher
+
+
+def main() -> None:
+    """Continue the provider's chunks and cross its parameter boundary."""
+    mut signer: HmacSha256Signer = start()
+    signer.update(b"c")
+    mut same: LegacySigner = forward(signer)
+    assert finish(same) == hmac_sha256.digest(b"key", b"abc")
+    mut sha: Sha256Hasher = start_sha256()
+    sha.update(b"c")
+    mut same_sha: LegacySha256Hasher = forward_sha256(sha)
+    assert finish_sha256(same_sha) == sha256.digest(b"abc")
+    println("hmac-identity-ok")

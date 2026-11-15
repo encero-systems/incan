@@ -1,0 +1,10 @@
+[project]
+name = "transitive_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+native_cost = { loaf = "pricing", path = "deps/pricing" }
+cost = { path = "deps/pricing" }

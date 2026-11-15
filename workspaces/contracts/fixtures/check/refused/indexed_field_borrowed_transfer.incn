@@ -1,0 +1,9 @@
+# behavior: an owned field cannot be transferred out of an explicitly borrowed list element (#2845).
+# expect-diagnostic: INCAN-T0126
+
+model Entry:
+    pub values: list[str]
+
+
+def take(entries: Borrowed[list[Entry]]) -> Owned[list[str]]:
+    return entries[0].values

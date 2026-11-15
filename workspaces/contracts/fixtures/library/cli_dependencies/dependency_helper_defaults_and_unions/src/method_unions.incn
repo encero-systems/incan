@@ -1,0 +1,24 @@
+"""A consumer matching the unions a dependency model's methods return."""
+
+from pub::unions import Box
+
+
+def show(value: int | str, label: str) -> str:
+    match value:
+        int(number) => return f"{label} {number}"
+        str(text) => return f"{label} {text}"
+
+
+def show_first(values: list[int | str]) -> str:
+    return show(values[0], "first")
+
+
+pub def run_method_unions() -> None:
+    """Pass each returned union to the consumer's own `int | str` positions."""
+    println(show(Box(value=3).answer(), "answer"))
+    println(show(Box(value=0).answer(), "answer"))
+    println(show_first(Box(value=5).answers()))
+    match Box(value=7).maybe():
+        int(number) => println(f"maybe {number}")
+        str(text) => println(f"maybe {text}")
+        None => println("none")

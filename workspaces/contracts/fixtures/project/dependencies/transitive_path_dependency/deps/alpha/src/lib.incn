@@ -1,0 +1,2 @@
+pub def alpha_value() -> int:
+    return 1

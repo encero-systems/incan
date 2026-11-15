@@ -1,0 +1,11 @@
+"""Publish generic collection mutations across a compiled Loaf module boundary."""
+
+
+pub def append_value[T](mut values: list[T], value: T) -> None:
+    """Append one value to caller-owned list storage."""
+    values.append(value)
+
+
+pub def insert_value[K, V](mut values: Dict[K, V], key: K, value: V) -> None:
+    """Insert one entry into caller-owned dictionary storage."""
+    values[key] = value

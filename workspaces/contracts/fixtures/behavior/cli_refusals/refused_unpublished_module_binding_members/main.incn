@@ -1,0 +1,9 @@
+# behavior: a module binding refuses a private declaration with the namespace member diagnostic (#2675)
+# expect-diagnostic: INCAN-T0001
+
+import helper
+
+
+def main() -> None:
+    """Attempt one private member call."""
+    println(helper.hidden())

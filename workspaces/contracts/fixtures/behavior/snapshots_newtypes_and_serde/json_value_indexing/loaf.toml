@@ -1,0 +1,9 @@
+[project]
+name = "json_value_indexing"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+memory_probe = { loaf = "memory_probe", path = "rust/memory_probe" }

@@ -1,0 +1,13 @@
+# behavior: An explicit version mode is recorded and a later lock keeps it without the option.
+# cli-commands:
+#   oven lock --versions newest .
+#   oven lock .
+# expect-stdout-contains:
+#   locked locked_mode 0.1.0 (newest)
+# expect-stderr:
+# expect-exit: 0
+
+
+def main() -> None:
+    """Provide the root program for a lock whose sticky mode is the contract."""
+    pass

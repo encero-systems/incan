@@ -1,7 +1,7 @@
 //! Source-local checked JSON selection projected only into Body IR reconstruction facts.
 
 use super::{
-    IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies, newtype_derives,
+    CollectionTypeId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies,
     parameter_types,
 };
 use incan_semantics_core::{
@@ -36,12 +36,7 @@ pub(super) fn has_checked_string_payload(
         && owner.declaration_name == declaration.name
         && canonical_module_identity(owner).as_deref() == Some(module_identity)
         && info.declarations.named_type_identities.get(&declaration.name) == Some(owner)
-        && declaration.direct_declaration_id
-            == CompilerNodeId::declaration_span(
-                module_identity,
-                owner.declaration_span.start,
-                owner.declaration_span.end,
-            )
+        && declaration.direct_declaration_id == CompilerNodeId::declaration_at(module_identity, owner.declaration_span)
         && !binder.is_empty()
         && declaration.type_parameter_count == 1
         && declaration.fields == ["0"]
@@ -76,7 +71,7 @@ pub(super) fn checked_deserialize_selection(
     info: &TypeCheckInfo,
 ) -> Option<CanonicalSymbolId> {
     let facts = info.declarations.newtype_construction.get(&source.name)?;
-    let selections = newtype_derives::checked_newtype_derives(source, info)?;
+    let selections = info.declarations.body_ir_newtype_derives.get(&source.name)?;
     if !selections
         .iter()
         .chain(facts.automatic_derives.iter())
@@ -91,11 +86,7 @@ pub(super) fn checked_deserialize_selection(
         || owner.namespace != SymbolNamespace::OrdinaryLexical
         || owner.scope_discriminant.is_some()
         || owner.declaration_name != source.name
-        || info
-            .declarations
-            .declaration_identities
-            .get(&(owner.declaration_span.start, owner.declaration_span.end))
-            != Some(owner)
+        || info.declarations.declaration_identities.get(&owner.declaration_span) != Some(owner)
         || facts.type_params
             != source
                 .type_params
@@ -110,11 +101,10 @@ pub(super) fn checked_deserialize_selection(
     let owner_type = symbolic_owner(source, &parameter)?;
     let selected_name = facts.checked_constructor.as_ref()?;
     let hook = facts.checked_constructor_identity.as_ref()?;
-    let method = source.methods.iter().find(|method| {
-        method.node.name == *selected_name
-            && method.span.start == hook.declaration_span.start
-            && method.span.end == hook.declaration_span.end
-    })?;
+    let method = source
+        .methods
+        .iter()
+        .find(|method| method.node.name == *selected_name && method.span == hook.declaration_span)?;
     if hook.kind != SemanticSourceTargetKind::Method
         || hook.namespace != SymbolNamespace::Member
         || hook.declaration_name != *selected_name
@@ -140,10 +130,7 @@ pub(super) fn checked_deserialize_selection(
     {
         return None;
     }
-    let binding = info
-        .declarations
-        .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))?;
+    let binding = info.declarations.method_bindings_by_span.get(&method.span)?;
     let [input] = binding.params.as_slice() else {
         return None;
     };
@@ -164,16 +151,11 @@ pub(super) fn checked_deserialize_selection(
         parameter_types::checked_parameter_type(&binding.return_type, info, &facts.type_params),
         &owner_type,
     );
-    let IncanType::Generic { base, args } = &result else {
-        return None;
-    };
-    if base != "Result"
-        || args.as_slice()
-            != [
-                owner_type,
-                IncanType::NativeBuiltin(RuntimeBuiltinType::ValidationError),
-            ]
-    {
+    let expected = [
+        owner_type,
+        IncanType::NativeBuiltin(RuntimeBuiltinType::ValidationError),
+    ];
+    if result.collection_arguments(CollectionTypeId::Result) != Some(expected.as_slice()) {
         return None;
     }
     Some(hook.clone())

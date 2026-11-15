@@ -1,0 +1,105 @@
+"""One operation-local admitted description dictionary, ordered by complete closed selector."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.descriptions import Description, StoredDescription, admit
+from crate.primitives.crumb.metadata_values import charge_copy
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.hex import hexlify
+
+
+pub model Dictionary:
+    """
+    Codec-internal parsed data, owned by one write/read operation rather than a user-mutable registry.
+
+    Public entry points construct this from complete descriptions themselves; accepting an instance
+    supplied by a caller would bypass admission. Helpers observe its fields through ordinary places.
+    """
+
+    pub entries: list[StoredDescription]
+    pub slots: dict[str, int]
+
+
+pub def admit_dictionary(
+    descriptions: list[Description],
+    registry: KindRegistry,
+    mut budget: Budget,
+) -> Result[Dictionary, CrumbError]:
+    """Check all descriptions and nominal dependencies before any record is encoded or exposed."""
+    mut parsed: list[StoredDescription] = []
+    mut order: list[tuple[str, int]] = []
+    mut seen: set[str] = set()
+    for index in range(len(descriptions)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(16)?
+        description = admit(descriptions[index], registry, budget)?
+        key = key_text(description.key, budget)?
+        if key in seen:
+            return Err(CrumbError.invalid_input("duplicate dictionary selector"))
+        seen.add(key)
+        order.append((key, index))
+        parsed.append(description)
+    mut entries: list[StoredDescription] = []
+    mut slots: dict[str, int] = {}
+    for pair in sorted(order):
+        charge_copy(parsed[pair[1]].source.metadata, budget)?
+        slots[pair[0]] = len(entries)
+        entries.append(parsed[pair[1]])
+    dictionary = Dictionary(entries=entries, slots=slots)
+    for description in dictionary.entries:
+        check_references(description.selector, dictionary, budget)?
+        for field in description.fields:
+            check_references(field.shape.storage_type, dictionary, budget)?
+        for variant in description.variants:
+            for field in variant.fields:
+                check_references(field.shape.storage_type, dictionary, budget)?
+    return Ok(dictionary)
+
+
+pub def slot(dictionary: &Dictionary, key: bytes, mut budget: Budget) -> Result[int, CrumbError]:
+    """Find an exact closed selector; never fetch a package, guess a revision or use a model hash."""
+    text = key_text(key, budget)?
+    if text not in dictionary.slots:
+        return Err(CrumbError.invalid_input("missing dictionary description"))
+    return Ok(dictionary.slots[text])
+
+
+def key_text(key: bytes, mut budget: Budget) -> Result[str, CrumbError]:
+    """Charge exact hexadecimal indexing storage before constructing a map key."""
+    budget.charge_elements(1)?
+    budget.charge_bytes(len(key))?
+    budget.charge_bytes(len(key))?
+    return Ok(hexlify(key))
+
+
+def check_references(node: TypeNode, dictionary: &Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
+    """Follow finite selector arguments only; nominal recursion does not recursively expand definitions."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = check_inner(node, dictionary, budget)
+    budget.leave()?
+    return result
+
+
+def check_inner(node: TypeNode, dictionary: &Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
+    """Every named dependency must already exist with the same record/enum shape."""
+    match node:
+        TypeNode.Nominal(kind, _, _, arguments) =>
+            index = slot(dictionary, closed_selector(node, budget)?, budget)?
+            if dictionary.entries[index].kind != kind:
+                return Err(CrumbError.invalid_input("nominal dictionary kind"))
+            for argument in arguments:
+                check_references(argument, dictionary, budget)?
+        TypeNode.Container(_, arguments) =>
+            for argument in arguments:
+                check_references(argument, dictionary, budget)?
+        TypeNode.Reference(arguments) =>
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            selector_spelling(arguments[0], budget)?
+        TypeNode.Scalar(_) | TypeNode.Decimal(_, _) => pass
+        _ => return Err(CrumbError.invalid_input("noncanonical dictionary type"))
+    return Ok(None)

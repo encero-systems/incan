@@ -1,9 +1,0 @@
-from rust::uuid import Uuid
-from rust::std::collections import HashMap
-from rust::std::time import Instant
-
-def main() -> None:
-  _id = Uuid.new_v4().to_string()
-  mut _typed = HashMap.new[str, int]()
-  _start = Instant.now()
-  println(_id)

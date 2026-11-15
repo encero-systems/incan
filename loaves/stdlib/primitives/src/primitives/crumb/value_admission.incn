@@ -1,0 +1,89 @@
+"""Validate logical input before projection, including values a canonical digest will omit."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
+from crate.primitives.crumb.native_numbers import normalize_decimal
+from crate.primitives.crumb.scalars import float64_bits
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.ordering import compare, order_values, order_entries
+from crate.primitives.hex import hexlify
+
+
+pub def validate(value: Value, mut budget: Budget) -> Result[None, CrumbError]:
+    """Check format invariants under shared limits; binding authority and model validation remain separate."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = validate_inner(value, budget)
+    budget.leave()?
+    return result
+
+
+def validate_inner(value: Value, mut budget: Budget) -> Result[None, CrumbError]:
+    """No canonical omission may hide malformed input or original duplicate map keys/set elements."""
+    match value:
+        Value.NoneValue | Value.Boolean(_) | Value.Withheld => pass
+        Value.Integer(_) => budget.charge_bytes(16)?
+        Value.Float(width, bits) => checked = float64_bits(width, bits, budget)?
+        Value.Decimal(coefficient, scale) => checked = normalize_decimal(coefficient, scale)?
+        Value.Text(text) =>
+            for _ in range(4):
+                budget.charge_bytes(len(text))?
+        Value.Binary(data) => budget.charge_bytes(len(data))?
+        Value.Some(items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("optional arity"))
+            validate(items[0], budget)?
+        Value.List(items) | Value.Tuple(items) =>
+            for item in items:
+                validate(item, budget)?
+        Value.Set(items) =>
+            for item in items:
+                validate(item, budget)?
+            order = order_values(items, Projection.Object, budget)?
+            for index in range(1, len(order)):
+                if compare(items[order[index - 1]], items[order[index]], Projection.Object, budget)? == 0:
+                    return Err(CrumbError.invalid_input("duplicate set element"))
+        Value.Map(entries) => validate_entries(entries, budget)?
+        Value.Record(fields) => validate_fields(fields, budget)?
+        Value.Enum(identity, fields) =>
+            if len(identity) != 6:
+                return Err(CrumbError.invalid_input("variant identity width"))
+            validate_fields(fields, budget)?
+        Value.Union(member, items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("union payload arity"))
+            selector_spelling(member, budget)?
+            validate(items[0], budget)?
+        Value.Reference(target, identity) =>
+            budget.charge_bytes(len(target))?
+            budget.charge_bytes(len(identity))?
+    return Ok(None)
+
+
+def validate_fields(fields: list[ValueField], mut budget: Budget) -> Result[None, CrumbError]:
+    """Field identity is checked before indexing; every original field value is visited."""
+    mut seen: set[str] = set()
+    for field in fields:
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        if len(field.identity) != 6:
+            return Err(CrumbError.invalid_input("field identity width"))
+        identity = hexlify(field.identity)
+        if identity in seen:
+            return Err(CrumbError.invalid_input("duplicate field identity"))
+        seen.add(identity)
+        validate(field.value, budget)?
+    return Ok(None)
+
+
+def validate_entries(entries: list[MapEntry], mut budget: Budget) -> Result[None, CrumbError]:
+    """Duplicate admission compares complete object keys, before any canonical projection changes them."""
+    for entry in entries:
+        validate(entry.key, budget)?
+        validate(entry.value, budget)?
+    order = order_entries(entries, Projection.Object, budget)?
+    for index in range(1, len(order)):
+        if compare(entries[order[index - 1]].key, entries[order[index]].key, Projection.Object, budget)? == 0:
+            return Err(CrumbError.invalid_input("duplicate map key"))
+    return Ok(None)

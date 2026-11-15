@@ -1,0 +1,13 @@
+# behavior: Locked mode checks the lock of a source named relative to the project root as it does for the project directory, so a missing lock is refused before compilation.
+# cli-commands:
+#   oven build --locked src/main.incn
+#   oven run --locked src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   is missing; run `oven lock`
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because locked mode must refuse before compilation."""
+    pass

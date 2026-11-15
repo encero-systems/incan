@@ -1,0 +1,13 @@
+# behavior: `build --report json` with no PATH builds the project at the working directory and reports the program it writes, as 0.5.1's report did, instead of an empty artifact list (#3142).
+# cli-commands:
+#   build --report json
+#   oven build --report json
+# expect-stdout-contains:
+#   {
+#         "kind": "executable",
+#     "status": "succeeded",
+# expect-exit: 0
+
+def main() -> None:
+    """A program the reported build compiles."""
+    println("built")

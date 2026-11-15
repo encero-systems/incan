@@ -1,0 +1,6 @@
+# behavior: discarding a value defines no name, so reading `_` afterward is refused at check time (#2481)
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    _ = 1
+    println(_)

@@ -1,0 +1,8 @@
+"""Translate decoder facts to test notation and typed failures to independent corpus categories."""
+
+from std.primitives.crumb.encoding_errors import BinaryFailure
+
+
+pub def category(kind: BinaryFailure) -> str:
+    """Match typed refusal categories; diagnostic wording is never parsed as a test outcome."""
+    return kind.value()

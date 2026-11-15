@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `[workspace.rust-dependencies]` table and shows the shared `[workspace.dependencies]` Loaf dependency that replaces it, as hees.ai's workspace declares its Rust crates (#3141).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["workspace", "rust-dependencies"]: unsupported
+#   use [workspace.dependencies] crossterm = { loaf = "crates-io/crossterm", version = "0.29" }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

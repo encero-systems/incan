@@ -1,0 +1,13 @@
+"""Construct the model the cycle declares from outside it, directly and inside a `Result`."""
+
+from facts import Fact, make
+
+
+pub def sealed(name: str) -> Fact:
+    """A fact named `name`."""
+    return Fact(name=name)
+
+
+pub def sealed_result(name: str) -> Result[Fact, str]:
+    """A sealed fact named `name`."""
+    return Ok(make(name))

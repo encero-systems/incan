@@ -1,0 +1,45 @@
+"""A consumer using each re-exported name through every module that publishes it."""
+
+from pub::facades import wave, Greeting, Tone, LOUDNESS
+from pub::facades.middle import (
+    greet as middle_greet,
+    Greeting as MiddleGreeting,
+    Tone as MiddleTone,
+    LOUDNESS as MIDDLE_LOUDNESS,
+)
+from pub::facades.inner import greet as inner_greet
+from pub::facades.outer import greet as outer_greet
+from pub::facades.renamed import salute
+from pub::facades.relabel import wave as relabel_wave
+from pub::facades.nested.relay import relay
+
+
+def tone_name(tone: Tone) -> str:
+    match tone:
+        case Tone.Warm:
+            return "warm"
+        case Tone.Cool:
+            return "cool"
+
+
+def middle_tone_name(tone: MiddleTone) -> str:
+    match tone:
+        case MiddleTone.Warm:
+            return "warm"
+        case MiddleTone.Cool:
+            return "cool"
+
+
+pub def run_submodule_reexports() -> None:
+    """Call a function, a model, an enum and a const through each module that publishes them."""
+    println(wave("root"))
+    println(middle_greet("middle"))
+    println(inner_greet("inner"))
+    println(outer_greet("outer"))
+    println(salute("renamed"))
+    println(relabel_wave("relabel"))
+    println(relay("relay"))
+    greeting = Greeting(text="root text")
+    println(f"{tone_name(Tone.Warm)} {LOUDNESS} {greeting.text}")
+    middle_greeting = MiddleGreeting(text="middle text")
+    println(f"{middle_tone_name(MiddleTone.Cool)} {MIDDLE_LOUDNESS} {middle_greeting.text}")

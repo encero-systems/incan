@@ -1,0 +1,9 @@
+# behavior: `build --report json --report-output PATH` writes the build report to PATH and keeps standard output free of it, as in 0.5.1 (#3142).
+# cli-commands:
+#   build src/main.incn --report json --report-output build-report.json
+# expect-stdout:
+# expect-exit: 0
+
+def main() -> None:
+    """A program the reported build compiles."""
+    println("built")

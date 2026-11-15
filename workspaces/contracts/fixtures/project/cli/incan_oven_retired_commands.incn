@@ -1,0 +1,13 @@
+# behavior: 0.5.1's `incan oven compiler-libtests`, `incan oven plan publish` and `incan oven import` refuse by saying what each did and that 0.6 has no such command, never by naming an `oven` command that does not exist.
+# cli-commands:
+#   incan oven compiler-libtests
+#   incan oven plan publish --format json
+#   incan oven import --project .
+# expect-stdout:
+# expect-stderr-contains:
+#   ; 0.6 has no such command
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

@@ -1,0 +1,15 @@
+# behavior: an exclusive view stored in a list keeps its source borrowed until the aggregate's last use, so an earlier overlapping source edit is refused (#2500).
+# expect-diagnostic: INCAN-T0126
+
+class Entry:
+    pub key: str
+
+
+def edit_key(mut entry: BorrowedMut[Entry]) -> Reference[str] from entry.key:
+    return entry.key
+
+
+def overlap(mut entry: BorrowedMut[Entry]) -> int:
+    keys = [edit_key(entry)]
+    entry.key = "changed"
+    return len(keys)

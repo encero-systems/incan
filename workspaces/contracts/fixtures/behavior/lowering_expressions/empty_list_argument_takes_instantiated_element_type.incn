@@ -1,0 +1,18 @@
+# behavior: an empty list passed to a generic list parameter takes the element type another argument or the explicit type argument gives its type parameter
+# expect-stdout:
+#   0
+#   5
+#   0
+
+def first_or[T](items: list[T], default: T) -> T:
+    println(len(items))
+    return default
+
+
+def count[T](items: list[T]) -> int:
+    return len(items)
+
+
+def main() -> None:
+    println(first_or([], 5))
+    println(count[str]([]))

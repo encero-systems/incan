@@ -1,0 +1,41 @@
+"""A keyed product names a standard carrier by the checked type it lays out, never by its admission position."""
+
+from pub::incan_mir_plan import Carrier, EnumDeclaration, EnumVariant, PlanType, source_span
+from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
+from nominal_records import carrier_nominal
+
+
+def option_carrier(name: str, payload: CheckedType, field: PlanType) -> EnumDeclaration:
+    """An admitted `Option` carrier at the native name its admission position gives it."""
+    return EnumDeclaration(
+        name=name,
+        public=false,
+        variants=[EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[field])],
+        derives=["Clone"],
+        span=source_span(file="carriers.incn", line=1, column=1),
+        carrier=Carrier.Option,
+        semantic_key=Some(CheckedType.Generic("Option", [payload])),
+    )
+
+
+pub def test_a_carrier_keeps_its_identity_when_another_module_admits_one_first() -> Result[None, str]:
+    """Another module's carrier, admitted first, renumbers this one; its identity and digest stay the same."""
+    integer = CheckedType.Primitive(CheckedPrimitiveType.Int)
+    before = carrier_nominal(option_carrier("__IncanCarrier0", integer, PlanType.Int))
+    after = carrier_nominal(option_carrier("__IncanCarrier1", integer, PlanType.Int))
+    assert before.identity != "", "an Option carrier with a checked type is named"
+    assert before.identity == after.identity, "a carrier's identity must not follow its admission position"
+    assert before.digest == after.digest
+    return Ok(None)
+
+
+pub def test_carriers_of_one_shape_but_different_payloads_are_distinct() -> Result[None, str]:
+    """`Option[int]` and `Option[str]` at the same native name are different declarations to a product."""
+    integer = carrier_nominal(
+        option_carrier("__IncanCarrier0", CheckedType.Primitive(CheckedPrimitiveType.Int), PlanType.Int),
+    )
+    text = carrier_nominal(
+        option_carrier("__IncanCarrier0", CheckedType.Primitive(CheckedPrimitiveType.Str), PlanType.String),
+    )
+    assert integer.identity != text.identity, "a product must not bind Option[int] to Option[str]"
+    return Ok(None)

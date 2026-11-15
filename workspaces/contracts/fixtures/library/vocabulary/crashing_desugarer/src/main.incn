@@ -1,0 +1,14 @@
+# behavior: a crashing vocabulary provider produces a node-local diagnostic
+# expect-exit: 1
+# expect-stderr-contains:
+#   vocabulary provider `words`
+#   native desugarer crashed
+
+from pub::words import marker
+
+
+def main() -> None:
+    """A process crash must be attributed to the requesting query node."""
+    value = query:
+        FROM 1
+    println(value)

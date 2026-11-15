@@ -1,0 +1,9 @@
+[project]
+name = "provider_view_overlapping_edit"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+viewlib = { path = "deps/viewlib" }

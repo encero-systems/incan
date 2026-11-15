@@ -1,0 +1,45 @@
+"""A family's protocol cases run side by side, each in a runner of its own, and come back as their runners reported."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from files import make_directory, read, write
+from protocols import ProtocolRunner, forwarded_lines, run_protocols
+
+
+def executable(path: Path, text: str) -> Path:
+    """Write `text` to `path` and make it executable."""
+    write(path, text).unwrap()
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().unwrap().success()
+    return path
+
+
+def counting_runner(scratch: Path) -> Path:
+    """
+    A runner that reports its case (its last argument) passed after a second. It holds a marker while it runs and
+    records how many markers it saw before it lets go, so two cases that ran at once both record 2.
+    """
+    markers = scratch.joinpath("running").0
+    seen = scratch.joinpath("seen").0
+    mut script = "#!/bin/sh\nfor case_name; do :; done\n"
+    script += f"touch '{markers}/'$$\nsleep 1\nls '{markers}' | wc -l | tr -d ' ' >> '{seen}'\nrm '{markers}/'$$\n"
+    script += "printf 'PASS %s\\nCONTRACT FAMILY COMPLETE\\n' \"$case_name\"\n"
+    return executable(scratch.joinpath("runner"), script)
+
+
+def test_a_family_s_protocol_cases_run_side_by_side() -> None:
+    """
+    A protocol case runs its own commands one after another, but two protocol cases share nothing, so with two jobs
+    two of them run at once. Each comes back as its own runner reported it.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    make_directory(scratch.path().joinpath("running")).unwrap()
+    program = counting_runner(scratch.path())
+    runner = ProtocolRunner(program=program.0, incan="incan", root="fixtures")
+    cases = ["project/cli/first", "project/cli/second"]
+    outcomes = run_protocols(runner, scratch.path().joinpath("work"), cases, 2).unwrap()
+    seen = read(scratch.path().joinpath("seen")).unwrap().strip().split("\n")
+    assert "2" in seen, "the protocol cases ran one at a time: " + ", ".join(seen)
+    assert forwarded_lines(outcomes["project/cli/first"]).unwrap() == ["PASS project/cli/first"]
+    assert forwarded_lines(outcomes["project/cli/second"]).unwrap() == ["PASS project/cli/second"]

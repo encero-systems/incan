@@ -14,7 +14,6 @@ Build and run from the repository root:
 
 from std.web import App, route, Response, Json, GET
 from std.serde import json
-import std.async
 
 
 # Models for JSON responses
@@ -28,6 +27,8 @@ model User:
     id: int
     name: str
     email: str
+
+
 # Routes
 
 

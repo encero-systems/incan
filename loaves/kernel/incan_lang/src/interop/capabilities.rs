@@ -46,6 +46,35 @@ pub fn is_rust_callable_capability_bound(name: &str) -> bool {
     RUST_CALLABLE_CAPABILITY_BOUNDS.contains(&name)
 }
 
+/// The auto traits a native callback's storage contract carries.
+const RUST_AUTO_TRAITS: &[&str] = &["Send", "Sync"];
+
+/// Return the callable trait (`Fn`, `FnMut` or `FnOnce`) a Rust trait path names.
+///
+/// Only the standard `std::ops` and `core::ops` paths qualify: a crate's own trait that is also called `Fn` is an
+/// ordinary trait, not a callable bound.
+#[must_use]
+pub fn rust_callable_trait(path: &str) -> Option<&'static str> {
+    let name = path
+        .strip_prefix("std::ops::")
+        .or_else(|| path.strip_prefix("core::ops::"))?;
+    RUST_CALLABLE_CAPABILITY_BOUNDS
+        .iter()
+        .copied()
+        .find(|marker| *marker == name)
+}
+
+/// Return the auto trait (`Send` or `Sync`) a Rust trait path names.
+///
+/// Only the standard `std::marker` and `core::marker` paths qualify: a crate's own `Send` is an ordinary trait.
+#[must_use]
+pub fn rust_auto_trait(path: &str) -> Option<&'static str> {
+    let name = path
+        .strip_prefix("std::marker::")
+        .or_else(|| path.strip_prefix("core::marker::"))?;
+    RUST_AUTO_TRAITS.iter().copied().find(|marker| *marker == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,6 +87,16 @@ mod tests {
         }
         assert!(!is_rust_callable_capability_bound("Send"));
         assert!(!is_rust_callable_capability_bound("RuntimeFnOnce"));
+    }
+
+    #[test]
+    fn only_standard_paths_name_callable_and_auto_traits() {
+        assert_eq!(rust_callable_trait("std::ops::FnMut"), Some("FnMut"));
+        assert_eq!(rust_callable_trait("core::ops::Fn"), Some("Fn"));
+        assert_eq!(rust_callable_trait("my_crate::Fn"), None);
+        assert_eq!(rust_auto_trait("std::marker::Send"), Some("Send"));
+        assert_eq!(rust_auto_trait("core::marker::Sync"), Some("Sync"));
+        assert_eq!(rust_auto_trait("my_crate::marker::Send"), None);
     }
 
     #[test]

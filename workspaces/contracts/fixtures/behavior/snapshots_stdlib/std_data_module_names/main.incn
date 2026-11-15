@@ -1,0 +1,24 @@
+# behavior: std.collections, std.datetime, std.graph, std.json, std.regex.types and std.uuid publish the names 0.5.1 published, and a module importing them from there uses them
+# expect-stdout:
+#   collections 8 full
+#   naive 6
+#   offset 0 9 2 0 true 6
+#   errors clock true
+#   uuid 16 20 true 5 3 bad
+#   graph cycle
+
+from collections_names import collections_line
+from naive_names import naive_line
+from offset_names import offset_line
+from error_names import error_line
+from uuid_names import uuid_line
+from graph_names import graph_line
+
+
+def main() -> None:
+    println(collections_line())
+    println(naive_line())
+    println(offset_line())
+    println(error_line())
+    println(uuid_line())
+    println(graph_line())

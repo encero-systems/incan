@@ -1,0 +1,124 @@
+# behavior: Result propagation and matching retain Ok, Err and tuple payloads through direct source callers, including a propagated call in an expression arm beside pass (#2807)
+# expect-stdout:
+#   2
+#   0
+#   42
+#   2
+#   2
+#   2
+#   2
+#   key
+#   control
+#   nested
+
+"""`?` routes an Err to the caller, `match` dispatches Ok and Err, and a tuple payload matches Ok."""
+
+
+enum Failure:
+    """Represent the Odd alternatives in this fixture."""
+
+    Odd
+
+
+def half(value: int) -> Result[int, Failure]:
+    """Halve an even value or return the odd-value error."""
+    if value % 2 != 0:
+        return Err(Failure.Odd)
+    return Ok(value // 2)
+
+
+def quarter(value: int) -> Result[int, Failure]:
+    """Apply checked halving twice, propagating either error."""
+    half_value = half(value)?
+    return half(half_value)
+
+
+def routed() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match quarter(8):
+        Ok(value) => return value
+        Err(_) => return 0
+    return 0
+
+
+def failed() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match quarter(5):
+        Ok(value) => return value
+        Err(_) => return 0
+    return 0
+
+
+def pair_result() -> Result[tuple[int, int], Failure]:
+    """Return the fixture expression `Ok((20, 22))`."""
+    return Ok((20, 22))
+
+
+def present(value: str) -> Result[Option[str], str]:
+    """Return one present value for the expression-arm propagation controls."""
+    return Ok(Some(value))
+
+
+def key(value: str) -> Result[str, str]:
+    """Return the matched value through another propagated carrier."""
+    return Ok(value)
+
+
+def expression_arm_propagation(value: str) -> Result[str, str]:
+    """Propagate inside an expression arm beside a pass arm."""
+    mut values: set[str] = set()
+    observed = present(value)?
+    match observed:
+        None => pass
+        Some(item) => values.add(key(item)?)
+    assert value in values
+    return Ok(value)
+
+
+def expression_arm_propagation_control(value: str) -> Result[str, str]:
+    """Bind the propagated arm value before adding it, the established control."""
+    mut values: set[str] = set()
+    observed = present(value)?
+    match observed:
+        None => pass
+        Some(item) =>
+            identity = key(item)?
+            values.add(identity)
+    assert value in values
+    return Ok(value)
+
+
+def nested_expression_arm_propagation(value: str) -> Result[str, str]:
+    """Propagate from an expression arm in a nested match."""
+    mut values: set[str] = set()
+    observed = present(value)?
+    match observed:
+        None => pass
+        Some(item) =>
+            match Some(item):
+                None => pass
+                Some(inner) => values.add(key(inner)?)
+    assert value in values
+    return Ok(value)
+
+
+def tuple_payload() -> int:
+    """Match the fixture alternatives and return the selected result."""
+    match pair_result():
+        Ok(_) => return 42
+        Err(_) => return 0
+    return 0
+
+
+def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(routed())
+    println(failed())
+    println(tuple_payload())
+    println(routed())
+    println(routed())
+    println(routed())
+    println(routed())
+    println(expression_arm_propagation("key").unwrap_or("error"))
+    println(expression_arm_propagation_control("control").unwrap_or("error"))
+    println(nested_expression_arm_propagation("nested").unwrap_or("error"))

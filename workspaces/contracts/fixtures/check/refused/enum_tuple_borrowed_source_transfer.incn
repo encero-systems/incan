@@ -1,0 +1,11 @@
+# behavior: a tuple match cannot hide ownership transfer from a borrowed enum input (#2834).
+# expect-diagnostic: INCAN-T0126
+
+enum Message:
+    Text(str)
+
+
+def invalid(message: Borrowed[Message], count: int) -> str:
+    match (message, count):
+        (Message.Text(text), _) => return text
+    return ""

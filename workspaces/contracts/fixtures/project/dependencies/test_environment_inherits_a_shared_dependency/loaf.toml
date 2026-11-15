@@ -1,0 +1,9 @@
+[project]
+name = "test_environment_inherits_a_shared_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["app"]

@@ -1,0 +1,18 @@
+# behavior: a view type cannot return a borrow of body-local storage under another declared source dependency (#2892)
+# expect-diagnostic: INCAN-T0124
+
+
+class Reader:
+    pub values: list[int]
+
+
+class Selection:
+    pub reader: Borrowed[Reader]
+
+
+class Catalog:
+    pub marker: int
+
+    def invalid(self) -> Selection from self:
+        reader = Reader(values=[1])
+        return Selection(reader=reader)

@@ -1,0 +1,16 @@
+# behavior: a populated list cannot replace a field's nominal owner with a same-named caller declaration
+# expect-exit: 1
+# expect-stdout:
+
+from records import Decision
+
+
+model EvidenceId:
+    """An independent identifier with the same name as the field's declared element."""
+    text: str
+
+
+def main() -> None:
+    """Refuse an inhabited argument whose declaration differs from the selected field's."""
+    own = EvidenceId(text="local")
+    _ = Decision(evidence_ids=[own])

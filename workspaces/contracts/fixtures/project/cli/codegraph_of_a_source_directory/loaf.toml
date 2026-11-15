@@ -1,0 +1,6 @@
+[project]
+name = "codegraph_of_a_source_directory"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

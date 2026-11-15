@@ -1,0 +1,20 @@
+# behavior: an empty list literal compares against a list of str on either side of == and != (#1476)
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+
+def main() -> None:
+    println(is_empty([]))
+    println(is_empty(["value"]))
+    println(is_not_empty(["value"]))
+    println(is_not_empty([]))

@@ -1,0 +1,51 @@
+"""Share filesystem and content-pattern operations across documentation contract checks."""
+
+from rust::std::env import current_exe
+from std.fs import Path
+from std.regex import Regex
+
+
+pub def site_root() -> Result[Path, str]:
+    """Find the docs workspace above a standalone script's Oven output directory."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while directory.name() != "target" and directory.parent().0 != directory.0:
+        directory = directory.parent()
+    return Ok(directory.parent().parent())
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """Read one docs contract input as strict UTF-8."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+pub def require(mut errors: list[str], condition: bool, message: str) -> None:
+    """Keep every failed content condition in evaluation order."""
+    if not condition:
+        errors.append(message)
+
+
+pub def matches(pattern: str, text: str) -> Result[bool, str]:
+    """Evaluate a content pattern with the standard regex engine."""
+    regex = Regex(pattern).map_err((error) => error.message())?
+    return Ok(regex.is_match(text))
+
+
+pub def captures(pattern: str, text: str) -> Result[list[str], str]:
+    """Read each first capture in source order."""
+    regex = Regex(pattern).map_err((error) => error.message())?
+    return Ok([capture.group(1).unwrap_or("") for capture in regex.captures_iter(text)])
+
+
+pub def distinct(values: list[str]) -> list[str]:
+    """Keep only the first occurrence of each captured marker."""
+    mut result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+pub def quoted_list(values: list[str]) -> str:
+    """Render apostrophe-free contract paths like the original Python diagnostics."""
+    return "[" + ", ".join([f"'{value}'" for value in values]) + "]"

@@ -1,6 +1,6 @@
 //! Module-level structure: compile-time `when feature(...)` headers, `module tests:` blocks, `import` and `from ...
 //! import` forms (`pub` re-exports, `rust::` versions and features, parenthesized item lists (#116), keyword path
-//! segments and item names) and the RFC 023 `rust.module()` directive.
+//! segments and item names) and RFC 171's targeted refusal of the retired `rust.module()` directive.
 
 use super::*;
 
@@ -814,34 +814,29 @@ fn test_parse_from_import_rejects_keyword_item_name_for_incan_modules() {
 }
 
 #[test]
-fn test_rust_module_directive_basic() -> Result<(), Vec<CompileError>> {
+fn test_rust_module_directive_is_retired() {
     let source = "rust.module(\"incan_std_testing\")\n\ndef foo() -> int:\n    return 1\n";
-    let program = parse_str(source)?;
-    assert_eq!(program.declarations.len(), 1);
-    let rmp = program.rust_module_path.as_ref();
-    assert!(rmp.is_some(), "rust_module_path should be set");
-    assert_eq!(rmp.map(|s| s.node.as_str()), Some("incan_std_testing"));
-    Ok(())
+    let Err(errors) = parse_str(source) else {
+        panic!("retired rust.module syntax should fail");
+    };
+    assert!(errors.iter().any(|error| {
+        error
+            .message
+            .contains("`rust.module(...)` has been removed; import each Rust item through `rust::` instead")
+    }));
 }
 
 #[test]
-fn test_rust_module_directive_with_docstring() -> Result<(), Vec<CompileError>> {
+fn test_rust_module_directive_after_docstring_is_retired() {
     let source = "\"Module docstring\"\nrust.module(\"my_crate::sub\")\n\ndef bar() -> str:\n    return \"hi\"\n";
-    let program = parse_str(source)?;
-    assert_eq!(program.declarations.len(), 2); // docstring + function
-    assert_eq!(
-        program.rust_module_path.as_ref().map(|s| s.node.as_str()),
-        Some("my_crate::sub")
+    let Err(errors) = parse_str(source) else {
+        panic!("retired rust.module syntax should fail after a docstring");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("`rust.module(...)` has been removed"))
     );
-    Ok(())
-}
-
-#[test]
-fn test_rust_module_directive_absent() -> Result<(), Vec<CompileError>> {
-    let source = "def foo() -> int:\n    return 1\n";
-    let program = parse_str(source)?;
-    assert!(program.rust_module_path.is_none());
-    Ok(())
 }
 
 #[test]
@@ -850,10 +845,12 @@ fn test_rust_module_directive_duplicate_is_error() {
     let Err(err) = parse_str(source) else {
         panic!("Duplicate rust.module() should fail");
     };
-    let has_duplicate_msg = err.iter().any(|e| e.message.contains("Duplicate"));
+    let has_duplicate_msg = err
+        .iter()
+        .any(|e| e.message.contains("`rust.module(...)` has been removed"));
     assert!(
         has_duplicate_msg,
-        "Should report duplicate rust.module(); errors: {:?}",
+        "Should report retired rust.module(); errors: {:?}",
         err.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
@@ -864,10 +861,12 @@ fn test_rust_module_directive_not_at_top_is_error() {
     let Err(err) = parse_str(source) else {
         panic!("rust.module() after declarations should fail");
     };
-    let has_msg = err.iter().any(|e| e.message.contains("must appear at the top"));
+    let has_msg = err
+        .iter()
+        .any(|e| e.message.contains("`rust.module(...)` has been removed"));
     assert!(
         has_msg,
-        "Should report rust.module() placement error; errors: {:?}",
+        "Should report retired rust.module(); errors: {:?}",
         err.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
@@ -891,15 +890,10 @@ fn test_rust_module_non_string_arg() {
 
 #[test]
 fn test_rust_module_empty_string() {
-    // `rust.module("")` — empty string should parse fine (validated later by typechecker).
+    // Even a formerly valid empty binding is now refused as retired syntax.
     let source = "rust.module(\"\")\n\n@rust.extern\ndef bar() -> int:\n    ...\n";
     let result = parse_str(source);
-    // Should parse OK; the empty path is caught by the typechecker's path validation.
-    assert!(
-        result.is_ok(),
-        "rust.module with empty string should parse; errors: {:?}",
-        result.err()
-    );
+    assert!(result.is_err(), "retired rust.module with empty string should fail");
 }
 
 #[test]

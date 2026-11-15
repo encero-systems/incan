@@ -1,82 +1,171 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
-from traits import specialize_project_traits
-from canonical_nominals import qualify_nominal_modules
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
+from rust::std::panic import resume_unwind
+from rust::std::sync import Arc
+from rust::std::thread import JoinHandle, spawn
+from parallel_ranges import balanced_module_ranges
+from traits import append_specialized_project_trait_bodies
+from table_views import borrowed_at
 
 
-pub def project_context(
-    modules: &list[BodyIrModule],
+pub def project_context(modules: &list[BodyIrModule], entry: int) -> Result[tuple[BodyIrModule, list[str]], str]:
+    """Retain one joined planning context and the source-provenance order of its owning modules."""
+    mut context = selected_context(modules, entry)
+    mut projections: list[BodyIrModule] = []
+    for module_position in range(len(modules)):
+        projections.append(project_module(modules, module_position)?)
+    owners = merge_project_modules(context, projections)?
+    return Ok((context, owners))
+
+
+pub def project_context_parallel(
+    modules: Arc[list[BodyIrModule]],
     entry: int,
-) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
-    """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
-    qualified = qualify_nominal_modules(modules)?
-    mut context = qualified[entry].clone()
-    context.bodies.clear()
-    context.nominal_declarations.clear()
-    context.enum_declarations.clear()
-    context.fieldless_enum_declarations.clear()
-    context.value_enum_declarations.clear()
-    context.trait_declarations.clear()
-    context.trait_implementations.clear()
-    context.static_declarations.clear()
-    context.decorated_bindings.clear()
-    context.stdlib_delegations.clear()
-    context.native_union_declarations.clear()
-    mut checked: list[BodyIrModule] = []
-    for module in qualified:
-        specialized = specialize_project_traits(module, qualified)?
-        # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
-        # An explicit interop clone is an owned call result and retains the module for both planning views.
-        checked.append(specialized.clone())
-        for body in specialized.bodies:
-            context.bodies.push(body.clone())
-        # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
-        for index in range(len(module.nominal_declarations)):
-            mut declaration = module.nominal_declarations[index].clone()
-            # A producer-retained carrier key names the exact canonical owner; older unqualified layouts stay refused.
+) -> Result[tuple[BodyIrModule, list[str]], str]:
+    """Project body-weighted contiguous module ranges concurrently, then merge their declarations in source order."""
+    mut context = selected_context(modules.as_ref(), entry)
+    mut weights: list[int] = []
+    for module_position in range(len(modules.as_ref())):
+        module = borrowed_at(modules.as_ref(), module_position)
+        mut weight = len(module.bodies)
+        if weight < 1:
+            weight = 1
+        weights.append(weight)
+    mut workers: list[JoinHandle[Result[list[BodyIrModule], str]]] = []
+    for start, end in balanced_module_ranges(weights):
+        worker_modules = modules.clone()
+        workers.append(spawn(() => project_modules(worker_modules, start, end)))
+    mut reversed: list[list[BodyIrModule]] = []
+    while len(workers) > 0:
+        worker = workers.pop()
+        match worker.join():
+            Ok(result) => reversed.append(result?)
+            Err(payload) => resume_unwind(payload)
+    mut projections: list[BodyIrModule] = []
+    while len(reversed) > 0:
+        for projection in reversed.pop():
+            projections.append(projection)
+    owners = merge_project_modules(context, projections)?
+    return Ok((context, owners))
+
+
+def selected_context(modules: &list[BodyIrModule], entry: int) -> BodyIrModule:
+    """Create the compact joined shell carrying only the selected entry module's unit-level facts."""
+    entry_module = borrowed_at(modules, entry)
+    mut context = BodyIrModule.declarations_only(str(entry_module.module_id.path()))
+    # Unit selection belongs only to the entry module. Copy those compact facts explicitly instead of cloning its
+    # complete checked body and declaration graph before replacing every joined table.
+    context.runtime_callable_bindings = list(entry_module.runtime_callable_bindings)
+    context.entrypoint_effects = list(entry_module.entrypoint_effects)
+    context.program_entrypoints = list(entry_module.program_entrypoints)
+    context.string_conversion_contract = entry_module.string_conversion_contract.clone()
+    context.constant_declarations = list(entry_module.constant_declarations)
+    context.type_alias_declarations = list(entry_module.type_alias_declarations)
+    return context
+
+
+def project_modules(modules: Arc[list[BodyIrModule]], start: int, end: int) -> Result[list[BodyIrModule], str]:
+    """Project one contiguous module range without shared mutable output."""
+    mut projections: list[BodyIrModule] = []
+    for module_position in range(start, end):
+        projections.append(project_module(modules.as_ref(), module_position)?)
+    return Ok(projections)
+
+
+def project_module(modules: &list[BodyIrModule], module_position: int) -> Result[BodyIrModule, str]:
+    """Normalize one validated module's declarations into a mergeable source-order projection."""
+    module = borrowed_at(modules, module_position)
+    mut projection = BodyIrModule.declarations_only(str(module.module_id.path()))
+    append_specialized_project_trait_bodies(module, modules, projection.bodies)?
+    for index in range(len(module.nominal_declarations)):
+        mut declaration = borrowed_at(module.nominal_declarations, index).clone()
+        if len(declaration.type_parameters) == 0:
             declaration.name = declaration.carrier_name()
+        else:
+            declaration.name = declaration.template_carrier_name()
+        projection.nominal_declarations.push(declaration)
+    for index in range(len(module.enum_declarations)):
+        mut declaration = borrowed_at(module.enum_declarations, index).clone()
+        declaration.name = declaration.carrier_name()
+        projection.enum_declarations.push(declaration)
+    projection.fieldless_enum_declarations = list(module.fieldless_enum_declarations)
+    projection.value_enum_declarations = list(module.value_enum_declarations)
+    projection.trait_declarations = list(module.trait_declarations)
+    projection.trait_implementations = list(module.trait_implementations)
+    projection.static_declarations = list(module.static_declarations)
+    projection.decorated_bindings = list(module.decorated_bindings)
+    projection.loaf_callables = list(module.loaf_callables)
+    projection.native_union_declarations = list(module.native_union_declarations)
+    return Ok(projection)
+
+
+def merge_project_modules(mut context: &mut BodyIrModule, projections: list[BodyIrModule]) -> Result[list[str], str]:
+    """Merge independently projected modules in source order under the existing collision rules."""
+    mut owners: list[str] = []
+    for projection_position in range(len(projections)):
+        projection = borrowed_at(projections, projection_position)
+        owners.append(str(projection.module_id.path()))
+        for body in projection.bodies:
+            context.bodies.push(body.clone())
+        for declaration in projection.nominal_declarations:
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
-        for index in range(len(module.enum_declarations)):
-            declaration = module.enum_declarations[index].clone()
-            for retained in range(len(context.enum_declarations)):
-                if context.enum_declarations[retained].name == declaration.name:
-                    return Err(f"unsupported Body IR ambiguous project enum carrier {declaration.name}")
-            context.enum_declarations.push(declaration.clone())
-        for index in range(len(module.fieldless_enum_declarations)):
-            declaration = module.fieldless_enum_declarations[index].clone()
+        for declaration in projection.enum_declarations:
+            if not retains_enum(context, declaration)?:
+                context.enum_declarations.push(declaration.clone())
+        for declaration in projection.fieldless_enum_declarations:
             context.fieldless_enum_declarations.push(declaration.clone())
-        for index in range(len(module.value_enum_declarations)):
-            declaration = module.value_enum_declarations[index].clone()
+        for declaration in projection.value_enum_declarations:
             context.value_enum_declarations.push(declaration.clone())
-        for index in range(len(module.trait_declarations)):
-            declaration = module.trait_declarations[index].clone()
+        for declaration in projection.trait_declarations:
             context.trait_declarations.push(declaration.clone())
-        for index in range(len(module.trait_implementations)):
-            declaration = module.trait_implementations[index].clone()
+        for declaration in projection.trait_implementations:
             context.trait_implementations.push(declaration.clone())
-        for index in range(len(module.static_declarations)):
-            declaration = module.static_declarations[index].clone()
+        for declaration in projection.static_declarations:
             context.static_declarations.push(declaration.clone())
-        for index in range(len(module.decorated_bindings)):
-            context.decorated_bindings.push(module.decorated_bindings[index].clone())
-        for index in range(len(module.stdlib_delegations)):
-            declaration = module.stdlib_delegations[index].clone()
-            context.stdlib_delegations.push(declaration.clone())
-        for index in range(len(module.native_union_declarations)):
-            declaration = module.native_union_declarations[index].clone()
+        for binding in projection.decorated_bindings:
+            context.decorated_bindings.push(binding.clone())
+        for declaration in projection.loaf_callables:
+            if not retains_callable(context, declaration):
+                context.loaf_callables.push(declaration.clone())
+        for declaration in projection.native_union_declarations:
             context.native_union_declarations.push(declaration.clone())
-    return Ok((context, checked))
+    return Ok(owners)
+
+
+def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
+    """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
+    # Borrow by position: iterating the borrowed list would clone every callable, body included, per candidate.
+    for position in range(len(context.loaf_callables)):
+        if borrowed_at(context.loaf_callables, position) == candidate:
+            return true
+    return false
 
 
 def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:
     """Reuse one exact published record; canonical duplicates with differing layout or execution facts remain refused."""
-    for declaration in context.nominal_declarations:
+    # Borrow by position: iterating the borrowed list would clone every record per candidate.
+    for position in range(len(context.nominal_declarations)):
+        declaration = borrowed_at(context.nominal_declarations, position)
         if declaration.canonical == candidate.canonical:
             if declaration != candidate:
                 return Err(f"unsupported Body IR conflicting project nominal records {candidate.name}")
             return Ok(true)
         if declaration.name == candidate.name:
             return Err(f"unsupported Body IR ambiguous project nominal carrier {candidate.name}")
+    return Ok(false)
+
+
+def retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Keep distinct checked enum owners while refusing conflicting records or unqualified carrier collisions."""
+    # Borrow by position: iterating the borrowed list would clone every record per candidate.
+    for position in range(len(context.enum_declarations)):
+        declaration = borrowed_at(context.enum_declarations, position)
+        if declaration.canonical == candidate.canonical:
+            if declaration != candidate:
+                return Err(f"unsupported Body IR conflicting project enum records {candidate.name}")
+            return Ok(true)
+        if declaration.carrier_name() == candidate.carrier_name():
+            return Err(f"unsupported Body IR ambiguous project enum carrier {candidate.name}")
     return Ok(false)

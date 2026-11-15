@@ -1,0 +1,10 @@
+[project]
+name = "members_match_a_glob"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["packages/*"]
+exclude = ["packages/skip*"]

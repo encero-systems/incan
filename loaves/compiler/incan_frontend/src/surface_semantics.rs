@@ -5,8 +5,7 @@
 
 use std::collections::HashSet;
 
-use crate::ast::{Declaration, Expr, ImportKind, Program};
-use crate::ast_walk;
+use crate::ast::{Declaration, ImportKind, Program};
 use incan_lang::lang::keywords::KeywordId;
 use incan_lang::lang::stdlib;
 use incan_semantics_core::SurfaceFeatureKey;
@@ -75,18 +74,6 @@ impl SurfaceContext {
     }
 }
 
-/// Return whether the program may use the ambient `std.logging` logger binding.
-///
-/// This deliberately detects the binding candidate, not a fixed list of `Logger` methods. The typechecker still lets
-/// local or imported `log` bindings shadow the ambient value; this scan only ensures the stdlib module is available
-/// when a file contains an unqualified `log` expression.
-pub fn uses_ambient_log_surface(program: &Program) -> bool {
-    ast_walk::any_expr_in_program(program, |expr| match expr {
-        Expr::Ident(name) => name == "log",
-        _ => false,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::SurfaceContext;
@@ -95,20 +82,20 @@ mod tests {
     use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
     #[test]
-    fn activates_async_soft_keywords_from_imports() -> Result<(), String> {
+    fn async_imports_do_not_activate_language_keywords() -> Result<(), String> {
         let source = "import std.async\n";
         let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
         let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
         let context = SurfaceContext::from_program(&program);
-        if !context.is_soft_keyword_active(KeywordId::Async) {
-            return Err("expected `async` to be activated by `import std.async`".to_string());
+        if context.is_soft_keyword_active(KeywordId::Async) {
+            return Err("expected `async` to remain language-owned after `import std.async`".to_string());
         }
-        if !context.is_soft_keyword_active(KeywordId::Await) {
-            return Err("expected `await` to be activated by `import std.async`".to_string());
+        if context.is_soft_keyword_active(KeywordId::Await) {
+            return Err("expected `await` to remain language-owned after `import std.async`".to_string());
         }
         let async_feature = context.soft_keyword_feature(KeywordId::Async);
         if async_feature != Some(SurfaceFeatureKey::SoftKeyword(KeywordId::Async)) {
-            return Err("expected async soft-keyword feature key to be registered".to_string());
+            return Err("expected the async surface feature key to remain registered".to_string());
         }
         Ok(())
     }
@@ -122,16 +109,5 @@ mod tests {
             feature,
             Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
         );
-    }
-
-    #[test]
-    fn detects_ambient_log_binding_candidates() -> Result<(), String> {
-        let source = "def run() -> None:\n    log.info(\"started\")\n";
-        let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
-        let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
-        if !super::uses_ambient_log_surface(&program) {
-            return Err("expected ambient log candidate to activate std.logging".to_string());
-        }
-        Ok(())
     }
 }

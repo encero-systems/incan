@@ -1,0 +1,5 @@
+"""The workspace root's library, which members share."""
+
+
+pub def answer() -> int:
+    return 42

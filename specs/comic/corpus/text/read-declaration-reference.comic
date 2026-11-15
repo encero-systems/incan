@@ -1,0 +1,5 @@
+example.Link = Record { target: ref<example.Target> }
+
+example.Target = Record { id: i64 }
+
+example.Link << (target=example.remote.point)

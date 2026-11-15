@@ -1,0 +1,6 @@
+"""Give the formatter one already formatted program."""
+
+
+def main() -> None:
+    """Print one line."""
+    println("formatted")

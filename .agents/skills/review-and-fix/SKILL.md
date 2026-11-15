@@ -9,16 +9,14 @@ description: Run the Incan review/fix loop end to end: review, fix actionable fi
 
 `/review-and-fix` is the user-facing entry point for autonomous review plus repair.
 
-The user should not need to choose between the simple reviewer and the orchestrated reviewer. This skill decides that
-itself from the current worktree.
+The user should not need to choose between the simple reviewer and the orchestrated reviewer. This skill decides that itself from the current worktree.
 
 Under the hood it chooses one of two paths:
 
 - **small/local scope**: `/loop /review /fix`
 - **broad/multi-surface scope**: `review-orchestrate` -> `/fix` -> final review pass
 
-`/loop` still owns repetition and stopping conditions for the small/local path. For broad scopes, this skill owns the
-high-level routing and uses the persistent report at `.agents/state/review-report.md`.
+`/loop` still owns repetition and stopping conditions for the small/local path. For broad scopes, this skill owns the high-level routing and uses the persistent report at `.agents/state/review-report.md`.
 
 ## Workflow
 
@@ -55,20 +53,22 @@ The default user expectation should be simple:
 - this skill decides whether the work is small or broad
 - the user does not need to manually choose `/review` vs `review-orchestrate`
 
-If the scope is borderline, prefer the broader review path. The cost of one wider first pass is lower than repeated
-serial misses and reruns.
+If the scope is borderline, prefer the broader review path. The cost of one wider first pass is lower than repeated serial misses and reruns.
 
 ## Verification expectations
 
 The repair pass should aim to leave the worktree in a strong verified state:
 
 - `make fmt`
-- narrow relevant checks
-- `cargo run -p incan_lang --bin generate_lang_reference` when language registries, the reference generator, or `workspaces/docs-site/docs/language/reference/language.md` changed; inspect and commit any resulting generated diff
-- `make pre-commit`
+- the smallest relevant contract selector during development, then affected whole families at commit points; use the runner documented in `workspaces/contracts/README.md`
+- `make pre-commit` (includes `make pre-commit`, `incan run scripts/check_us_english.incn`, `incan run scripts/check_changed_rustdocs.incn`, and `incan run scripts/check_agents_doc_sync.incn`)
+- when language registries or generated-reference inputs change, inspect the generator and its current entry point before regenerating; the Makefile and Oven CLI define commands, and no replacement generator command is assumed
 
-If the broad gate fails for unrelated environmental reasons, report that explicitly as residual risk instead of
-pretending the loop is clean.
+Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` before grep for declaration and call relationships. Oven owns builds and execution; never run Cargo.
+
+Repairs extend an existing case before adding one; add only when no same-area case can carry the behavior. Keep the whole suite under about 3,000 tests, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case. Change design records only when a decision changes, in a sentence or two; keep decisions, boundaries, consequences, and non-goals under about 1,000 words, with mechanisms in commit messages and rustdoc. Run `incan run scripts/check_us_english.incn` before every commit.
+
+If the broad gate fails for unrelated environmental reasons, report that explicitly as residual risk instead of pretending the loop is clean.
 
 ## Output format
 

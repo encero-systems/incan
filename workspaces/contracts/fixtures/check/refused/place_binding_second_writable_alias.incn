@@ -1,0 +1,14 @@
+# behavior: a second writable alias of a field is refused while the first is still used (RFC 129, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the check accepts the program.
+# expect-diagnostic: INCAN-T0126
+
+class Cart:
+    pub items: list[str]
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    mut first = cart.items
+    mut second = cart.items
+    first.append("apple")
+    second.append("pear")

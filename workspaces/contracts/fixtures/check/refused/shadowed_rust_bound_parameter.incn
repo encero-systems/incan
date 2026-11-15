@@ -1,0 +1,25 @@
+# behavior: a method's type parameter cannot shadow its class's Rust-bounded one, so the outer bound grants the inner one no native trait call (rust-1)
+# expect-diagnostic: INCAN-T0001
+
+"""An outer bound never reaches a shadowing type parameter."""
+
+from rust::std::convert import AsRef
+
+
+class Holder[T with AsRef[str]]:
+    """Hold a value whose type parameter is bounded by a Rust trait."""
+
+    value: T
+
+    def borrow_text(self) -> None:
+        """Call the bound's method on the class parameter."""
+        AsRef.as_ref(self.value)
+
+    def shadow[T](self, other: T) -> None:
+        """Call the outer bound's method on the shadowing parameter."""
+        AsRef.as_ref(other)
+
+
+def main() -> None:
+    """Never runs: the program is refused."""
+    pass

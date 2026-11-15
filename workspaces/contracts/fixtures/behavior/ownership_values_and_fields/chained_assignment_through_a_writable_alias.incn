@@ -1,0 +1,31 @@
+# behavior: a chained assignment evaluates its value once and assigns it to each existing target: through a writable alias it replaces the borrowed field, and an owned `Option` target keeps its own list, so a later append through the alias changes only the field (RFC 129, #1846).
+# pending: a `mut` local declared from a place is still an independent copy, so the chain leaves the field at three items and the last line is `3 1`.
+# expect-stdout:
+#   made
+#   1 1
+#   2 1
+
+"""RFC 129's chained assignment example."""
+
+
+class Cart:
+    pub items: list[str]
+
+
+def fresh_items() -> list[str]:
+    println("made")
+    return ["pear"]
+
+
+def replace_and_keep(mut cart: Cart) -> None:
+    mut items = cart.items
+    mut saved: Option[list[str]] = None
+    items = saved = fresh_items()
+    println(f"{len(items)} {len(saved.unwrap())}")
+    items.append("orange")
+    println(f"{len(cart.items)} {len(saved.unwrap())}")
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple", "plum", "fig"])
+    replace_and_keep(cart)

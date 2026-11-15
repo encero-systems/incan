@@ -1,0 +1,31 @@
+"""A compilation is for the directory its command ran in, never an engine's launch directory."""
+
+from rust::std::env import set_current_dir
+from codegen import WORKSPACE_PREFIX, remap_arguments
+from files import make_directory
+from request_directory import serve_from, served
+from scratch import scratch_directory
+
+
+pub def test_a_request_compiles_in_its_client_s_directory_after_the_launch_directory_is_removed() -> Result[None, str]:
+    """
+    An engine launched from a directory that was later removed still compiles a client's request: the compiler's
+    working directory is the client's, which the request names, so it neither fails nor depends on the launch.
+
+    The test changes this process's directory, so it is alone in its file.
+    """
+    scratch = scratch_directory()?
+    launched = scratch.path().joinpath("launched")
+    client = scratch.path().joinpath("client")
+    project = client.joinpath("project")
+    make_directory(launched)?
+    make_directory(project)?
+    set_current_dir(launched.0).map_err((error) => f"{launched.0}: {error}")?
+    launched.remove_tree().map_err((error) => error.message())?
+    serve_from(client.0)
+    remapped = remap_arguments(project.0)
+    served()
+    set_current_dir(scratch.path().0).map_err((error) => f"{scratch.path().0}: {error}")?
+    arguments = remapped?
+    assert f"{client.0}={WORKSPACE_PREFIX}" in arguments, f"the client's directory is not the workspace: {arguments}"
+    return Ok(None)

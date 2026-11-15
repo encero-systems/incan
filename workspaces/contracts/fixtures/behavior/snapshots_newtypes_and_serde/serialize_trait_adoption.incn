@@ -1,0 +1,46 @@
+# behavior: a model adopting std.serde.json Serialize calls its default from ordinary methods; json-derived models serialize through a generic bound and decode through from_json (RFC 024, #2256)
+# expect-stdout:
+#   {"value":1}
+#   hello
+#   {"value":"hello"}
+#   {"value":2}
+#   3
+
+from std.serde import json
+from std.serde.json import Serialize
+
+
+model Payload with Serialize:
+    value: int
+
+    def encoded(self) -> str:
+        """Call the selected Serialize default without treating it as an override."""
+        return self.to_json()
+
+
+model Text with Serialize:
+    value: str
+
+    def display_text(self) -> str:
+        return self.value
+
+
+@derive(json)
+model Derived:
+    value: int
+
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+
+
+def main() -> None:
+    assert Payload(value=1).encoded() == '{"value":1}'
+    println(Payload(value=1).to_json())
+    text = Text(value="hello")
+    println(text.display_text())
+    println(text.to_json())
+    println(encode(Derived(value=2)))
+    match Derived.from_json("{\"value\":3}"):
+        Ok(decoded) => println(decoded.value)
+        Err(_) => println("decode failed")

@@ -1,0 +1,28 @@
+"""Report typed provider errors through the public check command."""
+
+from std.vocab import (
+    ClauseSurface,
+    DeclarationSurface,
+    DesugarError,
+    DesugarRequest,
+    DesugarResponse,
+    DslSurface,
+    VocabRegistration,
+)
+
+
+pub def marker() -> int:
+    """Expose the ordinary library import that activates the vocabulary."""
+    return 7
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register an expression whose provider returns a node-local diagnostic."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("words").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Refuse this node without preventing independent authored statements from being checked."""
+    return Err(DesugarError.at(request.node.span(), "provider refused this query"))

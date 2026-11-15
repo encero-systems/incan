@@ -1,0 +1,390 @@
+"""Direct RFC 173 column encoding and reconstruction under caller-supplied descriptions."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_header import read_header
+from crate.primitives.crumb.column_data_write import block_count
+from crate.primitives.crumb.column_directory import group_index, prefix_at, read_table
+from crate.primitives.crumb.column_errors import ColumnError
+from crate.primitives.crumb.column_types import BlockEncoding
+from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary, slot
+from crate.primitives.crumb.description_read import read_dictionary
+from crate.primitives.crumb.descriptions import Description, StoredDescription, encode_entry
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed, offset_table_length, offset_width
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError
+from crate.primitives.crumb.encoding_index import CellIndex, bit, rank, read_index, selected
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.typed_cells import TypedCellSource, TypedCellWriter
+from crate.primitives.crumb.types import AbsentPolicy, NominalKind
+from crate.primitives.reflection import ShapeInfo
+from crate.primitives.text import copy_frozen_bytes
+from crate.primitives.views import MappedView
+
+
+model TypedColumnRow:
+    """One completed typed root split into its already encoded stored fields."""
+
+    description: int
+    cells: list[bytes]
+    present: list[bool]
+
+
+model TypedColumnBlock:
+    """One admitted indexed block retaining direct cell offsets and its optional presence bitmap."""
+
+    rows: int
+    present: int
+    bitmap: MappedView
+    bitmap_origin: int
+    cells: CellIndex
+
+
+model TypedColumnField:
+    """One typed field column split into fixed-size indexed blocks."""
+
+    blocks: list[TypedColumnBlock]
+
+
+model TypedColumnGroup:
+    """One maximal description run and its directly addressable typed field columns."""
+
+    description: int
+    start: int
+    end: int
+    fields: list[TypedColumnField]
+
+
+pub class TypedColumnWriter:
+    """Collect completed root walkers and emit the ordinary unsealed indexed column envelope."""
+
+    dictionary: Dictionary
+    rows: list[TypedColumnRow]
+    budget: Budget
+
+    @staticmethod
+    pub def create(
+        descriptions: list[Description],
+        registry: KindRegistry,
+        sealed: bool,
+        budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Admit caller descriptions and retain an independent allowance for typed transposition."""
+        if sealed:
+            return Err(CrumbError.invalid_input("typed column seals are not available"))
+        mut owned_budget = budget.snapshot()
+        dictionary = admit_dictionary(descriptions, registry, owned_budget)?
+        return Ok(TypedColumnWriter(dictionary=dictionary, rows=[], budget=owned_budget.snapshot()))
+
+    pub def root(self, shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]:
+        """Return a Walker bound to one exact caller-supplied root description."""
+        mut budget = self.budget.snapshot()
+        description = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        return Ok(TypedCellWriter.create_root(self.dictionary.entries[description], budget.snapshot()))
+
+    pub def append(mut self, writer: TypedCellWriter) -> Result[None, CrumbError]:
+        """Retain one completed root's typed cells without constructing a schema-less record."""
+        completed = writer.finish_root_cell()?
+        description = slot(self.dictionary, completed.key, self.budget)?
+        expected = len(self.dictionary.entries[description].fields)
+        if len(completed.cells) != expected or len(completed.present) != expected:
+            return Err(CrumbError.invalid_input("typed column field count"))
+        self.rows.append(TypedColumnRow(description=description, cells=completed.cells, present=completed.present))
+        return Ok(None)
+
+    pub def finish(self) -> Result[bytes, CrumbError]:
+        """Emit descriptions and maximal typed groups with the Value writer's indexed default bytes."""
+        mut budget = self.budget
+        mut body = EncodingBuffer.create()
+        body.count(len(self.dictionary.entries), budget)?
+        for admitted in self.dictionary.entries:
+            body.append(encode_entry(admitted, budget)?, budget)?
+        mut groups: list[bytes] = []
+        mut prefixes: list[int] = [0]
+        mut start = 0
+        while start < len(self.rows):
+            mut end = start + 1
+            while end < len(self.rows) and self.rows[end].description == self.rows[start].description:
+                budget.charge_elements(1)?
+                end += 1
+            groups.append(write_typed_group(self.rows[start].description, self.dictionary, self.rows, start, end, budget)?)
+            prefixes.append(end)
+            start = end
+        body.count(len(self.rows), budget)?
+        body.count(len(groups), budget)?
+        width = offset_width(len(self.rows))?
+        offset_table_length(len(groups), width)?
+        body.octet(width, budget)?
+        for prefix in prefixes:
+            body.offset(prefix, width, budget)?
+        body.append(indexed(groups, budget)?, budget)?
+        mut envelope = EncodingBuffer.create()
+        envelope.append(b"CRMB\x02\x01\x00", budget)?
+        envelope.frame(body.finish(budget)?, budget)?
+        return envelope.finish(budget)
+
+
+pub class TypedColumnReader:
+    """Admit an indexed column envelope and vend Source objects without schema-less Value nodes."""
+
+    dictionary: Dictionary
+    groups: list[TypedColumnGroup]
+    rows: int
+    backing: MappedView
+    budget: Budget
+
+    @staticmethod
+    pub def create(
+        view: MappedView,
+        supplied: list[Description],
+        registry: KindRegistry,
+        require_sealed: bool,
+        budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Admit descriptions, group directories and every indexed block before exposing typed sources."""
+        mut owned_budget = budget.snapshot()
+        mut cursor = EncodingCursor.create(view).map_err(binary_error)?
+        magic = copied(cursor.take(4, owned_budget).map_err(binary_error)?, 0, owned_budget).map_err(binary_error)?
+        if magic != b"CRMB" or cursor.length(owned_budget).map_err(binary_error)? != 2:
+            return Err(CrumbError.invalid_input("typed column profile"))
+        if cursor.length(owned_budget).map_err(binary_error)? != 1:
+            return Err(CrumbError.invalid_input("typed column profile"))
+        flags = cursor.byte(owned_budget).map_err(binary_error)?
+        if flags != 0 or require_sealed:
+            return Err(CrumbError.invalid_input("typed column seal or flags"))
+        payload = cursor.frame(owned_budget).map_err(binary_error)?
+        origin = cursor.absolute() - payload.len()
+        cursor.finished().map_err(binary_error)?
+        mut body = EncodingCursor.create(payload, origin).map_err(binary_error)?
+        dictionary = read_dictionary(body, supplied, registry, owned_budget).map_err(binary_error)?
+        rows = body.length(owned_budget).map_err(binary_error)?
+        count = body.length(owned_budget).map_err(binary_error)?
+        if (rows == 0 and count != 0) or (rows != 0 and count == 0) or count > rows:
+            return Err(CrumbError.invalid_input("typed column group count"))
+        prefixes = read_table(body, count, true, owned_budget).map_err(column_error)?
+        if prefixes.final != rows:
+            return Err(CrumbError.invalid_input("typed column final prefix"))
+        directory = group_index(body, count, owned_budget).map_err(column_error)?
+        mut groups: list[TypedColumnGroup] = []
+        mut previous = -1
+        for index in range(count):
+            start = prefix_at(prefixes, index, owned_budget).map_err(column_error)?
+            end = prefix_at(prefixes, index + 1, owned_budget).map_err(column_error)?
+            raw, group_origin = selected(directory, index, owned_budget).map_err(binary_error)?
+            group = read_typed_group(raw, group_origin, start, end, dictionary, owned_budget)?
+            if group.description == previous:
+                return Err(CrumbError.invalid_input("nonmaximal typed column group"))
+            previous = group.description
+            groups.append(group)
+        return Ok(
+            TypedColumnReader(
+                dictionary=dictionary,
+                groups=groups,
+                rows=rows,
+                backing=view,
+                budget=owned_budget.snapshot(),
+            ),
+        )
+
+    pub def len(self) -> int:
+        """Return the admitted logical row count."""
+        return self.rows
+
+    pub def source(self, index: int, shape: ShapeInfo) -> Result[TypedCellSource, CrumbError]:
+        """Select one row's typed field cells and return a caller-reconstructable root Source."""
+        if index < 0 or index >= self.rows:
+            return Err(CrumbError.invalid_input("typed column row index"))
+        mut budget = self.budget.snapshot()
+        expected = slot(self.dictionary, copy_frozen_bytes(shape.identity), budget)?
+        mut selected_group = -1
+        for position in range(len(self.groups)):
+            if index >= self.groups[position].start and index < self.groups[position].end:
+                selected_group = position
+        if selected_group < 0 or self.groups[selected_group].description != expected:
+            return Err(CrumbError.invalid_input("typed column description"))
+        group = self.groups[selected_group]
+        logical = index - group.start
+        mut views: list[MappedView] = []
+        mut origins: list[int] = []
+        mut presence: list[bool] = []
+        description = self.dictionary.entries[expected]
+        for field_index in range(len(description.fields)):
+            field = description.fields[field_index]
+            block = group.fields[field_index].blocks[logical // 256]
+            within = logical % 256
+            mut present = true
+            mut stored = within
+            if field.shape.absent != AbsentPolicy.Required:
+                present = bit(block.bitmap, within, block.bitmap_origin).map_err(binary_error)?
+                stored = rank(block.bitmap, within, block.bitmap_origin, budget).map_err(binary_error)?
+            if present:
+                raw, raw_origin = selected(block.cells, stored, budget).map_err(binary_error)?
+                views.append(raw)
+                origins.append(raw_origin)
+            else:
+                views.append(block.bitmap)
+                origins.append(block.bitmap_origin)
+            presence.append(present)
+        return Ok(
+            TypedCellSource.create_column_root(
+                description,
+                self.backing,
+                views,
+                origins,
+                presence,
+                self.dictionary,
+                budget.snapshot(),
+            ),
+        )
+
+def write_typed_group(
+    description_index: int,
+    dictionary: Dictionary,
+    rows: &list[TypedColumnRow],
+    start: int,
+    end: int,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Transpose one maximal typed record run directly from completed field cells."""
+    description = dictionary.entries[description_index]
+    if description.kind != NominalKind.Record or start < 0 or start >= end or end > len(rows):
+        return Err(CrumbError.invalid_input("typed column record group"))
+    mut columns: list[bytes] = []
+    for field_index in range(len(description.fields)):
+        columns.append(write_typed_column(description, rows, start, end, field_index, budget)?)
+    mut output = EncodingBuffer.create()
+    output.count(description_index, budget)?
+    output.append(indexed(columns, budget)?, budget)?
+    return output.finish(budget)
+
+
+def write_typed_column(
+    description: StoredDescription,
+    rows: &list[TypedColumnRow],
+    start: int,
+    end: int,
+    field_index: int,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Write one no-dictionary column as canonical indexed blocks of already encoded typed cells."""
+    count = block_count(end - start)?
+    mut blocks: list[bytes] = []
+    for block_index in range(count):
+        block_start = start + block_index * 256
+        block_end = min([end, block_start + 256])
+        blocks.append(write_typed_block(description, rows, block_start, block_end, field_index, budget)?)
+    mut output = EncodingBuffer.create()
+    output.octet(0, budget)?
+    output.append(indexed(blocks, budget)?, budget)?
+    return output.finish(budget)
+
+
+def write_typed_block(
+    description: StoredDescription,
+    rows: &list[TypedColumnRow],
+    start: int,
+    end: int,
+    field_index: int,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Write one bounded presence bitmap and indexed payload without converting cells back to Values."""
+    field = description.fields[field_index]
+    mut bitmap: list[u8] = []
+    mut cells: list[bytes] = []
+    for position in range(start, end):
+        logical = position - start
+        present = rows[position].present[field_index]
+        if field.shape.absent != AbsentPolicy.Required and logical % 8 == 0:
+            bitmap.append(0u8)
+        if present:
+            cells.append(rows[position].cells[field_index])
+            if field.shape.absent != AbsentPolicy.Required:
+                last = len(bitmap) - 1
+                bitmap[last] = (int(bitmap[last]) | (1 << (logical % 8))).saturating_resize[u8]()
+        elif field.shape.absent == AbsentPolicy.Required:
+            return Err(CrumbError.invalid_input("typed required column absence"))
+    mut output = EncodingBuffer.create()
+    output.append(bitmap, budget)?
+    output.count(BlockEncoding.Indexed.value(), budget)?
+    output.append(indexed(cells, budget)?, budget)?
+    return output.finish(budget)
+
+
+def read_typed_group(
+    view: MappedView,
+    origin: int,
+    start: int,
+    end: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[TypedColumnGroup, CrumbError]:
+    """Admit one record group's field and block indexes while keeping cell payloads borrowed."""
+    mut cursor = EncodingCursor.create(view, origin).map_err(binary_error)?
+    description_index = cursor.length(budget).map_err(binary_error)?
+    if description_index >= len(dictionary.entries):
+        return Err(CrumbError.invalid_input("typed column description index"))
+    description = dictionary.entries[description_index]
+    if description.kind != NominalKind.Record:
+        return Err(CrumbError.invalid_input("typed column root kind"))
+    directory = read_index(cursor, len(description.fields), budget).map_err(binary_error)?
+    mut fields: list[TypedColumnField] = []
+    for field_index in range(len(description.fields)):
+        raw, field_origin = selected(directory, field_index, budget).map_err(binary_error)?
+        fields.append(read_typed_field(description, field_index, end - start, raw, field_origin, dictionary, budget)?)
+    return Ok(TypedColumnGroup(description=description_index, start=start, end=end, fields=fields))
+
+
+def read_typed_field(
+    description: StoredDescription,
+    field_index: int,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[TypedColumnField, CrumbError]:
+    """Admit one no-dictionary field column and require indexed physical blocks."""
+    mut cursor = EncodingCursor.create(view, origin).map_err(binary_error)?
+    if cursor.byte(budget).map_err(binary_error)? != 0:
+        return Err(CrumbError.invalid_input("typed column dictionary mode"))
+    count = block_count(rows)?
+    directory = read_index(cursor, count, budget).map_err(binary_error)?
+    mut blocks: list[TypedColumnBlock] = []
+    for index in range(count):
+        raw, block_origin = selected(directory, index, budget).map_err(binary_error)?
+        length = min([256, rows - index * 256])
+        block = read_header(
+            description.fields[field_index].shape.storage_type,
+            description.fields[field_index].shape.absent,
+            length,
+            raw,
+            block_origin,
+            None,
+            dictionary,
+            budget,
+        ).map_err(column_error)?
+        if block.encoding != BlockEncoding.Indexed:
+            return Err(CrumbError.invalid_input("typed column physical encoding"))
+        cells = match block.cells:
+            Some(value) => value
+            None => return Err(CrumbError.invalid_input("typed column cell index"))
+        blocks.append(
+            TypedColumnBlock(
+                rows=block.rows,
+                present=block.present,
+                bitmap=block.bitmap,
+                bitmap_origin=block.bitmap_origin,
+                cells=cells,
+            ),
+        )
+    return Ok(TypedColumnField(blocks=blocks))
+
+
+def binary_error(error: BinaryError) -> CrumbError:
+    """Retain a binary refusal message in the typed Crumb failure channel."""
+    return CrumbError.invalid_input(error.message())
+
+
+def column_error(error: ColumnError) -> CrumbError:
+    """Retain a physical column refusal message in the typed Crumb failure channel."""
+    return CrumbError.invalid_input(error.message())

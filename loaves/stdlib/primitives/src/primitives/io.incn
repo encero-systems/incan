@@ -1,0 +1,305 @@
+"""Owned byte storage and shared binary I/O contracts without higher-level stream policy."""
+
+from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
+from crate.primitives.errors import Error
+
+
+@derive(Clone)
+pub model IoError with Error:
+    """
+    Binary I/O failure shared by primitive buffers and higher-level filesystem and stream facades.
+
+    `kind` is stable enough for branching on common failures such as `invalid_input`, `unexpected_eof`, and `other`.
+    The remaining fields retain human-readable operation context without prescribing higher-level recovery policy.
+    """
+
+    pub kind: str
+    pub detail: str
+    pub operation: str = "io"
+    pub position: int = -1
+    pub path: Option[str] = None
+
+    def message(self) -> str:
+        """Return the host detail, naming the operation and path when the failure has a path."""
+        if let Some(path) = self.path:
+            return f"{self.operation} {path}: {self.detail}"
+        return self.detail
+
+
+pub enum Endian:
+    """Byte order for exact-width numeric I/O."""
+
+    Little
+    Big
+
+
+pub class WriteBuffer:
+    """
+    Growable owned byte storage with one mutable cursor.
+
+    `snapshot()` is the explicit copying operation. Reads and writes advance the same cursor so a higher-level
+    combined stream can delegate without keeping a second implementation of buffer growth, seeking, or truncation.
+    """
+
+    cursor: Cursor[bytes]
+
+    @staticmethod
+    pub def from_bytes(initial: bytes) -> Self:
+        """Take owned initial bytes and return a buffer positioned at the start."""
+        return WriteBuffer(cursor=Cursor.new(initial))
+
+    @staticmethod
+    pub def empty() -> Self:
+        """Return an empty owned buffer positioned at the start."""
+        return WriteBuffer.from_bytes(b"")
+
+    pub def read(mut self, size: int = -1) -> Result[bytes, IoError]:
+        """
+        Read up to `size` bytes from the current cursor, or all remaining bytes when `size` is negative.
+
+        The returned bytes own their storage. Reading never returns a view into the growable backing allocation.
+        """
+        mut out: bytes = b""
+        if size < 0:
+            match self.cursor.read_to_end(out):
+                Ok(_) => return Ok(out)
+                Err(error) => return Err(_host_error("read", self.tell(), error))
+        match Read.by_ref(self.cursor).take(size.saturating_resize[u64]()).read_to_end(out):
+            Ok(_) => return Ok(out)
+            Err(error) => return Err(_host_error("read", self.tell(), error))
+
+    pub def write(mut self, data: bytes) -> Result[int, IoError]:
+        """Write every byte at the current cursor and return the accepted byte count."""
+        match self.cursor.write_all(data):
+            Ok(_) => return Ok(len(data))
+            Err(error) => return Err(_host_error("write", self.tell(), error))
+
+    pub def tell(mut self) -> int:
+        """Return the current byte cursor position."""
+        return int(self.cursor.position())
+
+    pub def seek(mut self, offset: int, whence: int = 0) -> Result[int, IoError]:
+        """
+        Move the cursor relative to the start, current position, or end.
+
+        `whence` accepts `0`, `1`, or `2` respectively. Any other value returns `invalid_input` without moving.
+        """
+        if whence == 0:
+            return self._seek_from(SeekFrom.Current(offset - self.tell()))
+        elif whence == 1:
+            return self._seek_from(SeekFrom.Current(offset))
+        elif whence == 2:
+            return self._seek_from(SeekFrom.End(offset))
+        return Err(_invalid_input("seek", self.tell(), "whence must be 0, 1, or 2"))
+
+    pub def truncate(mut self, size: Option[int] = None) -> Result[int, IoError]:
+        """
+        Resize owned storage to `size`, or to the current cursor when omitted.
+
+        Growth zero-fills new bytes. Shrinking below the cursor clamps the cursor to the new end.
+        """
+        position = self.tell()
+        mut target = position
+        if let Some(value) = size:
+            target = value
+        if target < 0:
+            return Err(_invalid_input("truncate", position, "truncate size must be non-negative"))
+        target_usize = _target_usize(target, position)?
+        target_u64 = _target_u64(target, position)?
+        self.cursor.get_mut().resize(target_usize, 0)
+        if self.tell() > target:
+            self.cursor.set_position(target_u64)
+        return Ok(target)
+
+    pub def snapshot(mut self) -> bytes:
+        """Copy the complete backing storage without changing the cursor."""
+        return self.cursor.get_ref().clone()
+
+    pub def remaining(mut self) -> int:
+        """Return the unread byte count from the current cursor to the end."""
+        total = len(self.cursor.get_ref())
+        position = self.tell()
+        if position >= total:
+            return 0
+        return total - position
+
+    def _seek_from(mut self, target: SeekFrom) -> Result[int, IoError]:
+        """Apply one validated native seek target and preserve its exact host failure."""
+        match self.cursor.seek(target):
+            Ok(position) => return Ok(int(position))
+            Err(error) => return Err(_host_error("seek", self.tell(), error))
+
+
+pub model ByteReader:
+    """An independently positioned reader over owned immutable bytes."""
+
+    data: bytes
+    offset: int
+
+    @staticmethod
+    pub def from_bytes(data: bytes) -> Self:
+        """Take ownership of `data` and return a reader positioned at its first byte."""
+        return ByteReader(data=data, offset=0)
+
+    pub def remaining(self) -> int:
+        """Return the number of unread bytes."""
+        return len(self.data) - self.offset
+
+    pub def read_u16_le(mut self) -> Option[u16]:
+        """Read one little-endian `u16`, or return `None` without advancing when truncated."""
+        match self._read_width(2):
+            None => return None
+            Some(raw) =>
+                mut value: u16 = 0u16
+                for index in range(2):
+                    byte: u16 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_u32_le(mut self) -> Option[u32]:
+        """Read one little-endian `u32`, or return `None` without advancing when truncated."""
+        match self._read_width(4):
+            None => return None
+            Some(raw) =>
+                mut value: u32 = 0u32
+                for index in range(4):
+                    byte: u32 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_u64_le(mut self) -> Option[u64]:
+        """Read one little-endian `u64`, or return `None` without advancing when truncated."""
+        match self._read_width(8):
+            None => return None
+            Some(raw) =>
+                mut value: u64 = 0u64
+                for index in range(8):
+                    byte: u64 = raw[index].wrapping_resize()
+                    value = value | (byte << (index * 8))
+                return Some(value)
+
+    pub def read_exact(mut self, size: int) -> Result[bytes, IoError]:
+        """Read exactly `size` bytes, returning a typed refusal without advancing for an invalid or truncated range."""
+        if size < 0:
+            return Err(_invalid_input("read_exact", self.offset, "read size must be non-negative"))
+        match self._read_width(size):
+            Some(value) => return Ok(value)
+            None =>
+                return Err(
+                    IoError(
+                        operation="read_exact",
+                        kind="truncated",
+                        detail="owned bytes ended before the requested range",
+                        position=self.offset,
+                    ),
+                )
+
+    pub def read_length_prefixed(mut self, max_length: int) -> Result[bytes, IoError]:
+        """
+        Read a little-endian `u64` length followed by that many bytes, bounded by `max_length`.
+
+        A truncated prefix or payload and a declared limit breach are typed failures. A failed read never indexes past
+        the owned bytes.
+        """
+        if max_length < 0:
+            return Err(_invalid_input("read_length_prefixed", self.offset, "maximum length must be non-negative"))
+        start = self.offset
+        match self.read_u64_le():
+            None => return Err(_byte_read_error("truncated", start, "owned bytes ended inside the length prefix"))
+            Some(encoded) =>
+                maybe_size: Option[int] = encoded.try_resize()
+                match maybe_size:
+                    None =>
+                        self.offset = start
+                        return Err(_byte_read_error("limit_exceeded", start, "encoded length exceeds host limits"))
+                    Some(size) =>
+                        if size > max_length:
+                            self.offset = start
+                            return Err(_byte_read_error("limit_exceeded", start, "encoded length exceeds the declared limit"))
+                        match self._read_width(size):
+                            Some(value) => return Ok(value)
+                            None =>
+                                self.offset = start
+                                return Err(_byte_read_error("truncated", start, "owned bytes ended inside the length-prefixed value"))
+
+    def _read_width(mut self, width: int) -> Option[bytes]:
+        """Return one checked range and advance only when the complete range is present."""
+        if width < 0 or self.offset < 0 or width > self.remaining():
+            return None
+        start = self.offset
+        self.offset += width
+        return Some(self.data[start:self.offset])
+
+
+def _target_usize(target: int, position: int) -> Result[usize, IoError]:
+    """Convert a nonnegative truncate target into the host vector size type."""
+    converted: Option[usize] = target.try_resize()
+    match converted:
+        Some(value) => return Ok(value)
+        None => return Err(_invalid_input("truncate", position, "truncate size does not fit host usize"))
+
+
+def _target_u64(target: int, position: int) -> Result[u64, IoError]:
+    """Convert a nonnegative truncate target into the native cursor position type."""
+    converted: Option[u64] = target.try_resize()
+    match converted:
+        Some(value) => return Ok(value)
+        None => return Err(_invalid_input("truncate", position, "truncate size does not fit u64"))
+
+
+def _invalid_input(operation: str, position: int, detail: str) -> IoError:
+    """Return a stable invalid-input error for one buffer operation."""
+    return IoError(operation=operation, kind="invalid_input", detail=detail, position=position)
+
+
+def _byte_read_error(kind: str, position: int, detail: str) -> IoError:
+    """Return one typed owned-byte decoding failure."""
+    return IoError(operation="read_length_prefixed", kind=kind, detail=detail, position=position)
+
+
+def _host_error(operation: str, position: int, detail: str) -> IoError:
+    """Classify native I/O error text into the stable primitive categories."""
+    if detail.contains("invalid"):
+        return _invalid_input(operation, position, detail)
+    elif detail.contains("failed to fill whole buffer") or detail.contains("early eof"):
+        return IoError(operation=operation, kind="unexpected_eof", detail=detail, position=position)
+    return IoError(operation=operation, kind="other", detail=detail, position=position)
+
+
+from rust::std::slice import Iter
+
+
+pub type ReadCursor = rusttype Iter[u8]:
+    """
+    An independently positioned cursor over borrowed bytes.
+
+    `as_slice()` returns the unread borrowed byte slice. The cursor owns only its position, so its source bytes stay
+    borrowed through the cursor's last use.
+    """
+
+
+pub type ReadSlice = rusttype Iter[u8]:
+    """A read-only view over unread bytes that keeps its cursor's borrowed byte source live."""
+
+
+pub def read_cursor(data: Borrowed[bytes]) -> Owned[ReadCursor] from data:
+    """Borrow `data` into a cursor whose position can advance independently of every other cursor."""
+    return data.as_slice().iter()
+
+
+pub def advance_cursor(mut cursor: BorrowedMut[ReadCursor]) -> bool:
+    """Advance `cursor` by one byte and report whether a byte was available."""
+    return cursor.next().is_some()
+
+
+pub def remaining_bytes(cursor: Borrowed[ReadCursor]) -> Owned[ReadSlice] from cursor:
+    """Return the unread byte slice borrowed through `cursor`."""
+    return cursor.as_slice().iter()
+
+
+pub def read_slice_len(mut view: BorrowedMut[ReadSlice]) -> int:
+    """Return the number of bytes in a borrowed read slice."""
+    mut count = 0
+    while view.next().is_some():
+        count += 1
+    return count

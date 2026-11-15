@@ -1,0 +1,14 @@
+# behavior: newtypes over int and str type function parameters and model fields
+# expect-accepted:
+
+type UserId = newtype int
+type Email = newtype str
+
+
+def get_user_id(id: UserId) -> int:
+    return 42
+
+
+model User:
+    id: UserId
+    email: Email

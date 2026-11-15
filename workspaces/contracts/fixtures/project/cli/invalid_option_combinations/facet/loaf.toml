@@ -1,0 +1,7 @@
+[project]
+name = "option_facet"
+version = "0.1.0"
+
+[[rust.bin]]
+name = "unused"
+path = "main.rs"

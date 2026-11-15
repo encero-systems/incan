@@ -1,0 +1,9 @@
+[project]
+name = "refuses_sdk_component_requirement"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features.web]
+requires-sdk-components = ["web"]

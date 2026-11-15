@@ -97,7 +97,7 @@ def normalize_names(text: str) -> Result[str, RegexError]:
 
 ## Keep the safe-engine boundary visible
 
-`std.regex` does not support lookaround or pattern backreferences. If a pattern depends on those features, choose a different parsing strategy or a package that explicitly opts into backtracking semantics. Do not hide that choice behind a pattern that happens to work in one engine.
+`std.regex` is the safe default: it follows the predictable Rust-regex/RE2-style model rather than a fully backtracking Python/PCRE-style model, so it does not support lookaround or pattern backreferences. If a pattern depends on those features, choose a different parsing strategy or a package that explicitly opts into backtracking semantics. Do not hide that choice behind a pattern that happens to work in one engine.
 
 ## See also
 

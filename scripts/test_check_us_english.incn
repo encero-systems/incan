@@ -1,0 +1,142 @@
+"""Verify spelling families, case boundaries, explicit exceptions and byte-preserving rewrites."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_us_english import hits
+from english_spellings import spellings
+from check_test_support import run_check, write
+from check_support import git
+
+
+def test_inflections_are_generated_from_the_base_forms() -> Result[None, str]:
+    """The explicit families expand to the same regular inflections."""
+    text = "behaviours initialisation SERIALISED catalogued cataloguing neighbouring colours centred analysed"
+    assert replacements(text)? == ["behaviors", "initialization", "SERIALIZED", "cataloged", "cataloging",
+        "neighboring", "colors", "centered", "analyzed"]
+    return Ok(None)
+
+
+def test_doubled_consonants_and_odd_nouns_are_listed_one_by_one() -> Result[None, str]:
+    """Irregular spellings override regular inflections."""
+    text = "labelled labelling modelled programme programmes whilst judgement acknowledgements licence"
+    assert replacements(text)? == ["labeled", "labeling", "modeled", "program", "programs", "while",
+        "judgment", "acknowledgments", "license"]
+    return Ok(None)
+
+
+def test_words_that_end_in_ise_in_both_dialects_are_untouched() -> Result[None, str]:
+    """Unlisted ise words and the shared analyses spelling stay unchanged."""
+    text = (
+        "advertise compromise exercise otherwise precise premise promise raise surprise wise noise cruise "
+        + "expertise enterprise analyses programmed programming"
+    )
+    assert replacements(text)? == []
+    return Ok(None)
+
+
+def test_the_cancel_family_is_deliberately_kept() -> Result[None, str]:
+    """The owner's retained cancellation spelling family is not rewritten."""
+    assert replacements("cancelled Cancelled cancelling cancellation is_cancelled")? == []
+    return Ok(None)
+
+
+def test_case_is_preserved_and_mixed_case_is_left_alone() -> Result[None, str]:
+    """Lowercase, title case and uppercase keep their original case pattern."""
+    found = hits("colour Colour COLOUR cOLOUR", spellings())?
+    assert [(hit.word, hit.replacement) for hit in found] == [("colour", "color"), ("Colour", "Color"),
+        ("COLOUR", "COLOR")]
+    return Ok(None)
+
+
+def test_snake_case_parts_and_camel_case_words_match() -> Result[None, str]:
+    """Identifier boundaries admit whole snake_case and CamelCase pieces."""
+    assert (
+        matched_words("cli_catalogue_forms BackgroundColour colourValue COLOUR_MAP")?
+        == ["catalogue", "Colour", "colour", "COLOUR"]
+    )
+    return Ok(None)
+
+
+def test_letters_inside_a_camel_case_word_do_not_match() -> Result[None, str]:
+    """A shared word fragment inside a larger CamelCase piece is not a spelling hit."""
+    assert matched_words("EntityRef tyre_ref Tyre centreLine")? == ["tyre", "Tyre", "centre"]
+    return Ok(None)
+
+
+def test_check_reports_path_line_word_and_replacement() -> Result[None, str]:
+    """The command reports each original source line and replacement."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    initialize(root)?
+    tracked(root, "src/lib.rs", "// the colour\nfn behaviour() {}\n")?
+    result = run_check("check_us_english", root)?
+    assert result.code == 1
+    assert "src/lib.rs:1: colour → color" in result.stdout
+    assert "src/lib.rs:2: behaviour → behavior" in result.stdout
+    return Ok(None)
+
+
+def test_fix_rewrites_in_place_and_keeps_line_endings() -> Result[None, str]:
+    """Fix mode keeps CRLF bytes and leaves a clean follow-up check."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    initialize(root)?
+    tracked(root, "doc.md", "The colour.\r\nThe Catalogue.\r\n")?
+    result = run_check("check_us_english", root, ["--fix"])?
+    assert result.code == 0
+    assert "doc.md: 2" in result.stdout
+    actual = root.joinpath("doc.md").read_bytes().map_err((error) => error.message())?
+    assert actual == b"The color.\r\nThe Catalog.\r\n"
+    assert run_check("check_us_english", root)?.code == 0
+    return Ok(None)
+
+
+def test_allow_file_exempts_a_path_a_word_or_an_enclosing_phrase() -> Result[None, str]:
+    """An exception applies only to its path and exact enclosing occurrence."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    initialize(root)?
+    tracked(root, "vendored/x.rs", "colour")?
+    tracked(root, "src/task.rs", "error.is_favoured(); let favoured = 1; // labelled\n")?
+    tracked(root, "scripts/check_us_english.allow",
+        "vendored/**\t*\tupstream\nsrc/task.rs\tis_favoured\tupstream name\n*\tlabelled\tdemo\n")?
+    result = run_check("check_us_english", root)?
+    assert result.code == 1
+    assert len(result.stdout.split("→")) - 1 == 1
+    assert "src/task.rs:1: favoured → favored" in result.stdout
+    return Ok(None)
+
+
+def test_malformed_allow_line_is_a_configuration_error() -> Result[None, str]:
+    """A malformed exception line fails closed with configuration status 2."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    initialize(root)?
+    tracked(root, "scripts/check_us_english.allow", "no tabs here\n")?
+    result = run_check("check_us_english", root)?
+    assert result.code == 2
+    assert "expected path, token and reason" in result.stderr
+    return Ok(None)
+
+
+def replacements(text: str) -> Result[list[str], str]:
+    """Read case-preserving replacements for a source line."""
+    return Ok([hit.replacement for hit in hits(text, spellings())?])
+
+
+def matched_words(text: str) -> Result[list[str], str]:
+    """Read the matched source spellings for a source line."""
+    return Ok([hit.word for hit in hits(text, spellings())?])
+
+
+def initialize(root: Path) -> Result[None, str]:
+    """Initialize a Git repository and its required empty exception file."""
+    _ = git(root, ["init", "-q"])?
+    return tracked(root, "scripts/check_us_english.allow", "")
+
+
+def tracked(root: Path, path: str, text: str) -> Result[None, str]:
+    """Write a fixture file and stage it without normalizing its line endings."""
+    write(root, path, text)?
+    _ = git(root, ["-c", "core.safecrlf=false", "add", path])?
+    return Ok(None)

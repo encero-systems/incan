@@ -1,0 +1,162 @@
+"""
+`build --report json [--report-output PATH]`: a machine-readable record of one build, as 0.5.1 wrote it: the toolchain
+version, what was built and with which profile, its outcome, each artifact with its size and digest, and the time it
+took. The build itself is the ordinary `build` of the same arguments; the report never changes what it does.
+"""
+
+from rust::std::env import current_exe
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Command
+from rust::std::time import Instant
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import file_digest
+from std.json import JsonValue
+from files import write
+from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
+from home_paths import TOOLCHAIN
+
+
+pub model ReportRequest:
+    """The report options of one build and the build arguments left once they are removed."""
+
+    pub format: Option[str] = None
+    pub output: Option[str] = None
+    pub remaining: list[str] = []
+
+
+pub def parse_report(arguments: list[str]) -> Result[ReportRequest, str]:
+    """Remove `--report FORMAT` and `--report-output PATH`; JSON is the one report format."""
+    mut request = ReportRequest()
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            request.remaining = request.remaining + arguments[index:]
+            break
+        if argument in ["--report", "--report-output"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            if argument == "--report":
+                request.format = Some(arguments[index + 1])
+            else:
+                request.output = Some(arguments[index + 1])
+            index += 2
+            continue
+        request.remaining.append(argument)
+        index += 1
+    match request.format:
+        Some(format) =>
+            if format != "json":
+                return Err(f"`--report` is json, got `{format}`")
+        None =>
+            if request.output is not None:
+                return Err("--report-output requires --report json")
+    return Ok(request)
+
+
+pub def reported_build(surface: str, request: ReportRequest, expected: list[str]) -> Result[i32, str]:
+    """
+    Run the build as its own invocation, then write its report to stdout or `--report-output`.
+
+    The build's standard output goes to standard error so a report on stdout stays one JSON document; a Rust project's
+    `binary:` lines become its artifacts; otherwise `expected` names the Incan artifacts the build writes.
+    """
+    executable = current_exe().map_err((error) => f"cannot locate the running Oven: {error}")?
+    mut child = Command.new(executable.as_os_str())
+    _ = child.arg0(surface)
+    child.arg("build")
+    for argument in request.remaining:
+        child.arg(argument)
+    started = Instant.now()
+    output = child.output().map_err((error) => f"cannot run build: {error}")?
+    seconds = started.elapsed().as_secs_f64()
+    printed = text_of(output.stdout)
+    console(printed)
+    console(text_of(output.stderr))
+    mut code: i32 = 1
+    match output.status.code():
+        Some(exited) => code = exited
+        None => pass
+    mut paths: list[str] = []
+    for line in printed.split("\n"):
+        if line.startswith("binary: "):
+            paths.append(line[8:])
+    path, profile = operand(request.remaining)
+    if code == 0 and len(paths) == 0:
+        paths = expected
+    document = report(path, profile, code, paths, seconds)?
+    text = document.to_pretty_json().map_err((error) => error.message())?
+    match request.output:
+        Some(destination) => write(Path(destination), text + "\n")?
+        None => println(text)
+    return Ok(code)
+
+
+def operand(arguments: list[str]) -> tuple[str, str]:
+    """The build's PATH and profile, as `build` reads them."""
+    mut path = ""
+    mut profile = "debug"
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            break
+        if argument in ["--profile", "--features", "--substitute", "--program-entry", "--argv0"]:
+            if argument == "--profile" and index + 1 < len(arguments):
+                profile = arguments[index + 1]
+            index += 2
+            continue
+        if not argument.startswith("-") and path == "":
+            path = argument
+        index += 1
+    return (path, profile)
+
+
+def report(path: str, profile: str, code: i32, paths: list[str], seconds: float) -> Result[JsonValue, str]:
+    """The versioned build report."""
+    mut artifacts: list[JsonValue] = []
+    for artifact in paths:
+        file = Path(artifact)
+        mut kind = "executable"
+        if artifact.endswith(".rlib"):
+            kind = "library"
+        mut fields: Dict[str, JsonValue] = {"kind": JsonValue.string(kind), "path": JsonValue.string(artifact)}
+        if file.is_file():
+            fields["size"] = JsonValue.int(
+                file.stat().map_err((error) => error.message())?.size().map_err((error) => error.message())?,
+            )
+            fields["sha256"] = JsonValue.string(
+                hexlify(file_digest(file, "sha256").map_err((error) => error.message())?),
+            )
+        artifacts.append(JsonValue.object(fields))
+    mut status = "succeeded"
+    if code != 0:
+        status = "failed"
+    return Ok(
+        JsonValue.object(
+            {"schema_version": JsonValue.int(1), "command": JsonValue.string("build"), "incan_version": JsonValue.string(
+                TOOLCHAIN,
+            ), "path": JsonValue.string(path), "profile": JsonValue.string(profile), "status": JsonValue.string(status), "exit_code": JsonValue.int(
+                int(code),
+            ), "artifacts": JsonValue.array(artifacts), "timings": JsonValue.object(
+                {"total_milliseconds": JsonValue.int(int(seconds * 1000.0))},
+            )},
+        ),
+    )
+
+
+def text_of(value: bytes) -> str:
+    """A child's output as text; invalid UTF-8 is replaced rather than lost."""
+    match value.decode("utf-8", "replace"):
+        Ok(text) => return text
+        Err(_) => return ""
+
+
+def console(text: str) -> None:
+    """Pass the build's own output on to standard error; a closed stream cannot be told about, so it is ignored."""
+    if text == "":
+        return
+    mut err = stderr()
+    _ = err.write_all(RustString.from(text).into_bytes())

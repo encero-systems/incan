@@ -1,0 +1,10 @@
+# behavior: an always_on() surface is active in a consumer module that has no import declaration (docs-2)
+# expect-stdout:
+#   42
+
+
+def main() -> None:
+    """The query surface is active without any import."""
+    value = query:
+        FROM 42
+    println(value)

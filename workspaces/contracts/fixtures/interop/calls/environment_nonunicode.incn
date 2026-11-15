@@ -1,0 +1,62 @@
+# behavior: Unix environment observations accept legal backslash-zero keys and preserve non-Unicode categories with redacted values through both standard layers (RFC 168, #2501)
+# expect-stdout:
+#   nonunicode-redacted-ok
+
+"""On Unix, a child receives invalid UTF-8 without mutating the parent's process environment."""
+
+from rust::std::env import current_exe
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::std::ffi import OsString
+from rust::std::os::unix::ffi import OsStringExt
+from std.environ import args, get, get_as, get_optional, get_or
+from std.primitives.environ import read, EnvironErrorKind
+
+
+def main() -> Result[None, str]:
+    """Require precise non-Unicode failure and retained redaction through every facade."""
+    arguments = args().map_err((error) => error.message())?
+    if len(arguments) > 1:
+        match read("INCAN_BACKSLASH\\0KEY"):
+            Ok(value) =>
+                assert value == "legal-key"
+            Err(_) =>
+                assert false
+        match get("INCAN_BACKSLASH\\0KEY"):
+            Ok(value) =>
+                assert value == "legal-key"
+            Err(_) =>
+                assert false
+        match read("INCAN_NONUNICODE"):
+            Err(EnvironErrorKind.NotUnicode) => pass
+            _ =>
+                assert false
+        match get("INCAN_NONUNICODE"):
+            Err(error) =>
+                assert error.kind() == EnvironErrorKind.NotUnicode
+                assert not error.message().contains("hidden-value")
+                assert not error.detail.contains("hidden-value")
+            Ok(_) =>
+                assert false
+        assert get_optional("INCAN_NONUNICODE") == None
+        assert get_or("INCAN_NONUNICODE", "fallback") == "fallback"
+        match get_as[int]("INCAN_NONUNICODE", default=7):
+            Err(error) =>
+                assert error.kind() == EnvironErrorKind.NotUnicode
+            Ok(_) =>
+                assert false
+        return Ok(None)
+    executable = current_exe().map_err((error) => str(error))?
+    raw = OsString.from_vec(b"\xffhidden-value")
+    output = Command
+        .new(executable)
+        .arg("child")
+        .env("INCAN_NONUNICODE", raw)
+        .env("INCAN_BACKSLASH\\0KEY", "legal-key")
+        .output()
+        .map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => str(error))?)
+    assert len(output.stdout) == 0
+    println("nonunicode-redacted-ok")
+    return Ok(None)

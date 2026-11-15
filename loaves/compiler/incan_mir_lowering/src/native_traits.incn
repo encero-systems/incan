@@ -1,0 +1,58 @@
+"""Rust trait implementations a source class fills with its own methods; rustc proves each implementation."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import NativeTraitAdoption, NativeTraitMethod
+from classes import function_name
+from table_views import borrowed_at
+
+
+pub def native_trait_adoptions(module: &BodyIrModule, owner: int) -> Result[list[NativeTraitAdoption], str]:
+    """
+    The Rust traits one class adopts, each with the planned method filling each trait method the class declares.
+
+    A slot the class does not fill keeps the trait's default; rustc refuses a missing required method or a mismatched
+    signature, so nothing here claims the class implements the trait.
+    """
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    mut adoptions: list[NativeTraitAdoption] = []
+    for adoption in declaration.trait_adoptions:
+        mut path = ""
+        match adoption.trait_identity.origin:
+            SymbolOrigin.RustCrate(parts) => path = "::".join(list(parts))
+            _ => continue
+        match adoption.methods:
+            None => return Err("unsupported Body IR Rust trait adoption without its method slots")
+            Some(slots) =>
+                mut methods: list[NativeTraitMethod] = []
+                for slot in slots:
+                    match filling_function(module, declaration.canonical, slot)?:
+                        Some(function) =>
+                            methods.append(NativeTraitMethod(name=str(slot.declaration_name), function=function))
+                        None => pass
+                adoptions.append(NativeTraitAdoption(path=path, methods=methods))
+    return Ok(adoptions)
+
+
+def filling_function(
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    slot: &CanonicalSymbolId,
+) -> Result[Option[str], str]:
+    """The planned function of the one concrete body filling this owner's slot; none keeps the trait's default."""
+    for position in range(len(module.trait_implementations)):
+        implementation = borrowed_at(module.trait_implementations, position)
+        if implementation.owner != owner.clone() or implementation.method != slot.clone():
+            continue
+        mut selected = ""
+        for body_position in range(len(module.bodies)):
+            body = borrowed_at(module.bodies, body_position)
+            if body.canonical != Some(implementation.implementation.clone()):
+                continue
+            if selected != "" or len(body.type_parameters) != 0:
+                return Err("unsupported Body IR ambiguous or generic Rust trait method")
+            selected = function_name(module, body)
+        if selected == "":
+            return Err("unsupported Body IR Rust trait method without its body")
+        return Ok(Some(selected))
+    return Ok(None)

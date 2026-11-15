@@ -1,0 +1,8 @@
+"""A consumer calling a library function that calls its sibling module."""
+
+from pub::facades.compose import compose
+
+
+pub def run_library_module_import() -> None:
+    """Consume the library function that calls its sibling module."""
+    println(compose("world"))

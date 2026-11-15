@@ -1,5 +1,0 @@
-from rust::serde import Serialize
-
-@rust.derive(Serialize, Default, Eq, Hash)
-pub model PayloadKey:
-  pub value: int

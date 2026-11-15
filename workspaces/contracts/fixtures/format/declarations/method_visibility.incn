@@ -1,0 +1,49 @@
+# behavior: A method marked `pub` in a model, class, enum or newtype body keeps its marker, and an unmarked method stays unmarked (#2570).
+# expect-formatted:
+#   pub model Account:
+#       pub owner: str
+#
+#       pub def summary(self) -> str:
+#           return self.owner
+#
+#       def helper(self) -> int:
+#           return 1
+#
+#
+#   pub class Counter:
+#       pub count: int
+#
+#       pub def following(self) -> int:
+#           return self.count + 1
+#
+#
+#   pub enum Light:
+#       Red
+#       Green
+#
+#       pub def label(self) -> str:
+#           return "light"
+#
+#
+#   pub type Meters = newtype int:
+#       pub def doubled(self) -> int:
+#           return self.0 * 2
+
+pub model Account:
+    pub owner:str
+    pub   def summary(self)->str:
+        return self.owner
+    def helper(self)->int:
+        return 1
+pub class Counter:
+    pub count:int
+    pub def following(self)->int:
+        return self.count+1
+pub enum Light:
+    Red
+    Green
+    pub def label(self)->str:
+        return "light"
+pub type Meters = newtype int:
+    pub def doubled(self)->int:
+        return self.0*2

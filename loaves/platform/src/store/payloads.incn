@@ -1,0 +1,103 @@
+"""Content-named payload files: install each once, protect it from preparation through commit, and check it in place."""
+
+from rust::std::process import id
+from rust::std::rc import Rc
+from std.primitives.hex import hexlify
+from crate.store import PreparedPayload, sync_durable
+from crate.store.files import StoreError, ensure_directory, failure, file_digest, io_failure, sync_directory, sync_file
+from crate.store.index import view_digest
+from crate.store.path import StorePath as Path
+
+
+pub def payload_path(root: Path, digest: str) -> Path:
+    """Where the payload of `digest` lives."""
+    return root.joinpath("payloads").joinpath(digest[:2]).joinpath(digest)
+
+
+pub def pin_payload(root: Path, digest: str) -> Result[PreparedPayload, StoreError]:
+    """Protect one canonical content name before validating or installing it; dropping the descriptor abandons it."""
+    if len(digest) != 64:
+        return Err(failure("format", digest, "payload digest requires 64 hexadecimal digits"))
+    for character in digest:
+        if character not in "0123456789abcdef":
+            return Err(failure("format", digest, "payload digest is not canonical hexadecimal"))
+    leases = root.joinpath("payload-leases")
+    ensure_directory(leases)?
+    pin = leases.joinpath(digest).store_lock_shared().map_err((error) => io_failure(leases, error))?
+    return Ok(PreparedPayload(digest=digest, pin=Rc.new(pin)))
+
+
+pub def put_payload(root: Path, source: Path) -> Result[PreparedPayload, StoreError]:
+    """Store immutable, synced content and return its live preparation guard; retain it until a record owns the digest."""
+    digests = put_payloads(root, [source])?
+    return Ok(digests[0])
+
+
+pub def put_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
+    """
+    Store each source under its content digest, read-only, in order; an existing payload must hold those bytes.
+
+    Each new file is synced before it is renamed into place, and each payload directory that received one is synced
+    once after all of them, before the caller's commit names them. Returned descriptors retain independent live
+    preparation leases; attach them to the transaction until its committed records own every referenced digest.
+    """
+    return store_payloads(root, sources, true)
+
+
+pub def prepare_payloads(root: Path, sources: list[Path]) -> Result[list[PreparedPayload], StoreError]:
+    """Stage ordered immutable payloads for a transaction that flushes their complete graph before publication."""
+    return store_payloads(root, sources, false)
+
+
+def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[list[PreparedPayload], StoreError]:
+    """Install each immutable payload once; optionally finish an independent durable insertion."""
+    mut digests: list[PreparedPayload] = []
+    mut touched: set[str] = set()
+    for source in sources:
+        digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.value, error.message()))?)
+        prepared = pin_payload(root, digest)?
+        target = payload_path(root, digest)
+        if target.is_file():
+            if not payload_intact(root, digest):
+                return Err(failure("integrity", target.value, "a stored payload does not match its name"))
+        else:
+            install_payload(source, target)?
+        # An intact existing name may belong to a writer that died before ordering its directory entry.
+        touched.add(target.parent().value)
+        digests.append(prepared)
+    for directory in sorted([name for name in touched]):
+        sync_directory(root.at(directory))?
+    if len(touched) > 0:
+        sync_directory(root.joinpath("payloads"))?
+        sync_directory(root)?
+        sync_directory(root.parent())?
+        if durable:
+            sync_durable(root)?
+    return Ok(digests)
+
+
+def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
+    """Copy one payload beside its place, sync it, make it read-only and rename it into place."""
+    ensure_directory(target.parent())?
+    temporary = target.at(f"{target.value}.{id()}.tmp")
+    source.store_copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
+    temporary.store_chmod(true).map_err((error) => io_failure(temporary, error))?
+    sync_file(temporary)?
+    temporary.store_replace(target).map_err((error) => io_failure(target, error))?
+    return Ok(None)
+
+
+pub def payload_intact(root: Path, digest: str) -> bool:
+    """Whether the stored payload of `digest` still has exactly that content, hashed in place."""
+    target = payload_path(root, digest)
+    if not target.is_file():
+        return false
+    match target.store_map_read():
+        Err(_) => return false
+        Ok(mapped) =>
+            match mapped.view(0, mapped.len()):
+                None => return false
+                Some(content) => return hexlify(view_digest(content)) == digest
+
+
+# ---- Files ----

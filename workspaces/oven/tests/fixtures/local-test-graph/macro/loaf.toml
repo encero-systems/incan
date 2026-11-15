@@ -1,7 +1,7 @@
 [project]
-name='macros'
+name='crates-io/macros'
 version='1.0.0'
 [dependencies]
-helper={loaf='helper',path='../helper',version='1'}
+helper={loaf='crates-io/helper',path='../helper',version='1'}
 [rust]
 type='proc-macro'

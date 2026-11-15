@@ -26,7 +26,9 @@ Use explicit codec modules when the data format is known. Use autodetection only
 
 Each top-level codec namespace exposes one-shot helpers: `compress(payload, level=None)` and `decompress(payload)`.
 
-The default `snappy` namespace uses framed Snappy. Raw Snappy is available under `std.compression.snappy.raw`, but it is not part of autodetection because raw blocks do not carry a reliable frame signature.
+Decoding gzip, bzip2 or xz input, one-shot or streaming, decodes every concatenated member. zlib and raw deflate input with bytes after the end of its stream is refused with `invalid_data`, and input that ends inside a stream is refused with `truncated_input`. Autodetection decodes as the detected codec does.
+
+The default `snappy` namespace uses framed Snappy. Raw Snappy is available under `std.compression.snappy.raw` and is not part of autodetection.
 
 ## Streaming
 
@@ -56,7 +58,7 @@ Autodetection is explicit and decompression-only.
 
 The `allowed` list is binding. An empty list or a payload whose signature does not match any allowed codec returns `CompressionError(kind="unsupported_codec", ...)`.
 
-Autodetection uses signatures and framing bytes only. It does not inspect file extensions, paths, or MIME types. Raw deflate and raw Snappy are not guessed because they do not have reliable framing signatures.
+Autodetection uses signatures and framing bytes only. It does not inspect file extensions, paths, or MIME types, and never selects raw deflate or raw Snappy.
 
 ## Errors
 
@@ -71,7 +73,7 @@ Fallible helpers return `Result[..., CompressionError]`.
 
 ## Boundaries
 
-`std.compression` does not provide archive containers such as ZIP or TAR, dictionary training APIs, authenticated encryption, checksums, or password hashing. Those require separate APIs because their compatibility and security contracts are different from byte compression.
+`std.compression` does not provide archive containers such as ZIP or TAR, dictionary training APIs, authenticated encryption, checksums, or password hashing.
 
 ## See Also
 

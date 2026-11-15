@@ -1,0 +1,9 @@
+"""Generic functions bounded by the prelude's collection protocols, with no import: the prelude makes them ambient."""
+
+
+pub def has[T with Contains[int]](values: T, item: int) -> bool:
+    return item in values
+
+
+pub def size[T with Len](values: T) -> int:
+    return len(values)

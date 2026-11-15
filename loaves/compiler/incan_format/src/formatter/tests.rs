@@ -124,13 +124,22 @@ fn structural_fragment_formatting_is_idempotent() -> Result<(), String> {
     Ok(())
 }
 
+/// Preserve holes and custom-property references while rendering style declarations to a parseable fixed point.
 #[test]
 fn a_structural_style_fragment_renders_rules_and_declarations() -> Result<(), String> {
     // The style submode nests declarations under a rule rather than children under an element, so it exercises a
     // different branch of the structural renderer than markup does.
     let (keyword_map, surface_map) =
         fixture_maps("css", "styleforge", incan_vocab::EmbeddedFragmentSubmode::Style, false);
-    let source = "import pub::styleforge\n\ndef theme(accent: str) -> None:\n    css:\n        .card {\n            color: {accent};\n        }\n";
+    let source = r"import pub::styleforge
+
+def theme(accent: str) -> None:
+    css:
+        .card {
+            color: {accent};
+            background: var(--accent-color);
+        }
+";
 
     let once = format_fixture(source, &keyword_map, &surface_map)?;
     assert!(
@@ -140,6 +149,10 @@ fn a_structural_style_fragment_renders_rules_and_declarations() -> Result<(), St
     assert!(
         once.contains("color: {accent};"),
         "a declaration with a hole value should render with its semicolon:\n{once}"
+    );
+    assert!(
+        once.contains("background: var(--accent-color);"),
+        "a custom-property reference must retain its expression delimiters:\n{once}"
     );
 
     let twice = format_fixture(&once, &keyword_map, &surface_map)?;
@@ -268,6 +281,30 @@ fn a_byte_literal_keeps_its_escapes() -> Result<(), String> {
     let once = formatted(source)?;
     assert!(once.contains(r#"b"a\"b""#), "the escaped quote was lost:\n{once}");
     assert!(once.contains(r#"b"x\\y""#), "the escaped backslash was lost:\n{once}");
+    assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
+    Ok(())
+}
+
+#[test]
+fn a_string_literal_keeps_its_escapes_between_double_quotes() -> Result<(), String> {
+    // Literals were rebuilt from their decoded values: `"\u{1b}"` came back as a raw ESC character, `"\u{41}"` as
+    // `"A"` and `"\u{9}"` as `"\t"`. A single-quoted literal is written between double quotes, and its escapes keep
+    // their spelling there too; only the quotes it needs change.
+    let source = r#"def main() -> None:
+    escape = "\u{1b}"
+    letter = "\u{41}"
+    quoted = 'it\'s "\u{1b}"'
+    println(escape + letter + quoted + '\u{9}')
+"#;
+    let once = formatted(source)?;
+    for spelled in [
+        r#"escape = "\u{1b}""#,
+        r#"letter = "\u{41}""#,
+        r#"quoted = "it's \"\u{1b}\"""#,
+        r#"quoted + "\u{9}")"#,
+    ] {
+        assert!(once.contains(spelled), "expected {spelled} in:\n{once:?}");
+    }
     assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
     Ok(())
 }

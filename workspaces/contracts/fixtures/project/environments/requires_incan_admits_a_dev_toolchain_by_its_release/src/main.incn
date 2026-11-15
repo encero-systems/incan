@@ -1,0 +1,9 @@
+# behavior: a prerelease toolchain satisfies `requires-incan` by its release version, so a dev build of 0.6 meets a real 0.5 project's `>=0.5.1-rc2` and runs it, as a 0.6 release does (#3140).
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+#   admitted by the release version
+# expect-exit: 0
+
+def main() -> None:
+    println("admitted by the release version")

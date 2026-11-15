@@ -55,14 +55,24 @@ Integer finalizers are intentionally absent from cryptographic namespaces. Use d
 
 `finalize_bytes()` returns the digest for bytes supplied so far and resets the handle for a new stream. `Sha256Hasher` hashes exactly the bytes callers give it; it does not choose, serialize, or certify canonical identity bytes for an application.
 
+`Sha256Hasher.update_view(view: MappedView) -> None` adds the bytes of a [`std.fs`](fs.md) mapped view where they lie; no byte is copied out of the mapping.
+
+`Sha256Hasher.new() -> Sha256Hasher` constructs empty incremental SHA-256 state. `sha256.new()` delegates to this class-owned factory.
+
+`Sha256Hasher`, `ByteDigestHasher`, and `sha256` are declared by `std.primitives`. `std.hash` reexports the same declarations, so values cross the lower-level and higher-level import paths without conversion:
+
+```incan
+from std.primitives import ByteDigestHasher, Sha256Hasher, sha256
+```
+
 ## File and reader helpers
 
 | API | Returns | Description |
 | --- | --- | --- |
 | `file_digest(input: Path \| File, algorithm: str, chunk_size: int = 65536, length: int = 0)` | `Result[bytes, HashError]` | Stream a path or open file through a hash algorithm and return digest bytes. SHAKE algorithms require a positive `length`; fixed-output algorithms ignore `length`. |
-| `file_hash_u32(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u32, HashError]` | Stream a path or open file through a 32-bit non-cryptographic hash. Currently supported by `xxh32`. |
-| `file_hash_u64(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u64, HashError]` | Stream a path or open file through a 64-bit non-cryptographic hash. Currently supported by `xxh64` and `xxh3_64`. |
-| `file_hash_u128(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u128, HashError]` | Stream a path or open file through a 128-bit non-cryptographic hash. Currently supported by `xxh3_128`. |
+| `file_hash_u32(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u32, HashError]` | Stream a path or open file through a 32-bit non-cryptographic hash. Supported by `xxh32`. |
+| `file_hash_u64(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u64, HashError]` | Stream a path or open file through a 64-bit non-cryptographic hash. Supported by `xxh64` and `xxh3_64`. |
+| `file_hash_u128(input: Path \| File, algorithm: str, chunk_size: int = 65536)` | `Result[u128, HashError]` | Stream a path or open file through a 128-bit non-cryptographic hash. Supported by `xxh3_128`. |
 | `reader_digest(input: BinaryReader, algorithm: str, chunk_size: int = 65536, length: int = 0)` | `Result[bytes, HashError]` | Stream any `std.io.BinaryReader` through a hash algorithm and return digest bytes. |
 | `reader_hash_u32(input: BinaryReader, algorithm: str, chunk_size: int = 65536)` | `Result[u32, HashError]` | Stream any `std.io.BinaryReader` through a 32-bit non-cryptographic hash. |
 | `reader_hash_u64(input: BinaryReader, algorithm: str, chunk_size: int = 65536)` | `Result[u64, HashError]` | Stream any `std.io.BinaryReader` through a 64-bit non-cryptographic hash. |
@@ -86,23 +96,36 @@ One-shot namespace helpers that are infallible raise `ValueError` for the same v
 
 `hmac_sha256` is the only keyed namespace on this page; every other namespace is unkeyed.
 
+The declarations are owned by `std.primitives.hmac`. The compatibility import retains the same nominal signer type:
+
+```incan
+from std.hash import HmacSha256Signer, hmac_sha256
+```
+
+The lower-level import is an alternative:
+
+```incan
+from std.primitives.hmac import HmacSha256Signer, hmac_sha256
+```
+
 | API | Returns | Notes |
 | --- | --- | --- |
 | `hmac_sha256.digest(key: bytes, data: bytes)` | `bytes` | 32-byte HMAC-SHA256 tag. |
-| `hmac_sha256.verify(key: bytes, data: bytes, tag: bytes)` | `bool` | Constant-time comparison; does not short-circuit on the first differing byte. |
+| `hmac_sha256.verify(key: bytes, data: bytes, tag: bytes)` | `bool` | Returns false for a mismatched or incorrectly sized tag. Uses the native constant-time comparison instead of comparing tag bytes with `==`. |
 | `hmac_sha256.new(key: bytes)` | `HmacSha256Signer` | Incremental signer keyed with `key`. |
+| `HmacSha256Signer.new(key: bytes)` | `HmacSha256Signer` | Class-owned factory for an incremental signer keyed with `key`. |
 
 | Hasher family | Methods |
 | --- | --- |
 | Keyed signer | `update(chunk: bytes) -> None`, `finalize_bytes() -> bytes` |
 
-`finalize_bytes` returns the tag for the bytes supplied so far and resets the signer for a subsequent stream under the same key.
+`finalize_bytes` returns the tag for the bytes supplied so far and resets the signer for a subsequent stream under the same key. Calling it again without an update returns the tag for an empty message under that key. Empty updates do not change the message.
 
 Keys of any length are accepted: shorter keys are zero-padded to the block size, longer keys are hashed first. Comparing tag bytes with `==` is not constant time; use `verify`.
 
 ## Boundaries
 
-`std.hash` does not provide password hashing, signatures, authenticated encryption, CRC, or Adler checksums. Those require separate APIs because their security and compatibility contracts are different from ordinary byte hashing. Use [`std.checksum`](checksum.md) for CRC32 compatibility checksums.
+`std.hash` does not provide password hashing, signatures, authenticated encryption, CRC, or Adler checksums. Use [`std.checksum`](checksum.md) for CRC32 compatibility checksums.
 
 ## See also
 

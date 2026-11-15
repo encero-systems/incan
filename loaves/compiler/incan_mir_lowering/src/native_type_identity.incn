@@ -1,0 +1,244 @@
+"""Native nominal representation identities retain physical callable inputs without source binding metadata."""
+
+from rust::incan_semantics_core import (
+    CanonicalSymbolId,
+    IncanType as RustType,
+    IncanCallableParam as RustCallableParam,
+    SymbolOrigin,
+    function_type,
+    generic,
+    native_array_type,
+)
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from rust::std::collections import BTreeMap, BTreeSet
+from rust::std::sync import Arc
+from table_views import borrowed_at
+
+# A representation wrapper retained through generic substitution; it is not a source type constructor.
+pub const OWNED_CALLABLE_STORAGE: str = "<owned-callable>"
+
+
+pub model ConstructorIndex:
+    """
+    Declaration positions for one nominal inventory, without copied declaration facts.
+
+    `owners` and `generic_owners` keep the first match by carrier key. `generic_arities` retains template validation
+    after concrete layout specialization removes the source declaration rows. `named` keeps every position by
+    declaration name in table order, since a carrier key can differ from the name. `source_files` and
+    `package_versions` retain the authenticated project inputs needed when a checked trait identity becomes a Plan fact.
+    `validated_constructors` admits generated Validate calls without rescanning every declaration at every call site.
+    `count` is the inventory length indexed so far.
+    """
+
+    pub owners: dict[str, int]
+    pub generic_owners: dict[str, int]
+    pub generic_arities: dict[str, int]
+    pub named: BTreeMap[str, list[int]]
+    pub source_files: BTreeMap[str, str]
+    pub package_versions: BTreeMap[str, str]
+    pub validated_constructors: BTreeSet[CanonicalSymbolId]
+    pub count: int
+
+
+pub def constructor_index(declarations: list[NominalDeclaration]) -> ConstructorIndex:
+    """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
+    named: BTreeMap[str, list[int]] = BTreeMap.new()
+    validated_constructors: BTreeSet[CanonicalSymbolId] = BTreeSet.new()
+    # The new index is built through the same mutable borrow that extends a shared one, so one path indexes rows.
+    versions: BTreeMap[str, str] = BTreeMap.new()
+    files: BTreeMap[str, str] = BTreeMap.new()
+    mut constructors = Arc.new(
+        ConstructorIndex(
+            owners={},
+            generic_owners={},
+            generic_arities={},
+            named=named,
+            source_files=files,
+            package_versions=versions,
+            validated_constructors=validated_constructors,
+            count=0,
+        ),
+    )
+    extend_constructor_index(Arc.make_mut(constructors), declarations)
+    return Arc.unwrap_or_clone(constructors)
+
+
+pub def constructor_index_with_packages(
+    declarations: list[NominalDeclaration],
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> ConstructorIndex:
+    """Index retained constructors and copy authenticated module files and package selections once for Plan facts."""
+    mut constructors = constructor_index(declarations)
+    constructors.source_files = source_files.clone()
+    constructors.package_versions = package_versions.clone()
+    return constructors
+
+
+pub def extend_constructor_index(
+    mut constructors: &mut ConstructorIndex,
+    declarations: &list[NominalDeclaration],
+) -> None:
+    """
+    Index the positions appended since the last generation. The indexed rows must be an unchanged prefix of
+    `declarations`; earlier first matches keep their positions, so the result equals a rebuild.
+    """
+    for position in range(constructors.count, len(declarations)):
+        declaration = borrowed_at(declarations, position)
+        base = declaration.template_carrier_name()
+        if constructors.owners.get(base) == None:
+            constructors.owners[base] = position
+        if declaration.type_parameter_count != 0:
+            if constructors.generic_owners.get(base) == None:
+                constructors.generic_owners[base] = position
+            if constructors.generic_arities.get(base) == None:
+                constructors.generic_arities[base] = int(declaration.type_parameter_count)
+        constructors.named.entry(str(declaration.name)).or_insert([]).push(position)
+        match declaration.validated_constructor:
+            Some(contract) => _ = constructors.validated_constructors.insert(contract.constructor.clone())
+            None => pass
+    constructors.count = len(declarations)
+
+
+pub def extend_generic_constructor_arities(
+    mut constructors: &mut ConstructorIndex,
+    templates: &ConstructorIndex,
+) -> None:
+    """Retain source-template arities beside specialized layout positions without copying invalid template indices."""
+    for base in templates.generic_arities:
+        if constructors.generic_arities.get(base) == None:
+            match templates.generic_arities.get(base):
+                Some(arity) => constructors.generic_arities[base] = int(arity.clone())
+                None => pass
+
+
+pub def with_generic_constructor_arities(
+    mut constructors: ConstructorIndex,
+    templates: &ConstructorIndex,
+) -> ConstructorIndex:
+    """Return layout constructors carrying compact source-template arities without copying template positions."""
+    for base in templates.generic_arities:
+        if constructors.generic_arities.get(base) == None:
+            match templates.generic_arities.get(base):
+                Some(arity) => constructors.generic_arities[base] = int(arity.clone())
+                None => pass
+    return constructors
+
+
+pub def extend_constructor_authority(
+    mut constructors: &mut ConstructorIndex,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> None:
+    """Add authenticated module provenance and package selections discovered with resolved runtime declarations."""
+    for module, file in source_files:
+        constructors.source_files.insert(module, file)
+    for package, version in package_versions:
+        constructors.package_versions.insert(package, version)
+
+
+pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]:
+    """Every indexed position whose declaration has this name, in table order."""
+    mut positions: list[int] = []
+    match constructors.named.get(name):
+        Some(indexed) =>
+            for position in indexed:
+                positions.append(int(position.clone()))
+        None => pass
+    return positions
+
+
+pub def native_owner(declaration: NominalDeclaration) -> bool:
+    """Authenticate Rust-owned layouts independently of source Loaf artifacts that also have a native item."""
+    match declaration.canonical.origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
+
+
+pub def representation_arguments(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    arguments: &list[RustType],
+) -> list[RustType]:
+    """
+    Close authenticated native arguments by erasing metadata absent from native callable storage.
+
+    Source instance symbols and checked callable types retain parameter names, defaults and partial presets. A Rust
+    function pointer or erased owned callable has none of those fields. Passing modes and nested source nominal
+    identities remain intact, so this representation boundary grants no semantic type compatibility or coercion.
+
+    The caller authenticates the outer native owner before this boundary. Source owners use their original borrowed
+    arguments for lookup. Nested source owners retain their exact checked arguments here.
+    """
+    return representation_types(declarations, constructors, arguments)
+
+
+def representation_types(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    types: &list[RustType],
+) -> list[RustType]:
+    """Normalize an ordered native argument sequence without changing its arity or ownership markers."""
+    mut retained: list[RustType] = []
+    for ty in types:
+        retained.append(representation_type(declarations, constructors, ty))
+    return retained
+
+
+def representation_type(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    ty: &RustType,
+) -> RustType:
+    """Erase callable binding metadata recursively while retaining distinct authored nominal instantiations."""
+    match ty:
+        RustType.Function(params=parameters, return_type=result) =>
+            mut retained: list[RustCallableParam] = []
+            for index in range(len(parameters)):
+                parameter = borrowed_at(parameters, index)
+                retained.append(
+                    RustCallableParam(
+                        name=None,
+                        ty=representation_type(declarations, constructors, parameter.ty),
+                        kind=parameter.kind,
+                        has_default=false,
+                        is_partial_preset=false,
+                        is_mut=parameter.is_mut,
+                        native_owned=parameter.native_owned,
+                        input_access=parameter.input_access,
+                    ),
+                )
+            return function_type(retained, representation_type(declarations, constructors, result))
+        RustType.Generic(base=base, args=arguments) =>
+            if retains_source_arguments(declarations, constructors, str(base)):
+                return ty.clone()
+            return generic(str(base), representation_types(declarations, constructors, arguments))
+        RustType.Tuple(elements) => return RustType.Tuple(representation_types(declarations, constructors, elements))
+        RustType.Ref(inner) => return RustType.Ref(representation_type(declarations, constructors, inner))
+        RustType.RefMut(inner) => return RustType.RefMut(representation_type(declarations, constructors, inner))
+        RustType.TypeToken(inner) => return RustType.TypeToken(representation_type(declarations, constructors, inner))
+        RustType.NativeArray(element=element, length=length) =>
+            return native_array_type(representation_type(declarations, constructors, element), length.clone())
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return RustType.NativePointer(
+                mutable=mutable,
+                pointee=representation_type(declarations, constructors, pointee),
+            )
+        _ => return ty.clone()
+
+
+def retains_source_arguments(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    base: str,
+) -> bool:
+    """Normalize only authenticated native or registry constructors; unknown source enum carriers stay exact."""
+    match constructors.owners.get(base):
+        Some(position) => return not native_owner(borrowed_at(declarations, position.clone()))
+        None => pass
+    if base == OWNED_CALLABLE_STORAGE:
+        return false
+    # Bind the enum's definition rather than the Rust re-export chosen by older facts (#2256).
+    selected: Option[CollectionTypeId] = collection_type(base)
+    return selected == None

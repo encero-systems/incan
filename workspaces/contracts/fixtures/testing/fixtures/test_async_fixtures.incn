@@ -1,0 +1,48 @@
+# behavior: an async fixture, `yield` included, is awaited for the tests that name it, and an async test takes fixtures and `@parametrize` arguments, as 0.5.1 runs them (#3149)
+# expect-stdout-contains:
+#   test_async_fixtures.incn::test_async_with_fixture PASSED
+#   test_async_fixtures.incn::test_uses_async_fixture PASSED
+#   test_async_fixtures.incn::test_async_with_async_fixture PASSED
+#   test_async_fixtures.incn::test_async_parametrized[1] PASSED
+#   test_async_fixtures.incn::test_async_parametrized[2] PASSED
+
+"""Async fixtures and async tests with fixtures, as 0.5.1 runs them."""
+
+import std.async
+from std.testing import assert_eq, fixture, parametrize
+
+
+@fixture
+async def resource() -> int:
+    """An async `yield` fixture is awaited up to `yield` and after the test."""
+    println("async setup")
+    yield 7
+    println("async teardown")
+
+
+@fixture
+async def offset() -> int:
+    """Async fixtures yield their value, as 0.5.1 requires."""
+    yield 2
+
+
+@fixture
+def base() -> int:
+    return 40
+
+
+async def test_async_with_fixture(base: int) -> None:
+    assert_eq(base, 40)
+
+
+def test_uses_async_fixture(resource: int) -> None:
+    assert_eq(resource, 7)
+
+
+async def test_async_with_async_fixture(resource: int, offset: int) -> None:
+    assert_eq(resource + offset, 9)
+
+
+@parametrize("n", [1, 2])
+async def test_async_parametrized(n: int, base: int) -> None:
+    assert base + n > 40

@@ -1,0 +1,147 @@
+# behavior: overloads select by ordinary values, explicit constrained type arguments and value-position type tokens; selected return types stay precise through aliases, and primitive, model, enum, trait, transparent-alias, constrained-scalar and newtype tokens can be passed, returned and collected under explicit Type[T] context (#1033)
+# expect-stdout:
+#   2
+#   a!
+#   int q
+#   float p
+#   int r
+#   float column
+#   int token
+#   float token
+#   schema
+#   flavor
+#   count
+#   positive
+#   user id
+#   trait
+#   trait token
+
+pub def convert(value: int) -> int:
+    return value + 1
+
+
+pub def convert(value: str) -> str:
+    return value + "!"
+
+
+model Col:
+    name: str
+
+
+model IntCol:
+    src: str
+
+
+model FloatCol:
+    src: str
+
+
+model Schema:
+    name: str
+
+
+enum Flavor:
+    Vanilla
+    Chocolate
+
+
+trait Renderable:
+    def render(self) -> str: ...
+
+
+type Count = int
+
+
+type Positive = int[gt=0]
+
+
+type UserId = newtype int
+
+
+def cast[T with Int](expr: Col) -> IntCol:
+    return IntCol(src="int " + expr.name)
+
+
+def cast[T with Float](expr: Col) -> FloatCol:
+    return FloatCol(src="float " + expr.name)
+
+
+safe_cast = alias cast
+
+
+def kind[T with IntCol]() -> str:
+    return "int column"
+
+
+def kind[T with FloatCol]() -> str:
+    return "float column"
+
+
+def token_cast(expr: Col, target: Type[int]) -> IntCol:
+    return IntCol(src="int " + expr.name)
+
+
+def token_cast(expr: Col, target: Type[float]) -> FloatCol:
+    return FloatCol(src="float " + expr.name)
+
+
+safe_token_cast = alias token_cast
+
+
+def schema_token(value: Type[Schema]) -> str:
+    return "schema"
+
+
+def return_schema_token() -> Type[Schema]:
+    return Schema
+
+
+def flavor_token(value: Type[Flavor]) -> str:
+    return "flavor"
+
+
+def count_token(value: Type[Count]) -> str:
+    return "count"
+
+
+def positive_token(value: Type[Positive]) -> str:
+    return "positive"
+
+
+def user_id_token(value: Type[UserId]) -> str:
+    return "user id"
+
+
+def source_kind(value: Type[Schema]) -> str:
+    return "model"
+
+
+def source_kind(value: Type[Renderable]) -> str:
+    return "trait"
+
+
+safe_source_kind = alias source_kind
+
+
+def return_renderable_token() -> Type[Renderable]:
+    return Renderable
+
+
+def main() -> None:
+    println(convert(1))
+    println(convert("a"))
+    println(cast[Int](Col(name="q")).src)
+    println(cast[Float](Col(name="p")).src)
+    println(safe_cast[int](Col(name="r")).src)
+    println(kind[FloatCol]())
+    println(token_cast(Col(name="token"), int).src)
+    println(safe_token_cast(Col(name="token"), float).src)
+    schemas: list[Type[Schema]] = [Schema, return_schema_token()]
+    println(schema_token(schemas[1]))
+    println(flavor_token(Flavor))
+    println(count_token(int))
+    println(positive_token(Positive))
+    println(user_id_token(UserId))
+    println(source_kind(Renderable))
+    traits: list[Type[Renderable]] = [Renderable, return_renderable_token()]
+    println(safe_source_kind(traits[1]) + " token")

@@ -1,0 +1,13 @@
+# behavior: an unsigned // by zero stops the program at the division, after the output before it, as every other zero divisor does
+# expect-stdout:
+#   3
+#   1
+# expect-exit: 101
+
+def main() -> None:
+    b: u8 = 7
+    zero: u8 = 0
+    println(b // 2)
+    println(b % 2)
+    println(b // zero)
+    println("unreachable")

@@ -1,0 +1,161 @@
+"""Byte identity and direct reconstruction for the caller-described RFC 173 row path."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.typed_columns import TypedColumnWriter
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.typed_rows import TypedRowWriter
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from std.primitives.reflection import FieldInfo, Reconstruct, ShapeInfo, Source, VariantInfo, Walk, Walker
+from std.primitives.text import copy_frozen_bytes
+
+
+const NO_RENAMES: FrozenList[FrozenStr] = []
+const NO_FIELDS: FrozenList[FieldInfo] = []
+const NO_VARIANTS: FrozenList[VariantInfo] = []
+const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
+
+
+model AmountLayout:
+    """Provide compiler-checked field metadata for the handwritten root model."""
+
+    pub amount: i8
+
+
+@derive(Eq)
+model TypedI8 with Reconstruct:
+    """A handwritten exact signed scalar used by the typed model fixture."""
+
+    value: i128
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Expose the native integer carrier without constructing a Crumb Value."""
+        return walker.integer(self.value)
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Describe the scalar spelling used by the caller's field description."""
+        return ShapeInfo(
+            name="TypedI8",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="i8",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        """Restore the exact signed carrier through the format-owned source."""
+        return Ok(TypedI8(value=source.integer()?))
+
+
+@derive(Eq)
+model TypedAmount with Reconstruct:
+    """One handwritten model whose callbacks match the ordinary Value-path fixture."""
+
+    amount: TypedI8
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Walk the complete root model and its checked field identity."""
+        walker.begin_model(Self.__shape__())?
+        walker.field(amount_field(), self.amount)?
+        return walker.end_model()
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Return the caller-owned closed selector and exact root field metadata."""
+        return ShapeInfo(
+            name="TypedAmount",
+            identity=b"record\x00",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="record@7265636f726400",
+            fields=AmountLayout.__fields__(),
+            variants=NO_VARIANTS,
+        )
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        """Request every stored field and refuse absence before returning complete state."""
+        source.begin_model(Self.__shape__())?
+        amount = match source.field[TypedI8](amount_field())?:
+            Some(value) => value
+            None => return Err(source.missing(amount_field()))
+        source.end_model()?
+        return Ok(TypedAmount(amount=amount))
+
+
+def amount_field() -> FieldInfo:
+    """Return the compiler-checked field identity used by both typed callbacks and the description."""
+    return AmountLayout.__fields__()[0]
+
+
+def description() -> Description:
+    """Return the complete description shared verbatim by the Value and typed paths."""
+    member = Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(amount_field().identity))),
+            MetadataEntry(key="name", value=Metadata.Text("amount")),
+            MetadataEntry(key="type", value=Metadata.Text("i8")),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+    complete = Metadata.Map(
+        [
+            MetadataEntry(key="kind", value=Metadata.Text("Record")),
+            MetadataEntry(key="nominal", value=Metadata.Binary(b"record\x00")),
+            MetadataEntry(key="path", value=Metadata.Text("example.TypedAmount")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+            MetadataEntry(key="fields", value=Metadata.List([member])),
+        ],
+    )
+    return Description(metadata=complete, mode=DescriptionMode.Inline)
+
+
+def value_record(value: i128) -> RowRecord:
+    """Return the schema-less comparator record for the same logical typed amount."""
+    field = ValueField(
+        identity=copy_frozen_bytes(amount_field().identity),
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(value)),
+    )
+    return RowRecord(key=b"record\x00", value=Value.Record([field]))
+
+
+def test_typed_rows_are_byte_identical_and_reconstruct_without_value_nodes() -> Result[None, str]:
+    """The handwritten typed path must reproduce ordinary bytes and restore the same model."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    expected = write_rows([description()], [value_record(7i128)], registry, false, budget).map_err((e) => e.message())?
+    mut typed = TypedRowWriter.create([description()], registry, false, budget).map_err((e) => e.message())?
+    mut root = typed.root(TypedAmount.__shape__()).map_err((e) => e.message())?
+    TypedAmount(amount=TypedI8(value=7i128)).__walk__(root).map_err((e) => e.message())?
+    typed.append(root).map_err((e) => e.message())?
+    actual = typed.finish().map_err((e) => e.message())?
+    assert actual == expected
+    return Ok(None)
+
+
+def test_typed_columns_are_byte_identical_and_reconstruct_without_value_nodes() -> Result[None, str]:
+    """The handwritten typed path must reproduce indexed columns and restore the same model."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    expected = write_columns([description()], [value_record(7i128)], registry, false, [], budget).map_err(
+        (e) => e.message(),
+    )?
+    mut typed = TypedColumnWriter.create([description()], registry, false, budget).map_err((e) => e.message())?
+    mut root = typed.root(TypedAmount.__shape__()).map_err((e) => e.message())?
+    TypedAmount(amount=TypedI8(value=7i128)).__walk__(root).map_err((e) => e.message())?
+    typed.append(root).map_err((e) => e.message())?
+    actual = typed.finish().map_err((e) => e.message())?
+    assert actual == expected
+    return Ok(None)

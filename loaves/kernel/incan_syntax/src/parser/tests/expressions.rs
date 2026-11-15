@@ -498,7 +498,7 @@ def run() -> int:
 }
 
 #[test]
-fn test_parse_race_for_expression_requires_std_async_activation() -> Result<(), Vec<CompileError>> {
+fn test_parse_race_identifier_remains_ordinary() -> Result<(), Vec<CompileError>> {
     let source = r#"
 def run() -> int:
   race = 1
@@ -526,8 +526,6 @@ def run() -> int:
 #[test]
 fn test_parse_active_race_for_expression_surface_shape() -> Result<(), Vec<CompileError>> {
     let source = r#"
-import std.async
-
 async def run() -> int:
   return race for value:
     await fast() => value
@@ -535,7 +533,7 @@ async def run() -> int:
       return value
 "#;
     let program = parse_str(source)?;
-    let function = require_function_decl(&program.declarations[1])?;
+    let function = require_function_decl(&program.declarations[0])?;
     let Statement::Return(Some(expr)) = &function.body[0].node else {
         return Err(vec![CompileError::new(
             "parser test internal error: expected return statement".to_string(),
@@ -578,75 +576,79 @@ async def run() -> int:
 }
 
 #[test]
-fn test_parse_race_for_rejects_pattern_binding_header() {
+fn test_parse_race_for_pattern_binding_uses_ordinary_expression_path() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-import std.async
-
 async def run() -> int:
   return race for (value):
     await fast() => value
 "#;
-    let errors = parse_str(source).expect_err("pattern race header should fail");
+    let Err(errors) = parse_str(source) else {
+        return Err("expected the ordinary expression path to refuse this invalid expression".into());
+    };
     assert!(
         errors
             .iter()
-            .any(|error| error.message.contains("Pattern-binding race headers are not supported")),
-        "expected pattern-binding diagnostic, got: {errors:?}"
+            .all(|error| !error.message.contains("Pattern-binding race headers are not supported")),
+        "race-specific parsing should not claim an incomplete header: {errors:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn test_parse_race_for_rejects_default_arm() {
+fn test_parse_race_for_rejects_default_arm() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-import std.async
-
 async def run() -> int:
   return race for value:
     default => value
 "#;
-    let errors = parse_str(source).expect_err("default race arm should fail");
+    let Err(errors) = parse_str(source) else {
+        return Err("expected default race arm to fail".into());
+    };
     assert!(
         errors
             .iter()
             .any(|error| error.message.contains("Default race arms are not supported")),
         "expected default-arm diagnostic, got: {errors:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn test_parse_race_for_rejects_guard_arm() {
+fn test_parse_race_for_rejects_guard_arm() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-import std.async
-
 async def run() -> int:
   return race for value:
     await fast() if value > 0 => value
 "#;
-    let errors = parse_str(source).expect_err("guarded race arm should fail");
+    let Err(errors) = parse_str(source) else {
+        return Err("expected guarded race arm to fail".into());
+    };
     assert!(
         errors
             .iter()
             .any(|error| error.message.contains("Race arm guards are not supported")),
         "expected guard diagnostic, got: {errors:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn test_parse_race_for_rejects_fairness_control() {
+fn test_parse_race_for_rejects_fairness_control() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-import std.async
-
 async def run() -> int:
   return race for value:
     fair await fast() => value
 "#;
-    let errors = parse_str(source).expect_err("fairness-controlled race arm should fail");
+    let Err(errors) = parse_str(source) else {
+        return Err("expected fairness-controlled race arm to fail".into());
+    };
     assert!(
         errors
             .iter()
             .any(|error| error.message.contains("Race fairness controls are not supported")),
         "expected fairness diagnostic, got: {errors:?}"
     );
+    Ok(())
 }
 
 #[test]

@@ -1,0 +1,61 @@
+"""Native input ABI follows explicit checked access without changing inferred parameter behavior."""
+
+from rust::incan_semantics_core import IncanInputAccess, IncanCallableParamKind
+from pub::incan_mir_plan import PlanType, ListLeaf
+from closures import signature_input, packed_input, semantic_input
+
+
+pub def test_explicit_scalar_inputs_keep_real_references() -> Result[None, str]:
+    """An explicit scalar loan keeps caller storage even though ordinary mutable scalars are local copies."""
+    assert signature_input(PlanType.Int, true)? == PlanType.Int
+    assert signature_input(PlanType.Int, false, false, IncanInputAccess.Shared)? == PlanType.ScalarRef([PlanType.Int])
+    assert signature_input(PlanType.Int, false, false, IncanInputAccess.Exclusive)? == PlanType.ScalarMutRef(
+        [PlanType.Int],
+    )
+    assert signature_input(PlanType.Int, true, false, IncanInputAccess.Owned)? == PlanType.Int
+    return Ok(None)
+
+
+pub def test_explicit_owned_collections_bypass_inferred_borrowing() -> Result[None, str]:
+    """Owned input remains a value while ordinary collection input keeps the established shared/exclusive ABI."""
+    ty = PlanType.List(ListLeaf.Int, 1)
+    assert signature_input(ty, false)? == PlanType.ListRef(ListLeaf.Int, 1)
+    assert signature_input(ty, true)? == PlanType.ListMutRef(ListLeaf.Int, 1)
+    assert signature_input(ty, true, false, IncanInputAccess.Owned)? == ty
+    assert signature_input(ty, false, false, IncanInputAccess.Shared)? == PlanType.ListRef(ListLeaf.Int, 1)
+    assert signature_input(ty, false, false, IncanInputAccess.Exclusive)? == PlanType.ListMutRef(ListLeaf.Int, 1)
+    return Ok(None)
+
+
+pub def test_callable_and_frame_inputs_share_access_selection() -> Result[None, str]:
+    """Semantic callable types and packed frame parameters agree for text and nominal reference carriers."""
+    types = [PlanType.String, PlanType.Model(0, "Point"), PlanType.Enum(1, "Choice")]
+    modes = [IncanInputAccess.Shared, IncanInputAccess.Exclusive, IncanInputAccess.Owned]
+    for ty in types:
+        for mode in modes:
+            expected = signature_input(ty, false, false, mode)?
+            assert packed_input(ty, IncanCallableParamKind.Normal, false, false, mode)? == expected
+            assert semantic_input(ty, IncanCallableParamKind.Normal, false, false, mode)? == expected
+    assert signature_input(PlanType.String, false, false, IncanInputAccess.Shared)? == PlanType.StringRef
+    assert signature_input(PlanType.Model(0, "Point"), false, false, IncanInputAccess.Exclusive)? == PlanType.ModelMutRef(
+        0,
+        "Point",
+    )
+    return Ok(None)
+
+
+pub def test_explicit_inputs_refuse_conflicting_or_unrepresented_packs() -> None:
+    """Native ownership and rest-pack contracts cannot silently override a checked explicit mode."""
+    ty = PlanType.List(ListLeaf.Int, 1)
+    match signature_input(ty, false, true, IncanInputAccess.Shared):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match packed_input(ty, IncanCallableParamKind.RestPositional, false, false, IncanInputAccess.Owned):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false
+    match semantic_input(PlanType.Int, IncanCallableParamKind.RestKeyword, false, false, IncanInputAccess.Shared):
+        Err(_reason) => pass
+        Ok(_value) =>
+            assert false

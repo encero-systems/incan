@@ -1,0 +1,11 @@
+from std.testing import assert_eq
+
+
+def test_alpha_one(run_wide: int) -> None:
+    println("alpha one")
+    assert_eq(run_wide, 10)
+
+
+def test_alpha_two(run_wide: int) -> None:
+    println("alpha two")
+    assert_eq(run_wide, 10)

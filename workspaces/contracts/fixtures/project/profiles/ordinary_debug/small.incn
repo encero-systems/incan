@@ -1,0 +1,8 @@
+"""Observe debug overflow of an exact-width integer."""
+
+
+def main() -> None:
+    """Overflow the largest signed byte after delivered output."""
+    value: i8 = 127
+    println("before")
+    println(value + 1)

@@ -1,6 +1,13 @@
 """Callable signature admission from checked frontend representation facts."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanCallableParam,
+    IncanCallableParamKind,
+    IncanInputAccess,
+)
+from body_index import BodyIndex
+from native_type_identity import constructor_index
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustModule,
@@ -10,8 +17,11 @@ from rust::incan_semantics_core::body_ir import (
     Callee as RustCallee,
     CallableTarget as RustCallableTarget,
     NamedCallableTarget as RustNamedTarget,
+    LoafCallable,
     DecoratedBinding,
     DecoratedInitialization,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
 )
 from pub::incan_mir_plan import (
     PlanType,
@@ -29,32 +39,59 @@ from pub::incan_mir_plan import (
     Unwind,
     OperandKind,
     EnumDeclaration,
+    ExternalFunction,
 )
-from pub::incan_mir_plan import block as plan_block, place as plan_place
+from pub::incan_mir_plan import block as plan_block, place as plan_place, assign as plan_assign
 from types import primitive_type
-from classes import receiver_mode
-from async_ import evaluator_name
+from classes import receiver_mode, parameter_local_index
+from async_ import evaluator_name, boxed_future_constructor
 from collections import is_collection, is_owned_collection
-from layout_types import native_source_type, callable_parameter_type, collection_leaf
-from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
+from layout_types import (
+    native_source_type,
+    context_free_type,
+    callable_parameter_type,
+    collection_leaf,
+    shared_receiver_type,
+    mutable_receiver_type,
+)
+from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
-from type_parameters import Instance, instantiate, substitute
+from type_parameters import Instance, instantiate, instantiate_parameter, request_instance, substitute
+from call_arguments import call_parameter_type
+from explicit_arguments import direct_view_access
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
-    """Keep the checked parameter order and append the return type to the native signature vector."""
+    """Build the native signature: 1. Retain checked input order and loans. 2. Append the owned return contract."""
+    # 1. Retain checked input order and loans.
     mut signature: list[PlanType] = []
+    nominals: list[NominalDeclaration] = []
+    constructors = constructor_index(nominals)
+    enums: list[RustEnumDeclaration] = []
+    unions: list[RustType] = []
+    intrinsics: list[EnumDeclaration] = []
     for parameter in parameters:
         mut input = PlanType.Unit
         if parameter.kind == IncanCallableParamKind.Normal:
-            input = callable_component(parameter.ty)?
+            input = callable_input(parameter.ty)?
         else:
-            input = callable_parameter_type([], [], [], parameter, [])?
-        signature.append(packed_input(input, parameter.kind, parameter.is_mut)?)
+            input = callable_parameter_type(constructors, nominals, enums, unions, parameter, intrinsics)?
+        signature.append(
+            packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned, parameter.input_access)?,
+        )
+    # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
+
+
+def callable_input(ty: &RustType) -> Result[PlanType, str]:
+    """Retain explicit native input loans; returned values still follow the owned callable component contract."""
+    match ty:
+        RustType.Ref(_inner) => return context_free_type(ty)
+        RustType.RefMut(_inner) => return context_free_type(ty)
+        _ => return callable_component(ty)
 
 
 def callable_result(ty: &RustType) -> Result[PlanType, str]:
@@ -67,51 +104,101 @@ def callable_result(ty: &RustType) -> Result[PlanType, str]:
     return callable_component(ty)
 
 
-pub def signature_input(ty: PlanType, mutable: bool) -> PlanType:
+pub def signature_input(
+    ty: PlanType,
+    mutable: bool,
+    native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
+) -> Result[PlanType, str]:
     """
     A callable's input as its declaration's frame receives it: a list or collection by the caller-owned reference, and
     for a `mut` parameter the exclusive borrow of the caller's value.
+
+    Checked access selects an owned value or a true shared/exclusive reference before ordinary defaults.
+    Binding mutability does not change that access. A checked native collection consumes its outer value;
+    references inside its elements keep their own ABI.
     """
+    # Explicit checked access precedes ordinary duckborrowing. Native collection ownership is a separate ABI fact.
+    if input_access != IncanInputAccess.Inferred:
+        if native_owned:
+            return Err("invalid Body IR simultaneous native and explicit input ownership")
+        match input_access:
+            IncanInputAccess.Owned => return Ok(ty)
+            IncanInputAccess.Shared => return shared_receiver_type(ty)
+            IncanInputAccess.InferredShared => return shared_receiver_type(ty)
+            IncanInputAccess.Exclusive => return mutable_receiver_type(ty)
+            _ => return Err("invalid Body IR explicit input access")
     # Every function frame stores its parameters this way, so a function item, a lifted closure and an annotated
     # callable type all agree on this one input representation.
-    return parameter_storage_type(ty, mutable)
+    if native_owned:
+        if not is_owned_collection(ty):
+            return Err("invalid Body IR owned native collection parameter")
+        return Ok(ty)
+    return Ok(parameter_storage_type(ty, mutable))
 
 
-pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
-    """Project a checked callable element and rest role onto the owned pack ABI; ordinary inputs keep their borrow."""
+pub def semantic_input(
+    ty: PlanType,
+    kind: IncanCallableParamKind,
+    mutable: bool,
+    native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
+) -> Result[PlanType, str]:
+    """
+    Project a checked callable element onto its parameter ABI.
+
+    1. Preserve ordinary input borrowing.
+    2. Refuse mutable rest parameters.
+    3. Pack the checked element using the shared collection representation.
+    """
+    # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return Ok(signature_input(ty, mutable))
+        return signature_input(ty, mutable, native_owned, input_access)
+    # 2. Rest ownership requires its own checked pack contract.
+    if input_access != IncanInputAccess.Inferred:
+        return Err("unsupported Body IR explicit rest input access")
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
-    match ty:
-        PlanType.Int => pass
-        PlanType.String => pass
-        _ => return Err("unsupported Body IR rest callable element representation")
+    # 3. Pack the checked element using the shared collection representation.
     if kind == IncanCallableParamKind.RestPositional:
+        match ty:
+            PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+            _ => pass
         return Ok(PlanType.List(collection_leaf(ty)?, 1))
     if kind == IncanCallableParamKind.RestKeyword:
         return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(ty)?))
     return Err("unsupported Body IR callable parameter role")
 
 
-pub def packed_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
-    """Consume a checked frame pack as owned storage, without applying ordinary collection borrowing."""
+pub def packed_input(
+    ty: PlanType,
+    kind: IncanCallableParamKind,
+    mutable: bool,
+    native_owned: bool = false,
+    input_access: IncanInputAccess = IncanInputAccess.Inferred,
+) -> Result[PlanType, str]:
+    """
+    Consume a checked frame pack as owned storage.
+
+    1. Preserve ordinary input borrowing.
+    2. Refuse mutable rest parameters.
+    3. Match the checked list or string-keyed dictionary to its declared rest role.
+    """
+    # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return Ok(signature_input(ty, mutable))
+        return signature_input(ty, mutable, native_owned, input_access)
+    # 2. Rest ownership requires its own checked pack contract.
+    if input_access != IncanInputAccess.Inferred:
+        return Err("unsupported Body IR explicit rest input access")
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
+    # 3. Match the checked pack to its declared rest role.
     match ty:
-        PlanType.List(leaf, depth) =>
-            if kind == IncanCallableParamKind.RestPositional and depth == 1 and (
-                leaf == ListLeaf.Int
-                or leaf == ListLeaf.Str
-            ):
+        PlanType.List(_leaf, depth) =>
+            if kind == IncanCallableParamKind.RestPositional and depth > 0:
                 return Ok(ty)
-        PlanType.Dict(key, value) =>
-            if kind == IncanCallableParamKind.RestKeyword and key == ListLeaf.Str and (
-                value == ListLeaf.Int
-                or value == ListLeaf.Str
-            ):
+        PlanType.Dict(key, _value) =>
+            if kind == IncanCallableParamKind.RestKeyword and key == ListLeaf.Str:
                 return Ok(ty)
         _ => pass
     return Err("unsupported Body IR checked rest pack representation")
@@ -126,7 +213,7 @@ pub def callable_component(ty: &RustType) -> Result[PlanType, str]:
     # A signature component carries no source-local nominal context, and lists or collections of admitted elements
     # translate without one. Models, enums and unions inside a signature stay refused by name. The `EnumDeclaration`
     # import keeps the empty intrinsics list's element type in scope (the compiler gap tracked by #2010).
-    match native_source_type([], [], [], ty, []):
+    match context_free_type(ty):
         Ok(component) =>
             if is_list(component) or is_collection(component):
                 return Ok(component)
@@ -159,7 +246,7 @@ pub def function_pointer_storage(body: &RustBody) -> list[int]:
     return locals
 
 
-pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
+pub def validate_callable_representation(body: RustBody) -> Result[None, str]:
     """Refuse callable signatures whose closure-holding contract the checker did not record."""
     match body.callable_representation:
         Some(_representation) => return Ok(None)
@@ -177,7 +264,7 @@ pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
 
 
 pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> Result[PlanType, str]:
-    """A selected generic value owns its environment; an ordinary environment-capable function parameter borrows it."""
+    """A selected generic value owns its environment; a call-only parameter owns one temporary lending envelope."""
     match ty:
         PlanType.FunctionPointer(signature) =>
             match body.callable_representation:
@@ -188,7 +275,7 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
                     for held in representation.closure_holding_parameters:
                         if int(held.index()) == local:
                             _ = closure_arguments(signature)?
-                            return Ok(PlanType.ClosureRef(signature))
+                            return Ok(PlanType.BorrowingClosure(signature))
                 None => pass
         _ => pass
     return Ok(ty)
@@ -209,7 +296,14 @@ pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanT
 
 
 pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
-    """A function whose one returned closure captures returns that closure's owned callable object."""
+    """
+    A function whose one returned closure captures returns that closure's owned callable object. A direct returned
+    view is a shared or exclusive reference to its source place, with the view's access; a carried view's carrier is
+    an owned result.
+    """
+    match direct_view_access(body):
+        Some(access) => return signature_input(ty, false, false, access)
+        None => pass
     match ty:
         PlanType.FunctionPointer(signature) =>
             match body.callable_representation:
@@ -224,10 +318,13 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
     """
-    Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
-    parameters take with their exact checked call representations. Results may own a list, set, dictionary, model,
-    newtype or enum, transferred from the lifted function to its caller under the same retained layout.
+    Validate a closure's retained input and result storage, including shared native model references.
+
+    1. Validate scalar/text inputs, owned nominals, shared model and collection views, and exclusive `mut` borrows.
+    2. Validate the result's scalar or owned transfer carrier.
+    3. Return input types in their checked call order.
     """
+    # 1. Validate each retained input representation.
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
     mut elements: list[PlanType] = []
@@ -244,19 +341,24 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                 PlanType.StringMutRef => pass
                 PlanType.Model(_index, _name) => pass
                 PlanType.ModelMutRef(_index, _name) => pass
-                PlanType.Model(_index, _name) => pass
+                PlanType.ModelRef(_index, _name) => pass
                 PlanType.EnumMutRef(_index, _name) => pass
                 _ =>
                     return Err(
                         "unsupported Body IR closure input outside scalars, text, models, collection views and borrows",
                     )
         elements.append(input)
-    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_nominal_result(
-        signature[-1],
+    # 2. Validate the result's owned transfer representation.
+    if (
+        not closure_value_type(signature[-1])
+        and not is_owned_collection(signature[-1])
+        and not is_generator_type(signature[-1])
+        and not owned_nominal_result(signature[-1])
     ):
         return Err(
             "unsupported Body IR closure result outside scalars, owned text, collections and retained nominal values",
         )
+    # 3. Keep the checked input order.
     return Ok(elements)
 
 
@@ -285,24 +387,53 @@ pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
     """
     Admit captures according to the retained reusable or consuming environment contract.
 
-    Reusable environments copy scalars and clone owned text, list, and model snapshots for every call. Checking forbids changes to captured values and aliases of their storage. A proven consuming environment instead transfers its canonical zip into the lifted body once.
+    Reusable environments copy scalars and clone owned text, collection, model, and enum snapshots for every call.
+    A reusable environment can also hold one shared reference, copied into every call, while checking keeps its source
+    borrowed. Checking forbids changes to captured values and aliases of their storage.
+    A proven consuming environment instead transfers its canonical zip into the lifted body once.
     """
-    if consumes_environment:
-        match ty:
-            PlanType.ZipIterator(_left, _right) => return true
-            _ => pass
     match ty:
-        PlanType.Model(_owner, _name) => return true
-        PlanType.List(_leaf, _depth) => return true
-        _ => return closure_value_type(ty) and ty != PlanType.Unit
+        PlanType.ZipIterator(_left, _right) => return consumes_environment
+        _ =>
+            return (
+                owned_capture(ty)
+                or (closure_value_type(ty) and ty != PlanType.Unit)
+                or (not consumes_environment and reference_capture(ty))
+            )
+
+
+pub def reference_capture(ty: PlanType) -> bool:
+    """Select a shared reference to borrowed text, a collection, a model, an enum, a tuple or a scalar."""
+    match ty:
+        PlanType.StringRef => return true
+        PlanType.StrRef => return true
+        PlanType.ListRef(_leaf, _depth) => return true
+        PlanType.SetRef(_leaf) => return true
+        PlanType.DictRef(_key, _value) => return true
+        PlanType.ModelRef(_owner, _name) => return true
+        PlanType.EnumRef(_owner, _name) => return true
+        PlanType.TupleRef(_elements) => return true
+        PlanType.ScalarRef(_elements) => return true
+        _ => return false
 
 
 pub def owned_capture(ty: PlanType) -> bool:
-    """Move text, lists, model and zip snapshots into an environment that clones them for each call."""
+    """
+    Select owned text, collection, callable, model, enum and zip snapshots for construction, validation and invocation.
+
+    Reusable calls clone these snapshots.
+    """
     match ty:
+        PlanType.String => return true
+        PlanType.List(_leaf, _depth) => return true
+        PlanType.Set(_leaf) => return true
+        PlanType.Dict(_key, _value) => return true
         PlanType.Model(_owner, _name) => return true
+        PlanType.Enum(_owner, _name) => return true
+        PlanType.Closure(_signature) => return true
+        PlanType.NativeClosure(_signature, _send, _sync) => return true
         PlanType.ZipIterator(_left, _right) => return true
-        _ => return ty == PlanType.String or is_owned_list(ty)
+        _ => return false
 
 
 pub def closure_constructor(
@@ -312,15 +443,23 @@ pub def closure_constructor(
     signature: list[PlanType],
     consumes_environment: bool,
     span: SourceSpan,
+    native_send: bool = false,
+    native_sync: bool = false,
+    borrowing: bool = false,
 ) -> Function:
     """
     Declare the constructor whose native body boxes one environment holding the captures in order.
 
-    Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object.
+    Its plan body is the validated reusable or consuming call contract returning the corresponding boxed object; an
+    environment holding a shared reference returns the borrowing object, which lives no longer than that borrow.
     The driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
     """
     mut object_type = PlanType.Closure(signature)
     mut body_call = CalleeKind.ClosureBody(lifted, len(captures))
+    if native_send or native_sync:
+        object_type = PlanType.NativeClosure(signature, native_send, native_sync)
+    if borrowing:
+        object_type = PlanType.BorrowingClosure(signature)
     if consumes_environment:
         object_type = PlanType.ClosureOnce(signature)
         body_call = CalleeKind.ClosureBodyOnce(lifted, len(captures))
@@ -390,14 +529,66 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
     )
 
 
+pub def borrowed_callable_forwarder(
+    name: str,
+    signature: list[PlanType],
+    borrowing_source: bool,
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """Forward a shared callable through a call-owned borrowing envelope with the same signature."""
+    mut source = PlanType.ClosureRef(signature)
+    mut callee = CalleeKind.CallClosure(signature)
+    if borrowing_source:
+        source = PlanType.BorrowingClosureRef(signature)
+        callee = CalleeKind.CallBorrowingClosure(signature)
+    mut locals = [Local(ty=signature[-1], span=span), Local(ty=source, span=span)]
+    mut parameters = [Parameter(name="__incan_callable", ty=source, span=span)]
+    mut operands: list[Operand] = []
+    for index in range(len(signature) - 1):
+        ty = signature[index]
+        locals.append(Local(ty=ty, span=span))
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
+        place = plan_place(index + 2, span)
+        mut kind = OperandKind.Copy(place)
+        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+            kind = OperandKind.Move(place)
+        operands.append(Operand(kind=kind, span=span))
+    inputs = closure_arguments(signature)?
+    packed = len(locals)
+    locals.append(Local(ty=PlanType.CallableArguments(inputs), span=span))
+    pack = plan_assign(plan_place(packed, span), RvalueKind.Tuple(operands), span)
+    receiver = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
+    arguments = [receiver, Operand(kind=OperandKind.Move(plan_place(packed, span)), span=span)]
+    call = TerminatorKind.Call(
+        Callee(kind=callee, span=span),
+        arguments,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Ok(
+        Function(
+            name=name,
+            parameters=parameters,
+            return_type=signature[-1],
+            locals=locals,
+            blocks=[plan_block([pack], call, span), plan_block([], TerminatorKind.Return, span)],
+            span=span,
+        ),
+    )
+
+
 pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
     """Read a retained function or callable-object signature; inputs come first and the result is last."""
     match ty:
         PlanType.FunctionPointer(signature) => return Ok(signature)
         PlanType.FunctionItem(_name, signature) => return Ok(signature)
         PlanType.Closure(signature) => return Ok(signature)
+        PlanType.NativeClosure(signature, _send, _sync) => return Ok(signature)
         PlanType.ClosureOnce(signature) => return Ok(signature)
         PlanType.ClosureRef(signature) => return Ok(signature)
+        PlanType.BorrowingClosure(signature) => return Ok(signature)
+        PlanType.BorrowingClosureRef(signature) => return Ok(signature)
         _ => return Err("unsupported Body IR local callable representation")
 
 
@@ -438,36 +629,42 @@ pub def function_assignment(
 
 
 pub def source_function_item(
-    module: &RustModule,
+    module: RustModule,
     mut builder: Builder,
-    value: &RustRvalue,
-) -> Result[Option[tuple[str, PlanType]], str]:
-    """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
+    value: RustRvalue,
+    span: SourceSpan,
+) -> Result[Option[tuple[str, PlanType, str]], str]:
+    """Retain a function item's exact signature and declaration name from its checked named-read or original identity."""
     match value:
         RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
-            match closure.original_callable:
-                Some(_) =>
+            if not closure.function_item and closure.original_callable == None:
+                return Ok(None)
+            mut inputs: list[RustParameter] = []
+            for parameter in parameters:
+                inputs.append(instantiate_parameter(parameter, builder.type_parameters, builder.type_arguments)?)
+            match closure.original_callable.as_ref():
+                Some(identity) =>
                     if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 0:
                         return Err("invalid Body IR original callable computation")
                     for binding in module.decorated_bindings:
                         if binding.original_body.canonical == closure.original_callable:
-                            return Ok(Some(original_function_item(module, builder, parameters, binding)?))
+                            item = original_function_item(module, builder, inputs, binding, span)?
+                            return Ok(Some((item[0], item[1], str(identity.declaration_name))))
                     return Err("unsupported Body IR unretained original callable")
                 None => pass
-            if not closure.function_item:
-                return Ok(None)
             if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:
                 return Err("invalid Body IR function-item forwarding computation")
-            return Ok(Some(checked_function_item(module, builder, parameters, closure.stmts[0].kind)?))
+            return Ok(Some(checked_function_item(module, builder, inputs, closure.stmts[0].kind, span)?))
         _ => return Ok(None)
 
 
 def checked_function_item(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     statement: &RustStatementKind,
-) -> Result[tuple[str, PlanType], str]:
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType, str], str]:
     """Require the same checked declaration and signature as the named read's retained forwarding call."""
     match statement:
         RustStatementKind.Call(destination=_destination, callee=callee, args=_arguments, may_panic=_panic) =>
@@ -475,32 +672,68 @@ def checked_function_item(
                 RustCallee.Function(target) =>
                     match target:
                         RustCallableTarget.Named(named) =>
-                            return function_item_identity(module, builder, parameters, named)
+                            return named_function_item(module, builder, parameters, named, span)
                         _ => return Err("invalid Body IR indirect function-item forwarding target")
                 _ => return Err("invalid Body IR nonfunction item forwarding target")
         _ => return Err("invalid Body IR function-item body")
 
 
-def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def named_function_item(
+    module: &RustModule,
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    target: &RustNamedTarget,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType, str], str]:
+    """Attach the canonical declaration name to an authenticated function item without reading its signature for a name."""
+    item = function_item_identity(module, builder, parameters, target, span)?
+    match target.canonical:
+        Some(identity) => return Ok((item[0], item[1], str(identity.declaration_name)))
+        None => return Err("unsupported Body IR unnamed function item")
+
+
+def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """
-    Admit a function item's signature component: a callable component, a source model or enum, or a standard carrier.
+    Retain a function item's signature component through its checked frame's ordinary layout context.
 
-    The item's own frame takes and returns models, enums and carriers by value under the frame's own layout, which is
-    the representation a closure expression's item already carries.
+    Its inputs and result use the same nominal, scalar, borrowed and collection storage as its own frame. A second
+    signature whitelist would reject admitted borrowed scalar inputs before the native callable can be verified.
     """
-    match callable_component(ty):
-        Ok(component) => return Ok(component)
-        Err(reason) =>
-            match native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics):
-                Ok(PlanType.Model(index, name)) => return Ok(PlanType.Model(index, name))
-                Ok(PlanType.ModelRef(index, name)) => return Ok(PlanType.ModelRef(index, name))
-                Ok(PlanType.ModelMutRef(index, name)) => return Ok(PlanType.ModelMutRef(index, name))
-                Ok(PlanType.Enum(index, name)) => return Ok(PlanType.Enum(index, name))
-                Ok(PlanType.FunctionPointer(signature)) => return Ok(PlanType.FunctionPointer(signature))
-                _ => return Err(reason)
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        ty,
+        builder.intrinsics,
+    )
 
 
-def item_result(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """Retain an item's explicit input loan against its full nominal context; other inputs use owned components."""
+    match ty:
+        RustType.Ref(_inner) =>
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                ty,
+                builder.intrinsics,
+            )
+        RustType.RefMut(_inner) =>
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                ty,
+                builder.intrinsics,
+            )
+        _ => return item_component(builder, ty)
+
+
+def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """A function item's result: a lazy generator, as `callable_result` admits one, or any item component."""
     match generator_type(ty):
         Some(Ok(result)) =>
@@ -511,42 +744,120 @@ def item_result(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
 
 
 def function_item_identity(
-    module: &RustModule,
-    builder: Builder,
+    module: RustModule,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     target: &RustNamedTarget,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
-    """A diagnostic source name becomes a plan item only after its canonical and physical identities agree."""
-    if len(target.type_args) != 0:
-        return Err("unsupported Body IR generic function item")
+    """A diagnostic source name becomes a plan item only after its canonical, instance and physical identities agree."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven function item")
         Some(identity) =>
             match module.body_for_canonical_target(identity):
                 None =>
-                    index = imported_item_body(module, target)?
-                    return item_signature(module, builder, parameters, module.bodies[index])
+                    for declaration in module.loaf_callables:
+                        if declaration.canonical == identity:
+                            if len(target.type_args) != 0:
+                                return Err("unsupported Body IR generic Loaf function item")
+                            return loaf_item_signature(builder, parameters, declaration, span)
+                    index = imported_item_body(module, builder.program.body_indices, target)?
+                    return instantiated_item_signature(module, builder, parameters, module.bodies[index], target, span)
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
                         return Err("invalid Body IR function-item identity")
-                    return item_signature(module, builder, parameters, body)
+                    return instantiated_item_signature(module, builder, parameters, body, target, span)
 
 
-def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[int, str]:
+def instantiated_item_signature(
+    module: &RustModule,
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    body: &RustBody,
+    target: &RustNamedTarget,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType], str]:
+    """Close and schedule a generic item from its checked ordered arguments before admitting its callable signature."""
+    if len(target.type_args) == 0:
+        return item_signature(module, builder, parameters, body, span, None)
+    mut arguments: list[RustType] = []
+    for argument in target.type_args:
+        closed: RustType = substitute(argument, builder.type_parameters, builder.type_arguments)?
+        arguments.append(closed.clone())
+    closed = instantiate(body, arguments, [])?
+    request_instance(builder.instances, body, arguments, [], false)
+    return item_signature(module, builder, parameters, closed, span, None)
+
+
+def loaf_item_signature(
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    declaration: &LoafCallable,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType], str]:
+    """Read a compiled function value's signature from its Loaf declaration, without requiring its implementation."""
+    if len(declaration.type_parameters) != 0 or len(declaration.native_type_arguments) != 0:
+        return Err("unsupported Body IR generic Loaf function item")
+    if len(parameters) != len(declaration.parameters):
+        return Err("invalid Body IR Loaf function-item parameter count")
+    mut signature: list[PlanType] = []
+    for index in range(len(parameters)):
+        parameter = parameters[index]
+        if parameter.ty != declaration.parameters[index]:
+            return Err("invalid Body IR Loaf function-item parameter contract")
+        component = item_input(builder, declaration.parameters[index])?
+        mut input = packed_input(
+            component,
+            parameter.kind,
+            parameter.mutable,
+            parameter.native_owned,
+            parameter.input_access,
+        )?
+        match declaration.declaration_frame():
+            Some(frame) =>
+                if parameter.input_access != frame.params[index].input_access:
+                    return Err("invalid Body IR Loaf function-item input access contract")
+                input = call_parameter_type(builder, frame, frame.params[index])?
+            None =>
+                if parameter.input_access != IncanInputAccess.Inferred:
+                    return Err("unsupported native Loaf function-item explicit input access without a provider frame")
+        signature.append(input)
+    mut result = item_result(builder, declaration.return_type)?
+    match declaration.declaration_frame():
+        Some(frame) => result = return_representation(frame, result)?
+        None => pass
+    signature.append(result)
+    name = str(declaration.item)
+    builder.externals.append(
+        ExternalFunction(path=name, parameters=signature[:-1], return_type=signature[-1], span=span),
+    )
+    return Ok((name, PlanType.FunctionItem(name, signature)))
+
+
+pub def function_item_callee(mut builder: Builder, name: str, span: SourceSpan) -> Callee:
+    """Use the registered external declaration for a Loaf item and the local declaration for a source item."""
+    for declaration in builder.externals:
+        if declaration.path == name and len(declaration.type_arguments) == 0:
+            return Callee(kind=CalleeKind.External(name), span=span)
+    return Callee(kind=CalleeKind.Planned(name), span=span)
+
+
+def imported_item_body(module: RustModule, bodies: BodyIndex, target: RustNamedTarget) -> Result[int, str]:
     """
     Find the one retained body, in another module of the project graph, that an imported function item names.
 
     Its exact canonical identity selects the body, as for a direct call to it. A published package fragment carries no
     source-local call id; a call id that is present must agree with the body.
     """
-    mut found = -1
-    for index in range(len(module.bodies)):
-        if module.bodies[index].canonical == target.canonical:
-            if found >= 0:
-                return Err("unsupported Body IR ambiguous imported function item")
-            found = index
-    if found < 0:
+    mut candidates: list[int] = []
+    match target.canonical:
+        Some(identity) => candidates = bodies.candidates(identity)
+        None => pass
+    if len(candidates) == 0:
         return Err("unsupported Body IR imported function item without a retained body")
+    if len(candidates) != 1:
+        return Err("unsupported Body IR ambiguous imported function item")
+    found = candidates[0]
     match target.direct_call_id:
         Some(call_id) =>
             if call_id != module.bodies[found].direct_call_id:
@@ -557,20 +868,27 @@ def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[
 
 def item_signature(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     body: &RustBody,
+    span: SourceSpan,
+    selected_name: Option[str],
 ) -> Result[tuple[str, PlanType], str]:
-    """Select a checked function's callable item; a generator names its lazy constructor, never its producer frame."""
-    if body.is_async:
-        return Err("unsupported Body IR async function item")
+    """
+    Select a checked function's callable item; deferred callables name their lazy constructor, never their producer.
+
+    An async item reifies a synchronous future constructor over the same checked inputs. `selected_name` authenticates
+    an original decorator frame whose coroutine evaluator has a distinct hidden symbol.
+    """
     if len(parameters) != len(body.params):
         return Err("invalid Body IR function-item parameter count")
     mut signature: list[PlanType] = []
     for index in range(len(parameters)):
+        if parameters[index].input_access != body.params[index].input_access:
+            return Err("invalid Body IR function-item input access contract")
         if parameters[index].kind != body.params[index].kind:
             return Err("unsupported Body IR function-item parameter role")
-        match receiver_mode(body.locals[int(body.params[index].local.index())].origin):
+        match receiver_mode(body.locals[parameter_local_index(body, index)].origin):
             Some(mutable) =>
                 match parameters[index].ty:
                     RustType.Ref(inner) =>
@@ -583,14 +901,39 @@ def item_signature(
             None =>
                 if parameters[index].ty != body.params[index].ty:
                     return Err("unsupported Body IR function-item parameter contract")
-        component = item_component(builder, parameters[index].ty)?
-        input = packed_input(component, parameters[index].kind, parameters[index].mutable)?
+        component = item_input(builder, parameters[index].ty)?
+        input = packed_input(
+            component,
+            parameters[index].kind,
+            parameters[index].mutable,
+            parameters[index].native_owned,
+            parameters[index].input_access,
+        )?
+        if body.is_generator() and parameters[index].input_access != IncanInputAccess.Inferred:
+            return Err("unsupported Body IR explicit input access in a deferred producer")
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")
         signature.append(input)
-    signature.append(item_result(builder, body.return_type)?)
+    result = item_result(builder, body.return_type)?
+    mut name = evaluator_name(module, body)
+    match selected_name:
+        Some(selected) => name = selected
+        None => pass
+    if body.is_async:
+        constructor = f"{name}__incan_future"
+        builder.synthesized.append(
+            boxed_future_constructor(
+                constructor,
+                CalleeKind.Planned(name),
+                signature.clone(),
+                result,
+                span,
+            ),
+        )
+        signature.append(PlanType.Future([result]))
+        return Ok((constructor, PlanType.FunctionItem(constructor, signature)))
+    signature.append(result)
     # Generator entrypoints retain their ordinary constructor symbol beside the separately named producer.
-    name = evaluator_name(module, body)
     return Ok((name, PlanType.FunctionItem(name, signature)))
 
 
@@ -604,66 +947,36 @@ def original_function_item(
     mut builder: Builder,
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
-    """Close an explicit original read with the enclosing wrapper's exact declared binding, never operand inference."""
+    """Select the original through its checked initializer policy, never through operand inference."""
     if binding.initialization == DecoratedInitialization.PerInstantiation:
-        return initialized_original_function_item(module, builder, parameters, binding)
-    if binding.initializer != None:
-        return Err("unsupported Body IR invocation or module decorator with cached initializer")
+        return initialized_original_function_item(module, builder, parameters, binding, span)
+    if binding.initialization != DecoratedInitialization.ModuleStorage or binding.initializer != None:
+        return Err("unsupported Body IR module decorator initialization policy")
     body = binding.original_body
     if len(body.type_parameters) != 0:
-        if body.is_generator():
-            return Err("unsupported Body IR generator original callable with type parameters")
-        if binding.initialization != DecoratedInitialization.PerInvocation or body.canonical != builder.callable_identity or body.type_parameters != builder.type_parameters:
-            return Err("unsupported Body IR original callable type-parameter binding")
-        mut arguments: list[RustType] = []
-        for argument in builder.type_arguments:
-            arguments.append(argument.clone())
-        mut concrete = instantiate(body, arguments, [])?
-        mut inputs: list[RustParameter] = []
-        for parameter in parameters:
-            mut input = parameter.clone()
-            closed: RustType = substitute(parameter.ty, body.type_parameters, arguments)?
-            input.ty = closed.clone()
-            inputs.append(input)
-        # Preserve the checked parameter records in Body IR storage for the borrowed signature boundary.
-        mut signature_body = body.clone()
-        signature_body.params = inputs
-        name, ty = item_signature(module, builder, signature_body.params, concrete)?
-        builder.instances.append(
-            Instance(body=body.clone(), arguments=arguments, owned_callable_slots=[], original_callable=true),
-        )
-        match ty:
-            PlanType.FunctionItem(_item, signature) =>
-                original_name = f"{name}__incan_original"
-                return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-            _ => return Err("invalid Body IR original callable signature")
-    if binding.initialization != DecoratedInitialization.ModuleStorage:
-        return Err("unsupported Body IR invocation replacement without type parameters")
-    name, ty = item_signature(module, builder, parameters, body)?
-    match ty:
-        PlanType.FunctionItem(_item, signature) =>
-            original_name = f"{name}__incan_original"
-            return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-        _ => return Err("invalid Body IR original callable signature")
+        return Err("unsupported Body IR module decorator with type parameters")
+    original_name = f"{evaluator_name(module, body)}__incan_original"
+    return item_signature(module, builder, parameters, body, span, Some(original_name))
 
 
 def initialized_original_function_item(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
+    span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Select a cached instantiation's original only inside its authenticated closed initializer frame."""
     mut original = binding.original_body.clone()
     if binding.initializer == None or len(original.type_parameters) == 0:
         return Err("unsupported Body IR cached decorator without a generic initializer")
-    if builder.initializing_decorator != original.canonical or builder.type_parameters != original.type_parameters.clone():
+    if (
+        builder.initializing_decorator != original.canonical
+        or builder.type_parameters != original.type_parameters.clone()
+    ):
         return Err("unsupported Body IR original callable outside its closed decorator initializer")
     original = instantiate(original, builder.type_arguments, [])?
-    name, ty = item_signature(module, builder, parameters, original)?
-    match ty:
-        PlanType.FunctionItem(_item, signature) =>
-            original_name = f"{name}__incan_original"
-            return Ok((original_name, PlanType.FunctionItem(original_name, signature)))
-        _ => return Err("invalid Body IR original callable signature")
+    original_name = f"{evaluator_name(module, original)}__incan_original"
+    return item_signature(module, builder, parameters, original, span, Some(original_name))

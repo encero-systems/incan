@@ -9,21 +9,21 @@ The comparison is:
 - Incan `std.collections.OrdinalMap[str]`
 - the prior Rust spike baseline recorded in `results.md`
 
-The default corpus has 100,000 string keys and 1,000,000 deterministic present-key probes. The runner also accepts `--keys` and `--probes`; for non-default values it generates a temporary `.incn` source with those constants before compiling the Incan benchmark.
+The default corpus has 100,000 string keys and 1,000,000 deterministic present-key probes. The runner accepts `--keys` and `--probes` and passes the same counts to each implementation.
 
 ## Run
 
-The runner builds the repository's release compiler before running Incan unless `INCAN=/path/to/incan` is set.
+The runner uses an installed CLI selected by `INCAN=/path/to/incan`, or the `incan` entry point of the selected `INCAN_HOME`. Set `INCAN_HOME` and `INCAN_STDLIB` as described in the benchmark suite README.
 
 The Python `dict` baseline has no extra dependency. To include `fastconstmap`, install it in a Python environment and pass that interpreter through `PYTHON`:
 
 ```bash
 python3 -m venv /private/tmp/incan-fastconstmap-venv
 /private/tmp/incan-fastconstmap-venv/bin/python -m pip install fastconstmap
-PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash workspaces/benchmarks/collections/ordinal_map/run.sh
+PYTHON=/path/to/venv/bin/python incan run workspaces/benchmarks/collections/ordinal_map/run.incn
 ```
 
-Without `fastconstmap`, `run.sh` still runs Python `dict` and Incan and reports the optional dependency as skipped.
+Without `fastconstmap`, `run.incn` still runs Python `dict` and Incan and reports the optional dependency as skipped.
 
 Non-default `--keys` or `--probes` values run all available implementations, including Incan.
 
@@ -32,7 +32,7 @@ Non-default `--keys` or `--probes` values run all available implementations, inc
 - `builtin_dict.py` runs the Python builtin-dict baseline.
 - `fastconstmap_lookup.py` runs both fastconstmap map variants when the optional package is installed, otherwise exits with a skip status.
 - `ordinal_map.incn` builds and runs the Incan `OrdinalMap[str]` benchmark.
-- `run.sh` runs the available implementations and skips only unavailable optional dependencies.
+- `run.incn` runs the available implementations and skips only unavailable optional dependencies.
 - `results.md` records the latest local run and the prior spike baseline used when RFC 101 was accepted.
 
 ## Interpreting results
@@ -49,5 +49,5 @@ The latest 1,000,000-key local run in `results.md` is a single directional run, 
 
 ## Notes
 
-- This benchmark remains standalone rather than part of `workspaces/benchmarks/run_all.sh` because `fastconstmap` is an optional Python dependency.
+- This benchmark remains standalone rather than part of `workspaces/benchmarks/run_all.incn` because `fastconstmap` is an optional Python dependency.
 - The benchmark uses deterministic present-key probes. It does not measure missing-key behavior, mixed workloads, construction from serialized bytes, or total process RSS.

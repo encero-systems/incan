@@ -59,13 +59,13 @@ def f(a: Foo) -> int:
     Ok(())
 }
 
-/// Qualified unit variant patterns parse as `Type::Variant` in the AST for Rust lowering; surface syntax uses `.`.
+/// Module-qualified unit variant patterns preserve every path segment in the canonical AST spelling.
 #[test]
 fn test_parse_qualified_unit_pattern_stores_double_colon_in_ast() -> Result<(), Vec<CompileError>> {
     let source = r#"
 def f(x: int) -> int:
   match x:
-    Kind.Read =>
+    shapes.Kind.Read =>
       return 1
 "#;
     let program = parse_str(source)?;
@@ -84,13 +84,23 @@ def f(x: int) -> int:
     let arm = &arms[0].node;
     match &arm.pattern.node {
         Pattern::Constructor(name, args) => {
-            assert_eq!(name.node, "Kind::Read");
-            let start = require_source_span(source, "Kind.Read", 0)?.start;
-            assert_eq!(name.span, Span::new(start, start + "Kind.Read".len()));
+            assert_eq!(name.node, "shapes::Kind::Read");
+            let start = require_source_span(source, "shapes.Kind.Read", 0)?.start;
+            assert_eq!(name.span, Span::new(start, start + "shapes.Kind.Read".len()));
             assert!(args.is_empty());
         }
         _ => panic!("Expected constructor pattern"),
     }
+
+    let errors = parse_str_err(
+        "def f(x: int) -> int:\n  match x:\n    shapes.Kind. => return 1\n",
+        "a qualified pattern ending in a dot should fail",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Expected variant name after '.'"))
+    );
     Ok(())
 }
 

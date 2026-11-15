@@ -1,0 +1,9 @@
+# behavior: `incan mcp --profile release` accepts one fixed session profile before EOF closes the transport.
+# cli-commands:
+#   mcp src/main.incn --profile release
+# expect-stdout:
+# expect-stderr:
+
+def main() -> None:
+    """Provide the fixed project selected by the MCP session."""
+    pass

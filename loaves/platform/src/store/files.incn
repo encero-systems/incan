@@ -1,0 +1,158 @@
+"""The segment store's failures, work observation and ordered object operations."""
+
+from rust::std::process import id, exit as process_exit
+from rust::std::string import String as RustString
+from std.primitives.environ import read as read_environment
+from crate.trace.schema import Clock, Operation, WorkObserver
+from crate.store.index import IndexError
+from crate.store.path import StoreIoError, StorePath as Path
+
+static WORK: WorkObserver = WorkObserver()
+
+
+pub def observe_work(observer: WorkObserver) -> None:
+    """
+    Set this process's work observer before using the store; an empty observer disables observation.
+
+    The caller owns tracing policy and flushing. Configure once before starting store work, never between an
+    operation's start and completion. The store's default observer touches no clock or output channel.
+    """
+    WORK = observer
+
+
+pub def begin_work() -> Option[Clock]:
+    """Start a store operation through the caller's observer."""
+    return WORK.begin()
+
+
+pub def record_work(operation: Operation, key: str, clock: Option[Clock]) -> None:
+    """Complete a store operation without importing consumer policy."""
+    WORK.record(operation, key, clock, 0)
+
+
+pub model StoreError:
+    """A named store failure: integrity, format, conflict, I/O, an expired snapshot, or deferred busy collection."""
+
+    pub kind: str
+    pub object: str
+    pub detail: str
+
+    pub def message(self) -> str:
+        """One line naming the failure, its object and what was found."""
+        return f"store {self.kind} error in {self.object}: {self.detail}"
+
+
+pub def failure(kind: str, object: str, detail: str) -> StoreError:
+    """A store error."""
+    return StoreError(kind=kind, object=object, detail=detail)
+
+
+pub def io_failure(object: Path, error: StoreIoError) -> StoreError:
+    """An I/O error on one path."""
+    return failure("io", object.value, error.message())
+
+
+pub def index_failure(error: IndexError) -> StoreError:
+    """A damaged or missing index page."""
+    return failure("integrity", error.object, error.detail)
+
+
+# ---- Snapshots ----
+
+
+pub def decode_text(data: bytes) -> Option[str]:
+    """`data` as UTF-8 text."""
+    match RustString.from_utf8(data):
+        Ok(text) => return Some(str(text))
+        Err(_) => return None
+
+
+pub def natural(text: str) -> Option[int]:
+    """A bounded decimal number, when `text` is one."""
+    if len(text) == 0 or len(text) > 18:
+        return None
+    for character in text:
+        if character not in "0123456789":
+            return None
+    return Some(int(text))
+
+
+def file_size(path: Path) -> int:
+    """A file's size, zero when it cannot be read."""
+    match path.store_stat():
+        Err(_) => return 0
+        Ok(info) =>
+            match info.store_size():
+                Ok(size) => return size
+                Err(_) => return 0
+
+
+pub def remove_tree(path: Path) -> None:
+    """Remove a staging directory; a failure leaves it for recovery and never fails a commit."""
+    match path.store_remove_tree():
+        Ok(_) => pass
+        Err(_) => pass
+
+
+pub def ensure_directory(path: Path) -> Result[None, StoreError]:
+    """Create `path` and its parents when absent."""
+    return path.store_mkdir(true, true).map_err((error) => io_failure(path, error))
+
+
+pub def sync_file(path: Path) -> Result[None, StoreError]:
+    """Order one staged object's contents through its placement."""
+    clock = begin_work()
+    result = path.store_sync_ordered().map_err((error) => failure("io", path.value, error.message()))
+    record_work(Operation.StoreFileSync, path.value, clock)
+    return result
+
+
+pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
+    """Write a complete object beside its destination, synchronize it, then atomically publish its name."""
+    ensure_directory(target.parent())?
+    temporary = target.at(f"{target.value}.{id()}.tmp")
+    writing = begin_work()
+    temporary.store_write_bytes(data).map_err((error) => io_failure(temporary, error))?
+    record_work(Operation.StoreFileWrite, target.value, writing)
+    boundary = publication_kind(target)
+    publication_boundary(f"{boundary}-written")
+    sync_file(temporary)?
+    publication_boundary(f"{boundary}-synced")
+    renaming = begin_work()
+    temporary.store_replace(target).map_err((error) => io_failure(target, error))?
+    record_work(Operation.StoreFileRename, target.value, renaming)
+    publication_boundary(f"{boundary}-replaced")
+    return Ok(None)
+
+
+def publication_kind(target: Path) -> str:
+    """Name the durability phase used by the process-exit proof without exposing format details to callers."""
+    if target.name() == "CURRENT":
+        return "current"
+    if target.name().endswith(".manifest"):
+        return "manifest"
+    if target.name() == "delta.seg":
+        return "delta"
+    return "object"
+
+
+pub def publication_boundary(name: str) -> None:
+    """Terminate only at an explicitly requested fault-injection boundary; ordinary publication has no effects here."""
+    mut requested = ""
+    if let Ok(value) = read_environment("INCAN_STORE_CRASH_AFTER"):
+        requested = value
+    if requested == name:
+        process_exit(86)
+
+
+pub def sync_directory(path: Path) -> Result[None, StoreError]:
+    """Order directory entries through the placement, separately from record encoding and locks."""
+    clock = begin_work()
+    result = path.store_sync_ordered().map_err((error) => failure("io", path.value, error.message()))
+    record_work(Operation.StoreDirectorySync, path.value, clock)
+    return result
+
+
+pub def file_digest(path: Path, algorithm: str) -> Result[bytes, StoreIoError]:
+    """Hash an object through its placement; disk keeps bounded reads and memory hashes its anchored view."""
+    return path.store_digest(algorithm)

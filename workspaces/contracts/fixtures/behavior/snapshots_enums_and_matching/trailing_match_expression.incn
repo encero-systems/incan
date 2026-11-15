@@ -1,0 +1,35 @@
+# behavior: a trailing match in a value-returning function is its result, a match expression assigns its arm value, and a trailing match in a unit function runs its arm
+# expect-stdout:
+#   one
+#   other
+#   one
+#   other
+#   one
+#   other
+
+def pick(n: int) -> str:
+    match n:
+        1 => "one"
+        _ => "other"
+
+
+def pick_bound(n: int) -> str:
+    label = match n:
+        1 => "one"
+        _ => "other"
+    return label
+
+
+def report(n: int) -> None:
+    match n:
+        1 => println("one")
+        _ => println("other")
+
+
+def main() -> None:
+    println(pick(1))
+    println(pick(2))
+    println(pick_bound(1))
+    println(pick_bound(2))
+    report(1)
+    report(2)

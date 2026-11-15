@@ -1,0 +1,11 @@
+# behavior: a test file receives the fixtures of every `conftest.incn` from its directory up to `tests/`, a nearer conftest's fixture depending on a farther one's, `yield` conftest fixtures tearing down after the test, as 0.5.1 does (#3149).
+# cli-commands:
+#   test tests --nocapture
+# expect-stdout-contains:
+#   conftest close
+#   test_nested.incn::test_parent_conftest PASSED
+#   test_nested.incn::test_both_conftests PASSED
+#   test_nested.incn::test_conftest_yield PASSED
+
+def main() -> None:
+    println("main")

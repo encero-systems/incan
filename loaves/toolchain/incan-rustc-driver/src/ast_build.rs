@@ -7,6 +7,32 @@ use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol, kw};
 use thin_vec::{ThinVec, thin_vec};
 
+/// Physical Rust core::result::Result success variant, also reexported by std.
+pub(crate) const RUST_RESULT_OK_SYMBOL: &str = "Ok";
+/// Physical Rust core::result::Result failure variant, also reexported by std.
+pub(crate) const RUST_RESULT_ERR_SYMBOL: &str = "Err";
+/// Physical Rust core::option::Option present variant, also reexported by std.
+pub(crate) const RUST_OPTION_SOME_SYMBOL: &str = "Some";
+/// Physical Rust core::option::Option absent variant, also reexported by std.
+pub(crate) const RUST_OPTION_NONE_SYMBOL: &str = "None";
+
+/// Physical core::fmt::Debug trait, also reexported by std.
+pub(crate) const RUST_FMT_DEBUG_SYMBOL: &str = "Debug";
+/// Physical core::fmt::Display trait, also reexported by std.
+pub(crate) const RUST_FMT_DISPLAY_SYMBOL: &str = "Display";
+/// Physical core::clone::Clone trait, also reexported by std.
+pub(crate) const RUST_CLONE_SYMBOL: &str = "Clone";
+/// Physical core::cmp::PartialEq trait, independent of Incan's Eq bound mapping.
+pub(crate) const RUST_CMP_PARTIAL_EQ_SYMBOL: &str = "PartialEq";
+/// Physical core::cmp::Eq trait, also reexported by std.
+pub(crate) const RUST_CMP_EQ_SYMBOL: &str = "Eq";
+/// Physical core::cmp::PartialOrd trait, also reexported by std.
+pub(crate) const RUST_CMP_PARTIAL_ORD_SYMBOL: &str = "PartialOrd";
+/// Physical core::cmp::Ord trait, also reexported by std.
+pub(crate) const RUST_CMP_ORD_SYMBOL: &str = "Ord";
+/// Physical core::convert::TryFrom trait, also reexported by std.
+pub(crate) const RUST_CONVERT_TRY_FROM_SYMBOL: &str = "TryFrom";
+
 /// The receiver `self` as an expression.
 pub(crate) fn self_value(span: Span) -> Box<ast::Expr> {
     expression(
@@ -51,6 +77,41 @@ pub(crate) fn path_ty(path: ast::Path, span: Span) -> Box<ast::Ty> {
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
+}
+
+/// A function pointer with already-translated inputs and result, shared by closed and generic field layouts.
+pub(crate) fn function_pointer(inputs: ThinVec<Box<ast::Ty>>, result: Box<ast::Ty>, span: Span) -> Box<ast::Ty> {
+    let inputs = inputs
+        .into_iter()
+        .map(|ty| ast::Param {
+            attrs: ThinVec::new(),
+            ty,
+            pat: Box::new(ast::Pat {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::PatKind::Wild,
+                span,
+                tokens: None,
+            }),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            is_placeholder: false,
+        })
+        .collect();
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+            safety: ast::Safety::Default,
+            ext: ast::Extern::None,
+            generic_params: ThinVec::new(),
+            decl: Box::new(ast::FnDecl {
+                inputs,
+                output: ast::FnRetTy::Ty(result),
+            }),
+            decl_span: span,
+        })),
         span,
         tokens: None,
     })

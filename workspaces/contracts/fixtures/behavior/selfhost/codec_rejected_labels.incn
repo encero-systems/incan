@@ -1,0 +1,29 @@
+# behavior: a rejected codec label skips later policy and receiver evaluation
+# expect-stdout:
+#   encoding
+#   encoding rejected
+#   encoding
+#   errors
+#   policy rejected
+
+
+def data() -> bytes:
+    """Make an incorrectly evaluated receiver observable."""
+    println("unexpected receiver")
+    return b"abc"
+
+
+def label(name: str, value: str) -> str:
+    """Expose the guard's label evaluation."""
+    println(name)
+    return value
+
+
+def main() -> None:
+    """Reject encoding before policy, and policy before receiver."""
+    match data().decode(errors=label("unexpected policy", "strict"), encoding=label("encoding", "latin-1")):
+        Ok(value) => println(value)
+        Err(error) => println("encoding rejected")
+    match data().decode(errors=label("errors", "invalid"), encoding=label("encoding", "utf-8")):
+        Ok(value) => println(value)
+        Err(error) => println("policy rejected")

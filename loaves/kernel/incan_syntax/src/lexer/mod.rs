@@ -22,6 +22,7 @@ pub use tokens::{FStringPart, Token, TokenKind, keyword_id};
 
 use crate::ast::Span;
 use crate::diagnostics::{CompileError, errors};
+use crate::source_security::bidirectional_control_name;
 use incan_lang::lang::operators::OperatorId;
 use incan_lang::lang::punctuation::PunctuationId;
 
@@ -190,16 +191,13 @@ impl<'a> Lexer<'a> {
             return;
         };
 
+        if self.scan_operator(c, start) {
+            return;
+        }
+
         match c {
             // Comments
-            '#' => {
-                while let Some(c) = self.peek() {
-                    if c == '\n' {
-                        break;
-                    }
-                    self.advance();
-                }
-            }
+            '#' => self.scan_comment(),
 
             // Newlines
             '\n' => {
@@ -219,7 +217,65 @@ impl<'a> Lexer<'a> {
             // Skip carriage return
             '\r' => {}
 
-            // Operators and punctuation
+            // Strings
+            '"' => self.scan_string(start, '"'),
+            '\'' => self.scan_string(start, '\''),
+
+            // f-strings
+            'f' if self.peek() == Some('"') || self.peek() == Some('\'') => {
+                if let Some(quote) = self.advance() {
+                    self.scan_fstring(start, quote);
+                }
+            }
+
+            // b-strings (byte strings)
+            'b' if self.peek() == Some('"') || self.peek() == Some('\'') => {
+                if let Some(quote) = self.advance() {
+                    self.scan_byte_string(start, quote);
+                }
+            }
+
+            // Numbers
+            '0'..='9' => self.scan_number(start),
+
+            // Identifiers and keywords
+            _ if is_ident_start(c) => self.scan_identifier(start, c),
+
+            _ if bidirectional_control_name(c).is_some() => {
+                self.errors.push(errors::bidirectional_control_in_source(
+                    c,
+                    errors::BidirectionalControlContext::Code,
+                    Span::new(start, self.current_pos),
+                ));
+            }
+
+            _ => {
+                self.errors
+                    .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
+            }
+        }
+    }
+
+    /// Consume one line comment while retaining source-security diagnostics for raw directional controls.
+    fn scan_comment(&mut self) {
+        while let Some(character) = self.peek() {
+            if character == '\n' {
+                break;
+            }
+            if bidirectional_control_name(character).is_some() {
+                self.errors.push(errors::bidirectional_control_in_source(
+                    character,
+                    errors::BidirectionalControlContext::Comment,
+                    Span::new(self.current_pos, self.current_pos + character.len_utf8()),
+                ));
+            }
+            self.advance();
+        }
+    }
+
+    /// Scan an operator or punctuation after its first character was consumed; leave other characters untouched.
+    fn scan_operator(&mut self, character: char, start: usize) -> bool {
+        match character {
             '+' => self.operator(start, OperatorId::Plus, &[('=', OperatorId::PlusEq)]),
             '-' => {
                 if self.match_char('>') {
@@ -296,35 +352,9 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            // Strings
-            '"' => self.scan_string(start, '"'),
-            '\'' => self.scan_string(start, '\''),
-
-            // f-strings
-            'f' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                if let Some(quote) = self.advance() {
-                    self.scan_fstring(start, quote);
-                }
-            }
-
-            // b-strings (byte strings)
-            'b' if self.peek() == Some('"') || self.peek() == Some('\'') => {
-                if let Some(quote) = self.advance() {
-                    self.scan_byte_string(start, quote);
-                }
-            }
-
-            // Numbers
-            '0'..='9' => self.scan_number(start),
-
-            // Identifiers and keywords
-            _ if is_ident_start(c) => self.scan_identifier(start, c),
-
-            _ => {
-                self.errors
-                    .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
-            }
+            _ => return false,
         }
+        true
     }
 
     // ========================================================================
@@ -672,8 +702,8 @@ mod tests {
     fn test_keywords() {
         let tokens = lex_ok("def async await class model trait");
         assert!(matches!(tokens[0].kind, TokenKind::Keyword(KeywordId::Def)));
-        assert!(matches!(&tokens[1].kind, TokenKind::Ident(name) if name == "async"));
-        assert!(matches!(&tokens[2].kind, TokenKind::Ident(name) if name == "await"));
+        assert!(matches!(tokens[1].kind, TokenKind::Keyword(KeywordId::Async)));
+        assert!(matches!(tokens[2].kind, TokenKind::Keyword(KeywordId::Await)));
         assert!(matches!(tokens[3].kind, TokenKind::Keyword(KeywordId::Class)));
         assert!(matches!(tokens[4].kind, TokenKind::Keyword(KeywordId::Model)));
         assert!(matches!(tokens[5].kind, TokenKind::Keyword(KeywordId::Trait)));
@@ -773,6 +803,49 @@ mod tests {
         let tokens = lex_ok(r#""hello" 'world'"#);
         assert!(matches!(&tokens[0].kind, TokenKind::String(s) if s == "hello"));
         assert!(matches!(&tokens[1].kind, TokenKind::String(s) if s == "world"));
+    }
+
+    /// Bidirectional controls are refused in every lexical context and retain their exact character span.
+    #[test]
+    fn bidirectional_controls_are_refused_in_code_comments_and_strings() {
+        for source in [
+            "value = \u{202e}1",
+            "# hidden \u{2066}text",
+            "label = \"\u{200f}text\"",
+            "data = b\"\u{202d}\"",
+            "label = f\"{name \u{2068}}\"",
+        ] {
+            let errors = lex_err(source);
+            assert_eq!(errors.len(), 1, "source should have one control diagnostic: {source:?}");
+            assert_eq!(errors[0].stable_code(), Some("INCAN-P0101"));
+            assert_eq!(errors[0].span.end - errors[0].span.start, 3);
+        }
+    }
+
+    /// Unicode scalar escapes decode in ordinary strings and f-string literal parts without admitting raw controls.
+    #[test]
+    fn unicode_scalar_escapes_decode_in_text_literals() {
+        let tokens = lex_ok(r#""A\u{1f388}" f"\u{200f}{name}""#);
+        assert!(matches!(&tokens[0].kind, TokenKind::String(value) if value == "A🎈"));
+        assert!(matches!(
+            &tokens[1].kind,
+            TokenKind::FString(parts)
+                if matches!(&parts[0], FStringPart::Literal(value) if value == "\u{200f}")
+        ));
+    }
+
+    /// Malformed, surrogate and out-of-range Unicode scalar escapes share the dedicated refusal.
+    #[test]
+    fn malformed_unicode_scalar_escapes_are_refused() {
+        for source in [r#""\u{}""#, r#""\u{xyz}""#, r#""\u{d800}""#, r#""\u{110000}""#] {
+            let errors = lex_err(source);
+            assert_eq!(
+                errors.len(),
+                1,
+                "source should have one malformed-escape diagnostic: {source:?}"
+            );
+            assert_eq!(errors[0].stable_code(), Some("INCAN-P0102"));
+        }
     }
 
     #[test]

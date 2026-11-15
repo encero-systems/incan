@@ -1,0 +1,68 @@
+"""The checked inputs that key a body's plan product, shared by ordinary frames and closed generic instances."""
+
+from rust::incan_semantics_core import CompilerNodeId, SymbolNamespace
+from rust::incan_semantics_core::body_ir import Body as RustBody
+from rust::incan_semantics_core::semantic_digest import semantic_digest as native_digest
+from rust::serde_json import to_string as native_json
+from rust::std::collections import BTreeMap
+from std.fs import Path
+from async_ import evaluator_name
+from checked_values import location
+from lowering import BodyIrModule
+from record_positions import body_position_map
+from scalar_store import record_scalar_inputs, scalar_inputs
+
+
+pub def ordinary_product_inputs(
+    context: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    overflow_checks: bool,
+    products: Option[str],
+    admitted: &BTreeMap[CompilerNodeId, str],
+    records: bool,
+    unchecked: Option[str] = None,
+) -> Option[tuple[list[str], list[tuple[int, int]]]]:
+    """
+    Retain exact checked input only for frames whose complete read witnesses the source producer proved.
+
+    A records key is the checked meaning; the body's node positions return beside it as the product's position map.
+    A body no consumer checks, such as a toolchain runtime generic, keys by `unchecked` in place of a witness.
+    """
+    if products is None:
+        return None
+    mut witness = ""
+    match admitted.get(body.direct_call_id):
+        Some(value) => witness = str(value)
+        None =>
+            match unchecked:
+                None => return None
+                Some(value) => witness = value
+    match native_json(body):
+        Err(_) => return None
+        Ok(input) =>
+            span = location(body.span, source, file)
+            name = evaluator_name(context, body)
+            if records:
+                meaning = match native_digest(body):
+                    Ok(value) => value
+                    Err(_) => return None
+                positions = match body_position_map(input, source, file, span):
+                    Ok(value) => value
+                    Err(_) => return None
+                generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
+                    Ok(value) => value
+                    Err(_) => return None
+                mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, witness, len(positions))
+                inputs.append(generation)
+                return Some((inputs, positions))
+            unpositioned: list[tuple[int, int]] = []
+            return Some((scalar_inputs(input, name, span, overflow_checks, witness), unpositioned))
+
+
+pub def graph_owner(body: &RustBody) -> bool:
+    """Whether the compiled graph records this body as an owner: a module-level declaration, never a member."""
+    match body.canonical:
+        None => return false
+        Some(identity) => return identity.namespace == SymbolNamespace.OrdinaryLexical

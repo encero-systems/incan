@@ -1,0 +1,53 @@
+# behavior: `incan tools metadata api PATH --format markdown` renders the checked public API as the compact Markdown reference 0.5.1 printed (#3142).
+# cli-commands:
+#   tools metadata api src/main.incn --format markdown
+# expect-stdout:
+#   # tools_metadata_api_markdown API
+#
+#   Version: `0.1.0`
+#
+#   ## Module `main`
+#
+#   ### `LIMIT`
+#
+#   ```incan
+#   pub const LIMIT: int
+#   ```
+#
+#   ### `Point`
+#
+#   ```incan
+#   pub model Point
+#   ```
+#
+#   ### `add`
+#
+#   ```incan
+#   pub def add(a: int, b: int = ...) -> int
+#   ```
+#
+#   Add two numbers.
+#
+# expect-stderr:
+# expect-exit: 0
+
+
+"""A small module for metadata."""
+
+pub const LIMIT: int = 3
+
+
+pub model Point:
+    """A point."""
+
+    pub x: int
+    pub y: int = 0
+
+
+pub def add(a: int, b: int = 2) -> int:
+    """Add two numbers."""
+    return a + b
+
+
+def main() -> None:
+    println(add(1))

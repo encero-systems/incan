@@ -1,0 +1,12 @@
+# behavior: function facade aliases remain callable when provider and facade modules declare the same payload-enum name
+# expect-stdout:
+#   42
+
+from crate.public_api import exported_calculate as compute
+from crate.public_api import label
+
+
+def main() -> None:
+    """Use both distinct enum owners through a facade and preserve the original result."""
+    if label("ready") == "ready":
+        println(compute(41))

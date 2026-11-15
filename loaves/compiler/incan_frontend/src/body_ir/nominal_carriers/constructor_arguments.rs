@@ -1,6 +1,7 @@
 //! Constructor and comparison arguments retain their checked declaration-owned field context.
 
 use super::{CanonicalSymbolId, Identities, IncanType, bir, retain_declared_return_type};
+use crate::body_ir::ContextModules;
 use incan_semantics_core::CompilerNodeId;
 use std::collections::BTreeMap;
 
@@ -22,7 +23,7 @@ pub(super) struct ConstructorCarrier {
 pub(super) type ConstructorCarriers = BTreeMap<CanonicalSymbolId, ConstructorCarrier>;
 
 /// Snapshot selected declaration facts before frame qualification mutates the current module's carrier names.
-pub(super) fn collect(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ConstructorCarriers {
+pub(super) fn collect(module: &bir::BodyIrModule, context: ContextModules<'_>) -> ConstructorCarriers {
     context
         .iter()
         .flat_map(|module| &module.nominal_declarations)

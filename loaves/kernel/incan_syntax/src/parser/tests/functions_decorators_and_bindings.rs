@@ -183,7 +183,7 @@ def col(name: str) -> ColumnExpr:
 
 #[test]
 fn test_parse_decorator_with_rust_namespace() -> Result<(), Vec<CompileError>> {
-    // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
+    // RFC 171: retired syntax remains parseable so checking can emit its targeted replacement diagnostic.
     let source = r#"
 @rust.extern
 def foo() -> None:
@@ -552,4 +552,60 @@ fn an_unknown_capability_clause_is_a_syntax_error() -> Result<(), Box<dyn std::e
         "expected a clause-specific error, got {errors:?}"
     );
     Ok(())
+}
+
+/// Result sources retain each static projection and its source token.
+#[test]
+fn test_result_source_static_path() -> Result<(), Vec<CompileError>> {
+    let source = "def address(customer: Borrowed[Customer]) -> Borrowed[Address] from customer.address:\n    return customer.address\n";
+    let program = parse_str(source)?;
+    let Declaration::Function(function) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new(
+            "expected function".to_string(),
+            Span::default(),
+        )]);
+    };
+    let result_source = function
+        .result_source
+        .as_ref()
+        .ok_or_else(|| vec![CompileError::new("expected result source".to_string(), Span::default())])?;
+    assert_eq!(result_source.node.binding.node, "customer");
+    assert_eq!(result_source.node.fields[0].node, "address");
+    assert_eq!(
+        &source[result_source.node.fields[0].span.start..result_source.node.fields[0].span.end],
+        "address"
+    );
+    Ok(())
+}
+
+/// Abstract methods carry the same source clause as methods with bodies.
+#[test]
+fn test_abstract_method_result_source() -> Result<(), Vec<CompileError>> {
+    let program = parse_str("trait View:\n    def view(self) -> Borrowed[str] from self.name\n")?;
+    let Declaration::Trait(declaration) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new("expected trait".to_string(), Span::default())]);
+    };
+    let source = declaration.methods[0]
+        .node
+        .result_source
+        .as_ref()
+        .ok_or_else(|| vec![CompileError::new("expected method source".to_string(), Span::default())])?;
+    assert_eq!(source.node.binding.node, "self");
+    assert_eq!(source.node.fields[0].node, "name");
+    Ok(())
+}
+
+/// A result source is a static place, never a call, index, namespace or list of alternatives.
+#[test]
+fn test_result_source_rejects_dynamic_forms() {
+    for source in [
+        "value()",
+        "value[0]",
+        "value::field",
+        "value, other",
+        "value from other",
+    ] {
+        let program = format!("def view(value: str) -> Borrowed[str] from {source}:\n    return value\n");
+        assert!(parse_str(&program).is_err(), "accepted dynamic result source: {source}");
+    }
 }

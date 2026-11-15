@@ -1,0 +1,11 @@
+# behavior: a `[tool.incan]` key this toolchain does not read is tolerated, as 0.5.1 tolerated it so that a manifest for a newer toolchain still loads, with one warning naming each such key, by `run` and by `check` (#3144).
+# cli-commands:
+#   run src/main.incn
+#   check src/main.incn
+# expect-stderr-once:
+#   [tool.incan] key `future` is not read by this toolchain and is ignored
+#   [tool.incan] key `newer` is not read by this toolchain and is ignored
+# expect-exit: 0
+
+def main() -> None:
+    println("main")

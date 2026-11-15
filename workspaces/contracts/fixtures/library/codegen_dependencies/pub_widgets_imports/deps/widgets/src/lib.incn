@@ -1,0 +1,120 @@
+pub model Widget:
+    pub name: str
+
+
+pub const DEFAULT_NAME: str = "default"
+
+
+pub def make_widget(name: str) -> Widget:
+    return Widget(name=name)
+
+
+pub model Mapper[T, U]:
+    """Retain a callback whose input and result use this model's type parameters."""
+
+    pub transform: (T) -> U
+
+    pub def apply(self, value: T) -> U:
+        """Apply the stored callback to one value."""
+        transform = self.transform
+        return transform(value)
+
+
+pub trait Catalog[T with Clone]:
+    def item(self) -> T
+
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+    def ordered(self) -> Self
+
+
+pub model Parcel[T with Clone] with OrderedCatalog:
+    pub value: T
+
+    def item(self) -> T:
+        return self.value
+
+    def ordered(self) -> Self:
+        return self
+
+
+pub enum Outcome[T]:
+    """Preserve one declared enum across independently compiled closed payload types."""
+
+    Complete(T)
+    Need(list[str])
+
+
+pub def outcome_number() -> Outcome[int]:
+    """Return the integer instance from the provider native template."""
+    return Outcome.Complete(1)
+
+
+pub def outcome_text() -> Outcome[str]:
+    """Return a distinct text instance from the same provider template."""
+    return Outcome.Complete("one")
+
+
+pub def outcome_nested() -> Outcome[list[tuple[int, str]]]:
+    """Retain nested collection and tuple payload arguments across the package boundary."""
+    return Outcome.Complete([(2, "two")])
+
+
+pub def outcome_length(value: Outcome[str]) -> int:
+    """Accept an enum constructed by the consumer using the provider-owned type."""
+    match value:
+        Outcome.Complete(text) => return len(text)
+        Outcome.Need(_messages) => return 0
+
+
+pub def outcome_echo[T](value: Outcome[T]) -> Outcome[T]:
+    """Preserve a consumer-selected payload type through a retained generic function."""
+    return value
+
+
+enum PrivateOutcome[T]:
+    """Keep private generic instances distinct without publishing their source name."""
+
+    Complete(T)
+
+
+def private_number() -> PrivateOutcome[int]:
+    """Construct one private closed instance inside the provider."""
+    return PrivateOutcome.Complete(3)
+
+
+def private_text() -> PrivateOutcome[str]:
+    """Construct a second private instance with different payload storage."""
+    return PrivateOutcome.Complete("three")
+
+
+pub def private_summary() -> str:
+    """Expose the result of using two private instances without exporting their type."""
+    match private_number():
+        PrivateOutcome.Complete(number) =>
+            match private_text():
+                PrivateOutcome.Complete(text) => return f"{number}:{text}"
+
+
+@derive(PartialEq, Eq)
+pub enum Signal[T]:
+    """Combine a payload-free case with typed storage and checked equality derives."""
+
+    Empty
+    Value(T)
+
+
+pub def empty_signal() -> Signal[int]:
+    """Return a payload-free variant whose destination fixes its type argument."""
+    return Signal.Empty
+
+
+pub enum Envelope[T]:
+    """Retain another provider-owned generic enum as a nested payload."""
+
+    Entry(Outcome[T])
+
+
+pub def wrapped_outcome() -> Envelope[int]:
+    """Return nested generic enum values across the native package boundary."""
+    return Envelope.Entry(Outcome.Complete(5))

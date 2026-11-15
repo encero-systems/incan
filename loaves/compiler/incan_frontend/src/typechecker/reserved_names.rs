@@ -1,17 +1,18 @@
-//! Refusal of source names that use the compiler's reserved `__incan_` prefix (#1769).
+//! Source-name diagnostics for the reserved compiler prefix and visually confusable declarations.
 //!
 //! The compiler spells the items and locals it generates with `__incan_` (the original a decorator wraps, lowering
 //! temporaries, projected symbol names), so a source name with that prefix could collide with a generated one and stop
 //! the build on a duplicate definition. This pass walks the program's own declarations and bodies before collection and
-//! refuses every name the source declares or binds with the prefix: module declarations and their members, parameters
-//! and type parameters, local and pattern bindings, closure parameters and import aliases. Uses of a name are not
-//! reported; the declaration is.
+//! refuses every name the source declares or binds with the prefix and compares names in each lexical scope by their
+//! UTS #39 skeleton. Module declarations and their members, parameters and type parameters, local and pattern
+//! bindings, closure parameters and import aliases all pass through this one walk. Uses of a name are not reported;
+//! the declaration is.
 //!
 //! Two kinds of name stay allowed. A type's `__incan_new` method is the constructor hook the compiler looks up by that
 //! exact name. A node the compiler synthesized, such as the hidden helper import a vocabulary desugarer receives,
 //! carries no source span (see [`crate::vocab_ast_bridge::is_synthetic_span`]) and is the compiler's own name.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use crate::ast::{
@@ -19,9 +20,28 @@ use crate::ast::{
     Expr, FStringPart, ImportDecl, ImportKind, ListEntry, MatchBody, MethodDecl, Param, Pattern, PatternArg, Program,
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam,
 };
-use crate::diagnostics::{CompileError, errors};
+use crate::diagnostics::{CompileError, errors, lints};
 use crate::vocab_ast_bridge::is_synthetic_span;
 use incan_lang::lang::conventions::{RESERVED_COMPILER_NAME_PREFIX, TYPE_CONSTRUCTOR_HOOK};
+
+/// Compute the UTS #39 skeleton of one Incan identifier from the standard's ASCII-source mappings.
+///
+/// Incan identifiers are ASCII, so only four mappings can affect an identifier: `I` and `1` become `l`, `0` becomes
+/// `O`, and `m` becomes `rn`. The other ASCII-source entries in `confusables.txt` are punctuation that the identifier
+/// grammar does not admit. Keeping this table at the language boundary avoids carrying the full Unicode mapping into
+/// every compiler while producing exactly the same skeleton for every legal Incan name.
+fn confusable_skeleton(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    for character in name.chars() {
+        match character {
+            'I' | '1' => result.push('l'),
+            '0' => result.push('O'),
+            'm' => result.push_str("rn"),
+            _ => result.push(character),
+        }
+    }
+    result
+}
 
 /// Collects the reserved-prefix names one program declares or binds, one report per source position.
 struct ReservedNameWalk {
@@ -29,18 +49,47 @@ struct ReservedNameWalk {
     refusals: Vec<CompileError>,
     /// Names and positions already reported, so a node reached twice (a comprehension's mirrored first clause)
     /// reports once while two names of one import declaration each report.
-    reported: HashSet<(String, usize, usize)>,
+    reported: HashSet<(String, crate::ast::Span)>,
+    /// Non-fatal confusable-name diagnostics in source order.
+    warnings: Vec<CompileError>,
+    /// UTS #39 skeletons already declared in each active lexical scope, outermost first.
+    scopes: Vec<HashMap<String, (String, Span)>>,
 }
 
 impl ReservedNameWalk {
     /// Refuse `name` as a `kind` declared at `span` when it uses the reserved prefix and the source spelled it.
     fn check(&mut self, name: &str, kind: &str, span: Span) {
-        if !name.starts_with(RESERVED_COMPILER_NAME_PREFIX) || is_synthetic_span(span) {
+        if is_synthetic_span(span) {
             return;
         }
-        if self.reported.insert((name.to_string(), span.start, span.end)) {
+        if name.starts_with(RESERVED_COMPILER_NAME_PREFIX) && self.reported.insert((name.to_string(), span)) {
             self.refusals.push(errors::reserved_compiler_name(name, kind, span));
         }
+
+        let confusable_skeleton = confusable_skeleton(name);
+        let Some(scope) = self.scopes.last_mut() else {
+            return;
+        };
+        match scope.get(&confusable_skeleton) {
+            Some((earlier, earlier_span)) if earlier != name => {
+                self.warnings
+                    .push(lints::confusable_identifier(name, earlier, span, *earlier_span))
+            }
+            Some(_) => {}
+            None => {
+                scope.insert(confusable_skeleton, (name.to_string(), span));
+            }
+        }
+    }
+
+    /// Enter a lexical declaration scope for one callable, type, test module or closure.
+    fn enter_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    /// Leave the innermost lexical declaration scope after all of its names have been visited.
+    fn leave_scope(&mut self) {
+        self.scopes.pop();
     }
 
     // ---- Declarations ----
@@ -60,6 +109,7 @@ impl ReservedNameWalk {
             }
             Declaration::Model(model) => {
                 self.check(&model.name, "model", span);
+                self.enter_scope();
                 self.type_params(&model.type_params);
                 for field in &model.fields {
                     self.check(&field.node.name, "field", field.span);
@@ -76,13 +126,15 @@ impl ReservedNameWalk {
                 for property in &model.properties {
                     self.check(&property.node.name, "property", property.span);
                     if let Some(body) = &property.node.body {
-                        self.block(body);
+                        self.property_body(body);
                     }
                 }
                 self.methods(&model.methods);
+                self.leave_scope();
             }
             Declaration::Class(class) => {
                 self.check(&class.name, "class", span);
+                self.enter_scope();
                 self.type_params(&class.type_params);
                 for field in &class.fields {
                     self.check(&field.node.name, "field", field.span);
@@ -99,13 +151,15 @@ impl ReservedNameWalk {
                 for property in &class.properties {
                     self.check(&property.node.name, "property", property.span);
                     if let Some(body) = &property.node.body {
-                        self.block(body);
+                        self.property_body(body);
                     }
                 }
                 self.methods(&class.methods);
+                self.leave_scope();
             }
             Declaration::Trait(trait_decl) => {
                 self.check(&trait_decl.name, "trait", span);
+                self.enter_scope();
                 self.type_params(&trait_decl.type_params);
                 for alias in &trait_decl.method_aliases {
                     self.check(&alias.node.name, "method alias", alias.span);
@@ -116,20 +170,31 @@ impl ReservedNameWalk {
                 for property in &trait_decl.properties {
                     self.check(&property.node.name, "property", property.span);
                     if let Some(body) = &property.node.body {
-                        self.block(body);
+                        self.property_body(body);
                     }
                 }
                 self.methods(&trait_decl.methods);
+                self.leave_scope();
             }
-            Declaration::Capability(capability) => self.check(&capability.name, "capability", span),
+            Declaration::Capability(capability) => {
+                self.check(&capability.name, "capability", span);
+                self.enter_scope();
+                for dimension in &capability.scope {
+                    self.check(&dimension.node.name, "capability scope dimension", dimension.span);
+                }
+                self.leave_scope();
+            }
             Declaration::Alias(alias) => self.check(&alias.name, "alias", span),
             Declaration::Partial(partial) => self.check(&partial.name, "partial", span),
             Declaration::TypeAlias(alias) => {
                 self.check(&alias.name, "type alias", span);
+                self.enter_scope();
                 self.type_params(&alias.type_params);
+                self.leave_scope();
             }
             Declaration::Newtype(newtype) => {
                 self.check(&newtype.name, "type", span);
+                self.enter_scope();
                 self.type_params(&newtype.type_params);
                 for alias in &newtype.method_aliases {
                     self.check(&alias.node.name, "method alias", alias.span);
@@ -138,9 +203,11 @@ impl ReservedNameWalk {
                     self.check(&partial.node.name, "method partial", partial.span);
                 }
                 self.methods(&newtype.methods);
+                self.leave_scope();
             }
             Declaration::Enum(enum_decl) => {
                 self.check(&enum_decl.name, "enum", span);
+                self.enter_scope();
                 self.type_params(&enum_decl.type_params);
                 for variant in &enum_decl.variants {
                     self.check(&variant.node.name, "variant", variant.span);
@@ -149,17 +216,22 @@ impl ReservedNameWalk {
                     self.check(&alias.node.name, "variant alias", alias.span);
                 }
                 self.methods(&enum_decl.methods);
+                self.leave_scope();
             }
             Declaration::Function(function) => {
                 self.check(&function.name, "function", span);
+                self.enter_scope();
                 self.type_params(&function.type_params);
                 self.params(&function.params);
                 self.block(&function.body);
+                self.leave_scope();
             }
             Declaration::TestModule(module) => {
+                self.enter_scope();
                 for nested in &module.body {
                     self.declaration(nested);
                 }
+                self.leave_scope();
             }
             // A vocabulary block is desugared before the checker runs, and a docstring binds nothing.
             Declaration::VocabBlock(_) | Declaration::Docstring(_) => {}
@@ -218,12 +290,21 @@ impl ReservedNameWalk {
             if method.node.name != TYPE_CONSTRUCTOR_HOOK {
                 self.check(&method.node.name, "method", method.span);
             }
+            self.enter_scope();
             self.type_params(&method.node.type_params);
             self.params(&method.node.params);
             if let Some(body) = &method.node.body {
                 self.block(body);
             }
+            self.leave_scope();
         }
+    }
+
+    /// Walk a computed property's local bindings in a callable scope separate from its owner's members.
+    fn property_body(&mut self, body: &[Spanned<Statement>]) {
+        self.enter_scope();
+        self.block(body);
+        self.leave_scope();
     }
 
     /// Walk declared type parameters.
@@ -394,8 +475,10 @@ impl ReservedNameWalk {
     fn expr(&mut self, expr: &Spanned<Expr>) {
         match &expr.node {
             Expr::Closure(params, body) => {
+                self.enter_scope();
                 self.params(params);
                 self.expr(body);
+                self.leave_scope();
             }
             Expr::Match(subject, arms) => {
                 self.expr(subject);
@@ -411,6 +494,7 @@ impl ReservedNameWalk {
                 }
             }
             Expr::ListComp(comp) => {
+                self.enter_scope();
                 self.pattern(&comp.pattern);
                 self.expr(&comp.iter);
                 if let Some(filter) = &comp.filter {
@@ -418,8 +502,10 @@ impl ReservedNameWalk {
                 }
                 self.clauses(&comp.clauses);
                 self.expr(&comp.expr);
+                self.leave_scope();
             }
             Expr::DictComp(comp) => {
+                self.enter_scope();
                 self.pattern(&comp.pattern);
                 self.expr(&comp.iter);
                 if let Some(filter) = &comp.filter {
@@ -428,10 +514,13 @@ impl ReservedNameWalk {
                 self.clauses(&comp.clauses);
                 self.expr(&comp.key);
                 self.expr(&comp.value);
+                self.leave_scope();
             }
             Expr::Generator(generator) => {
+                self.enter_scope();
                 self.clauses(&generator.clauses);
                 self.expr(&generator.expr);
+                self.leave_scope();
             }
             Expr::If(if_expr) => {
                 self.expr(&if_expr.condition);
@@ -566,19 +655,67 @@ impl ReservedNameWalk {
 }
 
 impl TypeChecker {
-    /// Refuse every name the program declares or binds with the compiler's reserved `__incan_` prefix (#1769).
+    /// Report reserved-prefix errors and same-scope UTS #39 confusable-name warnings in one source walk.
     ///
     /// Runs once per program check, before collection, over the program's own declarations; dependency modules are
     /// refused when they are checked as programs of their own. Each refusal carries `INCAN-T0111` and the position
     /// of the declaration, parameter or binding that spells the name.
-    pub(super) fn report_reserved_compiler_names(&mut self, program: &Program) {
+    pub(super) fn report_source_name_diagnostics(&mut self, program: &Program) {
         let mut walk = ReservedNameWalk {
             refusals: Vec::new(),
             reported: HashSet::new(),
+            warnings: Vec::new(),
+            scopes: vec![HashMap::new()],
         };
         for declaration in &program.declarations {
             walk.declaration(declaration);
         }
         self.errors.extend(walk.refusals);
+        self.warnings.extend(walk.warnings);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeChecker;
+
+    /// Parse and check one source module, returning the completed checker for warning inspection.
+    fn checked(source: &str) -> Result<TypeChecker, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        Ok(checker)
+    }
+
+    /// UTS #39 skeleton collisions warn at the later declaration but remain accepted.
+    #[test]
+    fn confusable_names_in_one_scope_warn_without_refusing() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked("def adrnin() -> None:\n    pass\n\ndef admin() -> None:\n    pass\n")?;
+        let warnings = checker
+            .warnings()
+            .iter()
+            .filter(|warning| warning.stable_code() == Some("INCAN-T0136"))
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].message.contains("`admin`"));
+        assert!(warnings[0].message.contains("`adrnin`"));
+        assert_eq!(warnings[0].related_spans().len(), 1);
+        Ok(())
+    }
+
+    /// Identical skeletons in different function scopes do not form a pair.
+    #[test]
+    fn confusable_locals_in_different_scopes_do_not_warn() -> Result<(), Box<dyn std::error::Error>> {
+        let checker = checked("def first() -> None:\n    adrnin = 1\n\ndef second() -> None:\n    admin = 1\n")?;
+        assert!(
+            checker
+                .warnings()
+                .iter()
+                .all(|warning| warning.stable_code() != Some("INCAN-T0136"))
+        );
+        Ok(())
     }
 }

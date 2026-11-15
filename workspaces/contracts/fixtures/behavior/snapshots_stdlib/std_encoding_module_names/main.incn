@@ -1,0 +1,42 @@
+# behavior: each encoding module publishes the EncodingError, Path and BytesIO names 0.5.1 published, and a module importing them from there uses them
+# expect-stdout:
+#   base32 base32 true
+#   base58 base58 true
+#   base64 base64 true
+#   base85 base85.b85 true
+#   hex hex true
+#   bech32 bech32 true
+#   base32 stream true
+#   base58 stream true
+#   base64 stream true
+#   base85 stream true
+#   hex stream true
+#   paths 5
+
+from base32_names import refusal_line as base32_line, stream_line as base32_stream, no_path as base32_path
+from base58_names import refusal_line as base58_line, stream_line as base58_stream, no_path as base58_path
+from base64_names import refusal_line as base64_line, stream_line as base64_stream, no_path as base64_path
+from base85_names import refusal_line as base85_line, stream_line as base85_stream, no_path as base85_path
+from hex_names import refusal_line as hex_line, stream_line as hex_stream, no_path as hex_path
+from bech32_names import refusal_line as bech32_line
+
+
+def main() -> None:
+    println(base32_line("!!!!"))
+    println(base58_line("0OIl"))
+    println(base64_line("@@@@"))
+    println(base85_line("\"\"\"\"\""))
+    println(hex_line("zz"))
+    println(bech32_line("not bech32"))
+    data = b"incan"
+    println(base32_stream(data))
+    println(base58_stream(data))
+    println(base64_stream(data))
+    println(base85_stream(data))
+    println(hex_stream(data))
+    paths = [base32_path(), base58_path(), base64_path(), base85_path(), hex_path()]
+    mut empty = 0
+    for slot in paths:
+        if slot:
+            empty += 1
+    println(f"paths {empty}")

@@ -1,0 +1,16 @@
+# behavior: `oven version BUMP` and `oven version --set VERSION` plan the project's next version from `loaf.toml`, as 0.5.1's `incan version` did (#3139).
+# cli-commands:
+#   oven version patch --dry-run
+#   oven version --set 0.1.1 --dry-run
+#   oven version patch --dry-run --project .
+# expect-stdout-contains:
+#   dry-run: true
+#   old version: 0.1.0
+#   new version: 0.1.1
+#   modified files:
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; a dry run never changes the manifest."""
+    pass

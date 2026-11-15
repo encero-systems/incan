@@ -1,0 +1,92 @@
+# behavior: plain trait inputs inherit borrowing and recursive generic Result defaults retain closed storage obligations
+# expect-stdout:
+#   8
+
+"""Inherited access stays borrowed while generic result obligations preserve successful and failed outcomes."""
+
+from rust::std::sync import Mutex
+
+trait Observer:
+    def observe[T](self, value: Borrowed[T]) -> None: ...
+
+class Ignore with Observer:
+    def observe[T](self, value: T) -> None:
+        pass
+
+trait Incrementer:
+    def increment(self, mut value: BorrowedMut[int]) -> None: ...
+
+class Increment with Incrementer:
+    def increment(self, mut value: int) -> None:
+        value += 1
+
+def through[T, O with Observer](observer: Borrowed[O], value: Borrowed[T]) -> None:
+    observer.observe(value)
+
+def main() -> None:
+    """Keep caller storage usable and check both outcomes of generic explicit calls."""
+    observer = Ignore()
+    lock = Mutex.new(7)
+    observer.observe(lock)
+    through(observer, lock)
+    assert not lock.is_poisoned()
+    mut value = 7
+    Increment().increment(value)
+    assert value == 8
+    match generic_result_probe():
+        Ok(_) => pass
+        Err(error) => assert false, error
+    failure = Broken()
+    match forward[str, Broken](failure, 7):
+        Err(error) => assert error == "kept failure"
+        Ok(_) => assert false
+    println(value)
+
+
+trait Visit:
+    """Visit any sink while preserving the sink-selected failure type."""
+    def visit[E, W with Sink[E]](self, mut sink: BorrowedMut[W]) -> Result[None, E]:
+        """Give a visitor exclusive call-local access without taking the sink."""
+        pass
+
+trait Sink[E]:
+    """A recursive default forwards a borrowed value and its unresolved result requirement."""
+    def feed[V with Visit](mut self, value: Borrowed[V]) -> Result[None, E]:
+        """Retain the dependency obligation until this adoption and method instance are closed."""
+        return value.visit(self)
+
+class Value with Visit:
+    """A value whose success leaves its caller-owned state available."""
+    pub count: int
+    def visit[E, W with Sink[E]](self, mut sink: W) -> Result[None, E]:
+        """Inherit the trait input mode with an ordinary parameter annotation."""
+        return Ok(None)
+
+class Reader with Sink[str]:
+    """Close the trait failure binder without overriding the recursive default."""
+    pub count: int
+
+def generic_result_probe() -> Result[None, str]:
+    """Execute the default and keep its borrowed input usable afterward."""
+    value = Value(count=7)
+    mut reader = Reader(count=0)
+    reader.feed(value)?
+    assert value.count == 7
+    return Ok(None)
+
+
+trait Failure[E]:
+    """Supply a concrete failure through an explicit borrowed argument contract."""
+    def fail(self, marker: Borrowed[int]) -> Result[None, E]:
+        """Return a failure without acquiring the caller marker."""
+        pass
+
+class Broken with Failure[str]:
+    """Create the owned error in a concrete implementation."""
+    def fail(self, marker: int) -> Result[None, str]:
+        """Preserve the exact error payload through the generic forwarding call."""
+        return Err("kept failure")
+
+def forward[E, F with Failure[E]](failure: Borrowed[F], marker: Borrowed[int]) -> Result[None, E]:
+    """Forward a checked result; this does not construct an unresolved owned error payload."""
+    return failure.fail(marker)

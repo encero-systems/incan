@@ -1,0 +1,280 @@
+"""Overlay requests answered by the installed records engine."""
+
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from files import write
+from rust_target import decoded
+from scratch import scratch_directory
+
+
+pub def test_an_overlay_is_answered_by_a_check_alone() -> Result[None, str]:
+    """An unsaved type error is reported from a check: the request plans no function and bakes no native unit."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("hello")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    source = program.joinpath("main.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    buffer = scratch.path().joinpath("buffer.incn")
+    write(buffer, "def main() -> None:\n    count: int = \"three\"\n    println(\"hello\")\n")?
+    store = scratch.path().joinpath("store")
+    answered = overlay(binary, source, buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    answer = answered?
+    text = answer.to_json().map_err((error) => error.message())?
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "plan_function_evaluations")? == 0, text
+    assert count(work, "native_bakes")? == 0, text
+    diagnostics = answer.require("diagnostics").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    assert len(diagnostics) == 1, text
+    assert count(diagnostics[0], "line")? == 2 and count(diagnostics[0], "column")? == 18, text
+    return Ok(None)
+
+
+pub def test_a_saved_buffer_runs_on_its_build_overlays_work() -> Result[None, str]:
+    """A build overlay of the saved buffer leaves the project's next run nothing to check, lower or bake."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("hello")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    source = program.joinpath("main.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    store = scratch.path().joinpath("store")
+    saved = "def main() -> None:\n    println(\"hello saved\")\n"
+    write(source, saved)?
+    built = overlay_with(binary, source, source, store, ["--build"])
+    ran = records_run(binary, source, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    answer = built?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    report, output = ran?
+    proof = report.to_json().map_err((error) => error.message())?
+    assert output == "hello saved\n", output
+    assert count(report, "body_evaluations")? == 0, proof
+    assert count(report, "native_bakes")? == 0, proof
+    return Ok(None)
+
+
+pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records() -> Result[None, str]:
+    """An imported name's hover is the signature record a build published; the buffer's own names come from it."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("program")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    write(program.joinpath("helper.incn"), "pub def value(scale: int) -> int:\n    return scale * 2\n")?
+    source = program.joinpath("main.incn")
+    write(source, "from helper import value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n")?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    imported = overlay_with(binary, source, source, store, ["--hover", "5:17"])
+    own = overlay_with(binary, source, source, store, ["--hover", "4:5"])
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    imported_answer = imported?
+    own_answer = own?
+    imported_text = imported_answer.to_json().map_err((error) => error.message())?
+    own_text = own_answer.to_json().map_err((error) => error.message())?
+    assert imported_text.contains("def value(scale: int) -> int"), imported_text
+    assert own_text.contains("def main() -> None"), own_text
+    return Ok(None)
+
+
+pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str]:
+    """After a build, an overlay that edits one function's body checks that body and restores every other one."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    buffer = scratch.path().joinpath("buffer.incn")
+    write(buffer, original.replace("value * 2", "value + value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    answered = overlay(binary, helper, buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    answer = answered?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    return Ok(None)
+
+
+pub def test_a_keystroke_writes_no_page_an_earlier_keystroke_wrote() -> Result[None, str]:
+    """
+    After a build, the first keystroke's check writes every checked-body page once. The next keystroke, which edits
+    another function, offers the same pages again without selecting, encoding or writing any of them.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 2", "value + value"))?
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, original.replace("value * 3", "value + value + value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_writes")? == 0, f"first: {first_text}\nsecond: {text}"
+    return Ok(None)
+
+
+pub def test_a_keystroke_decodes_no_page_an_earlier_keystroke_decoded() -> Result[None, str]:
+    """
+    After a build, the first keystroke's check decodes each page it restores. The next keystroke edits the same
+    function again: it restores the same bodies from the pages the compiler already decoded, and decodes none.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 2", "value + value"))?
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, original.replace("value * 2", "2 * value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_decodes")? == 0, f"first: {first_text}\nsecond: {text}"
+    return Ok(None)
+
+
+pub def test_a_keystroke_after_a_save_writes_only_the_pages_the_save_changed() -> Result[None, str]:
+    """
+    After a build and a first keystroke, a save that edits one function in place, moving no other declaration, changes
+    the checked values of that function alone. The next keystroke, which edits another function, writes the saved
+    function's page again and keeps every other one.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 3", "value + value + value"))?
+    saved = original.replace("value * 2", "2 * value")
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, saved.replace("value * 3", "3 * value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    wrote = write(helper, saved)
+    built = overlay_with(binary, helper, helper, store, ["--build"])
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    _ = wrote?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    built_text = built?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_writes")? == 1, f"first: {first_text}\nsave: {built_text}\nsecond: {text}"
+    return Ok(None)
+
+
+def keystroke_package(scratch: Path) -> Result[tuple[Path, Path, str], str]:
+    """A package whose `main` calls `twice` and `thrice` from `helper`: its entry, its helper and the helper's text."""
+    package = scratch.joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"keystroke\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    source = package.joinpath("src").joinpath("main.incn")
+    write(source, "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n")?
+    helper = package.joinpath("src").joinpath("helper.incn")
+    original = "pub def twice(value: int) -> int:\n    return value * 2\n\n\npub def thrice(value: int) -> int:\n    return value * 3\n"
+    write(helper, original)?
+    return Ok((source, helper, original))
+
+
+def overlay(binary: str, source: Path, buffer: Path, store: Path) -> Result[JsonValue, str]:
+    """Ask the installed Oven for one overlay answer, with its engine work, against a private store."""
+    return overlay_with(binary, source, buffer, store, ["--engine-report"])
+
+
+def overlay_with(binary: str, source: Path, buffer: Path, store: Path, options: list[str]) -> Result[JsonValue, str]:
+    """Ask the installed Oven for one overlay answer with extra request options, against a private store."""
+    outcome = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .args(["--overlay", buffer.0, "--document-version", "1", "--format", "json"])
+        .args(options)
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    text = decoded(outcome.stdout)
+    return parse(text).map_err((error) => f"{error.message()}: stdout={text} stderr={decoded(outcome.stderr)}")
+
+
+def records_run(binary: str, source: Path, store: Path) -> Result[tuple[JsonValue, str], str]:
+    """Run the program through the records engine against the store, returning its proof report and its output."""
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    text = decoded(outcome.stdout)
+    lines = text.split("\n")
+    if not outcome.status.success() or len(lines) < 2:
+        return Err(f"records run: stdout={text} stderr={decoded(outcome.stderr)}")
+    report = parse(lines[0]).map_err((error) => error.message())?
+    return Ok((report, text[len(lines[0]) + 1:]))
+
+
+def count(value: JsonValue, name: str) -> Result[int, str]:
+    """Read one required integer field."""
+    return value.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def stop_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop the private store's engine after the request."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="overlay request test completed")))
+        .map_err((refusal) => refusal.detail)?
+    _ = channel.receive().map_err((refusal) => refusal.detail)?
+    _ = channel.transport.close()
+    return Ok(None)

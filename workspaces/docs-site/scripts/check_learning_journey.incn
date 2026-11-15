@@ -1,0 +1,161 @@
+"""Validate the public learning routes and their canonical content contracts."""
+
+from rust::std::process import exit
+from std.fs import Path
+from std.regex import Regex
+from docs_check_support import site_root, read, require, matches, captures, distinct, quoted_list
+
+const ROUTES: FrozenList[str] = ["evaluate", "try", "learn", "build", "bridge", "reference"]
+const TUTORIALS: FrozenList[str] = [
+    "tooling/tutorials/getting_started.md",
+    "tooling/tutorials/your_first_project.md",
+    "tooling/tutorials/build_and_consume_library.md",
+    "tooling/tutorials/pipeline_mini_project.md",
+    "tooling/tutorials/project_to_ci_artifact.md",
+    "tooling/tutorials/diagnose_failed_build.md",
+    "language/tutorials/typed_data_processor.md",
+    "language/tutorials/build_your_first_api.md",
+    "language/tutorials/async_worker_pipeline.md",
+    "language/tutorials/add_a_rust_crate.md",
+    "language/tutorials/guided_project.md",
+]
+const BRIDGES: FrozenList[str] = [
+    "start_here/coming_from_python.md", "start_here/coming_from_rust.md",
+    "start_here/coming_from_typescript_javascript.md", "start_here/pipelines_and_automation.md",
+]
+const SNIPPETS: FrozenList[str] = [
+    "_snippets/learning/install_toolchain.md", "_snippets/learning/first_project_loop.md",
+    "_snippets/learning/development_toolchain.md",
+]
+
+
+def main() -> Result[None, str]:
+    """
+    Check the learning journey and exit with its result.
+
+    1. Validate route, bridge and shared setup contracts.
+    2. Validate tutorial metadata and source setup.
+    3. Report all failures or the complete inventory.
+    """
+    site = site_root()?
+    docs = site.joinpath("docs")
+    version = repository_version(site)?
+    mut errors: list[str] = []
+
+    # 1. Validate routes, bridges and canonical snippet references.
+    check_routes(docs, errors)?
+    check_bridges(docs, errors)?
+    check_setup_references(docs, errors)?
+
+    # 2. Validate tutorial and source setup metadata.
+    for relative in TUTORIALS:
+        check_tutorial(read(docs.joinpath(relative))?, relative, version, errors)?
+    setup = read(docs.joinpath("_snippets/learning/development_toolchain.md"))?
+    require(errors, installed_setup(setup, version),
+        f"source toolchain setup does not describe the installed {version} toolchain")
+    navigation = read(site.joinpath("mkdocs.yml"))?
+    require(errors, "  - Learn:" in navigation, "global navigation does not expose the Learn intent")
+    require(errors, "Learning journey QA: project/learning_journey.md" in navigation,
+        "learning QA contract is missing from Project")
+
+    # 3. Report the complete result.
+    if len(errors) > 0:
+        println("Learning journey contract failed:")
+        for error in errors:
+            println(f"- {error}")
+        exit(1)
+    println("Learning journey contract passed (6 intents, 4 bridges, 11 project tutorials)")
+    return Ok(None)
+
+
+def check_routes(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Require the six route intents, representative project paths and their status inventory."""
+    hub = read(docs.joinpath("start_here/index.md"))?
+    routes = distinct(captures("data-learning-route=\"([^\"]+)\"", hub)?)
+    require(errors, sorted(routes) == sorted(ROUTES),
+        f"Learn hub routes differ from the six-intent contract: {quoted_list(sorted(routes))}")
+    projects = captures("data-learning-project=\"([^\"]+)\"", hub)?
+    require(errors, len(projects) >= 6, "Learn hub must expose at least six representative project paths")
+    statuses = captures("data-project-status=\"([^\"]+)\"", hub)?
+    require(errors, len([status for status in statuses if status == "executable"]) >= 9,
+        "Learn hub must expose the completed executable project paths")
+    require(errors, len([status for status in statuses if status == "preview"]) == 1,
+        "Learn hub must keep only the hosted-delivery packaging preview")
+    chooser = read(docs.joinpath("start_here/incan_or_incql.md"))?
+    require(errors, "Incan-shaped" in chooser and "IncQL-shaped" in chooser,
+        "Incan/IncQL chooser lacks both problem shapes")
+    require(errors, not matches("(?i)https?://[^\\s)>\"]*incql", chooser)?,
+        "Incan/IncQL chooser links to an unpublished IncQL destination")
+    return Ok(None)
+
+
+def check_bridges(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Require bridge sections and keep installation and project commands in their canonical pages."""
+    for relative in BRIDGES:
+        page = read(docs.joinpath(relative))?
+        for heading in ["## Install once", "## What transfers", "## What changes", "## What not to expect"]:
+            require(errors, heading in page, f"{relative} is missing bridge section '{heading}'")
+        require(errors, "incan new " not in page, f"{relative} duplicates the canonical first-project commands")
+        require(errors, "pipx install incan" not in page, f"{relative} duplicates an installer command")
+        require(errors, "direct_install.sh" not in page, f"{relative} duplicates the direct installer snippet")
+    return Ok(None)
+
+
+def check_setup_references(docs: Path, mut errors: list[str]) -> Result[None, str]:
+    """Keep setup snippets referenced only from their declared canonical tutorial and how-to pages."""
+    mut references: list[list[str]] = [[], [], []]
+    for path in docs.rglob("*.md").map_err((error) => error.message())?:
+        page = read(path)?
+        relative = path.0[len(docs.0) + 1:]
+        for index in range(len(SNIPPETS)):
+            if SNIPPETS[index] in page:
+                references[index].append(relative)
+    for index in range(len(SNIPPETS)):
+        mut expected = ["tooling/how-to/install_and_run.md"]
+        if index < 2:
+            expected.append("tooling/tutorials/getting_started.md")
+        found = sorted(references[index])
+        mut message = f"{SNIPPETS[index]} references differ from the canonical setup pages: "
+        message += f"expected {quoted_list(sorted(expected))}, found {quoted_list(found)}"
+        require(errors, found == sorted(expected), message)
+    return Ok(None)
+
+
+def check_tutorial(page: str, relative: str, version: str, mut errors: list[str]) -> Result[None, str]:
+    """Require the tutorial's fields, verified range, completion condition, next step and execution status."""
+    require(errors, 'class="inc-tutorial-meta"' in page, f"{relative} has no tutorial metadata")
+    for field in ["Reader", "Prerequisites", "Time", "Verified", "Status", "Outcome", "Artifacts"]:
+        require(errors, f"<dt>{field}</dt>" in page, f"{relative} metadata is missing {field}")
+    exact = f"Incan <code>{version}</code>"
+    require(errors, exact in page or verified_range(version) in page,
+        f"{relative} does not state the verified compiler range")
+    require(errors, "inc-learning-panel--complete" in page, f"{relative} has no explicit completion condition")
+    require(errors, matches("(?m)^## (Continue|Next)", page)?, f"{relative} has no reader-facing next step")
+    require(errors, matches("<dt>Status</dt><dd>[^<]+</dd>", page)?,
+        f"{relative} does not state its execution status")
+    return Ok(None)
+
+
+def repository_version(site: Path) -> Result[str, str]:
+    """Read the current command's version from Oven's project manifest rather than a retired release envelope."""
+    manifest = read(site.parent().joinpath("oven/loaf.toml"))?
+    pattern = Regex("(?m)^version\\s*=\\s*\"([^\"]+)\"").map_err((error) => error.message())?
+    if let Some(capture) = pattern.captures(manifest):
+        return Ok(capture.group(1).unwrap_or(""))
+    return Err("Oven's project manifest does not declare a version")
+
+
+def verified_range(version: str) -> str:
+    """Bound the current compiler version by its next minor release."""
+    parts = version.split(".")
+    major = parts[0]
+    minor = int(parts[1])
+    return f"Incan <code>&gt;={version},&lt;{major}.{minor + 1}.0</code>"
+
+
+def installed_setup(source: str, version: str) -> bool:
+    """Require the installed-toolchain check/run loop and its current release identifier."""
+    return (
+        version.split("-")[-1] in source and "incan --version" in source
+        and "incan check " in source and "incan run " in source
+    )

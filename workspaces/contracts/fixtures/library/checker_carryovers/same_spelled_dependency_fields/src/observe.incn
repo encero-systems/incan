@@ -1,0 +1,8 @@
+"""Read a provider's collection element without importing its declaration."""
+
+from pub::records import Decision
+
+
+pub def first_text(value: Decision) -> str:
+    """Read the first identifier through its published owner and field metadata."""
+    return value.evidence_ids[0].text

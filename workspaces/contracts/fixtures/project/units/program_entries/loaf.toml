@@ -1,0 +1,6 @@
+[project]
+name = "program_entries"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

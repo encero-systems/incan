@@ -1,0 +1,13 @@
+# behavior: Intake accepts any valid Loaf scope and leaves an unavailable package to resolution.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   acme/widgets
+#   not published
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the accepted dependency has no published version."""
+    pass

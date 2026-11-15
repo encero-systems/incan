@@ -63,8 +63,7 @@ The canonical report is a thin merged index:
 
 It is not a second full review document. The slice reports remain the detailed evidence.
 
-Do not copy every per-file checklist from worker reports into the canonical report. Keep the detail in the slice
-reports and let the canonical report point at it.
+Do not copy every per-file checklist from worker reports into the canonical report. Keep the detail in the slice reports and let the canonical report point at it.
 
 Worker slice reports:
 
@@ -80,8 +79,7 @@ Canonical merged report:
 
 - `.agents/state/review-report.md`
 
-Workers do **not** write to the canonical report directly.
-Every worker slice report must identify the worker that produced it, and the canonical report must record the worker set used for the run.
+Workers do **not** write to the canonical report directly. Every worker slice report must identify the worker that produced it, and the canonical report must record the worker set used for the run.
 
 ## Workflow
 
@@ -159,20 +157,20 @@ Every worker slice report must identify the worker that produced it, and the can
 
 ## Findings
 
-- [ ] F1 | warning | rustdoc | rustdoc prose | loaves/oven/oven_model/src/project_lifecycle/version.rs:122
+- [ ] F1 | warning | rustdoc | rustdoc prose | loaves/compiler/incan_driver/src/unit.rs:122
   roles: rust-prose
   sources:
     - .agents/state/review-report.rust-prose.md
   status: open
   summary: Manually chopped single-paragraph rustdoc.
 
-- [ ] F2 | error | behavior | env dependency overlays are inspectable but not executable | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:193
+- [ ] F2 | error | behavior | dependency selection disagrees with execution | workspaces/oven/src/loaf_resolve.incn:193
   roles: scope, architecture
   sources:
     - .agents/state/review-report.scope.md
     - .agents/state/review-report.architecture.md
   status: open
-  summary: Env overlays resolve for display but do not enter command execution/dependency resolution.
+  summary: Displayed dependencies do not enter the unit description used for execution.
 
 ## Disagreements
 
@@ -180,7 +178,7 @@ Every worker slice report must identify the worker that produced it, and the can
 
 ## Clean Corroboration
 
-- loaves/oven/oven_model/src/project_lifecycle/env.rs — rust-prose clean
+- loaves/compiler/incan_driver/src/unit.rs — rust-prose clean
 - workspaces/docs-site/docs/tooling/tutorials/getting_started.md — docs-claims clean
 
 Only record clean corroboration where the lack of findings materially matters:

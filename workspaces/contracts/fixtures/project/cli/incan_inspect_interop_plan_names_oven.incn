@@ -1,0 +1,11 @@
+# behavior: 0.5.1's `incan inspect interop-plan` refuses by naming the command that runs it in 0.6, `oven inspect interop-plan` (#3132)
+# cli-commands:
+#   incan inspect interop-plan . --target aarch64-linux-android --format json
+# expect-stdout:
+# expect-stderr-contains:
+#   incan: `incan inspect interop-plan` is an Oven command: run `oven inspect interop-plan`
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

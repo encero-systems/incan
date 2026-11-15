@@ -1,0 +1,16 @@
+from std.collections import Error, xxh3_64
+
+
+model MapFailure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub def collections_line() -> str:
+    """Use std.collections' Error and xxh3_64 names."""
+    return f"collections {len(xxh3_64.digest(b"incan"))} {MapFailure(detail="full").message()}"

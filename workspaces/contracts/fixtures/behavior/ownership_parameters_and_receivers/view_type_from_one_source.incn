@@ -1,0 +1,66 @@
+# behavior: class, model, enum, newtype and nested view layouts store a borrow from their producing call's one declared source (#2892)
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
+#   5
+
+
+class Reader:
+    pub values: list[int]
+
+
+class ClassSelection:
+    pub reader: Borrowed[Reader]
+
+
+model ModelSelection:
+    reader: Borrowed[Reader]
+
+
+enum EnumSelection:
+    Selected(Borrowed[Reader])
+
+
+type NewtypeSelection = newtype Borrowed[Reader]:
+    def fourth(self) -> int:
+        return self.0.values[3]
+
+
+class WrappedSelection:
+    pub selection: ModelSelection
+
+
+def select_class(reader: Borrowed[Reader]) -> ClassSelection from reader:
+    return ClassSelection(reader=reader)
+
+
+def select_model(reader: Borrowed[Reader]) -> ModelSelection from reader:
+    return ModelSelection(reader=reader)
+
+
+def select_enum(reader: Borrowed[Reader]) -> EnumSelection from reader:
+    return EnumSelection.Selected(reader)
+
+
+def select_newtype(reader: Borrowed[Reader]) -> NewtypeSelection from reader:
+    return NewtypeSelection(reader)
+
+
+def select_nested(reader: Borrowed[Reader]) -> WrappedSelection from reader:
+    return WrappedSelection(selection=ModelSelection(reader=reader))
+
+
+def main() -> None:
+    reader = Reader(values=[1, 2, 3, 4, 5])
+    class_selection = select_class(reader)
+    println(class_selection.reader.values[0])
+    model_selection = select_model(reader)
+    println(model_selection.reader.values[1])
+    match select_enum(reader):
+        EnumSelection.Selected(selected) => println(selected.values[2])
+    newtype_selection = select_newtype(reader)
+    println(newtype_selection.fourth())
+    nested_selection = select_nested(reader)
+    println(nested_selection.selection.reader.values[4])

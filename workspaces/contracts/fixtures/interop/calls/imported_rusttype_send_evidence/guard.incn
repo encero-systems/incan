@@ -1,0 +1,24 @@
+"""Export one native guard whose explicit thread-safety evidence must cross a source module boundary."""
+
+from rust::incan_std_primitives::locking import LockGuard as NativeLockGuard
+from rust::std::marker import Send, Sync
+from rust::std::sync import Arc
+
+
+pub type ThreadSafeLockGuard = rusttype NativeLockGuard with Send, Sync
+
+
+pub model Lease:
+    """One imported source model retaining an explicitly thread-safe native carrier."""
+
+    pub held: Arc[ThreadSafeLockGuard]
+
+
+pub def memory_lease() -> Lease:
+    """Create a lease whose native reference count can be observed on another thread."""
+    return Lease(held=Arc.new(NativeLockGuard.memory()))
+
+
+pub def reference_count(lease: Lease) -> int:
+    """Observe the retained native resource through its declaring module's admitted Rust methods."""
+    return lease.held.as_ref().reference_count()

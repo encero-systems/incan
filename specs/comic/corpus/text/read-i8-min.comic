@@ -1,0 +1,3 @@
+example.Value = Record { value: i8 }
+
+example.Value << (value=-128)

@@ -1,0 +1,17 @@
+"""Own the source index and its precise native borrowing boundary."""
+
+from rust::std::sync import Arc
+from rust::std::convert import AsRef
+
+
+pub model Index:
+    """Keep two independently observed mappings."""
+
+    pub owners: dict[str, int]
+    pub generic_owners: dict[str, int]
+
+
+pub def borrowed_index(owner: &Arc[Index]) -> &Index:
+    """Borrow the source index while retaining its Arc owner."""
+    index: &Index = owner.as_ref()
+    return index

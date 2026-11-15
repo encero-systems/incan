@@ -1,0 +1,31 @@
+# behavior: separately compiled callers share primitive and builtin UTF-8 decoding for valid, malformed, truncated and frozen input and retain owned terminated storage (#2501)
+# expect-stdout:
+#   source café
+#   refused
+#   bad�tail
+#   cut�
+#   builtin café
+#   frozen café
+#   112 117 98 0
+#   true
+
+"""Exercise primitive text and native-string operations through a separately compiled provider."""
+
+from pub::source_text import decode_builtin, decode_frozen, decode_source, terminated
+
+
+def main() -> Result[None, str]:
+    """Print strict, replacement, frozen and owned-terminated provider results."""
+    println(decode_source(b"source caf\xc3\xa9", false))
+    println(decode_source(b"bad\xfftail", false))
+    println(decode_source(b"bad\xfftail", true))
+    println(decode_source(b"cut\xe2\x82", true))
+    println(decode_builtin(b"builtin caf\xc3\xa9"))
+    println(decode_frozen())
+    storage = terminated("pub")?
+    println(" ".join([str(int(byte)) for byte in storage]))
+    interior = b"a\x00b".decode().unwrap_or("")
+    match terminated(interior):
+        Ok(_) => println(false)
+        Err(_) => println(true)
+    return Ok(None)

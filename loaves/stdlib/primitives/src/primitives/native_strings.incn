@@ -1,0 +1,19 @@
+"""Owned native-string storage built from shared UTF-8 conversion."""
+
+from crate.primitives.text import encode_utf8
+from rust::std::vec import Vec as RustVec
+
+
+pub def nul_terminated_utf8(value: &str) -> Result[list[u8], str]:
+    """
+    Copy text into owned NUL-terminated UTF-8 storage.
+
+    The complete input is copied and checked before the terminator is appended. An interior NUL is refused, so a
+    caller can retain this storage for the complete duration of one admitted native call without exposing a shorter
+    logical string than the source value.
+    """
+    mut encoded: RustVec[u8] = encode_utf8(value)
+    if encoded.contains(0u8):
+        return Err("C string input contains an interior NUL")
+    encoded.push(0u8)
+    return Ok(encoded)

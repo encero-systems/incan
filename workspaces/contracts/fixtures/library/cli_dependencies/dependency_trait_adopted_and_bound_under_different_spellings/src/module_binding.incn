@@ -1,0 +1,39 @@
+"""The dependency's trait is named only through a module binding."""
+
+import pub::tags as t
+
+
+def shout[T with t.Tag](value: T) -> str:
+    return value.loud()
+
+
+def name_of[T with t.Tagging](value: T) -> str:
+    return value.tag()
+
+
+model Mine with t.Tag:
+    id: int
+
+    def tag(self) -> str:
+        return "mine"
+
+    def loud(self) -> str:
+        return "MINE"
+
+
+model Yours with t.Tagging:
+    id: int
+
+    def tag(self) -> str:
+        return "yours"
+
+    def loud(self) -> str:
+        return "YOURS"
+
+
+pub def run_module_binding() -> None:
+    """Print the dependency's and the consumer's models through bounds on either spelling."""
+    println(shout(t.Label(name="dep")))
+    println(name_of(t.Label(name="dep")))
+    println(shout(Mine(id=1)))
+    println(name_of(Yours(id=2)))

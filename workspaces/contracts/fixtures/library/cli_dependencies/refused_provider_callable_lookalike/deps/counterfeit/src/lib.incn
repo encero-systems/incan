@@ -1,0 +1,8 @@
+"""An ordinary provider trait cannot grant the standard callable contract by its name."""
+
+pub trait Callable1[A, R]:
+    def apply(self, value: A) -> R
+
+
+pub def apply_custom[F with Callable1[int, int]](operation: F, value: int) -> int:
+    return operation.apply(value)

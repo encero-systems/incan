@@ -1,0 +1,85 @@
+"""Verify that a standard package's own function re-exported through `std.` is refused, and nothing else is."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_std_reexports import check, defined_functions, reexports
+from check_test_support import write
+
+
+def test_refuses_a_packages_own_function_spelled_from_std() -> Result[None, str]:
+    """A function of the same package, re-exported from `std.`, is named with its line and the `crate.` spelling."""
+    temporary = package()?
+    root = temporary.path()
+    write(root, "loaves/stdlib/system/src/fs/path.incn", "pub from std.fs.locking import exclusive as lock_exclusive\n")?
+    findings = check(root)?
+    assert len(findings) == 1
+    assert findings[0].startswith("loaves/stdlib/system/src/fs/path.incn:1: ")
+    assert "spell it `pub from crate.fs.locking import exclusive`" in findings[0]
+    return Ok(None)
+
+
+def test_refuses_a_function_inside_a_parenthesized_list() -> Result[None, str]:
+    """A parenthesized import list is read whole, and a type beside the function is not named."""
+    temporary = package()?
+    root = temporary.path()
+    write(
+        root,
+        "loaves/stdlib/system/src/fs/path.incn",
+        "\npub from std.fs.locking import (\n    FileLock,\n    shared,\n)\n",
+    )?
+    findings = check(root)?
+    assert len(findings) == 1
+    assert findings[0].startswith("loaves/stdlib/system/src/fs/path.incn:2: `pub from std.fs.locking import shared`")
+    return Ok(None)
+
+
+def test_refuses_a_function_the_package_reexports_from_another_module() -> Result[None, str]:
+    """A function one module re-exports from `crate.` is that module's function too, so a `std.` re-export of it is named."""
+    temporary = package()?
+    root = temporary.path()
+    write(root, "loaves/stdlib/system/src/fs/path.incn", "pub from crate.fs.locking import shared as lock_shared\n")?
+    write(root, "loaves/stdlib/system/src/tempfile.incn", "pub from std.fs.path import lock_shared\n")?
+    findings = check(root)?
+    assert findings == [
+        "loaves/stdlib/system/src/tempfile.incn:1: `pub from std.fs.path import lock_shared` re-exports this package's own function; spell it `pub from crate.fs.path import lock_shared`",
+    ]
+    return Ok(None)
+
+
+def test_accepts_crate_spelling_types_other_packages_and_private_imports() -> Result[None, str]:
+    """`crate.`, a type, another package's function and a non-public import pass."""
+    temporary = package()?
+    root = temporary.path()
+    write(root, "loaves/stdlib/async/loaf.toml", "[project]\nname = \"incan_stdlib_async\"\nversion = \"0.5.0\"\n")?
+    write(root, "loaves/stdlib/async/src/time.incn", "pub def sleep(seconds: float) -> None:\n    pass\n")?
+    mut text = "pub from crate.fs.locking import exclusive\npub from std.fs.locking import FileLock\n"
+    text += "pub from std.time import sleep\nfrom std.fs.locking import shared\n"
+    write(root, "loaves/stdlib/system/src/fs/path.incn", text)?
+    assert check(root)? == []
+    return Ok(None)
+
+
+def test_reads_function_names_and_import_lists() -> Result[None, str]:
+    """Top-level functions, generic or async, are names; nested and class members are not."""
+    mut source = "pub def first[T](value: T) -> T:\n    def inner() -> None:\n        pass\n    return value\n"
+    source += "async def second() -> None:\n    pass\n\n\npub model Thing:\n    def method(self) -> None:\n        pass\n"
+    assert defined_functions(source)? == ["first", "second"]
+    found = reexports("pub from std.io import BytesIO as Buffer, IoError\n")?
+    assert len(found) == 1
+    assert found[0].root == "std"
+    assert found[0].module == "io"
+    assert found[0].names == ["BytesIO", "IoError"]
+    assert found[0].aliases == ["Buffer", "IoError"]
+    return Ok(None)
+
+
+def package() -> Result[TemporaryDirectory, str]:
+    """A standard package `system` whose `fs.locking` module declares two functions and a model."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    write(root, "loaves/stdlib/system/loaf.toml", "[project]\nname = \"incan_stdlib_system\"\nversion = \"0.5.0\"\n")?
+    mut locking = "pub model FileLock:\n    pub path: str\n\n\npub def exclusive(path: str) -> FileLock:\n"
+    locking += "    return FileLock(path=path)\n\n\npub def shared(path: str) -> FileLock:\n    return FileLock(path=path)\n"
+    write(root, "loaves/stdlib/system/src/fs/locking.incn", locking)?
+    write(root, "loaves/stdlib/system/src/lib.incn", "pub from crate.fs.locking import exclusive\n")?
+    return Ok(temporary)

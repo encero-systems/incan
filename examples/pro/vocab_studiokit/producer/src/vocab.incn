@@ -1,0 +1,83 @@
+"""Register studiokit's illustrative query, step and workflow vocabulary through Incan."""
+
+from std.vocab import ClauseSurface, DeclarationSurface, DesugarError, DesugarOutput, DesugarRequest, DesugarResponse
+from std.vocab import DslSurface, IncanExpr, IncanStatement, IncanStatementKind, ScopedSurfaceDescriptor
+from std.vocab import VocabRegistration, VocabSyntaxNode
+from pub::vocab_tools import declaration_expressions, format_expression, print_summary
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Register the example's query, step and workflow descriptors without assigning workflow execution semantics.
+
+    1. Define the structured query and step clauses and workflow statement body.
+    2. Attach workflow-local pipe, fallback, binding and shape glyphs.
+    """
+    # 1. These descriptors preserve the illustrative declaration contracts.
+    # FROM supplies the required query input.
+    source = ClauseSurface.expr("FROM").required()
+    # RELATE accepts repeated relationships.
+    relation = ClauseSurface.expr("RELATE").repeating()
+    # FILTER follows the query input.
+    filter_clause = ClauseSurface.expr("FILTER").optional().after("FROM")
+    # GROUP BY follows filtering.
+    grouping = ClauseSurface.expr_list("GROUP BY").optional().after("FILTER")
+    # SELECT supplies the required projection after grouping.
+    selection = ClauseSurface.expr_list("SELECT").required().after("GROUP BY")
+    # WINDOW BY follows projection with nested items.
+    window = ClauseSurface.nested_items("WINDOW BY").optional().after("SELECT")
+    # Queries accept the six clauses and desugar to expressions.
+    query = DeclarationSurface
+        .named("query")
+        .with_clause_body()
+        .desugars_to_expression()
+        .with_clauses([source, relation, filter_clause, grouping, selection, window])
+    # Config accepts optional fields.
+    config = ClauseSurface.fields("config").optional()
+    # Input supplies the required step input type.
+    input_clause = ClauseSurface.type_ref("input").required()
+    # Output supplies the required type after input.
+    output_clause = ClauseSurface.type_ref("output").required().after("input")
+    # Steps accept a signature and mixed clause body.
+    step = DeclarationSurface
+        .named("step")
+        .with_signature_head()
+        .with_mixed_body()
+        .with_clauses([config, input_clause, output_clause])
+    # Workflows accept header arguments and statements.
+    workflow = DeclarationSurface.named("workflow").with_header_args().with_statement_body()
+    # 2. The worker receives the parsed glyph tree, with original spans and descriptor ownership.
+    # Pipes compose workflow expressions pairwise.
+    pipe = ScopedSurfaceDescriptor.operator("workflow.pipe", ">>").in_declaration_body("workflow").pairwise_chain()
+    # Fallback is available only inside workflows.
+    fallback = ScopedSurfaceDescriptor.operator("workflow.fallback", "//").in_declaration_body("workflow")
+    # Bindings are available only inside workflows.
+    binding = ScopedSurfaceDescriptor.binding("workflow.bind", ":=").in_declaration_body("workflow")
+    # Shape comparison is available only inside workflows.
+    shape = ScopedSurfaceDescriptor.operator("workflow.shape", "===").in_declaration_body("workflow")
+    surface = DslSurface
+        .on_import("studiokit")
+        .with_declarations([query, step, workflow])
+        .with_scoped_surfaces([pipe, fallback, binding, shape])
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Preserve the original sketch: summarize workflow syntax, reference a query result, or emit a step pass."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            if declaration.keyword == "workflow":
+                expressions = declaration_expressions(declaration)
+                mut summary = "studiokit workflow desugared"
+                if len(expressions) > 0:
+                    mut labels: list[str] = []
+                    for expression in expressions:
+                        labels.append(format_expression(expression)?)
+                    summary = "studiokit workflow surfaces: " + "; ".join(labels)
+                return Ok(print_summary(summary, declaration.span))
+            if declaration.keyword == "query":
+                result = IncanExpr.path("__studiokit_query_result", declaration.span)
+                return Ok(DesugarResponse(output=DesugarOutput.Expression(result)))
+            statement = IncanStatement(span=declaration.span, kind=IncanStatementKind.Pass)
+            return Ok(DesugarResponse(output=DesugarOutput.Statements([statement])))
+        _ => return Err(DesugarError.at(request.node.span(), "studiokit expects a declaration"))

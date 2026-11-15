@@ -1,0 +1,101 @@
+"""Typed binary refusals retain boundary context without embedding input contents."""
+
+from crate.primitives.crumb.errors import CrumbError, CrumbFailure
+
+
+pub enum BinaryFailure(str):
+    """Stable semantic categories, separate from diagnostic wording and corpus labels."""
+
+    BadMagic = "bad_magic"
+    UnsupportedProfile = "unsupported_profile"
+    ReservedFlags = "reserved_flags"
+    NoncanonicalInteger = "noncanonical_integer"
+    IntegerOverflow = "integer_overflow"
+    Truncated = "truncated"
+    TrailingBytes = "trailing_bytes"
+    MissingDescription = "missing_description"
+    DescriptionMismatch = "description_mismatch"
+    DuplicateSelector = "duplicate_selector"
+    DescriptionOrder = "description_order"
+    DescriptionIndex = "description_index"
+    InvalidDescription = "invalid_description"
+    InvalidSelector = "invalid_selector"
+    DuplicateMember = "duplicate_member"
+    MemberPosition = "member_position"
+    MemberOrder = "member_order"
+    InvalidOffsets = "invalid_offsets"
+    InvalidOffsetWidth = "invalid_offset_width"
+    NonminimalOffsetWidth = "nonminimal_offset_width"
+    InvalidCell = "invalid_cell"
+    InvalidUtf8 = "invalid_utf8"
+    BitmapPadding = "bitmap_padding"
+    RedundantPresence = "redundant_presence"
+    NoncanonicalNan = "noncanonical_nan"
+    ArityMismatch = "arity_mismatch"
+    DuplicateKey = "duplicate_key"
+    CollectionOrder = "collection_order"
+    UnionIndex = "union_index"
+    VariantIndex = "variant_index"
+    SealRequired = "seal_required"
+    SealCount = "seal_count"
+    SealMismatch = "seal_mismatch"
+    LimitExceeded = "limit_exceeded"
+    MissingField = "missing_field"
+    RecordIndex = "record_index"
+
+
+pub model BinaryError:
+    """The deepest known offset/member plus an optional primitive cause; no secret payload is retained."""
+
+    pub kind: BinaryFailure
+    pub offset: int
+    pub field: Option[bytes] = None
+    pub variant: Option[bytes] = None
+    pub cause: Option[CrumbError] = None
+
+    pub def message(self) -> str:
+        """Render the category and byte position; input contents never become diagnostic text."""
+        return f"Crumb binary {self.kind.value()} at byte {self.offset}"
+
+
+pub def failure(kind: BinaryFailure, offset: int) -> BinaryError:
+    """Construct a format refusal at a known byte boundary."""
+    return BinaryError(kind=kind, offset=offset)
+
+
+pub def primitive(error: CrumbError, offset: int, fallback: BinaryFailure = BinaryFailure.InvalidCell) -> BinaryError:
+    """Preserve budget/framing categories and the original cause when crossing the primitive boundary."""
+    mut kind = fallback
+    match error.kind:
+        CrumbFailure.Limit => kind = BinaryFailure.LimitExceeded
+        CrumbFailure.Truncated => kind = BinaryFailure.Truncated
+        CrumbFailure.Nonminimal => kind = BinaryFailure.NoncanonicalInteger
+        CrumbFailure.Overflow => kind = BinaryFailure.IntegerOverflow
+        CrumbFailure.InvalidInput => pass
+    return BinaryError(kind=kind, offset=offset, cause=Some(error))
+
+
+pub def in_field(error: BinaryError, member: bytes) -> BinaryError:
+    """Keep a deeper field identity when present; otherwise annotate the failing outer stored field."""
+    if error.field.is_some():
+        return error
+    return BinaryError(
+        kind=error.kind,
+        offset=error.offset,
+        field=Some(member),
+        variant=error.variant,
+        cause=error.cause,
+    )
+
+
+pub def in_variant(error: BinaryError, identity: bytes) -> BinaryError:
+    """Add an enum payload identity without replacing a deeper variant or field context."""
+    if error.variant.is_some():
+        return error
+    return BinaryError(
+        kind=error.kind,
+        offset=error.offset,
+        field=error.field,
+        variant=Some(identity),
+        cause=error.cause,
+    )

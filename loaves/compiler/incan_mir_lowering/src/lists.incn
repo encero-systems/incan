@@ -11,6 +11,7 @@ from rust::incan_semantics_core::body_ir import (
     Rvalue as RustRvalue,
     OwnershipFact,
 )
+from table_views import borrowed_at
 
 
 pub def list_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
@@ -39,8 +40,9 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
 pub def list_iterator_locals(block: &RustBlock) -> list[int]:
     """Select all builtin cursor storage; the checked initializer separately chooses borrowed or consuming storage."""
     mut result: list[int] = []
-    for statement in block.stmts:
-        result.extend(statement_iterator_locals(statement.kind))
+    # Borrow each statement: a copied statement would copy every block nested inside it.
+    for position in range(len(block.stmts)):
+        result.extend(statement_iterator_locals(borrowed_at(block.stmts, position).kind))
     return result
 
 
@@ -60,8 +62,7 @@ pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
             matched_value: &RustRvalue = value
             match matched_value:
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
-                    matched_arms: &list[RustMatchArm] = arms
-                    for arm in matched_arms:
+                    for arm in arms:
                         collect_arm_iterator_locals(arm, result)
                 _ => pass
         RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=body) =>
@@ -93,7 +94,7 @@ pub def is_owned_list(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def is_builtin_iteration(protocol: &IterProtocol) -> bool:
+pub def is_builtin_iteration(protocol: IterProtocol) -> bool:
     """Match a borrowed protocol tag without treating a pattern binding as an owned enum value."""
     match protocol:
         IterProtocol.Builtin => return true
@@ -120,7 +121,11 @@ pub def parameter_storage_type(ty: PlanType, mutable: bool) -> PlanType:
     """
     A source parameter's frame storage: the collection and iterable references above, and for a `mut` text, model,
     enum or tuple parameter the exclusive borrow of the caller's value, which is how legacy passes it.
+
+    An explicit exclusive reference carries its checked contract even without a source `mut` parameter marker.
     """
+    if is_exclusive_borrow(ty):
+        return ty
     if mutable:
         match ty:
             PlanType.String => return PlanType.StringMutRef
@@ -159,14 +164,16 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
     if is_mutable_list_reference(ty):
         return true
     match ty:
+        PlanType.GeneratorMutRef(_leaf, _depth) => return true
         PlanType.StringMutRef => return true
         PlanType.ModelMutRef(_owner, _name) => return true
         PlanType.EnumMutRef(_owner, _name) => return true
         PlanType.TupleMutRef(_elements) => return true
+        PlanType.NativeArrayMutRef(_elements, _length) => return true
         _ => return false
 
 
-pub def taking_iterator_locals(block: &RustBlock) -> list[int]:
+pub def taking_iterator_locals(block: RustBlock) -> list[int]:
     """Read consuming materializations against this whole frame's polls, including same-frame nested blocks."""
     return taking_block_locals(block, list_iterator_locals(block))
 
@@ -174,8 +181,8 @@ pub def taking_iterator_locals(block: &RustBlock) -> list[int]:
 def taking_block_locals(block: &RustBlock, iterators: list[int]) -> list[int]:
     """Keep the enclosing frame's poll set when an initializer and its poll occupy different nested blocks."""
     mut result: list[int] = []
-    for statement in block.stmts:
-        result.extend(taking_statement_locals(statement.kind, iterators))
+    for position in range(len(block.stmts)):
+        result.extend(taking_statement_locals(borrowed_at(block.stmts, position).kind, iterators))
     return result
 
 
@@ -195,8 +202,7 @@ def taking_statement_locals(kind: &RustStatementKind, iterators: list[int]) -> l
                                     result.append(index)
                             None => pass
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
-                    matched_arms: &list[RustMatchArm] = arms
-                    for arm in matched_arms:
+                    for arm in arms:
                         collect_arm_taking_locals(arm, iterators, result)
                 _ => pass
         RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=body) =>
@@ -214,7 +220,7 @@ def taking_statement_locals(kind: &RustStatementKind, iterators: list[int]) -> l
     return result
 
 
-def collect_arm_iterator_locals(arm: &RustMatchArm, mut result: list[int]) -> None:
+def collect_arm_iterator_locals(arm: RustMatchArm, mut result: list[int]) -> None:
     """Borrow a same-frame match arm through its declared Rust type while finding cursor slots."""
     for statement in arm.guard_stmts:
         result.extend(statement_iterator_locals(statement.kind))
@@ -222,7 +228,7 @@ def collect_arm_iterator_locals(arm: &RustMatchArm, mut result: list[int]) -> No
         result.extend(statement_iterator_locals(statement.kind))
 
 
-def collect_arm_taking_locals(arm: &RustMatchArm, iterators: list[int], mut result: list[int]) -> None:
+def collect_arm_taking_locals(arm: RustMatchArm, iterators: list[int], mut result: list[int]) -> None:
     """Retain the enclosing frame's cursor set while borrowing a match arm's initializer statements."""
     for statement in arm.guard_stmts:
         result.extend(taking_statement_locals(statement.kind, iterators))

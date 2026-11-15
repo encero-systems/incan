@@ -1,0 +1,798 @@
+//! Complete semantic-codec boundary exercised by the retained Incan corpus twin.
+
+use std::time::Instant;
+
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+#[path = "semantic_adaptation.rs"]
+mod adaptation;
+#[path = "semantic_blocks.rs"]
+mod blocks;
+#[path = "semantic_columns.rs"]
+mod columns;
+#[path = "semantic_envelope.rs"]
+mod envelope;
+#[path = "semantic_hash.rs"]
+mod hash;
+#[path = "semantic_print.rs"]
+mod print;
+#[path = "semantic_read.rs"]
+mod read;
+#[path = "semantic_row_cells.rs"]
+mod row_cells;
+#[path = "semantic_row_cursor.rs"]
+mod row_cursor;
+#[path = "semantic_row_entry.rs"]
+mod row_entry;
+#[path = "semantic_row_set.rs"]
+mod row_set;
+#[path = "semantic_row_write.rs"]
+mod row_write;
+#[path = "semantic_rows.rs"]
+mod rows;
+#[path = "semantic_scan.rs"]
+mod scan;
+
+pub use row_entry::{RowAdmission, RowRequest};
+pub use row_set::RowRead;
+
+/// One native semantic-codec attempt with independently measured encode and decode stages.
+pub struct SemanticCase {
+    /// Zero is a completed semantic operation; one means that operation is not implemented natively.
+    pub kind: u8,
+    /// Canonical bytes produced by the native encoder for byte comparison with the Incan twin.
+    pub encoded: Vec<u8>,
+    /// Canonical logical result bytes reconstructed by the native decoder.
+    pub decoded: Vec<u8>,
+    /// Native encoding time in nanoseconds for this operation.
+    pub encode_ns: u64,
+    /// Native decoding time in nanoseconds for this operation.
+    pub decode_ns: u64,
+}
+
+/// Exercise one corpus case through the native semantic boundary without borrowing an Incan result.
+///
+/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec. Timing
+/// starts after the corpus document is parsed, so both stages measure the codec rather than the JSON reader.
+pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCase {
+    let parsed = match serde_json::from_str::<Value>(&document) {
+        Ok(value) => value,
+        Err(_) => return SemanticCase::unsupported(),
+    };
+    let encode_started = Instant::now();
+    let encoded = match operation.as_str() {
+        "member_identity" => member_identity(&parsed),
+        "nominal_identity" => nominal_identity(&parsed),
+        "type_selector" => type_selector(&parsed),
+        "shape_admission" => shape_admission(&parsed),
+        "value_relation" => value_relation(&parsed),
+        "hash_preimage" => hash_preimage(&parsed),
+        "adaptation" => adaptation::adaptation(&parsed),
+        "text_print" => print::text_print(&parsed),
+        "text_read" => read::text_read(&parsed),
+        "column_codec" => columns::encode(&parsed),
+        "binary_decode" => rows::encode(&parsed),
+        _ => None,
+    };
+    let encode_ns = elapsed_ns(encode_started);
+    let Some(encoded) = encoded else {
+        return SemanticCase::unsupported();
+    };
+    let decode_started = Instant::now();
+    let decoded = match operation.as_str() {
+        "hash_preimage" => verify_preimage(&encoded),
+        "column_codec" => columns::decode(&parsed),
+        "binary_decode" => rows::decode(&parsed),
+        _ => Some(encoded.clone()),
+    };
+    let decode_ns = elapsed_ns(decode_started);
+    let Some(decoded) = decoded else {
+        return SemanticCase::unsupported();
+    };
+    SemanticCase {
+        kind: 0,
+        encoded,
+        decoded,
+        encode_ns,
+        decode_ns,
+    }
+}
+
+/// Encode one derived preimage as a frame followed by its complete SHA-256 digest.
+fn hash_preimage(document: &Value) -> Option<Vec<u8>> {
+    let (preimage, digest) = hash::hash_preimage(document)?;
+    let mut encoded = Vec::with_capacity(preimage.len() + 40);
+    append_frame(&mut encoded, &preimage);
+    encoded.extend_from_slice(&digest);
+    Some(encoded)
+}
+
+/// Read a preimage frame back, require its trailing digest to match, and rebuild the comparison bytes.
+fn verify_preimage(encoded: &[u8]) -> Option<Vec<u8>> {
+    let (length, start) = read_unsigned(encoded)?;
+    let end = start.checked_add(usize::try_from(length).ok()?)?;
+    let preimage = encoded.get(start..end)?;
+    let digest = encoded.get(end..)?;
+    if digest != Sha256::digest(preimage).as_slice() {
+        return None;
+    }
+    let mut decoded = Vec::with_capacity(encoded.len());
+    append_frame(&mut decoded, preimage);
+    decoded.extend_from_slice(digest);
+    Some(decoded)
+}
+
+/// Read one shortest base-128 count, refusing overlong or truncated groups.
+fn read_unsigned(data: &[u8]) -> Option<(u64, usize)> {
+    let mut value = 0u64;
+    for (index, byte) in data.iter().enumerate().take(10) {
+        value |= u64::from(byte & 0x7f).checked_shl(7 * index as u32)?;
+        if byte & 0x80 == 0 {
+            if index > 0 && *byte == 0 {
+                return None;
+            }
+            return Some((value, index + 1));
+        }
+    }
+    None
+}
+
+/// Compute one member identity from the independently supplied earliest name.
+fn member_identity(document: &Value) -> Option<Vec<u8>> {
+    let earliest_name = document.get("earliest_name")?.as_str()?;
+    Some(Sha256::digest(earliest_name.as_bytes())[..6].to_vec())
+}
+
+/// Encode the nominal identity, its exact framed preimage and the complete digest.
+fn nominal_identity(document: &Value) -> Option<Vec<u8>> {
+    let registry = document.get("registry")?.as_str()?;
+    let package = document.get("package")?.as_str()?;
+    let earliest_path = document.get("earliest_path")?.as_str()?;
+    if registry.contains('\0') || package.contains('\0') || earliest_path.contains('\0') {
+        return None;
+    }
+    let mut preimage = Vec::with_capacity(registry.len() + package.len() + earliest_path.len() + 3);
+    for component in [registry, package, earliest_path] {
+        preimage.extend_from_slice(component.as_bytes());
+        preimage.push(0);
+    }
+    let digest = Sha256::digest(&preimage);
+    let mut encoded = Vec::with_capacity(6 + preimage.len() + 1 + digest.len());
+    encoded.extend_from_slice(&digest[..6]);
+    append_frame(&mut encoded, &preimage);
+    encoded.extend_from_slice(&digest);
+    Some(encoded)
+}
+
+/// Append one shortest base-128 length and the already admitted bytes.
+fn append_frame(output: &mut Vec<u8>, data: &[u8]) {
+    let mut length = data.len();
+    loop {
+        let mut group = (length & 0x7f) as u8;
+        length >>= 7;
+        if length != 0 {
+            group |= 0x80;
+        }
+        output.push(group);
+        if length == 0 {
+            output.extend_from_slice(data);
+            return;
+        }
+    }
+}
+
+/// Encode the canonical closed-selector spelling and its key preimage.
+fn type_selector(document: &Value) -> Option<Vec<u8>> {
+    let input = document.get("input")?;
+    let kind = input.get("kind")?.as_str()?;
+    if !matches!(kind, "record" | "enum") {
+        return None;
+    }
+    let identity_text = input.get("declaration_hex")?.as_str()?;
+    let identity = decode_hex(identity_text)?;
+    if identity.len() != 6 {
+        return None;
+    }
+    let arguments: &[Value] = match input.get("arguments") {
+        Some(value) => value.as_array()?.as_slice(),
+        None => &[],
+    };
+    if let Some(parameters) = input.get("parameter_names")
+        && parameters.as_array()?.len() != arguments.len()
+    {
+        return None;
+    }
+    let mut spellings = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        let spelling = argument.as_str()?;
+        if !valid_selector_spelling(spelling) {
+            return None;
+        }
+        spellings.push(spelling);
+    }
+    let mut selector = format!("{kind}@{identity_text}");
+    if !spellings.is_empty() {
+        selector.push('<');
+        selector.push_str(&spellings.join(","));
+        selector.push('>');
+    }
+    let mut key = identity;
+    append_base128(&mut key, spellings.len());
+    for spelling in spellings {
+        append_frame(&mut key, spelling.as_bytes());
+    }
+    let mut encoded = Vec::with_capacity(selector.len() + key.len() + 2);
+    append_frame(&mut encoded, selector.as_bytes());
+    encoded.extend(key);
+    Some(encoded)
+}
+
+/// Admit the closed scalar and nominal spellings exercised by selector construction.
+fn valid_selector_spelling(value: &str) -> bool {
+    if matches!(
+        value,
+        "none"
+            | "bool"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "fp32"
+            | "fp64"
+            | "decimal"
+            | "string"
+            | "binary"
+    ) {
+        return true;
+    }
+    let Some((head, arguments)) = value.split_once('<') else {
+        return valid_nominal_head(value);
+    };
+    if !valid_nominal_head(head) || !arguments.ends_with('>') {
+        return false;
+    }
+    let inner = &arguments[..arguments.len() - 1];
+    !inner.is_empty() && split_selector_arguments(inner).is_some()
+}
+
+/// Validate one nominal selector head with an exact six-byte lowercase identity.
+fn valid_nominal_head(value: &str) -> bool {
+    let Some((kind, identity)) = value.split_once('@') else {
+        return false;
+    };
+    matches!(kind, "record" | "enum") && identity.len() == 12 && decode_hex(identity).is_some()
+}
+
+/// Split nested selector arguments while rejecting empty or unbalanced members.
+fn split_selector_arguments(value: &str) -> Option<Vec<&str>> {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut result = Vec::new();
+    for (index, character) in value.char_indices() {
+        match character {
+            '<' => depth = depth.checked_add(1)?,
+            '>' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                let part = &value[start..index];
+                if !valid_selector_spelling(part) {
+                    return None;
+                }
+                result.push(part);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    let part = &value[start..];
+    if depth != 0 || !valid_selector_spelling(part) {
+        return None;
+    }
+    result.push(part);
+    Some(result)
+}
+
+/// Decode strict lowercase hexadecimal bytes.
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    value
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| Some(hex_value(pair[0])? * 16 + hex_value(pair[1])?))
+        .collect()
+}
+
+/// Decode one lowercase hexadecimal digit.
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
+}
+
+/// Append one shortest base-128 native count.
+fn append_base128(output: &mut Vec<u8>, mut value: usize) {
+    loop {
+        let mut group = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            group |= 0x80;
+        }
+        output.push(group);
+        if value == 0 {
+            return;
+        }
+    }
+}
+
+/// Encode the written-shape admission result without consulting expected corpus fields.
+fn shape_admission(document: &Value) -> Option<Vec<u8>> {
+    let fields = document.get("written")?.get("fields")?.as_array()?;
+    let mut previous: Option<&str> = None;
+    let mut seen = std::collections::BTreeSet::new();
+    for (index, field) in fields.iter().enumerate() {
+        let identity = field.get("id")?.as_str()?;
+        if identity.len() != 12 || decode_hex(identity).is_none() {
+            return Some(admission_refusal("IdentityWidth", &format!("/fields/{index}/id")));
+        }
+        if !seen.insert(identity) {
+            return Some(admission_refusal("DuplicateIdentity", &format!("/fields/{identity}")));
+        }
+        if previous.is_some_and(|value| value >= identity) {
+            return Some(admission_refusal("IdentityOrder", "/fields"));
+        }
+        previous = Some(identity);
+    }
+    Some(vec![0])
+}
+
+/// Encode one typed admission refusal as a stable kind and path pair.
+fn admission_refusal(kind: &str, path: &str) -> Vec<u8> {
+    let mut result = vec![1];
+    append_frame(&mut result, kind.as_bytes());
+    append_frame(&mut result, path.as_bytes());
+    result
+}
+
+/// Compare two logical values without consulting the corpus's expected relation.
+fn value_relation(document: &Value) -> Option<Vec<u8>> {
+    let left = document.get("left")?;
+    let right = document.get("right")?;
+    Some(vec![u8::from(!logical_equal(left, right)?)])
+}
+
+/// Apply Crumb object equality to the corpus value notation.
+fn logical_equal(left: &Value, right: &Value) -> Option<bool> {
+    let left = strip_present(left)?;
+    let right = strip_present(right)?;
+    let left_kind = left.get("kind")?.as_str()?;
+    let right_kind = right.get("kind")?.as_str()?;
+    if left_kind == "float" && right_kind == "float" {
+        return float_equal(left, right);
+    }
+    if left_kind == "int" && right_kind == "int" {
+        return Some(
+            left.get("value")?.as_str()?.parse::<i128>().ok()? == right.get("value")?.as_str()?.parse::<i128>().ok()?,
+        );
+    }
+    if left_kind != right_kind {
+        return Some(false);
+    }
+    match left_kind {
+        "none" => Some(true),
+        "string" => Some(left.get("value")?.as_str()? == right.get("value")?.as_str()?),
+        "some" => logical_equal(left.get("value")?, right.get("value")?),
+        "list" => sequence_equal(left.get("items")?.as_array()?, right.get("items")?.as_array()?),
+        "reference" => Some(
+            left.get("target_type")?.as_str()? == right.get("target_type")?.as_str()?
+                && left.get("identity")?.as_str()? == right.get("identity")?.as_str()?,
+        ),
+        _ => None,
+    }
+}
+
+/// Remove present optional layers only when they do not terminate in absence.
+fn strip_present(value: &Value) -> Option<&Value> {
+    let original = value;
+    let mut selected = value;
+    while selected.get("kind")?.as_str()? == "some" {
+        selected = selected.get("value")?;
+    }
+    if selected.get("kind")?.as_str()? == "none" {
+        Some(original)
+    } else {
+        Some(selected)
+    }
+}
+
+/// Compare ordered logical sequences element by element.
+fn sequence_equal(left: &[Value], right: &[Value]) -> Option<bool> {
+    if left.len() != right.len() {
+        return Some(false);
+    }
+    for (left_item, right_item) in left.iter().zip(right) {
+        if !logical_equal(left_item, right_item)? {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// Compare exact IEEE inputs while normalizing NaNs and preserving signed zero.
+fn float_equal(left: &Value, right: &Value) -> Option<bool> {
+    let left_number = float_number(left)?;
+    let right_number = float_number(right)?;
+    if left_number.is_nan() && right_number.is_nan() {
+        return Some(true);
+    }
+    if left_number == 0.0 && right_number == 0.0 {
+        return Some(left_number.is_sign_negative() == right_number.is_sign_negative());
+    }
+    Some(left_number == right_number)
+}
+
+/// Decode the corpus's exact big-endian IEEE bit label into a common carrier.
+fn float_number(value: &Value) -> Option<f64> {
+    let width = value.get("width")?.as_u64()?;
+    let bits = value.get("bits")?.as_str()?;
+    match width {
+        32 => Some(f32::from_bits(u32::from_str_radix(bits, 16).ok()?) as f64),
+        64 => Some(f64::from_bits(u64::from_str_radix(bits, 16).ok()?)),
+        _ => None,
+    }
+}
+
+impl SemanticCase {
+    /// Preserve an explicit unsupported state without placeholder bytes or timings.
+    fn unsupported() -> Self {
+        Self {
+            kind: 1,
+            encoded: Vec::new(),
+            decoded: Vec::new(),
+            encode_ns: 0,
+            decode_ns: 0,
+        }
+    }
+}
+
+/// Saturate elapsed nanoseconds at the interop carrier's maximum instead of truncating.
+fn elapsed_ns(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evaluate_semantic_case;
+
+    #[test]
+    fn member_identity_hashes_exact_utf8_without_normalization() {
+        let result = evaluate_semantic_case(
+            "member_identity".to_string(),
+            "{\"earliest_name\":\"email\"}".to_string(),
+        );
+        assert_eq!(result.kind, 0);
+        assert_eq!(result.encoded, [0x82, 0x24, 0x44, 0x17, 0xf9, 0x56]);
+        assert_eq!(result.encoded, result.decoded);
+
+        let nominal = evaluate_semantic_case(
+            "nominal_identity".to_string(),
+            "{\"registry\":\"registry.example\",\"package\":\"example/crm\",\"earliest_path\":\"customers.Customer\"}"
+                .to_string(),
+        );
+        assert_eq!(nominal.kind, 0);
+        assert_eq!(&nominal.encoded[..6], [0x1d, 0xdb, 0x0b, 0x3c, 0xe6, 0xd3]);
+        assert_eq!(nominal.encoded, nominal.decoded);
+
+        let selector = evaluate_semantic_case(
+            "type_selector".to_string(),
+            "{\"input\":{\"kind\":\"record\",\"declaration_hex\":\"070dcdc804d5\",\"arguments\":[\"i8\"]}}".to_string(),
+        );
+        assert_eq!(selector.kind, 0);
+        assert_eq!(selector.encoded, selector.decoded);
+
+        let admission = evaluate_semantic_case(
+            "shape_admission".to_string(),
+            "{\"written\":{\"fields\":[{\"id\":\"82244417\"}]}}".to_string(),
+        );
+        assert_eq!(admission.kind, 0);
+        assert_eq!(admission.encoded[0], 1);
+
+        let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
+        assert_eq!(unsupported.kind, 1);
+        assert!(unsupported.encoded.is_empty());
+    }
+
+    #[test]
+    fn adaptation_widens_integers_and_refuses_other_nominals() {
+        let widen = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i32","canonical":true,"absent":"required"}]},"requested":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i64","canonical":true,"absent":"required"}]},"values":[{"kind":"int","type":"i32","value":"12"}]}"#.to_string(),
+        );
+        assert_eq!(widen.kind, 0);
+        assert_eq!(widen.encoded[0], 0);
+        assert_eq!(&widen.encoded[widen.encoded.len() - 3..], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[]},"requested":{"nominal":"example.Supplier","fields":[]},"values":[]}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert_eq!(&refused.encoded[..17], b"\x01\x0fNominalMismatch");
+        assert_eq!(&refused.encoded[17..], b"\x08/nominal");
+    }
+
+    #[test]
+    fn text_print_groups_consecutive_records_as_rows() {
+        let printed = evaluate_semantic_case(
+            "text_print".to_string(),
+            r#"{"document":{"descriptions":[{"path":"example.Point","kind":"Record","fields":[{"name":"x","type":"i64","absent":"required","canonical":true},{"name":"y","type":"i64","absent":"required","canonical":true}]}],"values":[{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"1"},"y":{"kind":"int","type":"i64","value":"2"}}},{"kind":"record","type":"example.Point","fields":{"x":{"kind":"int","type":"i64","value":"3"},"y":{"kind":"int","type":"i64","value":"4"}}}]}}"#.to_string(),
+        );
+        assert_eq!(printed.kind, 0);
+        assert_eq!(
+            printed.encoded,
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n"
+        );
+        assert_eq!(printed.encoded, printed.decoded);
+    }
+
+    #[test]
+    fn column_dictionaries_round_trip_prefixes_and_refuse_zero_deltas() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"string","input_hex":"030d01000a00026161010162000162","expected":{"status":"accepted","keys_hex":["6161","6162","62"]}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            accepted.encoded,
+            [
+                0x03, 0x0d, 0x01, 0x00, 0x0a, 0x00, 0x02, 0x61, 0x61, 0x01, 0x01, 0x62, 0x00, 0x01, 0x62
+            ]
+        );
+        assert_eq!(accepted.decoded[0], 0);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"i8","input_hex":"020701000401000100","expected":{"status":"refused","kind":"nonminimal_delta"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x10nonminimal_delta");
+    }
+
+    #[test]
+    fn column_blocks_round_trip_packed_numbers_and_refuse_nonminimal_bases() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"01010003d808","type":"i8","logical_count":4,"expected":{"status":"accepted","values":[{"kind":"int","type":"i8","value":"0"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"4"}],"encoding":1}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(accepted.encoded, [0x01, 0x01, 0x00, 0x03, 0xd8, 0x08]);
+        assert_eq!(&accepted.decoded[..2], [0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"0101000209","type":"i8","logical_count":2,"expected":{"status":"refused","kind":"nonminimal_base"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0fnonminimal_base");
+    }
+
+    #[test]
+    fn text_read_prints_accepted_documents_and_positions_refusals() {
+        let source = "example.Point = Record { x: i64, y: i64 }\nexample.Point << (1, y=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let accepted = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            &accepted.encoded[2..],
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n"
+        );
+
+        let source = "example.Point = Record { x: i64 }\nexample.Point << (x=1, x=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let refused = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(refused.kind, 0);
+        assert_eq!(refused.encoded, b"\x01\x0fduplicate_field\x02\x18");
+    }
+
+    #[test]
+    fn row_envelopes_round_trip_references_and_refuse_seal_mismatches() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let refused = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            format!(
+                r#"{{"input_hex":"43524d42010101500101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770100020100013aba437d836d09b8dd1267631069d769c96ffe569621bbd420ac5a2cfb0a25e7","supplied_descriptions":{description}}}"#
+            ),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0dseal_mismatch\x37\x00\x00");
+
+        let missing = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            r#"{"input_hex":"43524d420101002d010109070dcdc804d5010154000000000000000000000000000000000000000000000000000000000000000000","supplied_descriptions":[]}"#.to_string(),
+        );
+        assert_eq!(missing.kind, 0);
+        assert_eq!(missing.decoded, b"\x01\x10invalid_selector\x09\x00\x00");
+    }
+
+    #[test]
+    fn row_envelopes_charge_every_read_owned_resource_limit() {
+        let nested = "43524d4201010185080600a201410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653030000470617468030d6578616d706c652e4e6f6465300a70726f70657274696573060001005d060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f706572746965730600047479706503137265636f72644036653666363436353330333100a201410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653031000470617468030d6578616d706c652e4e6f6465310a70726f70657274696573060001005d060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f706572746965730600047479706503137265636f72644036653666363436353330333200a201410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653032000470617468030d6578616d706c652e4e6f6465320a70726f70657274696573060001005d060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f706572746965730600047479706503137265636f72644036653666363436353330333300a201410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653033000470617468030d6578616d706c652e4e6f6465330a70726f70657274696573060001005d060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f706572746965730600047479706503137265636f72644036653666363436353330333400a201410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653034000470617468030d6578616d706c652e4e6f6465340a70726f70657274696573060001005d060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f706572746965730600047479706503137265636f726440366536663634363533303335009101410604046b696e6403065265636f7264076e6f6d696e616c04076e6f64653035000470617468030d6578616d706c652e4e6f6465350a70726f70657274696573060001004c060606616273656e74030872657175697265640963616e6f6e6963616c010102696404066669656c6431046e616d65030576616c75650a70726f70657274696573060004747970650302693801001301001001000d01000a0100070100040100010701ed2917a7e3da6c25739cb0874c2916a609f0db6db34cd9546a30da1b1f64fdb5";
+        let statuses: Vec<u8> = [r#"{"bytes":59893}"#, r#"{"elements":4205}"#, r#"{"depth":6}"#]
+            .iter()
+            .map(|limits| {
+                let result = evaluate_semantic_case(
+                    "binary_decode".to_string(),
+                    format!(r#"{{"input_hex":"{nested}","limits":{limits}}}"#),
+                );
+                assert_eq!(result.kind, 0);
+                *result.decoded.first().expect("one row decode status")
+            })
+            .collect();
+        assert_eq!(statuses, [1, 1, 1], "a nested sealed row escaped a read-owned limit");
+    }
+
+    #[test]
+    fn row_refusals_name_their_envelope_offset_field_and_variant() {
+        let header = "43524d420101007401006b3f0604046b696e640304456e756d076e6f6d696e616c04071ddb0b3ce6d3000470617468030d6578616d706c652e53746174650a70726f7065727469657306000100282606030269640406013f54400c82046e616d65030552656164790a70726f70657274696573060000010003000";
+        let decode = |input: &str, supplied: &str| {
+            evaluate_semantic_case(
+                "binary_decode".to_string(),
+                format!(r#"{{"input_hex":"{input}","supplied_descriptions":{supplied}}}"#),
+            )
+            .decoded
+        };
+        assert_eq!(decode("43524d", "[]"), b"\x01\x09truncated\x03\x00\x00");
+        assert_eq!(decode("43524d43010100", "[]"), b"\x01\x09bad_magic\x00\x00\x00");
+        assert_eq!(decode("43524d42010102", "[]"), b"\x01\x0ereserved_flags\x06\x00\x00");
+        assert_eq!(
+            decode("43524d4201010000ff", "[]"),
+            b"\x01\x0etrailing_bytes\x08\x00\x00"
+        );
+        // The enum's only variant has no payload fields; an offset width of three is refused inside the variant.
+        assert_eq!(
+            decode(&format!("{header}100"), "[]")[..3],
+            [0, 0, 1],
+            "the unmodified inline enum is accepted"
+        );
+        assert_eq!(
+            decode(&format!("{header}300"), "[]"),
+            b"\x01\x14invalid_offset_width\x7a\x00\x01\x06\x01\x3f\x54\x40\x0c\x82"
+        );
+        // A boolean cell of two is refused at its own byte, inside its stored field.
+        let boolean = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[{"kind":"map","entries":[[{"kind":"string","value":"id"},{"kind":"binary","hex":"013f54400c82"}],[{"kind":"string","value":"name"},{"kind":"string","value":"age"}],[{"kind":"string","value":"type"},{"kind":"string","value":"boolean"}],[{"kind":"string","value":"canonical"},{"kind":"boolean","value":true}],[{"kind":"string","value":"absent"},{"kind":"string","value":"required"}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let refused = decode(
+            "43524d42010100310101071ddb0b3ce6d3001da133a298ed40ff061c1219f095f290c49ba4ed00e4c9dad4afcf37eb2519ae01000401000102",
+            boolean,
+        );
+        assert_eq!(refused, b"\x01\x0cinvalid_cell\x38\x01\x06\x01\x3f\x54\x40\x0c\x82\x00");
+    }
+
+    #[test]
+    fn column_envelopes_round_trip_groups_and_refuse_reserved_flags() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let input = "43524d42020100350101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770101010001010003000100";
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            format!(r#"{{"operation":"binary_decode","input_hex":"{input}","supplied_descriptions":{description}}}"#),
+        );
+        assert_eq!(accepted.kind, 0);
+        let encoded: String = accepted.encoded.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(encoded, input);
+        assert_eq!(&accepted.decoded[..3], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"binary_decode","input_hex":"43524d4202010200"}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0ereserved_flags");
+    }
+
+    #[test]
+    fn hash_preimages_order_sets_and_spell_enum_payload_records() {
+        let cases = [
+            (
+                r#"{"projection":"object","input":{"kind":"set","items":[{"kind":"int","type":"i64","value":"128"},{"kind":"int","type":"i64","value":"-1"},{"kind":"int","type":"i64","value":"0"}]}}"#,
+                "6372756d623100010a0302010200028002",
+            ),
+            (
+                r#"{"projection":"model","input":{"type":{"kind":"enum","key":"E","variants":[{"id":"013f54400c82","fields":[]}]}}}"#,
+                "6372756d623100031b656e756d7b3031336635343430306338323a7265636f72647b7d7d",
+            ),
+        ];
+        for (document, preimage) in cases {
+            let result = evaluate_semantic_case("hash_preimage".to_string(), document.to_string());
+            assert_eq!(result.kind, 0);
+            let decoded: Option<Vec<u8>> = (0..preimage.len())
+                .step_by(2)
+                .map(|index| u8::from_str_radix(&preimage[index..index + 2], 16).ok())
+                .collect();
+            let Some(preimage) = decoded else {
+                panic!("invalid test hexadecimal");
+            };
+            assert_eq!(result.encoded[0] as usize, preimage.len());
+            assert_eq!(&result.encoded[1..=preimage.len()], preimage.as_slice());
+            assert_eq!(result.encoded.len(), 1 + preimage.len() + 32);
+            assert_eq!(result.encoded, result.decoded);
+        }
+    }
+
+    #[test]
+    fn value_relations_cover_exact_numeric_optional_sequence_and_reference_rules() {
+        let cases = [
+            (
+                r#"{"left":{"kind":"float","width":64,"bits":"0000000000000000"},"right":{"kind":"float","width":64,"bits":"8000000000000000"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"float","width":64,"bits":"7ff8000000000001"},"right":{"kind":"float","width":64,"bits":"fff8000000000042"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"float","width":32,"bits":"3fc00000"},"right":{"kind":"float","width":64,"bits":"3ff8000000000000"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i32","value":"2147483647"},"right":{"kind":"int","type":"i64","value":"2147483647"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i64","value":"9007199254740992"},"right":{"kind":"int","type":"i64","value":"9007199254740993"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"string","value":"é"},"right":{"kind":"string","value":"é"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"none"},"right":{"kind":"some","value":{"kind":"none"}}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i64","value":"7"},"right":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}},"right":{"kind":"some","value":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}}}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"some","value":{"kind":"none"}},"right":{"kind":"some","value":{"kind":"some","value":{"kind":"none"}}}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"list","items":[{"kind":"int","type":"i64","value":"1"},{"kind":"int","type":"i64","value":"2"}]},"right":{"kind":"list","items":[{"kind":"int","type":"i64","value":"2"},{"kind":"int","type":"i64","value":"1"}]}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"reference","target_type":"example.Customer","identity":"customer-7","observed_target":"revision-a"},"right":{"kind":"reference","target_type":"example.Customer","identity":"customer-7","observed_target":"revision-b"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"reference","target_type":"example.Customer","identity":"customer-7"},"right":{"kind":"reference","target_type":"example.Customer","identity":"customer-8"}}"#,
+                1,
+            ),
+        ];
+        for (document, expected) in cases {
+            let result = evaluate_semantic_case("value_relation".to_string(), document.to_string());
+            assert_eq!(result.kind, 0);
+            assert_eq!(result.encoded, [expected]);
+            assert_eq!(result.encoded, result.decoded);
+        }
+    }
+}

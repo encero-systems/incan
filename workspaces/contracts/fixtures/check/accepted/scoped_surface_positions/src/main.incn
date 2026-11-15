@@ -1,0 +1,12 @@
+# behavior: a scoped glyph outside eligible_in is ordinary Incan syntax without a vocabulary diagnostic (docs-5)
+# expect-accepted:
+
+"""Check an ordinary addition beside an imported, positively scoped addition glyph."""
+
+from pub::words import marker
+
+
+def main() -> None:
+    """Use the registered glyph outside its declaration-body eligibility."""
+    value = marker() + 2
+    assert value == 3

@@ -1,0 +1,10 @@
+# behavior: an unmarked method can be called only from the methods of its declaring type, so a call from another module is refused (#2570)
+# expect-diagnostic: INCAN-T0001
+
+from ledger import Ledger
+
+
+def main() -> None:
+    ledger = Ledger(total=4)
+    println(ledger.report())
+    println(ledger.checksum())

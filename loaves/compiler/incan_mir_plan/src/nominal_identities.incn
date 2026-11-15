@@ -1,0 +1,408 @@
+"""
+Index-free nominal identities for keyed plan products.
+
+A plan type names a model or enum by its position in the current unit's tables. A keyed product outlives the unit
+that produced it, so it never retains such a position: capture replaces each position by a product-local ordinal, in
+first-seen order, and the product names each ordinal's declaration by its stable identity and meaning digest. Binding
+replaces each ordinal by the position the current unit resolved for that identity.
+"""
+
+from rust::serde import Serialize, Deserialize
+from _types import TupleElement, ListLeaf, PlanType
+
+
+@derive(Clone, Eq, Serialize, Deserialize)
+pub enum NominalKind(str):
+    """The unit table a plan type's nominal position selects."""
+
+    Model = "model"
+    Enum = "enum"
+
+
+@derive(Clone, PartialEq)
+pub model NominalReference:
+    """
+    One position in the current unit's model or enum table and the native name it has there.
+
+    Request-local: a product never retains either, because both follow the declaration's place in the unit.
+    """
+
+    pub kind: NominalKind
+    pub index: int
+    pub name: str = ""
+
+
+@derive(Clone, PartialEq, Serialize, Deserialize)
+pub model ProductNominal:
+    """A declaration a product names: its table kind, stable index-free identity and checked-meaning digest."""
+
+    pub kind: NominalKind
+    pub identity: str
+    pub digest: str
+
+
+pub model NominalRemap:
+    """
+    Translate nominal positions and native names in one direction.
+
+    Capture replaces each unit position by its product-local ordinal and its native name by an empty name, recording
+    both in first-seen order. Binding replaces each ordinal by the unit position and native name `references` resolved
+    for it. A whole-unit record, whose tables are its own, preserves both. Publication folds each carrier position
+    into the plan's enum table after its `fold` source enums.
+    """
+
+    pub capture: bool
+    pub references: list[NominalReference]
+    pub preserve: bool = false
+    pub fold: int = -1
+
+    pub def slot(mut self, kind: NominalKind, index: int, name: str) -> Result[NominalReference, str]:
+        """Return the translated position and native name, refusing an ordinal the product does not name."""
+        if self.fold >= 0:
+            if kind == NominalKind.Enum and is_carrier_index(index):
+                return Ok(NominalReference(kind=kind, index=self.fold + carrier_position(index), name=name))
+            return Ok(NominalReference(kind=kind, index=index, name=name))
+        if self.preserve:
+            return Ok(NominalReference(kind=kind, index=index, name=name))
+        if self.capture:
+            for ordinal in range(len(self.references)):
+                if self.references[ordinal].kind == kind and self.references[ordinal].index == index:
+                    known = self.references[ordinal].name
+                    if name != "" and known == "":
+                        # A construction or clone names no native type; a later type supplies the name.
+                        self.references[ordinal] = NominalReference(kind=kind, index=index, name=name)
+                    elif name != "" and known != name:
+                        return Err("plan product names one declaration by two native names")
+                    return Ok(NominalReference(kind=kind, index=ordinal, name=""))
+            self.references.append(NominalReference(kind=kind, index=index, name=name))
+            return Ok(NominalReference(kind=kind, index=len(self.references) - 1, name=""))
+        if index < 0 or index >= len(self.references):
+            return Err("plan product names an unresolved nominal ordinal")
+        if self.references[index].kind != kind:
+            return Err("plan product nominal ordinal names another table")
+        return Ok(self.references[index])
+
+
+pub def capture_remap() -> NominalRemap:
+    """Start a capture that assigns product-local ordinals in first-seen order."""
+    references: list[NominalReference] = []
+    return NominalRemap(capture=true, references=references)
+
+
+pub def binding_remap(references: list[NominalReference]) -> NominalRemap:
+    """Bind each product-local ordinal to the unit position resolved for its declaration."""
+    return NominalRemap(capture=false, references=references)
+
+
+pub def preserving_remap() -> NominalRemap:
+    """Keep the positions of a record whose model and enum tables travel with it."""
+    references: list[NominalReference] = []
+    return NominalRemap(capture=false, references=references, preserve=true)
+
+
+pub def folding_remap(sources: int) -> NominalRemap:
+    """Fold each carrier position into the plan's enum table, after its `sources` source enums."""
+    references: list[NominalReference] = []
+    return NominalRemap(capture=false, references=references, fold=sources)
+
+
+# Far above any source enum count, so lowering's two enum position ranges never meet.
+pub const CARRIER_BASE: int = 1099511627776
+
+
+pub def carrier_index(position: int) -> int:
+    """The lowering position of the carrier at `position` among the carriers lowering admitted."""
+    return CARRIER_BASE + position
+
+
+pub def is_carrier_index(index: int) -> bool:
+    """Whether a lowering enum position names an admitted carrier rather than a source enum."""
+    return index >= CARRIER_BASE
+
+
+pub def carrier_position(index: int) -> int:
+    """The position among the admitted carriers that a carrier's lowering position names."""
+    return index - CARRIER_BASE
+
+
+pub def remap_types(types: list[PlanType], mut remap: NominalRemap) -> Result[list[PlanType], str]:
+    """Translate every nominal position in an ordered type list."""
+    mut translated: list[PlanType] = []
+    for ty in types:
+        translated.append(remap_type(ty, remap)?)
+    return Ok(translated)
+
+
+pub def remap_type(ty: PlanType, mut remap: NominalRemap) -> Result[PlanType, str]:
+    """Translate a plan type's nominal positions; every nested type crosses the same translation."""
+    match ty:
+        PlanType.Model(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(PlanType.Model(slot.index, slot.name))
+        PlanType.ModelRef(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(PlanType.ModelRef(slot.index, slot.name))
+        PlanType.ModelMutRef(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(PlanType.ModelMutRef(slot.index, slot.name))
+        PlanType.Enum(index, name) =>
+            slot = remap.slot(NominalKind.Enum, index, name)?
+            return Ok(PlanType.Enum(slot.index, slot.name))
+        PlanType.EnumRef(index, name) =>
+            slot = remap.slot(NominalKind.Enum, index, name)?
+            return Ok(PlanType.EnumRef(slot.index, slot.name))
+        PlanType.EnumMutRef(index, name) =>
+            slot = remap.slot(NominalKind.Enum, index, name)?
+            return Ok(PlanType.EnumMutRef(slot.index, slot.name))
+        PlanType.Tuple(elements) => return Ok(PlanType.Tuple(remap_elements(elements, remap)?))
+        PlanType.TupleRef(elements) => return Ok(PlanType.TupleRef(remap_elements(elements, remap)?))
+        PlanType.TupleMutRef(elements) => return Ok(PlanType.TupleMutRef(remap_elements(elements, remap)?))
+        PlanType.List(leaf, depth) => return Ok(PlanType.List(remap_leaf(leaf, remap)?, depth))
+        PlanType.ListRef(leaf, depth) => return Ok(PlanType.ListRef(remap_leaf(leaf, remap)?, depth))
+        PlanType.ListMutRef(leaf, depth) => return Ok(PlanType.ListMutRef(remap_leaf(leaf, remap)?, depth))
+        PlanType.ListIntoIter(leaf, depth) => return Ok(PlanType.ListIntoIter(remap_leaf(leaf, remap)?, depth))
+        PlanType.ListIntoIterMutRef(leaf, depth) =>
+            return Ok(PlanType.ListIntoIterMutRef(remap_leaf(leaf, remap)?, depth))
+        PlanType.Set(leaf) => return Ok(PlanType.Set(remap_leaf(leaf, remap)?))
+        PlanType.SetRef(leaf) => return Ok(PlanType.SetRef(remap_leaf(leaf, remap)?))
+        PlanType.SetMutRef(leaf) => return Ok(PlanType.SetMutRef(remap_leaf(leaf, remap)?))
+        PlanType.Dict(key, value) => return Ok(PlanType.Dict(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
+        PlanType.DictRef(key, value) => return Ok(PlanType.DictRef(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
+        PlanType.DictMutRef(key, value) =>
+            return Ok(PlanType.DictMutRef(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
+        PlanType.Generator(leaf, depth) => return Ok(PlanType.Generator(remap_leaf(leaf, remap)?, depth))
+        PlanType.GeneratorMutRef(leaf, depth) => return Ok(PlanType.GeneratorMutRef(remap_leaf(leaf, remap)?, depth))
+        PlanType.GeneratorYield(leaf, depth) => return Ok(PlanType.GeneratorYield(remap_leaf(leaf, remap)?, depth))
+        PlanType.GeneratorYieldRef(leaf, depth) =>
+            return Ok(PlanType.GeneratorYieldRef(remap_leaf(leaf, remap)?, depth))
+        _ => return remap_composite_type(ty, remap)
+
+
+def remap_composite_type(ty: PlanType, mut remap: NominalRemap) -> Result[PlanType, str]:
+    """Translate the callable, reference, iterator and native storage types that hold nested type lists."""
+    match ty:
+        PlanType.ScalarRef(types) => return Ok(PlanType.ScalarRef(remap_types(types, remap)?))
+        PlanType.ScalarMutRef(types) => return Ok(PlanType.ScalarMutRef(remap_types(types, remap)?))
+        PlanType.FrozenCollection(name, types) => return Ok(PlanType.FrozenCollection(name, remap_types(types, remap)?))
+        PlanType.FrozenCollectionRef(name, types) =>
+            return Ok(PlanType.FrozenCollectionRef(name, remap_types(types, remap)?))
+        PlanType.TypeToken(types) => return Ok(PlanType.TypeToken(remap_types(types, remap)?))
+        PlanType.ZipIterator(left, right) =>
+            return Ok(PlanType.ZipIterator(remap_element(left, remap)?, remap_element(right, remap)?))
+        PlanType.ZipIteratorRef(left, right) =>
+            return Ok(PlanType.ZipIteratorRef(remap_element(left, remap)?, remap_element(right, remap)?))
+        PlanType.ZipIteratorMutRef(left, right) =>
+            return Ok(PlanType.ZipIteratorMutRef(remap_element(left, remap)?, remap_element(right, remap)?))
+        PlanType.FunctionPointer(types) => return Ok(PlanType.FunctionPointer(remap_types(types, remap)?))
+        PlanType.FunctionItem(name, types) => return Ok(PlanType.FunctionItem(name, remap_types(types, remap)?))
+        PlanType.Closure(types) => return Ok(PlanType.Closure(remap_types(types, remap)?))
+        PlanType.NativeClosure(types, send, sync) =>
+            return Ok(PlanType.NativeClosure(remap_types(types, remap)?, send, sync))
+        PlanType.SharedCallable(types) => return Ok(PlanType.SharedCallable(remap_types(types, remap)?))
+        PlanType.ClosureOnce(types) => return Ok(PlanType.ClosureOnce(remap_types(types, remap)?))
+        PlanType.ClosureRef(types) => return Ok(PlanType.ClosureRef(remap_types(types, remap)?))
+        PlanType.BorrowingClosure(types) => return Ok(PlanType.BorrowingClosure(remap_types(types, remap)?))
+        PlanType.BorrowingClosureRef(types) => return Ok(PlanType.BorrowingClosureRef(remap_types(types, remap)?))
+        PlanType.CallableArguments(types) => return Ok(PlanType.CallableArguments(remap_types(types, remap)?))
+        PlanType.Future(types) => return Ok(PlanType.Future(remap_types(types, remap)?))
+        PlanType.NativeSlice(types) => return Ok(PlanType.NativeSlice(remap_types(types, remap)?))
+        PlanType.SliceRef(types) => return Ok(PlanType.SliceRef(remap_types(types, remap)?))
+        PlanType.SliceMutRef(types) => return Ok(PlanType.SliceMutRef(remap_types(types, remap)?))
+        PlanType.NativeArray(types, length) => return Ok(PlanType.NativeArray(remap_types(types, remap)?, length))
+        PlanType.NativeArrayRef(types, length) => return Ok(PlanType.NativeArrayRef(remap_types(types, remap)?, length))
+        PlanType.NativeArrayMutRef(types, length) =>
+            return Ok(PlanType.NativeArrayMutRef(remap_types(types, remap)?, length))
+        PlanType.RawPointer(mutable, types) => return Ok(PlanType.RawPointer(mutable, remap_types(types, remap)?))
+        PlanType.Boxed(types) => return Ok(PlanType.Boxed(remap_types(types, remap)?))
+        PlanType.Trait(identity) =>
+            # The publication fold crosses every type of the unit's own plan, and a trait names no position in it.
+            if remap.fold >= 0:
+                return Ok(PlanType.Trait(identity))
+            return Err("plan products refuse a canonical source-trait type")
+        # Every remaining alternative names no nested type and no nominal position.
+        _ => return Ok(ty)
+
+
+def remap_leaves(leaves: list[ListLeaf], mut remap: NominalRemap) -> Result[list[ListLeaf], str]:
+    """Translate an ordered list of collection leaves."""
+    mut translated: list[ListLeaf] = []
+    for leaf in leaves:
+        translated.append(remap_leaf(leaf, remap)?)
+    return Ok(translated)
+
+
+pub def remap_leaf(leaf: ListLeaf, mut remap: NominalRemap) -> Result[ListLeaf, str]:
+    """Translate one collection leaf's nominal positions."""
+    match leaf:
+        ListLeaf.Model(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(ListLeaf.Model(slot.index, slot.name))
+        ListLeaf.Enum(index, name) =>
+            slot = remap.slot(NominalKind.Enum, index, name)?
+            return Ok(ListLeaf.Enum(slot.index, slot.name))
+        ListLeaf.Tuple(elements) => return Ok(ListLeaf.Tuple(remap_elements(elements, remap)?))
+        ListLeaf.FrozenCollection(name, types) => return Ok(ListLeaf.FrozenCollection(name, remap_types(types, remap)?))
+        ListLeaf.FunctionPointer(types) => return Ok(ListLeaf.FunctionPointer(remap_types(types, remap)?))
+        ListLeaf.TypeToken(types) => return Ok(ListLeaf.TypeToken(remap_types(types, remap)?))
+        ListLeaf.List(leaves, depth) => return Ok(ListLeaf.List(remap_leaves(leaves, remap)?, depth))
+        ListLeaf.Dict(leaves) => return Ok(ListLeaf.Dict(remap_leaves(leaves, remap)?))
+        ListLeaf.Set(leaves) => return Ok(ListLeaf.Set(remap_leaves(leaves, remap)?))
+        ListLeaf.Reference(types) => return Ok(ListLeaf.Reference(remap_types(types, remap)?))
+        _ => return Ok(leaf)
+
+
+def remap_elements(elements: list[TupleElement], mut remap: NominalRemap) -> Result[list[TupleElement], str]:
+    """Translate an ordered tuple layout."""
+    mut translated: list[TupleElement] = []
+    for element in elements:
+        translated.append(remap_element(element, remap)?)
+    return Ok(translated)
+
+
+pub def remap_element(element: TupleElement, mut remap: NominalRemap) -> Result[TupleElement, str]:
+    """Translate one tuple element's nominal positions."""
+    match element:
+        TupleElement.Model(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(TupleElement.Model(slot.index, slot.name))
+        TupleElement.Enum(index, name) =>
+            slot = remap.slot(NominalKind.Enum, index, name)?
+            return Ok(TupleElement.Enum(slot.index, slot.name))
+        TupleElement.ModelRef(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(TupleElement.ModelRef(slot.index, slot.name))
+        TupleElement.ModelMutRef(index, name) =>
+            slot = remap.slot(NominalKind.Model, index, name)?
+            return Ok(TupleElement.ModelMutRef(slot.index, slot.name))
+        TupleElement.List(leaf, depth) => return Ok(TupleElement.List(remap_leaf(leaf, remap)?, depth))
+        TupleElement.Dict(key, value) => return Ok(TupleElement.Dict(remap_leaf(key, remap)?, remap_leaf(value, remap)?))
+        TupleElement.Set(leaf) => return Ok(TupleElement.Set(remap_leaf(leaf, remap)?))
+        TupleElement.Tuple(elements) => return Ok(TupleElement.Tuple(remap_elements(elements, remap)?))
+        TupleElement.FunctionPointer(types) => return Ok(TupleElement.FunctionPointer(remap_types(types, remap)?))
+        TupleElement.Reference(mutable, types) => return Ok(TupleElement.Reference(mutable, remap_types(types, remap)?))
+        TupleElement.SliceRef(types) => return Ok(TupleElement.SliceRef(remap_types(types, remap)?))
+        TupleElement.SliceMutRef(types) => return Ok(TupleElement.SliceMutRef(remap_types(types, remap)?))
+        TupleElement.FrozenCollection(name, types) =>
+            return Ok(TupleElement.FrozenCollection(name, remap_types(types, remap)?))
+        _ => return Ok(element)
+
+
+pub model UnitNominals:
+    """
+    The current unit's model, source enum and carrier tables: each position's declaration, by stable identity and
+    meaning digest, and the native name it has at that position.
+
+    `model_positions` and `enum_positions` keep each identity's first position, as lowering's own first-match name
+    resolution does. A carrier's position is its lowering position, `carrier_index` of its place among the carriers,
+    so a source enum appended later moves none.
+    """
+
+    pub models: list[ProductNominal]
+    pub enums: list[ProductNominal]
+    pub model_names: list[str]
+    pub enum_names: list[str]
+    pub model_positions: dict[str, int]
+    pub enum_positions: dict[str, int]
+    pub carriers: list[ProductNominal] = []
+    pub carrier_names: list[str] = []
+
+    pub def append_carrier(mut self, nominal: ProductNominal, name: str) -> None:
+        """Describe the next standard carrier lowering admitted, at its lowering position."""
+        if self.enum_positions.get(nominal.identity) == None:
+            self.enum_positions[nominal.identity] = carrier_index(len(self.carriers))
+        self.carriers.append(nominal)
+        self.carrier_names.append(name)
+
+    pub def enum_at(self, index: int) -> Option[tuple[ProductNominal, str]]:
+        """The declaration and native name at a lowering enum position, if the unit describes one."""
+        if is_carrier_index(index):
+            position = carrier_position(index)
+            if position >= len(self.carriers):
+                return None
+            return Some((self.carriers[position], self.carrier_names[position]))
+        if index < 0 or index >= len(self.enums):
+            return None
+        return Some((self.enums[index], self.enum_names[index]))
+
+
+pub def unit_nominals(
+    models: list[ProductNominal],
+    enums: list[ProductNominal],
+    model_names: list[str],
+    enum_names: list[str],
+) -> UnitNominals:
+    """Index described unit tables by identity, keeping each identity's first position."""
+    mut model_positions: dict[str, int] = {}
+    for index in range(len(models)):
+        if model_positions.get(models[index].identity) == None:
+            model_positions[models[index].identity] = index
+    mut enum_positions: dict[str, int] = {}
+    for index in range(len(enums)):
+        if enum_positions.get(enums[index].identity) == None:
+            enum_positions[enums[index].identity] = index
+    return UnitNominals(
+        models=models,
+        enums=enums,
+        model_names=model_names,
+        enum_names=enum_names,
+        model_positions=model_positions,
+        enum_positions=enum_positions,
+    )
+
+
+pub def resolve_nominals(stored: &list[ProductNominal], unit: &UnitNominals) -> Option[list[NominalReference]]:
+    """
+    Find the current position and native name of each declaration a product names.
+
+    A declaration the unit no longer has, or whose meaning digest changed, makes the whole product a miss.
+    """
+    mut references: list[NominalReference] = []
+    for nominal in stored:
+        if nominal.kind == NominalKind.Model:
+            match unit.model_positions.get(nominal.identity):
+                None => return None
+                Some(position) =>
+                    if unit.models[position].digest != nominal.digest:
+                        return None
+                    references.append(NominalReference(kind=NominalKind.Model, index=position, name=unit.model_names[position]))
+        else:
+            match unit.enum_positions.get(nominal.identity):
+                None => return None
+                Some(position) =>
+                    match unit.enum_at(position):
+                        None => return None
+                        Some(found) =>
+                            described, name = found
+                            if described.digest != nominal.digest:
+                                return None
+                            references.append(NominalReference(kind=NominalKind.Enum, index=position, name=name))
+    return Some(references)
+
+
+pub def describe_nominals(references: &list[NominalReference], unit: &UnitNominals) -> Result[list[ProductNominal], str]:
+    """
+    Name each referenced unit position by its declaration.
+
+    Refuses a position the unit does not describe, a declaration without a stable identity, and a native name that is
+    not the one the unit gives that position, which a reused product could not reproduce.
+    """
+    mut nominals: list[ProductNominal] = []
+    for reference in references:
+        if reference.kind == NominalKind.Model:
+            if reference.index < 0 or reference.index >= len(unit.models):
+                return Err("plan product names a model the unit does not describe")
+            if reference.name != "" and unit.model_names[reference.index] != reference.name:
+                return Err("plan product names a model by another native name")
+            nominals.append(unit.models[reference.index])
+        else:
+            match unit.enum_at(reference.index):
+                None => return Err("plan product names an enum the unit does not describe")
+                Some(found) =>
+                    described, name = found
+                    if reference.name != "" and name != reference.name:
+                        return Err("plan product names an enum by another native name")
+                    nominals.append(described)
+    for nominal in nominals:
+        if nominal.identity == "":
+            return Err("plan product names a declaration without a stable identity")
+    return Ok(nominals)

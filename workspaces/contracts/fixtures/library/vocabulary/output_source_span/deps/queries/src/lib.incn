@@ -1,0 +1,34 @@
+"""Return an authored FROM expression so consumer diagnostics retain its original location."""
+
+from std.vocab import (
+    ClauseSurface, DeclarationSurface, DesugarError, DesugarOutput, DesugarRequest, DesugarResponse,
+    DslSurface, VocabBodyItem, VocabClauseBody, VocabRegistration, VocabSyntaxNode,
+)
+
+
+pub def marker() -> int:
+    """Expose an ordinary import that activates the query surface."""
+    return 7
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Register an expression with one required FROM clause."""
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    surface = DslSurface.on_import("queries").with_declaration(query.with_clause(ClauseSurface.expr("FROM").required()))
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
+
+
+pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
+    """Return the clause expression with the exact span the parser assigned it."""
+    match request.node:
+        VocabSyntaxNode.Declaration(declaration) =>
+            for item in declaration.body:
+                match item:
+                    VocabBodyItem.Clause(clause) =>
+                        match clause.body:
+                            VocabClauseBody.Expression(expression) =>
+                                return Ok(DesugarResponse(output=DesugarOutput.Expression(expression)))
+                            _ => pass
+                    _ => pass
+        _ => pass
+    return Err(DesugarError.at(request.node.span(), "expected a FROM expression"))

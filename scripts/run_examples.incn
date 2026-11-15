@@ -1,0 +1,288 @@
+"""Run every repository example in its declared execution mode through an installed Incan toolchain."""
+
+from rust::std::process import Command, Output, exit
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from check_support import read, repository_root, write_stderr
+
+const CODEGRAPH_IMPORTER: str = "examples/pro/codegraph_importer/src/main.incn"
+
+
+pub model Settings:
+    """The installed command, deadline helper, selection and evidence directory for one examples run."""
+
+    pub compiler: str
+    pub timeout: str
+    pub seconds: str
+    pub selected: list[str]
+    pub output: Path
+
+
+pub model ExamplePlan:
+    """One example's repository path, compiler mode and process working directory."""
+
+    pub path: str
+    pub mode: str
+    pub directory: str
+
+
+pub model ExampleOutcome:
+    """One attempted example's plan, exit code and retained command log."""
+
+    pub path: str
+    pub mode: str
+    pub code: int
+    pub log: Path
+
+
+def main() -> None:
+    """1. Discover examples. 2. Run or check each selected entry. 3. Exit unsuccessfully on any failure."""
+    # 1. Resolve the checkout, installed toolchain and evidence settings.
+    match configure():
+        Ok(configured) =>
+            # 2. Discover the selected examples and execute each declared mode.
+            match run_gate(configured[0], configured[1]):
+                # 3. Keep a failed command distinct from a runner configuration failure.
+                Ok(true) => exit(0)
+                Ok(false) => exit(1)
+                Err(message) =>
+                    write_stderr(f"examples: {message}\n")
+                    exit(2)
+        Err(message) =>
+            write_stderr(f"examples: {message}\n")
+            exit(2)
+
+
+pub def configure() -> Result[Tuple[Path, Settings], str]:
+    """Resolve the checkout, installed command, timeout helper, optional selection and evidence directory."""
+    root = repository_root()?
+    compiler = get_or("INCAN_BIN", get_or("INCAN", "incan"))
+    timeout = timeout_executable(get_or("INCAN_EXAMPLES_TIMEOUT_BIN", ""))?
+    seconds = get_or("INCAN_EXAMPLES_TIMEOUT", "120")
+    if not positive_decimal(seconds):
+        return Err(f"INCAN_EXAMPLES_TIMEOUT must be a positive integer, got: {seconds}")
+    selected = [item for item in get_or("INCAN_EXAMPLES_ONLY", "").split(":") if item != ""]
+    output = Path(get_or("INCAN_EXAMPLES_OUT", root.joinpath("target/examples").0))
+    return Ok((root, Settings(compiler=compiler, timeout=timeout, seconds=seconds, selected=selected, output=output)))
+
+
+pub def plans(root: Path) -> Result[list[ExamplePlan], str]:
+    """
+    Discover every gate entry with a stable mode and working directory.
+
+    1. Select runnable entry points and every declared check-only source.
+    2. Assign each entry its declared mode and nearest Loaf root.
+    """
+    # 1. The explicit registry adds sources that intentionally have no runnable entry point.
+    check_only = check_only_entries(root)?
+    mut entries: list[str] = []
+    examples = root.joinpath("examples")
+    for source in examples.rglob("*.incn").map_err((error) => error.message())?:
+        path = repository_path(root, source)?
+        if "/target/" in f"/{path}" or not source.is_file():
+            continue
+        if has_main(read(source)?) or path in check_only:
+            entries.append(path)
+    for path in check_only:
+        if path not in entries:
+            entries.append(path)
+    # 2. Stable ordering makes the receipt reviewable and independent of host directory order.
+    mut discovered: list[ExamplePlan] = []
+    for path in sorted(entries):
+        source = root.joinpath(path)
+        if not source.is_file():
+            return Err(f"check-only example does not exist: {path}")
+        discovered.append(
+            ExamplePlan(path=path, mode=example_mode(path, check_only), directory=working_directory(root, source).0),
+        )
+    return Ok(discovered)
+
+
+pub def run_gate(root: Path, settings: Settings) -> Result[bool, str]:
+    """
+    Run the examples gate and report whether every selected command passed.
+
+    1. Discover and execute each selected entry.
+    2. Retain each completed outcome immediately in the tabular receipt.
+    3. Fail closed when the selection names no entry.
+    """
+    settings.output.mkdir(true, true).map_err((error) => error.message())?
+    mut rows: list[str] = ["example\tmode\tstatus\texit\tlog"]
+    mut passed = 0
+    mut failed = 0
+    # 1. A check-only entry uses the same compiler and deadline path as a runnable entry.
+    for plan in plans(root)?:
+        if not selected(plan.path, settings.selected):
+            continue
+        outcome = invoke(root, settings, plan)?
+        if outcome.code == 0:
+            passed += 1
+        else:
+            failed += 1
+        status = outcome_status(outcome.code)
+        # 2. Persist the result before moving to the next command so an interrupted gate retains evidence.
+        rows.append(f"{outcome.path}\t{outcome.mode}\t{status}\t{outcome.code}\t{outcome.log.0}")
+        write_receipt(settings.output, rows)?
+        println(f"{status} {outcome.mode} {outcome.path} (exit {outcome.code})")
+    println(f"{passed} passed, {failed} failed")
+    # 3. A misspelled explicit selection must not become a green no-op.
+    if passed + failed == 0:
+        return Err("selection matched no example entries")
+    return Ok(failed == 0)
+
+
+pub def invoke(root: Path, settings: Settings, plan: ExamplePlan) -> Result[ExampleOutcome, str]:
+    """
+    Run one bounded example command and return its retained outcome.
+
+    The codegraph importer first exports a real snapshot. A failed export is the example's result and prevents the
+    importer from running against missing evidence.
+    """
+    log = settings.output.joinpath(plan.path.replace("/", "_") + ".log")
+    log.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    if plan.path == CODEGRAPH_IMPORTER:
+        snapshot = settings.output.joinpath("codegraph.jsonl")
+        code = capture_snapshot(root, settings, plan, snapshot, log)?
+        if code != 0:
+            return Ok(example_outcome(plan, code, log))
+        return Ok(example_outcome(plan, run_compiler(root, settings, plan, ["--", snapshot.0], log)?, log))
+    return Ok(example_outcome(plan, run_compiler(root, settings, plan, [], log)?, log))
+
+
+pub def selected(path: str, choices: list[str]) -> bool:
+    """Whether an empty selection admits every entry or an explicit selection names this path."""
+    return len(choices) == 0 or path in choices
+
+
+def check_only_entries(root: Path) -> Result[list[str], str]:
+    """Read the explicit check-only registry, ignoring comments and blank lines while rejecting duplicates."""
+    mut entries: list[str] = []
+    for raw in read(root.joinpath("examples/check-only.txt"))?.split("\n"):
+        line = raw.strip()
+        if line == "" or line.startswith("#"):
+            continue
+        if line in entries:
+            return Err(f"duplicate check-only example: {line}")
+        entries.append(line)
+    return Ok(entries)
+
+
+def has_main(source: str) -> bool:
+    """Recognize the supported public, asynchronous and ordinary spellings of a top-level main function."""
+    for raw in source.split("\n"):
+        line = raw.strip()
+        for prefix in ["def main(", "async def main(", "pub def main(", "pub async def main("]:
+            if line.startswith(prefix):
+                return true
+    return false
+
+
+def example_mode(path: str, check_only: list[str]) -> str:
+    """Return `check` for an explicit frontend-only or long-lived entry, otherwise `run`."""
+    if path in check_only:
+        return "check"
+    return "run"
+
+
+def outcome_status(code: int) -> str:
+    """Return the stable receipt label for a process exit code."""
+    if code == 0:
+        return "PASS"
+    return "FAIL"
+
+
+def example_outcome(plan: ExamplePlan, code: int, log: Path) -> ExampleOutcome:
+    """Pair a completed plan with its exact status and retained log."""
+    return ExampleOutcome(path=plan.path, mode=plan.mode, code=code, log=log)
+
+
+def working_directory(root: Path, source: Path) -> Path:
+    """Use the nearest Loaf root for project-relative data; standalone examples run at the repository root."""
+    mut directory = source.parent()
+    while directory.0 != root.0:
+        if directory.joinpath("loaf.toml").is_file():
+            return directory
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return root
+        directory = parent
+    return root
+
+
+def repository_path(root: Path, path: Path) -> Result[str, str]:
+    """Return a normalized repository-relative spelling for a descendant path."""
+    prefix = root.0 + "/"
+    if not path.0.startswith(prefix):
+        return Err(f"example path is outside the repository: {path.0}")
+    return Ok(path.0[len(prefix):])
+
+
+def capture_snapshot(root: Path, settings: Settings, plan: ExamplePlan, snapshot: Path, log: Path) -> Result[int, str]:
+    """Export the hello program's real codegraph input and retain inspection diagnostics in the example log."""
+    arguments = ["inspect", "codegraph", root.joinpath("examples/simple/hello.incn").0, "--format", "jsonl"]
+    output = timed_output(settings, plan.directory, arguments)?
+    snapshot.write_bytes(output.stdout).map_err((error) => error.message())?
+    append_output(log, b"", output.stderr)?
+    return Ok(int(output.status.code().unwrap_or(-1)))
+
+
+def run_compiler(root: Path, settings: Settings, plan: ExamplePlan, extra: list[str], log: Path) -> Result[int, str]:
+    """Run one example mode through the deadline helper and retain both complete output streams."""
+    mut arguments = [plan.mode, root.joinpath(plan.path).0]
+    for argument in extra:
+        arguments.append(argument)
+    output = timed_output(settings, plan.directory, arguments)?
+    append_output(log, output.stdout, output.stderr)?
+    return Ok(int(output.status.code().unwrap_or(-1)))
+
+
+def timed_output(settings: Settings, directory: str, compiler_arguments: list[str]) -> Result[Output, str]:
+    """Capture one installed compiler command bounded by GNU timeout, preserving its exact process status."""
+    mut command = Command.new(settings.timeout)
+    command.arg("--kill-after=5").arg(settings.seconds).arg(settings.compiler)
+    for argument in compiler_arguments:
+        command.arg(argument)
+    command.current_dir(directory)
+    return command.output().map_err((error) => f"cannot run {settings.timeout}: {error}")
+
+
+def append_output(log: Path, stdout: bytes, stderr: bytes) -> Result[None, str]:
+    """Append lossy process streams to one diagnostic log without discarding an earlier snapshot diagnostic."""
+    previous = read(log)?
+    text = previous + str(RustString.from_utf8_lossy(stdout)) + str(RustString.from_utf8_lossy(stderr))
+    return log.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def write_receipt(output: Path, rows: list[str]) -> Result[None, str]:
+    """Replace the receipt after each completed command so an interrupted run retains completed evidence."""
+    text = "\n".join(rows) + "\n"
+    return output.joinpath("examples.tsv").write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def timeout_executable(configured: str) -> Result[str, str]:
+    """Select an explicit GNU timeout command, or discover the common `timeout` and `gtimeout` spellings."""
+    if configured != "":
+        return Ok(configured)
+    for candidate in ["timeout", "gtimeout"]:
+        match Command.new("which").arg(candidate).output():
+            Ok(output) =>
+                if output.status.success():
+                    found = str(RustString.from_utf8_lossy(output.stdout)).strip()
+                    if found != "":
+                        return Ok(found)
+            Err(_) => pass
+    return Err("install GNU timeout (coreutils), or set INCAN_EXAMPLES_TIMEOUT_BIN")
+
+
+def positive_decimal(text: str) -> bool:
+    """Whether a deadline is a non-zero sequence of decimal digits."""
+    if text == "":
+        return false
+    mut nonzero = false
+    for character in text:
+        if character < "0" or character > "9":
+            return false
+        if character != "0":
+            nonzero = true
+    return nonzero

@@ -29,7 +29,7 @@ pub(super) fn collect(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<
             let Some(target) = type_info
                 .declarations
                 .method_bindings_by_span
-                .get(&(method.span.start, method.span.end))
+                .get(&method.span)
                 .and_then(|binding| binding.identity.clone())
             else {
                 continue;

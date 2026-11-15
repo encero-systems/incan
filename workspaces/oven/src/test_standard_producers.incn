@@ -1,0 +1,20 @@
+"""A shipped standard Loaf that another compiler produced is refused by name before any compile reads it."""
+
+from files import write
+from scratch import scratch_directory
+from standard_producers import stale_standard_refusal
+
+
+pub def test_standard_loaf_from_another_compiler_is_refused_by_name() -> Result[None, str]:
+    """A recorded producer other than this installation's compiler names both compilers; the same one passes."""
+    scratch = scratch_directory()?
+    directory = scratch.path().joinpath("incan_stdlib_system/release")
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    write(directory.joinpath(".oven-inputs.sha256"), "compiler 4380bd98cbf90dda\ndescription b1d6b176\n")?
+    match stale_standard_refusal("incan_stdlib_system", directory, "e426244949cbe7df")?:
+        Some(message) =>
+            assert "incan_stdlib_system" in message, message
+            assert "4380bd98cbf9" in message and "e426244949cb" in message, message
+        None => return Err("a standard Loaf another compiler produced was admitted")
+    assert stale_standard_refusal("incan_stdlib_system", directory, "4380bd98cbf90dda")? == None
+    return Ok(None)

@@ -1,0 +1,12 @@
+# behavior: a language hook is callable wherever its type is, so marking it `pub` is refused (#2570)
+# expect-diagnostic: INCAN-T0001
+
+pub model Point:
+    pub x: int
+
+    pub def __eq__(self, other: Point) -> bool:
+        return self.x == other.x
+
+
+def main() -> None:
+    println(Point(x=1) == Point(x=1))

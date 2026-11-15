@@ -6,6 +6,47 @@
 use crate::ast::Span;
 
 use crate::diagnostics::CompileError;
+use crate::source_security::{bidirectional_control_name, unicode_scalar_escape};
+
+/// Lexical context containing a refused bidirectional control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BidirectionalControlContext {
+    /// Ordinary Incan code, including an f-string expression.
+    Code,
+    /// A line comment.
+    Comment,
+    /// A string, f-string literal part or docstring.
+    String,
+}
+
+/// Refuse a raw Unicode bidirectional control without rendering the control itself.
+pub fn bidirectional_control_in_source(
+    character: char,
+    context: BidirectionalControlContext,
+    span: Span,
+) -> CompileError {
+    let name = bidirectional_control_name(character).unwrap_or("BIDIRECTIONAL CONTROL");
+    let escape = unicode_scalar_escape(character);
+    let hint = match context {
+        BidirectionalControlContext::String => format!("Write `{escape}` to place this character in the string value"),
+        BidirectionalControlContext::Code => "Delete the bidirectional control from the code".to_string(),
+        BidirectionalControlContext::Comment => "Delete the bidirectional control from the comment".to_string(),
+    };
+    CompileError::syntax(
+        format!("Bidirectional control U+{:04X} {name} in source", u32::from(character)),
+        span,
+    )
+    .with_primary_label(format!("{escape} ({name})"))
+    .with_hint(hint)
+    .with_stable_code("INCAN-P0101")
+}
+
+/// Refuse one malformed `\u{...}` scalar escape at its complete authored spelling.
+pub fn malformed_unicode_scalar_escape(spelling: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Malformed Unicode scalar escape `{spelling}`: {reason}"), span)
+        .with_hint("Write `\\u{` followed by one to six hexadecimal digits and `}`")
+        .with_stable_code("INCAN-P0102")
+}
 
 // -- Token-level -------------------------------------------------------------
 
@@ -23,6 +64,15 @@ pub fn unexpected_token(found: &str, span: Span) -> CompileError {
 
 pub fn expected_identifier(found: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Expected identifier, found {found}"), span)
+}
+
+/// Report an always-reserved keyword where source would otherwise declare or bind a name.
+pub fn reserved_keyword_name(keyword: &str, span: Span) -> CompileError {
+    CompileError::syntax(
+        format!("`{keyword}` is a reserved word and cannot be declared as a name"),
+        span,
+    )
+    .with_hint("Choose a different name")
 }
 
 pub fn expected_string_literal(found: &str, span: Span) -> CompileError {
@@ -248,6 +298,15 @@ pub fn method_trait_target_after_return_type(span: Span) -> CompileError {
     .with_hint("Write `def name(self) for Trait -> ReturnType:`")
 }
 
+/// Report `pub` on a method declared in a trait, which takes the trait's visibility (#2570).
+pub fn pub_modifier_not_allowed_on_trait_method(span: Span) -> CompileError {
+    CompileError::syntax(
+        "A method declared in a trait takes the trait's visibility and cannot be marked `pub`".to_string(),
+        span,
+    )
+    .with_hint("Remove `pub`; mark the trait `pub` to make its methods public")
+}
+
 pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {
     CompileError::syntax(
         "`static` declarations are only allowed at module scope".to_string(),
@@ -305,6 +364,12 @@ pub fn unknown_field_metadata_key(key: &str, span: Span) -> CompileError {
 
 pub fn duplicate_field_metadata_key(key: &str, span: Span) -> CompileError {
     CompileError::syntax(format!("Duplicate '{}' metadata key", key), span)
+}
+
+/// Report a safe metadata value whose shape does not match its compiler-known key.
+pub fn invalid_field_metadata_value(key: &str, expected: &str, field: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Field metadata '{key}' on '{field}' expects {expected}"), span)
+        .with_hint(format!("Write {expected} for '{key}'"))
 }
 
 pub fn field_alias_as_conflict(span: Span) -> CompileError {

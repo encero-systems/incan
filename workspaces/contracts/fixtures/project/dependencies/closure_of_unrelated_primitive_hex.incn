@@ -1,0 +1,14 @@
+# behavior: an unrelated std.primitives hex call reaches the primitives package without selecting the async standard package or runtime facet
+# cli-commands:
+#   oven inspect dependencies src/main.incn
+# expect-stdout-contains:
+#   program `closure_of_unrelated_primitive_hex` reaches 2 packages
+#   incan_native_runtime
+#   incan_stdlib_primitives
+# expect-exit: 0
+
+from std.primitives import hexlify
+
+
+def main() -> None:
+    println(hexlify(b"abc"))

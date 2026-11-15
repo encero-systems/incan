@@ -1,0 +1,71 @@
+# behavior: `mut local = place` borrows the place: appending, compound assignment and whole assignment through the local change the list, scalar or object field it names, with or without a value-type annotation; an explicit clone and a shadowing declaration from a clone stay independent (RFC 129, #1846).
+# pending: a `mut` local declared from a place is still an independent copy (`INCAN-T0125` marks each one), so every line but the last prints the unchanged field.
+# expect-stdout:
+#   ["apple", "plum"]
+#   ["pear", "orange"]
+#   10
+#   ["pear"]
+#   ["pear", "orange", "kiwi"]
+#   ["pear", "orange", "kiwi"]
+#   ["lime"] ["pear", "orange", "kiwi", "fig"]
+
+"""RFC 129's cart, order and basket examples: a writable alias keeps naming the place it borrows."""
+
+
+class Cart:
+    pub items: list[str]
+
+    pub def add(mut self, item: str) -> None:
+        mut items = self.items
+        items.append(item)
+
+    pub def replace(mut self) -> None:
+        mut items = self.items
+        items = ["pear"]
+        items.append("orange")
+
+
+class Order:
+    pub quantity: int
+
+
+class Basket:
+    pub cart: Cart
+
+    pub def replace(mut self) -> None:
+        mut cart = self.cart
+        cart = Cart(items=["pear"])
+
+
+def shadowed(mut cart: Cart) -> list[str]:
+    mut items = cart.items
+    items.append("fig")
+    mut items = items.clone()
+    items.append("date")
+    items = ["lime"]
+    return items
+
+
+def main() -> None:
+    mut cart = Cart(items=["apple"])
+    cart.add("plum")
+    println(cart.items)
+    cart.replace()
+    println(cart.items)
+    mut order = Order(quantity=1)
+    mut quantity = order.quantity
+    quantity += 1
+    quantity = quantity * 5
+    println(order.quantity)
+    mut basket = Basket(cart=Cart(items=["apple"]))
+    basket.replace()
+    println(basket.cart.items)
+    mut annotated: list[str] = cart.items
+    annotated.append("kiwi")
+    println(cart.items)
+    mut copied = cart.items.clone()
+    copied.append("grape")
+    copied = ["melon"]
+    println(cart.items)
+    local = shadowed(cart)
+    println(f"{local} {cart.items}")

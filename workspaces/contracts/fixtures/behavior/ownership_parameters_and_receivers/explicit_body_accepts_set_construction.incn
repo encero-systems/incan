@@ -1,0 +1,17 @@
+# behavior: an explicit borrowed body accepts an ordinary set constructor and method call (#2500)
+# expect-stdout:
+#   1
+
+class Graph:
+    pub values: list[int]
+
+
+def unique_count(graph: Borrowed[Graph]) -> int:
+    """Construct fresh set storage before reading the borrowed graph."""
+    seen: set[int] = set()
+    return len(graph.values)
+
+
+def main() -> None:
+    graph = Graph(values=[7])
+    println(unique_count(graph))

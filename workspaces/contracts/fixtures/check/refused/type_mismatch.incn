@@ -1,0 +1,5 @@
+# behavior: returning a str from a function declared to return int is refused
+# expect-diagnostic: INCAN-T0001
+
+def foo() -> int:
+    return "not an int"

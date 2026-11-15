@@ -1,0 +1,9 @@
+# behavior: a target's toolchain or SDK capability requirement takes a nonempty capability and a semantic-version requirement, as in 0.5 (#3135)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `eighteen-ish` is not a version requirement
+
+def main() -> None:
+    println("unreachable")

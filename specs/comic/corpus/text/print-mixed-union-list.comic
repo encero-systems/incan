@@ -1,0 +1,12 @@
+example.File = Record { name: string }
+
+example.Folder = Record { name: string }
+
+example.Tree = Record { entries: list<example.File | example.Folder> }
+
+example.Tree << (
+    entries=[
+        File << (name="a"),
+        Folder << (name="b"),
+    ],
+)

@@ -1,0 +1,261 @@
+"""
+Checked compiler metadata for tooling and documentation: a source package's public API, its contract-backed models
+and its typed registries.
+
+Each view reads the library manifest the compiler publishes for the package's checked source interface, the same
+`contract_metadata` a compiled Loaf's `.incnlib` carries. Nothing is compiled natively and no module is executed.
+"""
+
+from rust::incan_loaf_names import artifact_stem
+from rust::std::fs import remove_dir_all
+from rust::std::io import Write, stdout
+from std.fs import Path
+from std.json import JsonValue
+from features import FeatureRequest
+from files import make_directory, read_json, write
+from cli_help import render
+from intake import ManifestReader, entry_source
+from unit import UnitDescription, describe
+from api_markdown import api_markdown
+from registry_inspection import inspect_registry
+from unit_compiler import crate_name, run_compiler, write_unit
+from unit_rust import prepare_native, toolchain_for
+from toolchain import load_toolchain
+
+pub const API_USAGE: str = "incan tools metadata api [PATH] [--format json|markdown]"
+pub const MODEL_USAGE: str = "incan tools metadata model PATH MODEL [--format incan|json]"
+pub const REGISTRY_USAGE: str = "incan inspect registry IDENTITY [--project PATH] [--format json]"
+
+
+@derive(Eq)
+pub enum MetadataView(str):
+    """Which checked metadata a request prints."""
+
+    Api = "api"
+    Model = "model"
+    Registry = "registry"
+
+
+pub model MetadataRequest:
+    """One metadata command: the view, the source or project it reads, the model or registry it names and the format."""
+
+    pub view: MetadataView
+    pub path: str = "."
+    pub name: str = ""
+    pub format: str = "json"
+
+
+pub def parse_metadata(arguments: list[str]) -> Result[MetadataRequest, str]:
+    """`tools metadata api [PATH] [--format json|markdown]` or `tools metadata model PATH MODEL [--format FORMAT]`."""
+    if len(arguments) == 0:
+        return Err("expected `api` or `model`")
+    view = arguments[0]
+    if view != "api" and view != "model":
+        if view.startswith("-"):
+            return Err(f"unknown option `{view}`")
+        return Err(f"unknown command `{view}`")
+    mut format = "json"
+    if view == "model":
+        format = "incan"
+    mut operands: list[str] = []
+    mut index = 1
+    while index < len(arguments):
+        if arguments[index] == "--format" and index + 1 < len(arguments):
+            format = arguments[index + 1]
+            index += 2
+            continue
+        if arguments[index].startswith("-"):
+            return Err(f"unknown option `{arguments[index]}`")
+        operands.append(arguments[index])
+        index += 1
+    if view == "api":
+        if len(operands) > 1:
+            return Err(f"unexpected argument `{operands[1]}`")
+        if format != "json" and format != "markdown":
+            return Err(f"`--format` is json or markdown, got `{format}`")
+        mut path = "."
+        if len(operands) == 1:
+            path = operands[0]
+        return Ok(MetadataRequest(view=MetadataView.Api, path=path, format=format))
+    if len(operands) != 2:
+        return Err("expected PATH and MODEL")
+    if format != "incan" and format != "json":
+        return Err(f"`--format` is incan or json, got `{format}`")
+    return Ok(MetadataRequest(view=MetadataView.Model, path=operands[0], name=operands[1], format=format))
+
+
+pub def parse_registry(arguments: list[str]) -> Result[MetadataRequest, str]:
+    """`inspect registry IDENTITY [--project PATH] [--format json]`."""
+    mut project = "."
+    mut format = "json"
+    mut operands: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] in ["--project", "--format"] and index + 1 < len(arguments):
+            if arguments[index] == "--project":
+                project = arguments[index + 1]
+            else:
+                format = arguments[index + 1]
+            index += 2
+            continue
+        if arguments[index].startswith("-"):
+            return Err(f"unknown option `{arguments[index]}`")
+        operands.append(arguments[index])
+        index += 1
+    if len(operands) != 1:
+        return Err("expected one registry identity, such as `feature::functions`")
+    if format != "json":
+        return Err(f"`--format` is json, got `{format}`")
+    return Ok(MetadataRequest(view=MetadataView.Registry, path=project, name=operands[0], format=format))
+
+
+pub def checked_metadata(request: MetadataRequest) -> Result[i32, str]:
+    """Print the requested view; a model or registry the package does not hold is refused with the ones it does."""
+    if request.view == MetadataView.Model:
+        return print_model(request)
+    checked = checked_source(Path(request.path), request.view == MetadataView.Registry)?
+    metadata = contract_metadata(checked.manifest)?
+    if request.view == MetadataView.Registry:
+        match metadata.get("registry"):
+            Some(registry) => return inspect_registry(request.name, registry, checked.unit.loaves)
+            None =>
+                mut empty: Dict[str, JsonValue] = {}
+                return inspect_registry(request.name, JsonValue.object(empty), checked.unit.loaves)
+    match metadata.get("api"):
+        None => return Err(f"{request.path}: the compiler published no checked API metadata")
+        Some(api) =>
+            if request.format == "markdown":
+                # The reference ends with its own blank line, as 0.5.1 printed it.
+                mut out = stdout()
+                match out.write_all(api_markdown(api)?.encode("utf-8")):
+                    Err(error) => return Err(str(error))
+                    Ok(_) => pass
+            else:
+                println(api.to_pretty_json().map_err((error) => error.message())?)
+            return Ok(0)
+
+
+def print_model(request: MetadataRequest) -> Result[i32, str]:
+    """
+    Print one contract-backed model. A bundle JSON file or a `.incnlib` artifact is read as it is; a project's model
+    metadata is every bundle its manifest declares, publishable or not, as 0.5.1 read it. The compiler formats the
+    model and names the models available when MODEL is not one of them.
+    """
+    path = Path(request.path)
+    mut metadata = path
+    if not path.is_file() or not (path.0.endswith(".json") or path.0.endswith(".incnlib")):
+        metadata = declared_bundles(path)?
+    toolchain = load_toolchain()?
+    return run_compiler(toolchain, ["--emit-model", metadata.0, request.name, request.format, request.path])
+
+
+def declared_bundles(path: Path) -> Result[Path, str]:
+    """
+    The project's declared model bundles gathered into one contract metadata package for the compiler to read.
+
+    A declared file holds one bundle or a package of bundles; the package keeps their declared order.
+    """
+    unit = described_library(path)?
+    root = Path(unit.project_root)
+    mut bundles: list[JsonValue] = []
+    for declared in unit.contract_models:
+        document = read_json(root.joinpath(declared))?
+        match document.get("model_bundles"):
+            Some(listed) =>
+                for bundle in listed.expect_array().map_err((error) => f"{declared}: {error.message()}")?:
+                    bundles.append(bundle)
+            None => bundles.append(document)
+    directory = metadata_directory(unit)?
+    package = directory.joinpath("model-bundles.json")
+    document = JsonValue.object({"schema_version": JsonValue.int(1), "model_bundles": JsonValue.array(bundles)})
+    write(package, document.to_pretty_json().map_err((error) => error.message())?)?
+    return Ok(package)
+
+
+pub model CheckedSource:
+    """A package's checked library manifest and the unit description it was checked from."""
+
+    pub manifest: Path
+    pub unit: UnitDescription
+
+
+def checked_source(path: Path, inspection: bool) -> Result[CheckedSource, str]:
+    """
+    The library manifest of the package at or around `path`, as the compiler checks its source interface. An
+    inspection keeps the package's private registries, named by their source modules.
+
+    1. Describe the source as a library unit and bind its exact dependencies.
+    2. Publish the checked source interface into a private, empty directory.
+    """
+    # 1. Every declaration a library would export is checked exactly as a dependent sees it.
+    unit = described_library(path)?
+    toolchain = toolchain_for(unit)?
+    ready = prepare_native(unit, toolchain)?
+    description = write_unit(ready, crate_name(ready))?
+    # 2. A source interface never replaces an earlier publication.
+    directory = metadata_directory(ready)?
+    mut arguments = ["--source-interface", description.0, toolchain.sysroot, directory.0]
+    if inspection:
+        arguments.append("--inspection")
+    code = run_compiler(toolchain, arguments)?
+    if code != 0:
+        return Err(f"{unit.source}: the compiler could not check the source interface (exit {code})")
+    return Ok(CheckedSource(manifest=directory.joinpath(f"{artifact_stem(ready.package)}.incnlib"), unit=ready))
+
+
+def described_library(path: Path) -> Result[UnitDescription, str]:
+    """The library unit of a source file, or of a directory's library entry, then its program entry."""
+    mut source = path
+    if path.is_dir():
+        match entry_source(path, ManifestReader())?:
+            Some(entry) => source = entry
+            None => return Err(f"{path.0}: the Loaf has no Incan entry to inspect; name a source file")
+    mut unit = describe(source, "debug", FeatureRequest(), ManifestReader())?
+    unit.kind = "library"
+    return Ok(unit)
+
+
+def metadata_directory(unit: UnitDescription) -> Result[Path, str]:
+    """A private, empty directory for one inspection of `unit`'s package."""
+    directory = Path(unit.project_root).joinpath("target/incan/metadata").joinpath(artifact_stem(unit.package))
+    if directory.exists():
+        remove_dir_all(directory.0).map_err((error) => f"cannot clear {directory.0}: {error}")?
+    make_directory(directory)?
+    return Ok(directory)
+
+
+def contract_metadata(manifest: Path) -> Result[JsonValue, str]:
+    """The checked `contract_metadata` a library manifest carries."""
+    match read_json(manifest)?.get("contract_metadata"):
+        Some(metadata) => return Ok(metadata)
+        None => return Err(f"{manifest.0}: the library manifest carries no checked metadata")
+
+
+pub def metadata_help(view: MetadataView) -> str:
+    """`incan tools metadata api|model --help` and `incan inspect registry --help`."""
+    match view:
+        MetadataView.Api =>
+            return render(
+                API_USAGE,
+                ["  --format json|markdown  Checked API metadata as JSON (default) or a compact Markdown reference."],
+                "incan tools metadata api src/lib.incn",
+            )
+        MetadataView.Model =>
+            return render(
+                MODEL_USAGE,
+                [
+                    "  --format incan|json  Formatted Incan model source (default) or the canonical model bundle.",
+                    "  PATH is a project directory, a bundle JSON file or a `.incnlib` artifact.",
+                    "  MODEL is a logical type name or a stable model id.",
+                ],
+                "incan tools metadata model . Order",
+            )
+        MetadataView.Registry =>
+            return render(
+                REGISTRY_USAGE,
+                [
+                    "  --project PATH  Source project root (default the current directory).",
+                    "  --format json   Deterministic checked registry JSON.",
+                ],
+                "incan inspect registry feature::functions",
+            )

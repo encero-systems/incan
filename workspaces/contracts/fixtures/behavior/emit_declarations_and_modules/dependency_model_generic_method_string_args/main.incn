@@ -1,0 +1,17 @@
+# behavior: a generic method with an explicit type argument on a model from another module takes a str literal and a str local as ordinary owned arguments and the local stays usable afterwards
+# expect-stdout:
+#   main:order_lines@s3://bucket/orders.csv
+#   s3://bucket/orders.csv
+
+from session import Session
+
+
+model OrderLine:
+    id: int
+
+
+def main() -> None:
+    session = Session(name="main")
+    input_uri = "s3://bucket/orders.csv"
+    println(session.read_csv[OrderLine]("order_lines", input_uri))
+    println(input_uri)

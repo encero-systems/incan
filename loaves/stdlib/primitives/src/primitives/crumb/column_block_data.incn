@@ -1,0 +1,21 @@
+"""Retained physical indexes for one bounded column block."""
+
+from crate.primitives.crumb.encoding_index import CellIndex
+from crate.primitives.crumb.column_types import BlockEncoding
+from crate.primitives.views import MappedView
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+pub model BlockData:
+    """Internal admitted block facts; callers cannot substitute this model for envelope admission."""
+
+    pub rows: int
+    pub present: int
+    pub encoding: BlockEncoding
+    pub bitmap: MappedView
+    pub bitmap_origin: int
+    pub payload: MappedView
+    pub origin: int
+    pub cells: Option[CellIndex] = None
+    pub width: int = 0
+    pub base: WideInteger

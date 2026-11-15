@@ -16,7 +16,7 @@ pub def integer_conversion(value: Operand, ty: PlanType) -> Result[RvalueKind, s
 
 
 pub def float_conversion(value: Operand, ty: PlanType) -> Result[RvalueKind, str]:
-    """Admit legacy numeric carriers; bool-to-float stays refused because legacy Rust emission rejects it."""
+    """Admit legacy numeric carriers; bool-to-float stays refused."""
     match ty:
         PlanType.Int => return Ok(RvalueKind.IntToFloat(value))
         PlanType.Float => return Ok(RvalueKind.Use(value))
@@ -24,7 +24,7 @@ pub def float_conversion(value: Operand, ty: PlanType) -> Result[RvalueKind, str
         _ => return Err("unsupported Body IR Float input type")
 
 
-pub def numeric_type(kind: &NumericTypeId) -> Result[PlanType, str]:
+pub def numeric_type(kind: NumericTypeId) -> Result[PlanType, str]:
     """Translate the checker-owned numeric identity without decoding display spellings."""
     match kind:
         NumericTypeId.I8 => return Ok(PlanType.I8)
@@ -44,7 +44,7 @@ pub def numeric_type(kind: &NumericTypeId) -> Result[PlanType, str]:
         NumericTypeId.Bool => return Err("unsupported Body IR numeric carrier bool")
 
 
-pub def numeric_constant(value: &TypedNumericConstant) -> Result[Constant, str]:
+pub def numeric_constant(value: TypedNumericConstant) -> Result[Constant, str]:
     """Retain exact integer digits and IEEE bits without a host-width conversion."""
     match value:
         TypedNumericConstant.Signed(kind=kind, value=number) =>
@@ -93,24 +93,6 @@ pub def has_sized_numeric(ty: PlanType) -> bool:
         None => return false
 
 
-pub def sized_plan_type(kind: SizedNumeric) -> PlanType:
-    """Recover the scalar plan type carried by a sized overflow pair."""
-    match kind:
-        SizedNumeric.I8 => return PlanType.I8
-        SizedNumeric.I16 => return PlanType.I16
-        SizedNumeric.I32 => return PlanType.I32
-        SizedNumeric.I128 => return PlanType.I128
-        SizedNumeric.U8 => return PlanType.U8
-        SizedNumeric.U16 => return PlanType.U16
-        SizedNumeric.U32 => return PlanType.U32
-        SizedNumeric.U64 => return PlanType.U64
-        SizedNumeric.U128 => return PlanType.U128
-        SizedNumeric.F32 => return PlanType.F32
-        SizedNumeric.F64 => return PlanType.F64
-        SizedNumeric.ISize => return PlanType.ISize
-        SizedNumeric.USize => return PlanType.USize
-
-
 pub def numeric_name(ty: PlanType) -> str:
     """Name the matching monomorphic legacy-runtime boundary."""
     match ty:
@@ -150,7 +132,7 @@ pub def numeric_carrier(ty: PlanType) -> bool:
     return has_sized_numeric(ty) or ty == PlanType.Int or ty == PlanType.Float
 
 
-pub def is_float_constant(value: &TypedNumericConstant) -> bool:
+pub def is_float_constant(value: TypedNumericConstant) -> bool:
     """Report whether a typed numeric literal is one of the float carriers."""
     match value:
         TypedNumericConstant.F32(bits=_bits) => return true

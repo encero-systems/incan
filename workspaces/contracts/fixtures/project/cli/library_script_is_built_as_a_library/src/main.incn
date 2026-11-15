@@ -1,0 +1,11 @@
+# behavior: a `[project.scripts]` entry naming the conventional library, as hees.ai's `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it: one warning names the line, and the library is built as a library, never as an executable.
+# cli-commands:
+#   check src/lib.incn
+#   build src/lib.incn
+# expect-stderr-once:
+#   loaf.toml:6: [project.scripts] library = "src/lib.incn" names the conventional library, which is built as a library, not as an executable; the entry is ignored
+# expect-exit: 0
+
+def main() -> None:
+    """The project's program, which this case does not run."""
+    pass

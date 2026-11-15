@@ -1,0 +1,17 @@
+# behavior: a program may declare its own IncanClass model beside an ordinary model without colliding with the model's built-in derives
+# expect-stdout:
+#   Ada
+#   1
+
+model User:
+    name: str
+
+
+model IncanClass:
+    rank: int
+
+
+def main() -> None:
+    let user = User(name="Ada")
+    println(user.name)
+    println(IncanClass(rank=1).rank)

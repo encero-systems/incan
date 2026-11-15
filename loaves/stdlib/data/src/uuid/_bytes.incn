@@ -1,0 +1,192 @@
+"""Hex, byte and error-shaping helpers behind `std.uuid` text and byte codecs."""
+
+from std.io import BytesIO, Endian, IoError
+from crate.uuid._types import UuidError
+
+
+pub def _discard_written_count(_count: int) -> None:
+    """
+    Drop a successful byte count from `BytesIO.write_bytes`.
+
+    Args:
+        _count: Number of bytes written.
+
+    Returns:
+        `None` for writer methods that expose only success or failure.
+    """
+    pass
+
+
+pub def _hex_value(digit: str) -> Result[int, UuidError]:
+    """
+    Decode one lower-case hexadecimal digit.
+
+    Args:
+        digit: Single-character hexadecimal text.
+
+    Returns:
+        The numeric value for the digit.
+    """
+    match digit:
+        "0" => return Ok(0)
+        "1" => return Ok(1)
+        "2" => return Ok(2)
+        "3" => return Ok(3)
+        "4" => return Ok(4)
+        "5" => return Ok(5)
+        "6" => return Ok(6)
+        "7" => return Ok(7)
+        "8" => return Ok(8)
+        "9" => return Ok(9)
+        "a" => return Ok(10)
+        "b" => return Ok(11)
+        "c" => return Ok(12)
+        "d" => return Ok(13)
+        "e" => return Ok(14)
+        "f" => return Ok(15)
+        _ => return Err(_invalid_character(digit))
+
+
+def _hex_digit(value: int) -> str:
+    """
+    Encode a nibble as lower-case hexadecimal text.
+
+    Args:
+        value: Integer from 0 through 15.
+
+    Returns:
+        A single hexadecimal character.
+    """
+    digits = "0123456789abcdef"
+    return digits.__slice__(value, value + 1)
+
+
+pub def _hex_byte(value: u8) -> str:
+    """
+    Encode a byte as two lower-case hexadecimal digits.
+
+    Args:
+        value: Byte to encode.
+
+    Returns:
+        Two hexadecimal characters.
+    """
+    as_int = int(value)
+    high = as_int // 16
+    low = as_int - (high * 16)
+    return _hex_digit(high) + _hex_digit(low)
+
+
+pub def _read_u128_from_bytes(raw: bytes) -> Result[u128, IoError]:
+    """
+    Read sixteen network-order bytes into a `u128`.
+
+    Args:
+        raw: Bytes to read.
+
+    Returns:
+        The decoded integer, or `Err(IoError)` when the input is too short.
+    """
+    reader = BytesIO(raw)
+    value: u128 = reader.read(Endian.Big)?
+    return Ok(value)
+
+
+def _byte_at(raw: bytes, index: int) -> Result[u8, IoError]:
+    """
+    Read one byte from a byte buffer.
+
+    Args:
+        raw: Source bytes.
+        index: Byte offset to read.
+
+    Returns:
+        The selected byte, or `Err(IoError)` when the offset is outside the buffer.
+    """
+    reader = BytesIO(raw)
+    reader.seek(index)?
+    value: u8 = reader.read(Endian.Big)?
+    return Ok(value)
+
+
+pub def _byte_at_uuid(raw: bytes, index: int, operation: str) -> Result[u8, UuidError]:
+    """
+    Read one byte and convert I/O failures into UUID errors.
+
+    Args:
+        raw: Source bytes.
+        index: Byte offset to read.
+        operation: Operation label used in the error detail.
+
+    Returns:
+        The selected byte, or `Err(UuidError)`.
+    """
+    match _byte_at(raw, index):
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_io_error(operation, err))
+
+
+pub def _invalid_length(length: int) -> UuidError:
+    """
+    Build an invalid-length UUID error.
+
+    Args:
+        length: Observed text length.
+
+    Returns:
+        A `UuidError` describing the length mismatch.
+    """
+    return UuidError(kind="invalid_length", detail=f"UUID text must contain 32 hex digits, got {length}")
+
+
+pub def _invalid_format(detail: str) -> UuidError:
+    """
+    Build an invalid-format UUID error.
+
+    Args:
+        detail: Specific format problem.
+
+    Returns:
+        A `UuidError` with `invalid_format` kind.
+    """
+    return UuidError(kind="invalid_format", detail=detail)
+
+
+def _invalid_character(digit: str) -> UuidError:
+    """
+    Build an invalid-hex-character UUID error.
+
+    Args:
+        digit: Rejected digit text.
+
+    Returns:
+        A `UuidError` with `invalid_character` kind.
+    """
+    return UuidError(kind="invalid_character", detail=f"invalid UUID hex digit: {digit}")
+
+
+pub def _invalid_bytes_len(length: int) -> UuidError:
+    """
+    Build an invalid-byte-length UUID error.
+
+    Args:
+        length: Observed byte length.
+
+    Returns:
+        A `UuidError` with `invalid_bytes` kind.
+    """
+    return UuidError(kind="invalid_bytes", detail=f"UUID byte representation must be 16 bytes, got {length}")
+
+
+pub def _io_error(operation: str, err: IoError) -> UuidError:
+    """
+    Convert an `IoError` into this module's UUID error type.
+
+    Args:
+        operation: Operation label to include in the error detail.
+        err: Source I/O error.
+
+    Returns:
+        A `UuidError` with `io_error` kind.
+    """
+    return UuidError(kind="io_error", detail=f"{operation} failed: {err.message()}")

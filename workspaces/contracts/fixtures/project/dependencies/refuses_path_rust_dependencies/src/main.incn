@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `[rust-dependencies]` entry for a local Cargo crate and names the local Rust-facet Loaf that replaces it, as local_transcriber_spike declares its native crate, never a crates-io Loaf that does not exist (#3144).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["rust-dependencies"]: unsupported
+#   use [dependencies] transcriber_native = { loaf = "transcriber_native", path = "native" }, with a native/loaf.toml whose [rust] table declares the crate
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

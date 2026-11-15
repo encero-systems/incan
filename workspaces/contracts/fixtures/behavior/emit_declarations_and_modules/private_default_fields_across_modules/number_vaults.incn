@@ -1,0 +1,12 @@
+pub class Vault:
+    secret: int
+    pub label: int
+    revision: str = "provider-default"
+
+    pub def describe(self) -> str:
+        return f"{self.label} {self.revision} {self.secret}"
+
+    @staticmethod
+    pub def create(secret: int, label: int) -> Vault:
+        """Construct a vault through its public provider-owned surface."""
+        return Vault(secret=secret, label=label)

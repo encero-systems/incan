@@ -1,0 +1,3 @@
+"""Models whose field defaults construct other models."""
+
+import shapes

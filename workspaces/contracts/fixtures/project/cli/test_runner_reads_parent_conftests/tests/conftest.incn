@@ -1,0 +1,15 @@
+"""Fixtures every test under `tests/` receives."""
+
+from std.testing import fixture
+
+
+@fixture
+def root_name() -> str:
+    return "root"
+
+
+@fixture
+def opened() -> int:
+    println("conftest open")
+    yield 5
+    println("conftest close")

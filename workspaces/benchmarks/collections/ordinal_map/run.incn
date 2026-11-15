@@ -1,0 +1,117 @@
+"""Run the Python and Incan OrdinalMap lookup implementations with one shared corpus size."""
+
+from rust::std::env import current_exe
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from std.environ import args, get_or
+from std.fs import Path
+
+
+def main() -> None:
+    """Parse positive corpus counts, run each available implementation, and preserve optional skip status 77."""
+    arguments = args().unwrap_or([])
+    match run(arguments[1:]):
+        Ok(_) => exit(0)
+        Err(message) =>
+            println(f"ordinal map benchmark: {message}")
+            exit(1)
+
+
+pub def run(arguments: list[str]) -> Result[None, str]:
+    """Run builtin dict, optional fastconstmap, and Incan with the same original arguments."""
+    keys, probes = counts(arguments)?
+    directory = source_directory()?
+    python_command = get_or("PYTHON", "python3")
+    println("== Python builtin dict ==")
+    require(python_command, [directory.joinpath("builtin_dict.py").0] + arguments, directory)?
+    println("\n== Python fastconstmap ==")
+    optional = invoke(python_command, [directory.joinpath("fastconstmap_lookup.py").0] + arguments, directory)?
+    if optional != 0 and optional != 77:
+        return Err(f"fastconstmap benchmark exited {optional}")
+    println("\n== Incan OrdinalMap ==")
+    home = get_or("INCAN_HOME", get_or("HOME", "") + "/.incan")
+    incan = get_or("INCAN", home + "/bin/incan")
+    require(
+        incan,
+        ["run", directory.joinpath("ordinal_map.incn").0, "--profile", "release", "--", str(keys), str(probes)],
+        directory,
+    )?
+    return Ok(None)
+
+
+def counts(arguments: list[str]) -> Result[tuple[int, int], str]:
+    """Parse `--keys` and `--probes` in split or equals form, ignoring other Python-owned arguments."""
+    mut keys = 100000
+    mut probes = 1000000
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--keys" or argument == "--probes":
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} requires a value")
+            value = positive(arguments[index + 1])?
+            if argument == "--keys":
+                keys = value
+            else:
+                probes = value
+            index += 2
+        elif argument.startswith("--keys="):
+            keys = positive(argument[7:])?
+            index += 1
+        elif argument.startswith("--probes="):
+            probes = positive(argument[9:])?
+            index += 1
+        else:
+            index += 1
+    return Ok((keys, probes))
+
+
+def positive(value: str) -> Result[int, str]:
+    """Parse one positive decimal benchmark count."""
+    if value == "":
+        return Err("--keys and --probes must be positive integers")
+    for character in value:
+        if character not in "0123456789":
+            return Err("--keys and --probes must be positive integers")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err("--keys and --probes must be positive integers")
+    return Ok(parsed)
+
+
+def source_directory() -> Result[Path, str]:
+    """Find the OrdinalMap benchmark sources above this program's output path."""
+    binary = current_exe().map_err((error) => error.to_string())?
+    mut directory = Path(binary.to_string_lossy().into_owned()).parent()
+    while true:
+        candidate = directory.joinpath("workspaces/benchmarks/collections/ordinal_map")
+        if candidate.joinpath("ordinal_map.incn").is_file():
+            return Ok(candidate)
+        parent = directory.parent()
+        if parent.0 in [directory.0, "", "."]:
+            return Err("cannot find the OrdinalMap benchmark sources")
+        directory = parent
+
+
+def require(command: str, arguments: list[str], directory: Path) -> Result[None, str]:
+    """Run one implementation, relay both streams, and require success."""
+    code = invoke(command, arguments, directory)?
+    if code != 0:
+        return Err(f"{command} exited {code}")
+    return Ok(None)
+
+
+def invoke(command: str, arguments: list[str], directory: Path) -> Result[int, str]:
+    """Run one implementation and relay its captured output."""
+    mut process = Command.new(command)
+    process.current_dir(directory.0)
+    for argument in arguments:
+        process.arg(argument)
+    output = process.output().map_err((error) => f"cannot run {command}: {error}")?
+    if len(output.stdout) > 0:
+        print(str(RustString.from_utf8_lossy(output.stdout)))
+    if len(output.stderr) > 0:
+        print(str(RustString.from_utf8_lossy(output.stderr)))
+    match output.status.code():
+        Some(code) => return Ok(int(code))
+        None => return Ok(128)

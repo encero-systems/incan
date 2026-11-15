@@ -1,0 +1,322 @@
+<svg viewBox="0 0 1280 868" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dd0015-map-title dd0015-map-desc">
+<title id="dd0015-map-title">Producer map: the records of the hello program, and what two edits evaluate</title>
+<desc id="dd0015-map-desc">Columns are the producer stages in rank order, from Discover to NativeInterface, with frozen admitted records in a band on the left. The top panel shows the records a cold build of the two-function hello program produces and the typed reads between them: main's local check reads greeting's name slot and slot, main's lowering demand reads the frozen runtime facade for println, the check scope reads the final records as members, and the native interface reads the plan functions as members and the position maps. The second panel shows the edit of the string in greeting: discover, greeting's declaration source, influence (whose value is equal, so its readers are reused), local, final, Body IR chain, lowering demand and plan function, and the native interface are evaluated; greeting's slot and declaration and every record of main are reused. The third panel shows a comment added above main: only discover, main's position map and the native interface are evaluated. Two insets show a joint group, a mutation-effect forwarding cycle of two functions evaluated once, and an absent witness, a read of a name that does not exist yet.</desc>
+<defs><style>
+.dd15-n{fill:#e4ebf2;font-family:'Exo 2',Roboto,'Noto Sans','Helvetica Neue',Arial,sans-serif;font-size:11px;font-weight:600}
+.dd15-k{fill:#e4ebf2;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
+.dd15-s{fill:#98a2ad;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px}
+.dd15-t{fill:rgba(228,235,242,0.55);font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd15-ta{fill:#ffc15a;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:7px;letter-spacing:0.14em}
+.dd15-l{fill:#c1c8d0;font-family:'SFMono-Regular','Cascadia Code','Liberation Mono',monospace;font-size:8px;letter-spacing:0.06em}
+.dd15-i{fill:#c1c8d0;font-family:Brawler,Georgia,serif;font-size:12px;font-style:italic}
+.dd15-h{fill:#e4ebf2;font-family:Brawler,Georgia,serif;font-size:14px}
+.dd15-c{text-anchor:middle}
+.dd15-m{fill:#030304}
+.dd15-box{fill:rgba(228,235,242,0.07);stroke:#e4ebf2;stroke-width:1}
+.dd15-reused{fill:rgba(228,235,242,0.03);stroke:rgba(228,235,242,0.55);stroke-width:1}
+.dd15-eval{fill:rgba(255,193,90,0.14);stroke:#ffc15a;stroke-width:1.2}
+.dd15-frozen{fill:rgba(72,240,239,0.05);stroke:rgba(72,240,239,0.60);stroke-width:1}
+.dd15-dim{fill:rgba(228,235,242,0.02);stroke:rgba(228,235,242,0.30);stroke-width:1;stroke-dasharray:4 3}
+.dd15-zone{fill:rgba(228,235,242,0.02);stroke:rgba(255,193,90,0.34);stroke-width:0.8}
+.dd15-zonec{fill:rgba(72,240,239,0.03);stroke:rgba(72,240,239,0.40);stroke-width:0.8}
+.dd15-group{fill:none;stroke:rgba(228,235,242,0.30);stroke-width:0.8;stroke-dasharray:3 3}
+.dd15-joint{fill:rgba(255,193,90,0.04);stroke:rgba(255,193,90,0.60);stroke-width:1;stroke-dasharray:4 4}
+.dd15-w{fill:none;stroke:#c1c8d0;stroke-width:1.2}
+.dd15-wc{fill:none;stroke:#48f0ef;stroke-width:1.2}
+.dd15-wa{fill:none;stroke:#ffc15a;stroke-width:1.2;stroke-dasharray:4 3}
+.dd15-rule{stroke:rgba(255,193,90,0.25);stroke-width:0.8}
+</style>
+<marker id="dd15-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
+<marker id="dd15-arrow-c" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#48f0ef"/></marker>
+<marker id="dd15-arrow-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ffc15a"/></marker>
+</defs>
+<rect width="1280" height="868" fill="#030304"/>
+<text x="24" y="26" class="dd15-h">Cold build of the hello program: every record, in rank order</text>
+<text x="213" y="50" class="dd15-t dd15-c">DISCOVER</text>
+<text x="338" y="46" class="dd15-t dd15-c">NAME</text>
+<text x="338" y="55" class="dd15-t dd15-c">SLOT</text>
+<text x="426" y="50" class="dd15-t dd15-c">INFLUENCE</text>
+<text x="514" y="50" class="dd15-t dd15-c">SLOT</text>
+<text x="602" y="50" class="dd15-t dd15-c">DECLARATION</text>
+<text x="690" y="50" class="dd15-t dd15-c">LOCAL</text>
+<text x="778" y="50" class="dd15-t dd15-c">FINAL</text>
+<text x="866" y="46" class="dd15-t dd15-c">CHECK</text>
+<text x="866" y="55" class="dd15-t dd15-c">SCOPE</text>
+<text x="954" y="46" class="dd15-t dd15-c">BODY IR</text>
+<text x="954" y="55" class="dd15-t dd15-c">CHAIN</text>
+<text x="1042" y="46" class="dd15-t dd15-c">LOWERING</text>
+<text x="1042" y="55" class="dd15-t dd15-c">DEMAND</text>
+<text x="1130" y="46" class="dd15-t dd15-c">PLAN</text>
+<text x="1130" y="55" class="dd15-t dd15-c">FUNCTION</text>
+<text x="1218" y="46" class="dd15-t dd15-c">NATIVE</text>
+<text x="1218" y="55" class="dd15-t dd15-c">INTERFACE</text>
+<rect x="24" y="64" width="96" height="232" rx="6" class="dd15-zonec"/>
+<text x="72" y="78" class="dd15-t dd15-c">FROZEN</text>
+<text x="72" y="88" class="dd15-t dd15-c">ADMITTED STD</text>
+<rect x="134" y="64" width="158" height="176" rx="6" class="dd15-zone"/>
+<text x="286" y="77" class="dd15-ta" text-anchor="end">ONE PARSE</text>
+<rect x="138" y="134" width="76" height="102" rx="5" class="dd15-group"/>
+<rect x="738" y="134" width="80" height="102" rx="5" class="dd15-group"/>
+<rect x="1090" y="134" width="80" height="158" rx="5" class="dd15-group"/>
+<path d="M304,154 L285,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M392,154 L373,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M480,154 L461,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M568,154 L549,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M744,154 L725,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M920,154 L813,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1008,154 L989,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1096,154 L1077,154" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="288.5" y="141" width="11" height="10" class="dd15-m"/>
+<text x="294" y="149" class="dd15-l dd15-c">M</text>
+<rect x="464.5" y="141" width="11" height="10" class="dd15-m"/>
+<text x="470" y="149" class="dd15-l dd15-c">M</text>
+<path d="M304,216 L285,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M392,216 L373,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M480,216 L461,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M568,216 L549,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M744,216 L725,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M920,216 L813,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1008,216 L989,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M1096,216 L1077,216" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="288.5" y="203" width="11" height="10" class="dd15-m"/>
+<text x="294" y="211" class="dd15-l dd15-c">M</text>
+<rect x="464.5" y="203" width="11" height="10" class="dd15-m"/>
+<text x="470" y="211" class="dd15-l dd15-c">M</text>
+<path d="M700,202 L700,186 Q700,180 694,180 L520,180 Q514,180 514,174 L514,169" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M680,202 L680,196 Q680,190 674,190 L344,190 Q338,190 338,184 L338,169" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="499.5" y="171" width="11" height="10" class="dd15-m"/>
+<text x="505" y="179" class="dd15-l dd15-c">P</text>
+<rect x="323.5" y="177" width="11" height="10" class="dd15-m"/>
+<text x="329" y="185" class="dd15-l dd15-c">P</text>
+<path d="M832,98 L784,98 Q778,98 778,104 L778,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="792.5" y="85" width="11" height="10" class="dd15-m"/>
+<text x="798" y="93" class="dd15-l dd15-c">M</text>
+<path d="M1184,98 L1136,98 Q1130,98 1130,104 L1130,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="1144.5" y="85" width="11" height="10" class="dd15-m"/>
+<text x="1150" y="93" class="dd15-l dd15-c">M</text>
+<path d="M1218,84 L1218,74 Q1218,68 1212,68 L182,68 Q176,68 176,74 L176,133" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="657" y="58" width="86" height="10" class="dd15-m"/>
+<text x="700" y="66" class="dd15-l dd15-c">P  POSITION MAPS</text>
+<path d="M1042,230 L1042,240 Q1042,246 1036,246 L78,246 Q72,246 72,240 L72,231" class="dd15-wc" marker-end="url(#dd15-arrow-c)"/>
+<rect x="554.5" y="236" width="91" height="10" class="dd15-m"/>
+<text x="600" y="244" class="dd15-l dd15-c">P  RUNTIME FACADE</text>
+<rect x="30" y="202" width="84" height="28" rx="4" class="dd15-frozen"/>
+<text x="72" y="215" class="dd15-k dd15-c">runtime-facade</text>
+<text x="72" y="225" class="dd15-s dd15-c">println_text</text>
+<rect x="216" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="97" class="dd15-k dd15-c">discover</text>
+<text x="250" y="107" class="dd15-s dd15-c">app</text>
+<rect x="142" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="176" y="153" class="dd15-k dd15-c">position-map</text>
+<text x="176" y="163" class="dd15-s dd15-c">greeting</text>
+<rect x="216" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="153" class="dd15-k dd15-c">decl-source</text>
+<text x="250" y="163" class="dd15-s dd15-c">greeting</text>
+<rect x="304" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="338" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="392" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="426" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="480" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="514" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="568" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="602" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="656" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="690" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="744" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="778" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="920" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="954" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="1008" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1042" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="1096" y="140" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="158" class="dd15-n dd15-c">greeting</text>
+<rect x="142" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="176" y="215" class="dd15-k dd15-c">position-map</text>
+<text x="176" y="225" class="dd15-s dd15-c">main</text>
+<rect x="216" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="250" y="215" class="dd15-k dd15-c">decl-source</text>
+<text x="250" y="225" class="dd15-s dd15-c">main</text>
+<rect x="304" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="338" y="220" class="dd15-n dd15-c">main</text>
+<rect x="392" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="426" y="220" class="dd15-n dd15-c">main</text>
+<rect x="480" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="514" y="220" class="dd15-n dd15-c">main</text>
+<rect x="568" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="602" y="220" class="dd15-n dd15-c">main</text>
+<rect x="656" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="690" y="220" class="dd15-n dd15-c">main</text>
+<rect x="744" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="778" y="220" class="dd15-n dd15-c">main</text>
+<rect x="920" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="954" y="220" class="dd15-n dd15-c">main</text>
+<rect x="1008" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1042" y="220" class="dd15-n dd15-c">main</text>
+<rect x="1096" y="202" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="220" class="dd15-n dd15-c">main</text>
+<rect x="832" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="866" y="102" class="dd15-n dd15-c">app</text>
+<rect x="1184" y="84" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1218" y="102" class="dd15-n dd15-c">app</text>
+<rect x="1096" y="258" width="68" height="28" rx="4" class="dd15-box"/>
+<text x="1130" y="276" class="dd15-n dd15-c">entry</text>
+<line x1="24" y1="318" x2="60" y2="318" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<text x="68" y="321" class="dd15-l">READER TO WHAT IT READ   ·   P PRESENT, A ABSENT, M MEMBERS; UNLABELLED IS P   ·   NOT DRAWN: EACH RECORD'S READ OF ITS OWN DECLARATION SOURCE, AND DOC RECORDS</text>
+<line x1="24" y1="338" x2="1256" y2="338" class="dd15-rule"/>
+<text x="24" y="366" class="dd15-h">Body edit: &quot;hello&quot; becomes &quot;hullo&quot; in greeting</text>
+<text x="24" y="382" class="dd15-i">greeting is checked, lowered and planned again. Its influence value is equal, so its slot and declaration are reused, and main evaluates nothing.</text>
+<rect x="216" y="396" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="409" class="dd15-k dd15-c">discover</text>
+<rect x="142" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="439" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="439" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="392" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="426" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="480" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="568" y="426" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="656" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="690" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="744" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="778" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="920" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="954" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="1008" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1042" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="1096" y="426" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1130" y="439" class="dd15-k dd15-c">greeting</text>
+<rect x="142" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="469" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="469" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="469" class="dd15-k dd15-c">main</text>
+<rect x="392" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="469" class="dd15-k dd15-c">main</text>
+<rect x="480" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="469" class="dd15-k dd15-c">main</text>
+<rect x="568" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="469" class="dd15-k dd15-c">main</text>
+<rect x="656" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="469" class="dd15-k dd15-c">main</text>
+<rect x="744" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="469" class="dd15-k dd15-c">main</text>
+<rect x="920" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="469" class="dd15-k dd15-c">main</text>
+<rect x="1008" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="469" class="dd15-k dd15-c">main</text>
+<rect x="1096" y="456" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="469" class="dd15-k dd15-c">main</text>
+<rect x="832" y="396" width="68" height="20" rx="4" class="dd15-dim"/>
+<text x="866" y="409" class="dd15-k dd15-c">app</text>
+<rect x="1184" y="396" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1218" y="409" class="dd15-k dd15-c">app</text>
+<rect x="1096" y="486" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="499" class="dd15-k dd15-c">entry</text>
+<rect x="30" y="456" width="84" height="20" rx="4" class="dd15-frozen"/>
+<text x="72" y="469" class="dd15-k dd15-c">runtime-facade</text>
+<text x="426" y="422" class="dd15-ta dd15-c">EQUAL VALUE</text>
+<text x="250" y="422" class="dd15-ta dd15-c">NEW BODY</text>
+<text x="24" y="536" class="dd15-h">Comment edit: a comment added above main</text>
+<text x="24" y="552" class="dd15-i">Header seeds and body projections are equal, so every semantic record is reused. Only main's lines move.</text>
+<rect x="216" y="566" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="250" y="579" class="dd15-k dd15-c">discover</text>
+<rect x="142" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="176" y="609" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="609" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="392" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="480" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="568" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="656" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="744" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="920" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="1008" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="1096" y="596" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="609" class="dd15-k dd15-c">greeting</text>
+<rect x="142" y="626" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="176" y="639" class="dd15-k dd15-c">position-map</text>
+<rect x="216" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="250" y="639" class="dd15-k dd15-c">decl-source</text>
+<rect x="304" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="338" y="639" class="dd15-k dd15-c">main</text>
+<rect x="392" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="426" y="639" class="dd15-k dd15-c">main</text>
+<rect x="480" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="514" y="639" class="dd15-k dd15-c">main</text>
+<rect x="568" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="602" y="639" class="dd15-k dd15-c">main</text>
+<rect x="656" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="690" y="639" class="dd15-k dd15-c">main</text>
+<rect x="744" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="778" y="639" class="dd15-k dd15-c">main</text>
+<rect x="920" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="954" y="639" class="dd15-k dd15-c">main</text>
+<rect x="1008" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1042" y="639" class="dd15-k dd15-c">main</text>
+<rect x="1096" y="626" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="639" class="dd15-k dd15-c">main</text>
+<rect x="832" y="566" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="866" y="579" class="dd15-k dd15-c">app</text>
+<rect x="1184" y="566" width="68" height="20" rx="4" class="dd15-eval"/>
+<text x="1218" y="579" class="dd15-k dd15-c">app</text>
+<rect x="1096" y="656" width="68" height="20" rx="4" class="dd15-reused"/>
+<text x="1130" y="669" class="dd15-k dd15-c">entry</text>
+<rect x="30" y="626" width="84" height="20" rx="4" class="dd15-frozen"/>
+<text x="72" y="639" class="dd15-k dd15-c">runtime-facade</text>
+<rect x="24" y="694" width="26" height="14" rx="4" class="dd15-eval"/>
+<text x="58" y="704" class="dd15-l">EVALUATED</text>
+<rect x="140" y="694" width="26" height="14" rx="4" class="dd15-reused"/>
+<text x="174" y="704" class="dd15-l">REUSED</text>
+<rect x="236" y="694" width="26" height="14" rx="4" class="dd15-dim"/>
+<text x="270" y="704" class="dd15-l">NOT STATED BY THE EDIT MATRIX</text>
+<rect x="456" y="694" width="26" height="14" rx="4" class="dd15-frozen"/>
+<text x="490" y="704" class="dd15-l">FROZEN, NEVER EVALUATED</text>
+<line x1="24" y1="722" x2="1256" y2="722" class="dd15-rule"/>
+<text x="24" y="746" class="dd15-h">Joint group</text>
+<rect x="24" y="758" width="330" height="86" rx="6" class="dd15-joint"/>
+<text x="34" y="772" class="dd15-ta">MUTATION-EFFECT  ·  KEY = RULE + DIGEST OF SORTED MEMBERSHIP</text>
+<path d="M124,793 L253,793" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<path d="M254,807 L125,807" class="dd15-w" marker-end="url(#dd15-arrow)"/>
+<rect x="183.5" y="781" width="11" height="10" class="dd15-m"/>
+<text x="189" y="789" class="dd15-l dd15-c">M</text>
+<rect x="183.5" y="810" width="11" height="10" class="dd15-m"/>
+<text x="189" y="818" class="dd15-l dd15-c">M</text>
+<rect x="44" y="784" width="80" height="32" rx="4" class="dd15-box"/>
+<text x="84" y="799" class="dd15-k dd15-c">effect</text>
+<text x="84" y="809" class="dd15-s dd15-c">a, parameter</text>
+<rect x="254" y="784" width="80" height="32" rx="4" class="dd15-box"/>
+<text x="294" y="799" class="dd15-k dd15-c">effect</text>
+<text x="294" y="809" class="dd15-s dd15-c">b, parameter</text>
+<text x="34" y="836" class="dd15-s">a forwards to b and b to a: one evaluation runs the fixed point</text>
+<text x="370" y="790" class="dd15-i">A dependency cycle is one evaluation.</text>
+<text x="370" y="808" class="dd15-i">Each member is published under its own key,</text>
+<text x="370" y="826" class="dd15-i">so an equal member value still stops propagation.</text>
+<text x="680" y="746" class="dd15-h">Absent witness</text>
+<path d="M800,800 L899,800" class="dd15-wa" marker-end="url(#dd15-arrow-a)"/>
+<rect x="844.5" y="787" width="11" height="10" class="dd15-m"/>
+<text x="850" y="795" class="dd15-l dd15-c">A</text>
+<rect x="680" y="784" width="120" height="32" rx="4" class="dd15-box"/>
+<text x="740" y="799" class="dd15-k dd15-c">name-slot</text>
+<text x="740" y="809" class="dd15-s dd15-c">app, f</text>
+<rect x="900" y="784" width="120" height="32" rx="4" class="dd15-dim"/>
+<text x="960" y="799" class="dd15-k dd15-c">helpers.f</text>
+<text x="960" y="809" class="dd15-s dd15-c">no record at this key</text>
+<text x="680" y="836" class="dd15-s">from helpers import f, before helpers.incn exists</text>
+<text x="1036" y="790" class="dd15-i">The read records that nothing is there.</text>
+<text x="1036" y="808" class="dd15-i">Creating helpers.incn evaluates</text>
+<text x="1036" y="826" class="dd15-i">this witness's readers and no one else.</text>
+</svg>

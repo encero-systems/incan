@@ -1,0 +1,25 @@
+# behavior: a generic argument keeps the caller's type even when the declaring module defines the same type name: an empty generic field, and an imported generic function over an imported generic model returning its type argument or the model (#2447)
+# expect-stdout:
+#   0
+#   1
+#   two
+#   3
+#   mine
+
+from records import Box, Parcel, rebox, unbox
+
+
+@derive(Clone)
+model EvidenceId:
+    """The caller's identifier, selected as a generic argument."""
+    text: str
+
+
+def main() -> None:
+    """Keep each generic argument independent of the declaring module's namespace."""
+    parcel = Parcel[EvidenceId](items=[])
+    println(len(parcel.items))
+    println(f"{unbox(Box(value=1))}")
+    println(rebox(Box(value="two")).value)
+    println(unbox(rebox(Box(value=3))))
+    println(unbox(Box(value=EvidenceId(text="mine"))).text)

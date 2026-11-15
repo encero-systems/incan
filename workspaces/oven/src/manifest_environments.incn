@@ -1,0 +1,153 @@
+"""Read `[envs.NAME]`: validate each environment and normalize its dependency overlay against the production graph."""
+
+from std.toml import TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from loaf_identity import crate_name, validate_loaf_identity
+from manifest_fields import (
+    allowed,
+    first_key,
+    refusal,
+    request_flag,
+    requested_features,
+    required,
+    requirement,
+    table,
+    unique_strings,
+)
+from manifest_models import RustInputRequest
+from manifest_dependencies import dependency_replacement, inherited_edge, rust_request, validate_target
+
+# The keys of `[envs.NAME]` (RFC 073, RFC 117).
+const ENVIRONMENT_KEYS: FrozenList[str] = [
+    "dependencies",
+    "extends",
+    "requires-incan",
+    "cwd",
+    "env-vars",
+    "scripts",
+    "detached",
+    "description",
+]
+
+
+def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Admit inactive environment tables without treating their partial dependency overrides as production edges."""
+    if "envs" not in root:
+        return Ok(None)
+    environments = table(root["envs"], manifest, ["envs"])?
+    for name in sorted([name for name in environments.keys()]):
+        validate_environment(environments[name], manifest, ["envs", name])?
+    return Ok(None)
+
+
+pub def validate_environment(value: TomlValue, manifest: str, field: list[str]) -> Result[None, IntakeError]:
+    """
+    One environment table, `[envs.NAME]` or a workspace root's `[workspace.envs.NAME]` fragment: its keys, its
+    dependency, variable and script tables, and its `requires-incan`.
+    """
+    environment = table(value, manifest, field)?
+    if "rust-dependencies" in environment:
+        entries = table(environment["rust-dependencies"], manifest, field + ["rust-dependencies"])?
+        alias = first_key(entries)
+        replacement = dependency_replacement(alias, entries[alias], manifest, field + ["rust-dependencies", alias])?
+        detail = f"use [{".".join(field)}.dependencies] {replacement}"
+        return Err(refusal(manifest, field + ["rust-dependencies"], IntakeErrorKind.Unsupported, detail))
+    allowed(environment, list(ENVIRONMENT_KEYS), manifest, field)?
+    for group in ["dependencies", "env-vars", "scripts"]:
+        if group in environment:
+            table(environment[group], manifest, field + [group])?
+    if "requires-incan" in environment:
+        requirement(environment["requires-incan"], manifest, field + ["requires-incan"])?
+    return Ok(None)
+
+
+pub def parse_environment_dependencies(
+    root: Dict[str, TomlValue],
+    production: list[RustInputRequest],
+    manifest: str,
+) -> Result[Dict[str, list[RustInputRequest]], IntakeError]:
+    """Normalize each root environment's partial dependency overlay against the admitted production graph."""
+    validate_environments(root, manifest)?
+    mut result: Dict[str, list[RustInputRequest]] = {}
+    if "envs" not in root:
+        return Ok(result)
+    environments = table(root["envs"], manifest, ["envs"])?
+    for name in sorted([name for name in environments.keys()]):
+        environment = table(environments[name], manifest, ["envs", name])?
+        mut selected = production.clone()
+        if "dependencies" in environment:
+            entries = table(environment["dependencies"], manifest, ["envs", name, "dependencies"])?
+            for alias in sorted([alias for alias in entries.keys()]):
+                mut found = false
+                for index in range(len(selected)):
+                    if selected[index].alias == alias:
+                        selected[index] = overlay_rust_request(
+                            selected[index],
+                            entries[alias],
+                            manifest,
+                            ["envs", name, "dependencies", alias],
+                        )?
+                        found = true
+                if not found:
+                    field = ["envs", name, "dependencies", alias]
+                    entry = table(entries[alias], manifest, field)?
+                    # An entry the workspace root shares is inherited, as 0.5.1's members inherited dev dependencies.
+                    if "workspace" in entry:
+                        edge = inherited_edge(alias, entry, manifest, field)?
+                        if let Some(request) = edge.facet:
+                            selected.append(request)
+                    elif "loaf" in entry:
+                        selected.append(rust_request(alias, entries[alias], manifest, "dependencies")?)
+        result[name] = selected
+    return Ok(result)
+
+
+def overlay_rust_request(
+    base: RustInputRequest,
+    value: TomlValue,
+    manifest: str,
+    field: list[str],
+) -> Result[RustInputRequest, IntakeError]:
+    """Apply explicit environment fields to one normalized production request without inventing omitted values."""
+    entry = table(value, manifest, field)?
+    allowed(
+        entry,
+        ["loaf", "version", "features", "default-features", "optional", "path", "target", "package", "crate"],
+        manifest,
+        field,
+    )?
+    for retired in ["package", "crate"]:
+        if retired in entry:
+            return Err(
+                refusal(
+                    manifest,
+                    field + [retired],
+                    IntakeErrorKind.Unsupported,
+                    f"use `{base.alias}` with its `loaf` identity under this environment's [dependencies] table",
+                ),
+            )
+    mut result = base.clone()
+    if "loaf" in entry:
+        identity = required(entry, "loaf", manifest, field + ["loaf"])?
+        validate_loaf_identity(identity).map_err(
+            (error) => refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, error),
+        )?
+        result.loaf = Some(identity)
+        result.package = crate_name(identity)
+    if "version" in entry:
+        result.version = required(entry, "version", manifest, field + ["version"])?
+    if "features" in entry:
+        result.features = unique_strings(result.features + requested_features(entry["features"], manifest, field)?)
+    if "default-features" in entry:
+        result.default_features = request_flag(entry["default-features"], manifest, field)?
+    if "optional" in entry:
+        result.optional = request_flag(entry["optional"], manifest, field)?
+    if "target" in entry:
+        predicate = required(entry, "target", manifest, field + ["target"])?
+        validate_target(predicate).map_err(
+            (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+        )?
+        result.target = Some(predicate)
+    if "path" in entry:
+        result.path = Some(required(entry, "path", manifest, field + ["path"])?)
+    return Ok(result)

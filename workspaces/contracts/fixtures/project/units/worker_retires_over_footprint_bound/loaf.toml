@@ -1,0 +1,6 @@
+[project]
+name = "worker_retires_over_footprint_bound"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

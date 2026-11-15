@@ -1,0 +1,47 @@
+"""Typed framing failures without embedding potentially sensitive input bytes."""
+
+
+pub enum CrumbFailure(str):
+    """Stable diagnostic prefixes for malformed framing, host limits and incomplete input."""
+
+    InvalidInput = "invalid Crumb input for "
+    Truncated = "truncated Crumb input at byte "
+    Nonminimal = "nonminimal Crumb integer at byte "
+    Overflow = "Crumb length exceeds u64 at byte "
+    Limit = "Crumb request limit exceeded: "
+
+
+pub model CrumbError:
+    """A typed framing failure and its input-free diagnostic detail."""
+
+    pub kind: CrumbFailure
+    pub detail: str
+
+    @staticmethod
+    pub def invalid_input(detail: str) -> Self:
+        """Create an invalid-input failure with the rejected operation or contract."""
+        return CrumbError(kind=CrumbFailure.InvalidInput, detail=detail)
+
+    @staticmethod
+    pub def truncated(offset: int) -> Self:
+        """Create an incomplete-input failure at the first unavailable byte offset."""
+        return CrumbError(kind=CrumbFailure.Truncated, detail=str(offset))
+
+    @staticmethod
+    pub def nonminimal(offset: int) -> Self:
+        """Create a nonminimal-integer failure at its starting byte offset."""
+        return CrumbError(kind=CrumbFailure.Nonminimal, detail=str(offset))
+
+    @staticmethod
+    pub def overflow(offset: int) -> Self:
+        """Create a length-overflow failure at its starting byte offset."""
+        return CrumbError(kind=CrumbFailure.Overflow, detail=str(offset))
+
+    @staticmethod
+    pub def limit(detail: str) -> Self:
+        """Create a caller-limit failure naming the exhausted resource."""
+        return CrumbError(kind=CrumbFailure.Limit, detail=detail)
+
+    pub def message(self) -> str:
+        """Describe the failure category and boundary, without reproducing input contents."""
+        return self.kind.value() + self.detail

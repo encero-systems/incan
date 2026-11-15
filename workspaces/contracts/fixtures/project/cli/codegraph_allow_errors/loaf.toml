@@ -1,0 +1,6 @@
+[project]
+name = "codegraph_allow_errors"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

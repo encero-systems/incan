@@ -1,0 +1,12 @@
+# behavior: a model deriving Default is constructible through its default() associated function with its field defaults
+# expect-stdout:
+#   0
+
+@derive(Default)
+model Point:
+    x: int = 0
+
+
+def main() -> None:
+    p = Point.default()
+    println(p.x)

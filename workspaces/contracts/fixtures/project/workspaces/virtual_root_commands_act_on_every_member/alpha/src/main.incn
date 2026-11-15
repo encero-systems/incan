@@ -1,0 +1,5 @@
+"""The alpha member's program."""
+
+
+def main() -> None:
+    println("alpha ran")

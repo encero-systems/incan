@@ -1,0 +1,11 @@
+[project]
+name = "dependency_feature_unification"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+left_alias = { path = "deps/left" }
+right_alias = { path = "deps/right" }
+unused = { path = "deps/unused", optional = true }

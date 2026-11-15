@@ -1,0 +1,14 @@
+[project]
+name = "rust_feature_consumer"
+version = "0.1.0"
+
+[project.features]
+default = ["fast"]
+fast = ["engine/fast"]
+
+[dependencies]
+engine = { path = "../deps/engine", optional = true }
+
+[[rust.bin]]
+name = "rust_feature_consumer"
+path = "main.rs"

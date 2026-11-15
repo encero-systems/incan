@@ -1,0 +1,12 @@
+# behavior: an optional dependency is reached only when an active feature selects it
+# expect-dependencies:
+#   extra extra
+# expect-active-features:
+#   default
+#   extras
+
+from pub::extra import extra_value
+
+
+def main() -> None:
+    println(extra_value())

@@ -1,0 +1,9 @@
+# behavior: a `system` artifact names a capability the selected toolchain or SDK supplies and no package file, as in 0.5 (#3135)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   system artifact `foundation` cannot declare a package path
+
+def main() -> None:
+    println("unreachable")

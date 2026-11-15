@@ -1,0 +1,320 @@
+"""Compare cold, warm, and verified incremental project builds across installed Incan toolchains."""
+
+from rust::std::env::consts import ARCH, OS
+from rust::std::process import Command, exit
+from rust::std::string import String as RustString
+from rust::std::time import Instant
+from std.environ import args
+from std.fs import Path
+from std.regex import Regex
+from check_support import repository_root, write_stderr
+
+
+pub model Toolchain:
+    """One human-readable release label and its installed Incan command."""
+
+    pub label: str
+    pub command: str
+
+
+pub model BenchmarkOptions:
+    """Toolchains, workload, repetitions, evidence paths, and optional warm-path ceiling."""
+
+    pub toolchains: list[Toolchain]
+    pub project: Option[Path]
+    pub repetitions: int
+    pub output: Path
+    pub scratch: Path
+    pub keep_work: bool
+    pub warm_max_ms: Option[int]
+
+
+pub model TimingRow:
+    """One toolchain's display-ready timings and machine-readable warm-path evidence."""
+
+    pub label: str
+    pub cold: str
+    pub warm: str
+    pub incremental: str
+    pub warm_ms: Option[int]
+    pub incremental_verified: bool
+
+
+pub model Invocation:
+    """One completed command's elapsed milliseconds and captured standard output."""
+
+    pub milliseconds: int
+    pub stdout: str
+
+
+def main() -> None:
+    """Parse the benchmark, measure each toolchain, write Markdown evidence, and enforce the optional ceiling."""
+    arguments = args().unwrap_or([])
+    match repository_root():
+        Ok(root) =>
+            match parse_options(root, arguments[1:]):
+                Ok(options) =>
+                    match benchmark(options):
+                        Ok(_) => exit(0)
+                        Err(message) =>
+                            write_stderr(f"bench build times: {message}\n")
+                            exit(1)
+                Err(message) =>
+                    write_stderr(f"bench build times: {message}\n")
+                    exit(2)
+        Err(message) =>
+            write_stderr(f"bench build times: {message}\n")
+            exit(2)
+
+
+pub def parse_options(root: Path, arguments: list[str]) -> Result[BenchmarkOptions, str]:
+    """Parse repeatable toolchains and explicit benchmark settings without shell-dependent defaults."""
+    mut toolchains: list[Toolchain] = []
+    mut project: Option[Path] = None
+    mut repetitions = 3
+    mut output = root.joinpath("workspaces/benchmarks/results/build_times.md")
+    mut scratch = root.joinpath("target/bench-build-times")
+    mut keep_work = false
+    mut warm_max_ms: Option[int] = None
+    mut index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if argument == "--keep-work":
+            keep_work = true
+            index += 1
+        elif argument in ["--toolchain", "--project", "--repetitions", "--output", "--scratch", "--warm-max-ms"]:
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} requires a value")
+            value = str(arguments[index + 1])
+            if argument == "--toolchain":
+                toolchains.append(parse_toolchain(value)?)
+            elif argument == "--project":
+                project = Some(Path(value))
+            elif argument == "--repetitions":
+                repetitions = positive(value, argument)?
+            elif argument == "--output":
+                output = Path(value)
+            elif argument == "--scratch":
+                scratch = Path(value)
+            else:
+                warm_max_ms = Some(positive(value, argument)?)
+            index += 2
+        else:
+            return Err(f"unknown option `{argument}`; at least one --toolchain LABEL=PATH is required")
+    if len(toolchains) == 0:
+        return Err("at least one --toolchain LABEL=PATH is required")
+    for toolchain in toolchains:
+        if not Path(toolchain.command).is_file():
+            return Err(f"toolchain is not a file: {toolchain.command}")
+    return Ok(
+        BenchmarkOptions(
+            toolchains=toolchains,
+            project=project,
+            repetitions=repetitions,
+            output=output,
+            scratch=scratch,
+            keep_work=keep_work,
+            warm_max_ms=warm_max_ms,
+        ),
+    )
+
+
+pub def parse_toolchain(value: str) -> Result[Toolchain, str]:
+    """Split one `LABEL=PATH` operand while preserving equals signs inside the command path."""
+    parts = value.split("=")
+    if len(parts) < 2 or parts[0] == "" or "=".join(parts[1:]) == "":
+        return Err(f"--toolchain expects LABEL=PATH, got: {value}")
+    return Ok(Toolchain(label=parts[0], command="=".join(parts[1:])))
+
+
+pub def benchmark(options: BenchmarkOptions) -> Result[None, str]:
+    """Prepare isolated homes, collect every timing row, publish the report, and enforce verified regressions."""
+    if options.scratch.exists():
+        options.scratch.remove_tree().map_err((error) => error.message())?
+    options.scratch.mkdir(true, false).map_err((error) => error.message())?
+    mut rows: list[TimingRow] = []
+    for index in range(len(options.toolchains)):
+        rows.append(measure(options, options.toolchains[index], index)?)
+    write_report(options, rows)?
+    enforce_warm_ceiling(options, rows)?
+    if not options.keep_work:
+        options.scratch.remove_tree().map_err((error) => error.message())?
+    else:
+        println(f"Scratch retained at {options.scratch.0}")
+    return Ok(None)
+
+
+def measure(options: BenchmarkOptions, toolchain: Toolchain, index: int) -> Result[TimingRow, str]:
+    """Measure cold, warm, and observable incremental behavior for one isolated installed toolchain."""
+    println(f"======== {toolchain.label} ========")
+    home = options.scratch.joinpath(f"home-{index}")
+    project_directory = options.scratch.joinpath(f"project-{index}")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    project = prepare_project(options.project, toolchain, home, project_directory)?
+
+    cold = invoke(toolchain.command, ["build"], project, home)?
+    println(f"cold: {format_ms(cold.milliseconds)}")
+    warm = best_build(toolchain.command, project, home, options.repetitions)?
+    println(f"warm: {format_ms(warm)}")
+    incremental = measure_incremental(toolchain, project, home, options.repetitions, index)?
+    if incremental is None:
+        println("incremental: stale")
+        return Ok(
+            TimingRow(
+                label=toolchain.label,
+                cold=format_ms(cold.milliseconds),
+                warm=format_ms(warm),
+                incremental="stale",
+                warm_ms=Some(warm),
+                incremental_verified=false,
+            ),
+        )
+    measured = incremental.unwrap_or(0)
+    println(f"incremental: {format_ms(measured)}")
+    return Ok(
+        TimingRow(
+            label=toolchain.label,
+            cold=format_ms(cold.milliseconds),
+            warm=format_ms(warm),
+            incremental=format_ms(measured),
+            warm_ms=Some(warm),
+            incremental_verified=true,
+        ),
+    )
+
+
+def prepare_project(source: Option[Path], toolchain: Toolchain, home: Path, destination: Path) -> Result[Path, str]:
+    """Copy the caller's workload or create a starter, then remove every prior build view."""
+    mut project = destination.clone()
+    match source:
+        Some(existing) =>
+            if not existing.is_dir():
+                return Err(f"project is not a directory: {existing.0}")
+            _ = existing.copy(destination, true, true).map_err((error) => error.message())?
+        None =>
+            destination.mkdir(true, false).map_err((error) => error.message())?
+            _ = invoke(toolchain.command, ["new", "bench", "--yes"], destination, home)?
+            project = destination.joinpath("bench")
+    for relative in [".incan", "target", "oven.lock", "incan.lock"]:
+        path = project.joinpath(relative)
+        if path.is_dir() and not path.is_symlink():
+            path.remove_tree().map_err((error) => error.message())?
+        elif path.exists() or path.is_symlink():
+            path.unlink().map_err((error) => error.message())?
+    return Ok(project)
+
+
+def best_build(command: str, project: Path, home: Path, repetitions: int) -> Result[int, str]:
+    """Return the best no-change build so one scheduling interruption does not define the result."""
+    mut best: Option[int] = None
+    for _ in range(repetitions):
+        elapsed = invoke(command, ["build"], project, home)?.milliseconds
+        if best is None or elapsed < best.unwrap_or(elapsed):
+            best = Some(elapsed)
+    return Ok(best.unwrap_or(0))
+
+
+def measure_incremental(
+    toolchain: Toolchain,
+    project: Path,
+    home: Path,
+    repetitions: int,
+    toolchain_index: int,
+) -> Result[Option[int], str]:
+    """Time source edits only when each edit reaches the launched program's observable output."""
+    mut entry = project.joinpath("src/main.incn")
+    if not entry.is_file():
+        entries = project.joinpath("src").rglob("*.incn").map_err((error) => error.message())?
+        if len(entries) == 0:
+            return Err(f"no Incan source found below {project.0}")
+        entry = entries[0]
+    returns = Regex("return \"[^\"]*\"").map_err((error) => error.message())?
+    mut best: Option[int] = None
+    for repetition in range(repetitions):
+        token = f"bench-edit-{toolchain_index}-{repetition}"
+        original = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        changed = returns.replace_all(original, f"return \"{token}\"")
+        if changed == original:
+            return Err(f"benchmark entry has no observable string return: {entry.0}")
+        entry.write_text(changed, "utf-8", "strict", None).map_err((error) => error.message())?
+        elapsed = invoke(toolchain.command, ["build"], project, home)?.milliseconds
+        observed = invoke(toolchain.command, ["run"], project, home)?.stdout
+        if token not in observed:
+            return Ok(None)
+        if best is None or elapsed < best.unwrap_or(elapsed):
+            best = Some(elapsed)
+    return Ok(best)
+
+
+def invoke(command: str, arguments: list[str], directory: Path, home: Path) -> Result[Invocation, str]:
+    """Run one compiler command with an isolated home and return captured output plus elapsed milliseconds."""
+    mut process = Command.new(command)
+    process.current_dir(directory.0).env("INCAN_HOME", home.0).env("INCAN_NO_BANNER", "1")
+    for argument in arguments:
+        process.arg(argument)
+    started = Instant.now()
+    output = process.output().map_err((error) => f"cannot run {command}: {error}")?
+    elapsed = int(started.elapsed().as_millis())
+    if not output.status.success():
+        diagnostic = RustString.from_utf8_lossy(output.stderr).into_owned()
+        return Err(f"{command} {" ".join(arguments)} failed: {diagnostic}")
+    return Ok(Invocation(milliseconds=elapsed, stdout=RustString.from_utf8_lossy(output.stdout).into_owned()))
+
+
+def write_report(options: BenchmarkOptions, rows: list[TimingRow]) -> Result[None, str]:
+    """Write stable Markdown with the workload semantics and every measured toolchain row."""
+    mut lines = [
+        "# Incan build times",
+        "",
+        f"Host: {OS} {ARCH}",
+        "",
+        f"Best of {options.repetitions} timed repeats per phase, except cold, which is measured once per toolchain.",
+        "",
+        "Incremental edits are verified by running the binary afterwards. `stale` means a successful build did not carry the edit into the binary.",
+        "",
+        "| Toolchain | Cold (new user) | Warm (no changes) | Incremental (one edit) |",
+        "|---|---:|---:|---:|",
+    ]
+    for row in rows:
+        lines.append(f"| {row.label} | {row.cold} | {row.warm} | {row.incremental} |")
+    options.output.parent().mkdir(true, true).map_err((error) => error.message())?
+    return options.output
+        .write_text("\n".join(lines) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+def enforce_warm_ceiling(options: BenchmarkOptions, rows: list[TimingRow]) -> Result[None, str]:
+    """Apply a warm ceiling only where the incremental build proved that this toolchain rebuilds edits."""
+    if options.warm_max_ms is None:
+        return Ok(None)
+    ceiling = options.warm_max_ms.unwrap_or(0)
+    mut regressions: list[str] = []
+    for row in rows:
+        if row.incremental_verified and row.warm_ms.unwrap_or(0) > ceiling:
+            regressions.append(f"{row.label} no-change rebuild took {row.warm_ms.unwrap_or(0)}ms, over {ceiling}ms")
+    if len(regressions) > 0:
+        return Err("; ".join(regressions))
+    return Ok(None)
+
+
+def positive(value: str, option: str) -> Result[int, str]:
+    """Parse one strictly positive decimal option."""
+    if value == "":
+        return Err(f"{option} requires a positive integer")
+    for character in value:
+        if character not in "0123456789":
+            return Err(f"{option} requires a positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        return Err(f"{option} requires a positive integer")
+    return Ok(parsed)
+
+
+def format_ms(milliseconds: int) -> str:
+    """Render subsecond values in milliseconds and longer values in seconds with two decimals."""
+    if milliseconds < 1000:
+        return f"{milliseconds}ms"
+    mut centiseconds = str((milliseconds % 1000) // 10)
+    if len(centiseconds) == 1:
+        centiseconds = "0" + centiseconds
+    return f"{milliseconds // 1000}.{centiseconds}s"

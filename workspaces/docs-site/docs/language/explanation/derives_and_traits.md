@@ -141,15 +141,17 @@ For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](..
 
 A trait method's `mut` parameter behaves like a function's: a list, model or class object the method changes is the caller's value. With a default `def replace(self, mut items: list[int]) -> int` that appends one element and returns `len(items)`, `widget.replace(items)` with `mut items: list[int] = [1, 2]` returns `3` and leaves `items` with 3 elements, and `widget.replace([5])` returns `2`. A call through a type parameter's bound, such as `grower.grow(items)` in `def run[T with Grower](grower: T, items: list[int]) -> int`, may run any adopter's method, so it counts as changing the parameter, and the immutable `items` is refused with `INCAN-T0117`. The rules are in [`mut` parameters](../reference/functions.md#mut-parameters).
 
-## Trait dispatch is not overloading
+## Trait dispatch and overloading
 
-A type may adopt one generic trait several times, `with Convert[int], Convert[float]`, and then declare two methods named `convert`. That looks like overloading, but it is not: each method satisfies a different trait instantiation, and a call picks the instantiation from its argument types or, when those do not decide, from the type the result is expected to have. Two ordinary methods with the same name stay an error, because nothing ties them to distinct instantiations. When two unrelated traits happen to require the same method name, the `for TraitName` target on each method says which adoption it belongs to.
+Ordinary functions and methods may share a name when their positional argument counts or parameter types let every call select one declaration. For example, `write(self, data: bytes)` and `write(self, value: int, endian: str)` form an overload set selected entirely from the call's arguments. Parameter names and return types do not distinguish overload declarations, and two declarations that accept the same positional call are refused where the later one is declared.
+
+A type may also adopt one generic trait several times, `with Convert[int], Convert[float]`, and then declare two methods named `convert`. Each method satisfies a different trait instantiation. A call first selects by its argument types; only when instantiations of that same generic trait remain tied may the expected result type choose between them. When two unrelated traits happen to require the same method name, the `for TraitName` target on each method says which adoption it belongs to.
 
 When an operation should be available only for values with a capability, state that capability as a generic bound (`T with OrderedCollection[int]`) rather than hiding inherited trait methods. The bound is checked at every call, including through supertraits.
 
 Adopting one generic trait more than once fits a type that supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into several result types, or serializing through a generic format trait. When the argument types do not pick the instantiation, a typed binding (`as_float: float = reading.convert()`) is the most direct way to give the call its expected result type.
 
-When two methods with the same name are both trait implementations, give each a method-level target (`def convert(self) for ToInt -> int`). When they are ordinary methods of the type, give them distinct names instead.
+When two methods with the same name are both trait implementations, give each a method-level target (`def convert(self) for ToInt -> int`). Ordinary methods need no trait target; give their overloads distinct parameter surfaces instead.
 
 ## Why `@requires` is for models and classes
 
@@ -168,21 +170,13 @@ Incan intentionally separates two kinds of “stringification”:
 
 This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for human-friendly formatting.
 
-## `@rust.extern` (Rust-backed functions)
+## Rust-backed functions
 
-You may see `@rust.extern` used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided by a Rust module (declared via `rust.module()`).
+A Rust-backed API keeps its Incan-shaped signature and behavior in an ordinary Incan wrapper. The wrapper imports the narrow host function through `rust::` and calls it explicitly. This makes the boundary visible to checking, lowering and codegraph tools; there is no separate module-to-Rust delegation path.
 
-The intended meaning is:
+Direct imports also carry inspected derive and attribute macro facts. A derive macro imported from Rust can be named by `@derive(...)`, and an imported Rust attribute macro can decorate an Incan function without a function-shaped facade declaration.
 
-- the function's signature is defined in Incan (`.incn` source)
-- the function's implementation lives in a Rust crate, mapped via `rust.module()`
-- the compiler emits a call to the Rust implementation instead of compiling the `...` body
-
-This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in pure Incan.
-
-See also:
-
-- [How derives work](how_derives_work.md)
+See [Call Rust APIs from Incan](../how-to/rust_interop.md) for the authoring forms.
 
 ## Copy and Clone
 

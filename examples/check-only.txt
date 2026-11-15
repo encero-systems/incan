@@ -1,0 +1,8 @@
+# Descriptor conformance consumers have no runtime lowering hook (see each project's README).
+examples/pro/vocab_markform/consumer/src/main.incn
+examples/pro/vocab_scriptkit/consumer/src/main.incn
+examples/pro/vocab_styleforge/consumer/src/main.incn
+# This declaration-only example has no executable entry point.
+examples/rust_interop_rusttype/main.incn
+# This example starts a server and is exercised interactively, so the repository gate checks it without running it.
+examples/web/hello_web.incn

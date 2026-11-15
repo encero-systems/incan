@@ -1,0 +1,14 @@
+# behavior: a model value is not turned into text on its way to a str parameter; the program is refused before it runs
+# expect-diagnostic: INCAN-T0001
+
+model User:
+    name: str
+
+
+def label(text: str) -> str:
+    return f"[{text}]"
+
+
+def main() -> None:
+    user = User(name="Ann")
+    println(label(user))

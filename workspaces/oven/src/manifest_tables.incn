@@ -1,0 +1,216 @@
+"""
+Validate a manifest's root tables beside the project and its dependencies: the refused 0.5.1 tables, `[workspace]`,
+the Rust and vocabulary facets, and the C headers `[interop.c]` declares.
+"""
+
+from std.toml import TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from toolchain_access import BINARY_SEPARATOR, access_keys, read_access
+from manifest_fields import allowed, first_key, flag, refusal, required, string_list, table, text
+from manifest_dependencies import dependency_replacement, moved_dependencies
+from manifest_environments import validate_environment
+
+
+pub def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """
+    A `[workspace]` table, with the tables 0.5.1 accepted in it:
+
+    1. `members`, `default-members` and `exclude` list member directories, which workspace selection reads.
+    2. `[workspace.dependencies]` entries are shared dependencies members inherit (`workspace_inheritance`); 0.5.1's
+       `[workspace.rust-dependencies]` entries are shared dependencies now, in their Loaf form, and its
+       `[workspace.rust-dev-dependencies]` entries too, each inherited by a member's `[envs.test.dependencies]`.
+    3. `[workspace.envs.NAME]` fragments are environment tables members extend as `workspace:NAME` (`environments`).
+    4. `[workspace.policy]` and `[workspace.sources]` are raw tables 0.5.1 reserved for later RFC 076 and RFC 077
+       phases; no command reads them.
+    """
+    if "workspace" not in root:
+        return Ok(None)
+    workspace = table(root["workspace"], manifest, ["workspace"])?
+    if "rust-dependencies" in workspace:
+        field = ["workspace", "rust-dependencies"]
+        return moved_dependencies(workspace["rust-dependencies"], field, "[workspace.dependencies]", manifest)
+    if "rust-dev-dependencies" in workspace:
+        return moved_test_dependencies(workspace["rust-dev-dependencies"], manifest)
+    keys = ["members", "default-members", "exclude", "dependencies", "envs", "policy", "sources"]
+    allowed(workspace, keys, manifest, ["workspace"])?
+    # 1. Member directories.
+    for key in ["members", "default-members", "exclude"]:
+        if key in workspace:
+            entries = workspace[key]
+                .as_array()
+                .map_err((error) => refusal(manifest, ["workspace", key], IntakeErrorKind.Invalid, error.message()))?
+            for entry in entries:
+                text(entry, manifest, ["workspace", key])?
+    # 2. Shared dependencies.
+    if "dependencies" in workspace:
+        shared = table(workspace["dependencies"], manifest, ["workspace", "dependencies"])?
+        for alias in sorted([key for key in shared.keys()]):
+            entry = table(shared[alias], manifest, ["workspace", "dependencies", alias])?
+            if "path" not in entry and "loaf" not in entry:
+                detail = "a shared dependency names a local `path` or a registry `loaf`"
+                return Err(refusal(manifest, ["workspace", "dependencies", alias], IntakeErrorKind.Missing, detail))
+    # 3. Environment fragments.
+    if "envs" in workspace:
+        fragments = table(workspace["envs"], manifest, ["workspace", "envs"])?
+        for name in sorted([name for name in fragments.keys()]):
+            validate_environment(fragments[name], manifest, ["workspace", "envs", name])?
+    # 4. Reserved tables.
+    for key in ["policy", "sources"]:
+        if key in workspace:
+            table(workspace[key], manifest, ["workspace", key])?
+    return Ok(None)
+
+
+def moved_test_dependencies(value: TomlValue, manifest: str) -> Result[None, IntakeError]:
+    """
+    Refuse 0.5.1's `[workspace.rust-dev-dependencies]`, naming its successor: the shared entry under
+    `[workspace.dependencies]`, which each member's test environment inherits with `{ workspace = true }`.
+    """
+    field = ["workspace", "rust-dev-dependencies"]
+    entries = table(value, manifest, field)?
+    alias = first_key(entries)
+    mut detail = "use [workspace.dependencies], inherited by each member's [envs.test.dependencies]"
+    if alias in entries:
+        replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
+        member = f"{alias} = {{ workspace = true }} in each member's [envs.test.dependencies]"
+        detail = f"use [workspace.dependencies] {replacement}, and {member}"
+    return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
+
+
+pub def refuse_moved_tables(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """
+    Refuse a 0.5.1 table whose content has another table now, naming that table.
+
+    1. Rust test dependencies, in `[rust-dev-dependencies]` or `[rust.dev-dependencies]`, belong to the test
+       environment, and `[rust.dependencies]` entries to `[dependencies]`, each in its Loaf form.
+    2. `[oven.interop]` is `[interop.c]`.
+    3. `[tool.incan.envs.NAME]` is `[envs.NAME]`.
+    """
+    # 1. Rust dependency tables.
+    if "rust-dev-dependencies" in root:
+        return moved_dependencies(
+            root["rust-dev-dependencies"],
+            ["rust-dev-dependencies"],
+            "[envs.test.dependencies]",
+            manifest,
+        )
+    if "rust" in root:
+        facet = table(root["rust"], manifest, ["rust"])?
+        if "dependencies" in facet:
+            return moved_dependencies(facet["dependencies"], ["rust", "dependencies"], "[dependencies]", manifest)
+        if "dev-dependencies" in facet:
+            return moved_dependencies(
+                facet["dev-dependencies"],
+                ["rust", "dev-dependencies"],
+                "[envs.test.dependencies]",
+                manifest,
+            )
+    # 2. C interop.
+    if "oven" in root:
+        oven = table(root["oven"], manifest, ["oven"])?
+        if "interop" in oven:
+            detail = "[oven.interop] is refused; declare C interop under [interop.c]"
+            return Err(refusal(manifest, ["oven", "interop"], IntakeErrorKind.Unsupported, detail))
+    # 3. Environments.
+    if "tool" in root:
+        tool = table(root["tool"], manifest, ["tool"])?
+        if "incan" in tool:
+            incan = table(tool["incan"], manifest, ["tool", "incan"])?
+            if "envs" in incan:
+                detail = "[tool.incan.envs] is refused; declare each environment as [envs.NAME]"
+                return Err(refusal(manifest, ["tool", "incan", "envs"], IntakeErrorKind.Unsupported, detail))
+    return Ok(None)
+
+
+pub def parse_c_headers(root: Dict[str, TomlValue], manifest: str) -> Result[list[str], IntakeError]:
+    """The headers every `[[interop.c.targets]]` entry declares, each once; the checker reads the rest of the table."""
+    if "interop" not in root:
+        return Ok([])
+    interop = table(root["interop"], manifest, ["interop"])?
+    allowed(interop, ["c"], manifest, ["interop"])?
+    if "c" not in interop:
+        return Ok([])
+    c = table(interop["c"], manifest, ["interop", "c"])?
+    if "targets" not in c:
+        return Ok([])
+    targets = c["targets"]
+        .as_array()
+        .map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
+    mut headers: list[str] = []
+    for index in range(len(targets)):
+        field = ["interop", "c", "targets", str(index)]
+        entry = table(targets[index], manifest, field)?
+        if "headers" in entry:
+            for header in string_list(entry["headers"], manifest, field + ["headers"])?:
+                if header not in headers:
+                    headers.append(header)
+    return Ok(headers)
+
+
+pub def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name: str) -> Result[None, IntakeError]:
+    """Validate authored facet metadata even when local intake does not execute it."""
+    if "rust" in root:
+        rust_facet = table(root["rust"], manifest, ["rust"])?
+        allowed(
+            rust_facet,
+            ["name", "type", "edition", "source", "bin", "lib", "build-script", "lints"],
+            manifest,
+            ["rust"],
+        )?
+        for key in ["name", "type", "edition"]:
+            if key in rust_facet:
+                value = required(rust_facet, key, manifest, ["rust", key])?
+                if key == "type" and value not in ["lib", "proc-macro"]:
+                    return Err(refusal(manifest, ["rust", key], IntakeErrorKind.Invalid, "unsupported Rust type"))
+                if key == "edition" and value not in ["2015", "2018", "2021", "2024"]:
+                    return Err(refusal(manifest, ["rust", key], IntakeErrorKind.Invalid, "unsupported Rust edition"))
+        if "source" in rust_facet:
+            source = table(rust_facet["source"], manifest, ["rust", "source"])?
+            allowed(source, ["root"], manifest, ["rust", "source"])?
+            required(source, "root", manifest, ["rust", "source", "root"])?
+        if "bin" in rust_facet:
+            validate_binaries(rust_facet["bin"], manifest)?
+        if flag(rust_facet, "build-script", false, manifest, ["rust"])?:
+            return Err(
+                refusal(
+                    manifest,
+                    ["rust", "build-script"],
+                    IntakeErrorKind.Unsupported,
+                    f"{project_name} requires a recorded build fact for this exact binding",
+                ),
+            )
+    if "vocab" in root:
+        vocab = table(root["vocab"], manifest, ["vocab"])?
+        if "crate" in vocab:
+            return Err(
+                refusal(
+                    manifest,
+                    ["vocab", "crate"],
+                    IntakeErrorKind.Unsupported,
+                    "[vocab] crate is refused; declare [vocab] entry",
+                ),
+            )
+        allowed(vocab, ["entry"], manifest, ["vocab"])?
+        required(vocab, "entry", manifest, ["vocab", "entry"])?
+    return Ok(None)
+
+
+def validate_binaries(value: TomlValue, manifest: str) -> Result[None, IntakeError]:
+    """Each `[[rust.bin]]` is a table of known keys, and the access it declares passes `[build]`'s validator."""
+    binaries = value
+        .as_array()
+        .map_err((error) => refusal(manifest, ["rust", "bin"], IntakeErrorKind.Invalid, error.message()))?
+    for index in range(len(binaries)):
+        field = ["rust", "bin", str(index)]
+        binary = table(binaries[index], manifest, field)?
+        allowed(binary, ["name", "path"] + access_keys(BINARY_SEPARATOR), manifest, field)?
+        read_access(binary, BINARY_SEPARATOR, manifest, field)?
+    return Ok(None)
+
+
+pub def parse_vocab_entry(root: Dict[str, TomlValue], manifest: str) -> Result[Option[str], IntakeError]:
+    """Read the validated vocabulary entry without resolving its filesystem path."""
+    if "vocab" not in root:
+        return Ok(None)
+    vocab = table(root["vocab"], manifest, ["vocab"])?
+    return Ok(Some(required(vocab, "entry", manifest, ["vocab", "entry"])?))

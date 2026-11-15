@@ -1,0 +1,6 @@
+# behavior: model fields whose RFC 165 six-byte identities collide are refused and name both fields
+# expect-diagnostic: INCAN-T0128
+
+model CollidingFields:
+    fieldbbea15ef9eff: int
+    field3d4624c2d3a2: int

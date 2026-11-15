@@ -1,0 +1,60 @@
+"""Exact floating-point normalization without logical conversion through host floats."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+
+
+pub def float64_bits(width: int, bits: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Widen IEEE binary32 exactly and normalize every NaN while retaining signed zero and infinities."""
+    budget.charge_bytes(8)?
+    if width == 64:
+        if len(bits) != 8:
+            return Err(CrumbError.invalid_input("binary64 bit width"))
+        exponent = (int(bits[0]) & 127) * 16 + int(bits[1]) // 16
+        mut fraction = int(bits[1]) & 15
+        for index in range(2, 8):
+            fraction |= int(bits[index])
+        if exponent == 2047 and fraction != 0:
+            return Ok(b"\x7f\xf8\x00\x00\x00\x00\x00\x00")
+        return Ok(bits)
+    if width != 32 or len(bits) != 4:
+        return Err(CrumbError.invalid_input("float width"))
+    mut raw = 0
+    for byte in bits:
+        raw = raw * 256 + int(byte)
+    sign = raw // 2147483648
+    exponent = (raw // 8388608) % 256
+    mantissa = raw % 8388608
+    if exponent == 255 and mantissa != 0:
+        return Ok(b"\x7f\xf8\x00\x00\x00\x00\x00\x00")
+    mut wide_exponent = 0
+    mut fraction = 0
+    if exponent == 255:
+        wide_exponent = 2047
+    elif exponent > 0:
+        wide_exponent = exponent + 896
+        fraction = mantissa * 536870912
+    elif mantissa != 0:
+        mut high_bit = 0
+        mut power = 1
+        while power * 2 <= mantissa:
+            power *= 2
+            high_bit += 1
+        wide_exponent = high_bit + 874
+        fraction = mantissa - power
+        for _ in range(52 - high_bit):
+            fraction *= 2
+    high = sign * 2147483648 + wide_exponent * 1048576 + fraction // 4294967296
+    low = fraction % 4294967296
+    return Ok(
+        [
+            ((high // 16777216) % 256).saturating_resize[u8](),
+            ((high // 65536) % 256).saturating_resize[u8](),
+            ((high // 256) % 256).saturating_resize[u8](),
+            (high % 256).saturating_resize[u8](),
+            ((low // 16777216) % 256).saturating_resize[u8](),
+            ((low // 65536) % 256).saturating_resize[u8](),
+            ((low // 256) % 256).saturating_resize[u8](),
+            (low % 256).saturating_resize[u8](),
+        ],
+    )

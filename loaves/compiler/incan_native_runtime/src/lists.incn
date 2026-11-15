@@ -2,46 +2,59 @@
 
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
-from rust::incan_std_core::collections import (
+from rust::std::vec import Vec
+from rust::std::mem import replace
+from rust::std::cmp import Ordering
+from native_equality import equal_native
+from native_copying import clone_native
+from rust::incan_std_primitives::collections import (
     list_concat as runtime_concat,
     list_contains as runtime_contains,
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_get as runtime_get,
+    list_extend as runtime_extend,
+    list_remove as runtime_remove,
+    normalize_list_index,
     list_repeat as runtime_repeat,
     list_slice as runtime_slice,
 )
+from rust::incan_std_primitives::collections::__private import list_pop as runtime_pop
 from std.derives.comparison import Eq, Ord
 
 
 pub def equal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
-    """Compare elements through legacy's borrowed PartialEq without introducing Clone effects."""
-    return left == right
+    """Compare elements without Clone effects: 1. Invoke native equality through its declared borrowed bound."""
+    # 1. Invoke native equality through its declared borrowed bound.
+    return equal_native(left, right)
 
 
 pub def unequal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
-    """Retain the legacy borrowed collection inequality operation."""
-    return left != right
+    """Preserve borrowed list inequality: 1. Negate native equality without copying either input."""
+    # 1. Negate native equality without copying either input.
+    return not equal_native(left, right)
 
 
 pub def empty_list[T]() -> list[T]:
-    """Allocate an empty homogeneous list."""
-    return []
+    """Allocate list storage through Vec so a governed instance does not recursively invoke itself."""
+    return Vec.new()
 
 
-pub def append_list[T](mut values: list[T], value: T) -> None:
-    """Append one owned value to the caller's list."""
-    values.append(value)
+pub def append_list[T](values: &mut Vec[T], value: T) -> None:
+    """Append through Vec's primitive to the caller's list storage."""
+    Vec.push(values, value)
 
 
-pub def length_list[T](values: &list[T]) -> int:
-    """Read a list's length without consuming its binding."""
-    return len(values)
+pub def length_list[T](values: &Vec[T]) -> int:
+    """Read Vec's length without consuming its binding or reentering the list builtin."""
+    return int(values.len())
 
 
-pub def get_list[T with Clone](values: &list[T], index: int) -> T:
+pub def get_list[T with RuntimeClone](values: &list[T], index: int) -> T:
     """Read an element using Python indices and the legacy runtime errors."""
-    return values[index]
+    element: &T = runtime_get(values, index)
+    return clone_native[T](element)
 
 
 pub def borrow_list_mut[T](values: &mut list[T], index: int) -> &mut T:
@@ -49,14 +62,14 @@ pub def borrow_list_mut[T](values: &mut list[T], index: int) -> &mut T:
     return runtime_get_mut(values, index)
 
 
-pub def set_list[T](mut values: list[T], index: int, value: T) -> None:
+pub def set_list[T](values: &mut list[T], index: int, value: T) -> None:
     """Replace an element through a caller-owned mutable list borrow."""
-    values[index] = value
+    _ = replace(runtime_get_mut(values, index), value)
 
 
 pub def clone_list[T with Clone](values: &list[T]) -> list[T]:
     """Duplicate a list when Body IR records a value-preserving read."""
-    return RuntimeClone.clone(values)
+    return clone_native(values)
 
 
 pub def contains_list[T with Eq](values: &list[T], value: T) -> bool:
@@ -77,25 +90,28 @@ pub def index_list[T with Eq](values: &list[T], value: T) -> int:
     return runtime_index(values, reference)
 
 
-pub def extend_list[T with Clone](mut values: list[T], other: &list[T]) -> None:
+pub def extend_list[T with Clone](values: &mut list[T], other: &list[T]) -> None:
     """Append a copy of the other list's elements without consuming it."""
-    for index in range(len(other)):
-        values.append(other[index])
+    runtime_extend(values, other)
 
 
-pub def pop_list[T](mut values: list[T]) -> T:
+pub def pop_list[T](values: &mut list[T]) -> T:
     """Remove the last element with the legacy empty-list error."""
-    return values.pop()
+    return runtime_pop(values)
 
 
-pub def remove_list[T](mut values: list[T], index: int) -> None:
+pub def remove_list[T](values: &mut list[T], index: int) -> None:
     """Remove one element using legacy Python-style index normalization."""
-    values.remove(index)
+    runtime_remove(values, index)
 
 
-pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
-    """Swap two elements with the legacy negative-index and bounds behavior."""
-    values.swap(left, right)
+pub def swap_list[T](mut values: &mut Vec[T], left: int, right: int) -> None:
+    """Swap elements through the canonical negative-index normalization and bounds-error boundary."""
+    size = values.len()
+    left_index = normalize_list_index(size, left)
+    right_index = normalize_list_index(size, right)
+    mut view = values.as_mut_slice()
+    view.swap(left_index, right_index)
 
 
 pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
@@ -109,15 +125,32 @@ pub def repeat_list[T with Clone](value: T, count: int) -> list[T]:
 
 
 pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:
-    """Copy and sort ordered elements through legacy builtin emission."""
-    owned = RuntimeClone.clone(values)
-    return sorted(owned)
+    """Stably sort a fresh snapshot through the native slice method, leaving the source unchanged."""
+    mut owned: Vec[T] = clone_native(values)
+    mut view = owned.as_mut_slice()
+    view.sort()
+    return owned
 
 
 pub def sorted_float(values: &list[float]) -> list[float]:
-    """Use legacy partial-order sorting, including its NaN ordering policy."""
-    owned = RuntimeClone.clone(values)
-    return sorted(owned)
+    """Stably sort a snapshot: 1. Clone the input. 2. Compare partial-order values with unordered pairs equal."""
+    # 1. Clone the input while preserving its owner.
+    mut owned: Vec[float] = clone_native(values)
+    mut view = owned.as_mut_slice()
+    # 2. Keep the native stable sort and the language's unordered-pair policy.
+    view.sort_by(compare_float)
+    return owned
+
+
+def compare_float(left: &float, right: &float) -> Ordering:
+    """Treat an unordered floating-point pair as equal, preserving the original stable sorting policy."""
+    left_value: float = clone_native[float](left)
+    right_value: float = clone_native[float](right)
+    if left_value < right_value:
+        return Ordering.Less
+    if left_value > right_value:
+        return Ordering.Greater
+    return Ordering.Equal
 
 
 pub def slice_list[T with Clone](

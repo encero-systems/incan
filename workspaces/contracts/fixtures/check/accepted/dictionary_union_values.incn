@@ -1,0 +1,24 @@
+# behavior: dictionary literals take declared union values in bindings, returns and named method arguments (#1442)
+# expect-accepted:
+
+from std.logging import basic_config
+
+
+model Event:
+    """Accept structured fields with several scalar types."""
+
+    def record(self, fields: dict[str, str | int | bool]) -> None:
+        """Accept the declared dictionary value union."""
+        pass
+
+
+def fields() -> dict[str, str | int | bool]:
+    """Return mixed values through the declared dictionary type."""
+    return {"label": "job", "count": 3, "dry_run": false}
+
+
+def report(event: Event) -> None:
+    """Check literal destinations, including an imported logger's method signature."""
+    values: dict[str, str | int | bool] = {"label": "job", "count": 3, "dry_run": false}
+    event.record(fields={"label": "job", "count": 3, "dry_run": false})
+    log.info("job", fields={"label": "job", "count": 3, "dry_run": false})

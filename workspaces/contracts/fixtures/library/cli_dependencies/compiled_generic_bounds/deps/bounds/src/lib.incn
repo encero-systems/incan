@@ -1,0 +1,118 @@
+from std.traits.callable import Callable1
+from std.traits.callable import Callable1 as Mapper
+
+
+pub model Holder[V]:
+    pub value: V
+
+    pub def get(self) -> V:
+        return self.value
+
+    pub def first[T](self, items: list[T]) -> T:
+        return items[0]
+
+
+pub def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+pub trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def plain(self) -> int:
+        return 1
+    def required(self) -> int
+
+
+pub model Selector with Picker:
+    pub id: int
+
+    def required(self) -> int:
+        return self.id
+
+
+pub def apply[F with Mapper[int, int]](f: F, value: int) -> int:
+    return f(value)
+
+
+pub trait Failing[E]:
+    def failure(self) -> E
+
+    def describe[F with Clone, Describe with (Clone, Callable1[E, F])](self, f: Describe) -> F:
+        return f(self.failure())
+
+
+pub model Lookup with Failing[str]:
+    pub key: str
+
+    def failure(self) -> str:
+        return self.key
+
+
+pub trait Labeled:
+    """Describe values through one required method and one reusable default."""
+
+    def text(self) -> str:
+        """Return the receiver's own label."""
+        pass
+
+    def decorated(self) -> str:
+        """Call the receiver's selected implementation from the inherited default."""
+        return f"<{self.text()}>"
+
+    def set(mut self, value: str) -> None:
+        """Replace the receiver's label."""
+        pass
+
+    def replace(mut self, first: str, second: str) -> str:
+        """Retain the exclusive receiver across two compiled mutations and a shared read."""
+        self.set(first)
+        self.set(second)
+        return self.text()
+
+
+pub trait WalkValue:
+    """Walk a value through a provider-owned generic protocol."""
+
+    def walk[E, W with ValueWalker[E]](self, mut walker: W) -> Result[str, E]
+
+
+pub trait ValueWalker[E]:
+    """Supply provider-owned defaults for walking nested consumer values."""
+
+    def field[V with WalkValue](mut self, value: V) -> Result[str, E]:
+        """Walk a nested value through this same walker."""
+        return value.walk(self)
+
+
+pub trait NumberSource[E]:
+    """Supply one integer for a provider-owned reconstruction protocol."""
+
+    def integer(mut self) -> Result[int, E]
+
+
+pub trait Reconstruct:
+    """Reconstruct an adopter through an associated implementation."""
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]
+
+    @staticmethod
+    def through_default[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]:
+        """Dispatch through Self inside this provider-owned default."""
+        return Self.__reconstruct__(source)
+
+
+pub model Item with Labeled:
+    """Supply the label in a compiled library method."""
+
+    pub value: str
+
+    def text(self) -> str:
+        """Read the library-owned value."""
+        return self.value
+
+    def set(mut self, value: str) -> None:
+        """Update the library-owned field in place."""
+        self.value = value

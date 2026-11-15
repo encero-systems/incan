@@ -1,0 +1,99 @@
+"""Verify example discovery, declared modes, project roots, receipts and unexpected failure propagation."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_test_support import write
+from run_examples import ExamplePlan, Settings, invoke, plans, run_gate, selected
+
+const CHECK_ONLY: str = """# frontend only
+examples/pro/vocab_markform/consumer/src/main.incn
+# long lived
+examples/web/hello_web.incn
+"""
+
+
+def test_discovery_uses_declared_modes_and_nearest_project_roots() -> Result[None, str]:
+    """Runnable, DSL check-only and long-lived entries keep their declared modes and project working directories."""
+    temporary = fixture()?
+    root = temporary.path()
+    discovered = plans(root)?
+    assert [plan.path for plan in discovered] == [
+        "examples/pro/vocab_markform/consumer/src/main.incn",
+        "examples/simple/hello.incn",
+        "examples/web/hello_web.incn",
+    ]
+    assert discovered[0].mode == "check"
+    assert discovered[0].directory == root.joinpath("examples/pro/vocab_markform/consumer").0
+    assert discovered[1].mode == "run"
+    assert discovered[1].directory == root.0
+    assert discovered[2].mode == "check"
+    assert discovered[2].directory == root.0
+    return Ok(None)
+
+
+def test_selection_is_exact_and_empty_means_every_entry() -> Result[None, str]:
+    """Colon-decoded selections compare complete repository paths rather than prefixes or substrings."""
+    path = "examples/simple/hello.incn"
+    assert selected(path, [])
+    assert selected(path, [path])
+    assert not selected(path, ["examples/simple/hello"])
+    assert not selected(path, ["examples/simple/hello.incn.extra"])
+    return Ok(None)
+
+
+def test_unexpected_compiler_failure_fails_the_gate_and_stays_in_the_receipt() -> Result[None, str]:
+    """A runnable entry's non-zero compiler status remains a failed gate result with its exact status and mode."""
+    temporary = fixture()?
+    root = temporary.path()
+    output = root.joinpath("evidence")
+    settings = configured("/usr/bin/false", ["examples/simple/hello.incn"], output)
+    assert not run_gate(root, settings)?
+    receipt = output.joinpath("examples.tsv").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert "examples/simple/hello.incn\trun\tFAIL\t1\t" in receipt
+    return Ok(None)
+
+
+def test_check_only_success_is_not_converted_to_a_run() -> Result[None, str]:
+    """A declared frontend-only consumer reaches the installed command as a successful check plan."""
+    temporary = fixture()?
+    root = temporary.path()
+    output = root.joinpath("evidence")
+    output.mkdir(true, true).map_err((error) => error.message())?
+    settings = configured("/usr/bin/true", [], output)
+    plan = plans(root)?[0]
+    outcome = invoke(root, settings, plan)?
+    assert outcome.mode == "check"
+    assert outcome.code == 0
+    return Ok(None)
+
+
+def test_an_unknown_selection_fails_closed() -> Result[None, str]:
+    """A misspelled selection cannot turn a gate invocation into an empty successful run."""
+    temporary = fixture()?
+    root = temporary.path()
+    settings = configured("/usr/bin/true", ["examples/missing.incn"], root.joinpath("evidence"))
+    match run_gate(root, settings):
+        Ok(_) => return Err("unknown selection unexpectedly ran")
+        Err(message) =>
+            assert message == "selection matched no example entries"
+    return Ok(None)
+
+
+def configured(compiler: str, choices: list[str], output: Path) -> Settings:
+    """Create deterministic test settings around the host's qualified GNU timeout executable."""
+    return Settings(compiler=compiler, timeout="timeout", seconds="5", selected=choices, output=output)
+
+
+def fixture() -> Result[TemporaryDirectory, str]:
+    """Create runnable, project check-only, long-lived check-only and non-entry example sources."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    write(root, "AGENTS.md", "fixture\n")?
+    write(root, "scripts/check_support.incn", "fixture\n")?
+    write(root, "examples/simple/hello.incn", "def main() -> None:\n    println('hello')\n")?
+    write(root, "examples/simple/support.incn", "def helper() -> int:\n    return 1\n")?
+    write(root, "examples/pro/vocab_markform/consumer/loaf.toml", "[project]\nname = 'consumer'\n")?
+    write(root, "examples/pro/vocab_markform/consumer/src/main.incn", "def main() -> None:\n    pass\n")?
+    write(root, "examples/web/hello_web.incn", "def main() -> None:\n    pass\n")?
+    write(root, "examples/check-only.txt", CHECK_ONLY)?
+    return Ok(temporary)

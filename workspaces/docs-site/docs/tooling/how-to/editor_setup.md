@@ -87,7 +87,7 @@ The Incan Language Server provides IDE integration:
 - **Go-to-definition** - Jump to symbol definitions
 - **Completions** - Keywords and symbols
 
-See [Language Server](lsp.md) for setup instructions. If you develop the compiler from a clone, prefer `make build` so `incan` and `incan-lsp` on your `PATH` both point at `target/debug` (see the LSP guide).
+See [Language Server](lsp.md) for executable selection. Use a server built for the same compiler line as your project; the source checkout alone does not install it.
 
 ## Format on Save
 

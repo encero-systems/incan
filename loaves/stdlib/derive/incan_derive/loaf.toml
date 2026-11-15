@@ -1,6 +1,6 @@
 [project]
 name = "incan_derive"
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.9"
 license = "Apache-2.0"
 private = true
 

@@ -1,0 +1,20 @@
+[project]
+name = "interop_bundled_fields"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-linux-android"
+sdk = { capability = "android" }
+platform = { kind = "android", api-level = 24 }
+
+[[interop.c.targets.artifacts]]
+name = "bridge_runtime"
+kind = "bundled"
+path = "interop/android/libbridge_runtime.so"
+placement = "jniLibs/arm64-v8a"
+minimum-platform = "24"

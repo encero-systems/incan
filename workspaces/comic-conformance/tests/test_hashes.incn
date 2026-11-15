@@ -1,0 +1,187 @@
+"""Digest domain, projection, original admission and resource-limit boundaries."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.hashes import value_hash, model_hash, description_hash, seal_hash, verify_description_digest
+from std.primitives.crumb.values import IntegerValue, Value, ValueField, MapEntry, Metadata, MetadataEntry, Projection
+from std.primitives.crumb.types import AbsentPolicy, NominalKind, ScalarKind, TypeNode
+from std.primitives.crumb.ordering import order_values
+from std.primitives.hex import hexlify
+
+
+def test_streaming_matches_capture_and_literal_digest() -> Result[None, str]:
+    """The preimage is independently fixed; default hashing returns no retained preimage."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    captured = value_hash(Value.Integer(IntegerValue.Signed(0i128)), Projection.Object, budget, true).map_err(
+        (e) => e.message(),
+    )?
+    streamed = value_hash(Value.Integer(IntegerValue.Signed(0i128)), Projection.Object, budget).map_err(
+        (e) => e.message(),
+    )?
+    assert captured.digest == streamed.digest
+    assert hexlify(streamed.digest) == "991e7a62cf2aef8a06713404f30c31a223803dae92ec3ab0e4eb83946faf1359"
+    match captured.preimage:
+        Some(bytes) =>
+            assert hexlify(bytes) == "6372756d623100010200"
+        None => return Err("missing captured preimage")
+    match streamed.preimage:
+        None => pass
+        Some(_) => return Err("ordinary hashing retained its preimage")
+    return Ok(None)
+
+
+def test_duplicates_refused_before_projection() -> Result[None, str]:
+    """Two numeric spellings of the same decimal cannot disguise an original duplicate key or set item."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    first = Value.Decimal(1990i128, 2)
+    second = Value.Decimal(199i128, 1)
+    assert value_hash(Value.Set([first, second]), Projection.Canonical, budget).is_err()
+    entries = [MapEntry(key=first, value=Value.Text("a")), MapEntry(key=second, value=Value.Text("b"))]
+    assert value_hash(Value.Map(entries), Projection.Object, budget).is_err()
+    assert budget.leave().is_err()
+    return Ok(None)
+
+
+def test_omitted_fields_still_require_valid_original_input() -> Result[None, str]:
+    """An invalid nested value cannot disappear behind canonical=false or a later projection."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    hidden = ValueField(identity=b"abcdef", canonical=false, absent=AbsentPolicy.Required, value=Value.Enum(b"short", []))
+    assert value_hash(Value.Record([hidden]), Projection.Canonical, budget).is_err()
+    assert budget.leave().is_err()
+    return Ok(None)
+
+
+def test_projection_keeps_set_multiplicity() -> Result[None, str]:
+    """Distinct objects may become equal canonically, but two contributions must remain two."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    a = Value.Record(
+        [ValueField(identity=b"abcdef", canonical=false, absent=AbsentPolicy.Required, value=Value.Text("a"))],
+    )
+    b = Value.Record(
+        [ValueField(identity=b"abcdef", canonical=false, absent=AbsentPolicy.Required, value=Value.Text("b"))],
+    )
+    pair = value_hash(Value.Set([b, a]), Projection.Canonical, budget, true).map_err((e) => e.message())?
+    single = value_hash(Value.Set([a]), Projection.Canonical, budget).map_err((e) => e.message())?
+    assert pair.digest != single.digest
+    match pair.preimage:
+        Some(bytes) =>
+            assert hexlify(bytes) == "6372756d623100020a020c000c00"
+        None => return Err("missing captured preimage")
+    return Ok(None)
+
+
+def test_description_integrity_is_derived_from_complete_metadata() -> Result[None, str]:
+    """Changed properties and duplicate names cannot be hidden by supplying the old digest."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    old = Metadata.Map([MetadataEntry(key="property", value=Metadata.Integer(1i128))])
+    changed = Metadata.Map([MetadataEntry(key="property", value=Metadata.Integer(2i128))])
+    digest = description_hash(old, budget).map_err((e) => e.message())?
+    verify_description_digest(old, digest.digest, budget).map_err((e) => e.message())?
+    assert verify_description_digest(changed, digest.digest, budget).is_err()
+    duplicate = Metadata.Map(
+        [
+            MetadataEntry(key="property", value=Metadata.Integer(1i128)),
+            MetadataEntry(key="property", value=Metadata.Integer(1i128)),
+        ],
+    )
+    assert description_hash(duplicate, budget).is_err()
+    if description_hash(Metadata.Map([MetadataEntry(key="not.a.segment", value=Metadata.Null)]), budget).is_ok():
+        return Err("non-segment metadata key was accepted")
+    text = description_hash(Metadata.Text("Public"), budget).map_err((e) => e.message())?
+    symbol = description_hash(Metadata.Symbol("Public"), budget).map_err((e) => e.message())?
+    if text.digest == symbol.digest:
+        return Err("metadata text and symbol used the same digest contribution")
+    assert budget.leave().is_err()
+    return Ok(None)
+
+
+def test_domains_and_seal_order_remain_distinct() -> Result[None, str]:
+    """Identical scalar contributions cannot cross domains, and record order remains part of a seal."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    one = Value.Integer(IntegerValue.Signed(1i128))
+    two = Value.Integer(IntegerValue.Signed(2i128))
+    object = value_hash(one, Projection.Object, budget).map_err((e) => e.message())?
+    canonical = value_hash(one, Projection.Canonical, budget).map_err((e) => e.message())?
+    assert object.digest != canonical.digest
+    forward = seal_hash([one, two], budget).map_err((e) => e.message())?
+    reverse = seal_hash([two, one], budget).map_err((e) => e.message())?
+    assert forward.digest != reverse.digest
+    return Ok(None)
+
+
+def test_limits_refuse_without_digest_and_balance_depth() -> Result[None, str]:
+    """A failed traversal restores depth accounting, but does not refund already consumed work."""
+    mut shallow = Budget.create(bytes=65536, elements=65536, depth=2).map_err((e) => e.message())?
+    nested = Value.List([Value.List([Value.List([Value.Integer(IntegerValue.Signed(1i128))])])])
+    assert value_hash(nested, Projection.Object, shallow).is_err()
+    assert shallow.leave().is_err()
+    mut small = Budget.create(bytes=10, elements=65536, depth=64).map_err((e) => e.message())?
+    assert value_hash(Value.Binary(b"large enough to refuse"), Projection.Object, small).is_err()
+    assert small.leave().is_err()
+    return Ok(None)
+
+
+def test_float_order_covers_signed_zero_infinities_and_nan() -> Result[None, str]:
+    """Sorting uses mathematical order plus the profile's signed-zero/NaN rules, not input bytes."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    values = [
+        Value.Float(64, b"\x7f\xf8\x00\x00\x00\x00\x00\x01"),
+        Value.Float(64, b"\x00\x00\x00\x00\x00\x00\x00\x00"),
+        Value.Float(64, b"\xff\xf0\x00\x00\x00\x00\x00\x00"),
+        Value.Float(64, b"\x80\x00\x00\x00\x00\x00\x00\x00"),
+        Value.Float(64, b"\x7f\xf0\x00\x00\x00\x00\x00\x00"),
+    ]
+    assert order_values(values, Projection.Object, budget).map_err((e) => e.message())? == [2, 3, 1, 4, 0]
+    return Ok(None)
+
+
+def test_nominal_union_identity_is_not_structural_equality() -> Result[None, str]:
+    """Equal empty payloads in distinct nominal branches keep different logical contributions."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    a = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"aaaaaa"), []), [Value.Record([])])
+    b = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []), [Value.Record([])])
+    first = value_hash(a, Projection.Object, budget).map_err((e) => e.message())?
+    second = value_hash(b, Projection.Object, budget).map_err((e) => e.message())?
+    assert first.digest != second.digest
+    return Ok(None)
+
+
+def test_sorting_temporary_memory_is_bounded() -> Result[None, str]:
+    """A byte-empty budget cannot allocate ordering index buffers even for existing scalar values."""
+    mut budget = Budget.create(bytes=0, elements=65536, depth=64).map_err((e) => e.message())?
+    assert order_values(
+        [Value.Integer(IntegerValue.Signed(2i128)), Value.Integer(IntegerValue.Signed(1i128))],
+        Projection.Object,
+        budget,
+    ).is_err()
+    return Ok(None)
+
+
+def test_invalid_shapes_refuse_without_partial_digest() -> Result[None, str]:
+    """Malformed payload arity, bit widths and duplicate identities fail even in capture mode."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    malformed = [
+        Value.Some([]),
+        Value.Float(16, b"00"),
+        Value.Union(TypeNode.Scalar(ScalarKind.I64), []),
+        Value.Enum(b"short", []),
+    ]
+    for item in malformed:
+        assert value_hash(item, Projection.Object, budget, true).is_err()
+        assert budget.leave().is_err()
+    duplicate = ValueField(identity=b"abcdef", canonical=true, absent=AbsentPolicy.Required, value=Value.NoneValue)
+    assert value_hash(Value.Record([duplicate, duplicate]), Projection.Object, budget, true).is_err()
+    return Ok(None)
+
+
+def test_metadata_key_order_and_list_order_have_different_meanings() -> Result[None, str]:
+    """Map entry order is canonical; ordered declaration/property lists preserve their source order."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    a = MetadataEntry(key="a", value=Metadata.Integer(1i128))
+    b = MetadataEntry(key="b", value=Metadata.Integer(2i128))
+    forward = description_hash(Metadata.Map([a, b]), budget).map_err((e) => e.message())?
+    reverse = description_hash(Metadata.Map([b, a]), budget).map_err((e) => e.message())?
+    assert forward.digest == reverse.digest
+    first = description_hash(Metadata.List([a.value, b.value]), budget).map_err((e) => e.message())?
+    second = description_hash(Metadata.List([b.value, a.value]), budget).map_err((e) => e.message())?
+    assert first.digest != second.digest
+    return Ok(None)

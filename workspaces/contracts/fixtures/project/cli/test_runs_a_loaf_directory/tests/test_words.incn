@@ -1,0 +1,5 @@
+"""A second test module, collected from the same directory."""
+
+
+def test_joins() -> None:
+    assert "a" + "b" == "ab"

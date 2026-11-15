@@ -1,6 +1,7 @@
 //! Retain consumer method selection after a provider's private alias return, without changing legacy checker facts.
 
 use super::{BodyBuilder, CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast, bir};
+use crate::body_ir::ContextModules;
 use incan_semantics_core::SymbolNamespace;
 
 /// One checked, provider-owned immutable method taking only its receiver.
@@ -14,15 +15,15 @@ pub(super) struct PublishedMethod {
     pub(super) return_type: IncanType,
 }
 
-/// Collect nongeneric, receiver-only immutable source methods within their exact retained owner declarations.
+/// Collect nongeneric, receiver-only immutable method frames within their exact retained owner declarations.
 ///
 /// The declaration anchors, origin, receiver type and canonical member identity must agree. Static methods, mutable
 /// receivers and ordinary parameter/default binding are outside this record's contract and remain unselected here.
-pub(super) fn collect(context: &[bir::BodyIrModule]) -> Vec<PublishedMethod> {
+pub(super) fn collect(context: ContextModules<'_>) -> Vec<PublishedMethod> {
     let mut methods: Vec<PublishedMethod> = Vec::new();
     for module in context {
         for owner in &module.nominal_declarations {
-            for body in &module.bodies {
+            for body in module.callable_declaration_frames() {
                 let Some(identity) = &body.canonical else {
                     continue;
                 };
@@ -81,11 +82,7 @@ impl BodyBuilder<'_, '_> {
         if !type_args.is_empty()
             || !args.is_empty()
             || self.type_info.resolved_identity(span).is_some()
-            || self
-                .type_info
-                .traits
-                .self_method_identities
-                .contains_key(&(span.start, span.end))
+            || self.type_info.traits.self_method_identities.contains_key(&span)
         {
             return None;
         }

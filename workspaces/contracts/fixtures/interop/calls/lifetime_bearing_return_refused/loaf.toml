@@ -1,0 +1,9 @@
+[project]
+name = "lifetime_bearing_return_refused"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+regex = { loaf = "crates-io/regex", version = "1" }

@@ -1,0 +1,9 @@
+# behavior: the iOS adapter stages only an iOS device or simulator target with iOS platform facts, and the Android adapter only the Android arm64 target with Android platform facts, as in 0.5 (#3134)
+# cli-commands:
+#   oven interop stage --target aarch64-linux-android --adapter ios --output staged
+# expect-exit: 1
+# expect-stderr-contains:
+#   iOS adapter staging requires an iOS device or simulator target with iOS platform facts, found `aarch64-linux-android`
+
+def main() -> None:
+    println("not run")

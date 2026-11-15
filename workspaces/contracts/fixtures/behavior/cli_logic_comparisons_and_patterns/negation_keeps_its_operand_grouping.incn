@@ -1,0 +1,18 @@
+# behavior: not and unary minus over an operator expression apply to the whole expression rather than to its first operand
+# expect-stdout:
+#   true
+#   true
+#   -5
+#   true
+#   false
+#   false
+#   -4
+
+def main() -> None:
+    println(not (1 == 2))
+    println(not 1 == 2)
+    println(-(2 + 3))
+    println(not (true and false))
+    println(not (1 < 2 or false))
+    println(not bool(5))
+    println(~(1 | 2))
