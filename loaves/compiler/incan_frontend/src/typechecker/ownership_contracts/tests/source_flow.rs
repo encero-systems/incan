@@ -579,3 +579,21 @@ fn call_results_that_hold_no_borrow_are_fresh_values() -> Result<(), Box<dyn std
 fn source_text(source: &str, span: crate::ast::Span) -> Option<&str> {
     source.get(span.start..span.end)
 }
+
+/// Formatting a list of primitives reaches no display hook: a shared list of numbers or texts formats as it is read.
+#[test]
+fn formatting_reads_primitive_lists() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def show(items: Borrowed[list[int]], names: Borrowed[list[str]]) -> str:\n    return f\"{items} {names}\"\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "show" && matches!(flow, InputFlow::Checked { .. }))
+    );
+    Ok(())
+}
