@@ -155,7 +155,7 @@ const CALL_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "acc3945d17249ed84fc6fffa57fb0b00de9c3f9c2bbcc1e0e03dfab22340edce";
+const GENERATOR_SHA256: &str = "280cc46d70e652aed500c6a9334106ceae7acc368b8e1164963a3c5fd98d2299";
 
 pub(super) fn project(
     positions: &Positions,
