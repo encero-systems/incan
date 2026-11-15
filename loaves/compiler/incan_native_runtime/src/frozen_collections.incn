@@ -210,3 +210,23 @@ def frozen_text_item[T with (Display, Static)](value: RuntimeFrozenList[T], inde
 def frozen_dict_entries[K with Static, V with Static](value: RuntimeFrozenDict[K, V]) -> RuntimeFrozenList[tuple[K, V]]:
     """View a dictionary's immutable entries with explicit native owner arguments, preserving both tuple types."""
     return RuntimeFrozenList.new[tuple[K, V]](value.as_slice())
+
+
+pub def frozen_list_contains_text[T with (Borrow[RustStr], Static)](
+    value: RuntimeFrozenList[T],
+    needle: Borrowed[str],
+) -> bool:
+    """Compare each static element's text with the needle in place, copying and formatting nothing (#2944)."""
+    mut index = 0
+    while true:
+        match value.get(nonnegative_count(index)):
+            Some(item) =>
+                if Borrow.borrow(item) == needle:
+                    return true
+            None => return false
+        index += 1
+
+
+pub def frozen_set_list[T with Static](value: RuntimeFrozenSet[T]) -> RuntimeFrozenList[T]:
+    """View a frozen set's baked elements as a frozen list over the same static slice, copying nothing."""
+    return RuntimeFrozenList.new[T](value.as_slice())

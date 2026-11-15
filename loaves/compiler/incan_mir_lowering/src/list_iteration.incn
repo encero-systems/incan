@@ -69,6 +69,7 @@ from list_values import collection_read_storage, list_base_place, list_borrow, v
 from list_methods import argument_value, call_destination, materialized_receiver, shared_receiver_place
 from hashed_collections import iterable_call
 from sequence_builtins import argument_type
+from call_arguments import call_argument_operand
 
 
 pub def operand_list_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
@@ -680,3 +681,71 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
 def list_projection_refusal(name: str, ty: PlanType, projection: PlaceElem) -> str:
     """Name the retained carrier and projection that cannot provide structural collection storage."""
     return f"unsupported Body IR list root projection in {name}: {ty:?}; {projection:?}"
+
+
+pub def frozen_text_membership(
+    mut builder: Builder,
+    negated: bool,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Test text membership in a frozen list or set in place: the runtime compares each static element's text with the
+    needle, and no element is copied or formatted (#2944). A set is read as a list over its own static slice. Any
+    other membership keeps the ordinary route.
+    """
+    mut set = false
+    match argument_type(builder, arguments, 0, span)?:
+        (PlanType.FrozenCollection(name, elements) | PlanType.FrozenCollectionRef(name, elements)) =>
+            if len(elements) != 1 or elements[0] not in [PlanType.StaticText, PlanType.FrozenStr]:
+                return Ok(false)
+            if name == "FrozenSet":
+                set = true
+            elif name != "FrozenList":
+                return Ok(false)
+        _ => return Ok(false)
+    mut frozen = literal(Constant.Unit, span)
+    match arguments[0].as_one():
+        Some(RustOperand.Place(_read)) =>
+            receiver = shared_receiver_place(builder, arguments, 0, span)?
+            storage = collection_read_storage(builder, receiver, span)?
+            frozen = read_place(storage, false, span)
+        Some(_value) => frozen = argument_value(builder, arguments, 0, span)?
+        None => return Err("unsupported Body IR spread frozen membership receiver")
+    mut elements: list[PlanType] = []
+    match operand_type(builder, frozen)?:
+        PlanType.FrozenCollection(_name, retained) => elements = retained
+        _ => return Err("unsupported Body IR frozen membership receiver value")
+    listed_type = PlanType.FrozenCollection("FrozenList", elements)
+    if set:
+        listed = temporary(builder, listed_type, span)
+        instantiated_external_call(
+            builder,
+            "incan_native_runtime::frozen_set_list",
+            elements,
+            [PlanType.FrozenCollection("FrozenSet", elements)],
+            listed_type,
+            [frozen],
+            listed,
+            span,
+        )?
+        frozen = read_place(listed, false, span)
+    mut needle = literal(Constant.Unit, span)
+    match arguments[1].as_one():
+        Some(value) => needle = call_argument_operand(builder, value, PlanType.StringRef, span, false)?
+        None => return Err("unsupported Body IR frozen membership needle spread")
+    output = call_destination(builder, destination, PlanType.Bool, span)?
+    instantiated_external_call(
+        builder,
+        "incan_native_runtime::frozen_list_contains_text",
+        elements,
+        [listed_type, PlanType.StringRef],
+        PlanType.Bool,
+        [frozen, needle],
+        output,
+        span,
+    )?
+    if negated:
+        builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+    return Ok(true)
