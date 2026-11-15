@@ -875,7 +875,7 @@ fn lower_compilation_plan(
                 };
                 unit_plan(
                     &program.modules,
-                    inputs,
+                    &inputs,
                     program.entry.try_into()?,
                     &kind_name,
                     &mut attempt_unions,
@@ -991,7 +991,7 @@ fn census_complete(
     let refusals = loop {
         let outcome = program_refusals(
             &program.modules,
-            SourceInputs {
+            &SourceInputs {
                 scalar_products: None,
                 scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),
@@ -1017,7 +1017,7 @@ fn census_complete(
     if std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some() {
         match program_refusals(
             &program.modules,
-            SourceInputs {
+            &SourceInputs {
                 scalar_products: None,
                 scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),

@@ -43,7 +43,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     incan_platform::release_free_heap();
                     timing.mark("worker_heap_released");
                 }
-                incan_worker_host::complete(&mut host, outcome, footprint(), live_heap());
+                incan_worker_host::complete(&mut host, &outcome, footprint(), live_heap());
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
@@ -166,7 +166,7 @@ impl Abandonment {
         let Ok(descriptor) = RawFd::try_from(watch.descriptor) else {
             return Self::unobserved();
         };
-        let mut observer = Self::observe(descriptor, move || incan_worker_host::abandon(watch));
+        let mut observer = Self::observe(descriptor, move || incan_worker_host::abandon(&watch));
         observer.retiring = retiring;
         observer
     }
