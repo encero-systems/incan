@@ -9,6 +9,7 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 /// One logical value after notation translation, mirroring the Incan `Value` carrier.
+#[derive(Clone)]
 pub(super) enum Value {
     Absent,
     Some(Box<Value>),
@@ -30,6 +31,7 @@ pub(super) enum Value {
 }
 
 /// One stored field with its identity, canonical participation and declared absence.
+#[derive(Clone)]
 pub(super) struct Field {
     pub(super) identity: Vec<u8>,
     pub(super) canonical: bool,
@@ -47,6 +49,7 @@ pub(super) enum Node {
     Record(String, Vec<Shape>),
     Enum(String, Vec<(Vec<u8>, Vec<Shape>)>),
     Recursive(String),
+    Reference(Box<Node>),
 }
 
 /// One structural field shape used by S spellings.
@@ -65,7 +68,7 @@ pub(super) enum Projection {
     Canonical,
 }
 
-const SCALARS: [&str; 18] = [
+pub(super) const SCALARS: [&str; 18] = [
     "boolean",
     "i8",
     "i16",
@@ -607,7 +610,7 @@ fn stable_order(count: usize, compare: impl Fn(usize, usize) -> Option<Ordering>
 }
 
 /// Compare complete values: absence first, then present values by type-specific stored order.
-fn compare(left: &Value, right: &Value, projection: Projection) -> Option<Ordering> {
+pub(super) fn compare(left: &Value, right: &Value, projection: Projection) -> Option<Ordering> {
     match (absence_depth(left), absence_depth(right)) {
         (Some(a), Some(b)) => return Some(a.cmp(&b)),
         (Some(_), None) => return Some(Ordering::Less),
@@ -720,7 +723,7 @@ fn compare_maps(left: &[(Value, Value)], right: &[(Value, Value)], projection: P
 }
 
 /// Order nominal members by framed K, others by hashed N with a full spelling tie-break.
-fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
+pub(super) fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
     match node {
         Node::Nominal(kind, ..) => Some((1, closed_selector(node)?, kind.clone())),
         _ => {
@@ -835,6 +838,13 @@ fn spell(node: &Node, nominal: bool, active: &mut Vec<String>) -> Option<String>
             let result = variant_fields(variants, nominal, active);
             active.pop();
             result
+        }
+        Node::Reference(item) => {
+            if nominal {
+                Some(format!("ref<{}>", spell(item, true, active)?))
+            } else {
+                Some("reference".to_string())
+            }
         }
         Node::Recursive(key) => {
             let offset = active.iter().rev().position(|item| item == key)?;
@@ -1037,4 +1047,9 @@ pub(super) fn frame(output: &mut Vec<u8>, data: &[u8]) {
 /// Spell octets as lowercase hexadecimal.
 pub(super) fn hex_string(data: &[u8]) -> String {
     data.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Append one value's object contribution without validating it again.
+pub(super) fn emit_object(value: &Value, output: &mut Vec<u8>) -> Option<()> {
+    emit(value, Projection::Object, output)
 }

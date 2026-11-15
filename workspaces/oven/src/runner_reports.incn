@@ -30,6 +30,8 @@ pub model Outcome:
     pub reason: str = ""
     pub duration_ms: int = 0
     pub markers: list[str] = []
+    # A parametrized case's argument values, as its record lists them.
+    pub parameters: list[str] = []
 
     pub def console_line(self) -> str:
         """The console line: `FILE::TEST` and the outcome, with its reason where the outcome has one."""
@@ -60,6 +62,8 @@ pub def json_record(outcome: Outcome) -> Result[str, str]:
     )}
     if outcome.reason != "":
         fields["reason"] = JsonValue.string(outcome.reason)
+    if len(outcome.parameters) > 0:
+        fields["parameters"] = JsonValue.array([JsonValue.string(value) for value in outcome.parameters])
     return JsonValue.object(fields).to_json().map_err((error) => error.message())
 
 

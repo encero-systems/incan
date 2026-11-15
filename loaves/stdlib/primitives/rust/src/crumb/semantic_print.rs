@@ -10,7 +10,7 @@ use super::super::{binary_literal, quote_text, spaces};
 
 /// One admitted text type; nominal names stay paths, exactly as the text grammar resolves them.
 #[derive(Clone, PartialEq)]
-enum Type {
+pub(super) enum Type {
     Scalar(String),
     Nominal(String),
     Decimal(i64, i64),
@@ -23,7 +23,7 @@ enum Type {
 }
 
 /// One inert declaration property value.
-enum Meta {
+pub(super) enum Meta {
     Null,
     Boolean(bool),
     Integer(i128),
@@ -35,41 +35,43 @@ enum Meta {
 }
 
 /// One declared field: its name-derived identity, storage type and absence facts.
-struct FieldShape {
-    identity: Vec<u8>,
-    storage: Type,
-    canonical: bool,
-    absent: char,
-    name: String,
+pub(super) struct FieldShape {
+    pub(super) identity: Vec<u8>,
+    pub(super) storage: Type,
+    pub(super) canonical: bool,
+    pub(super) absent: char,
+    pub(super) name: String,
+    pub(super) renamed: Vec<String>,
 }
 
 /// One declared enum variant.
-struct Variant {
-    identity: Vec<u8>,
-    fields: Vec<FieldShape>,
-    name: String,
+pub(super) struct Variant {
+    pub(super) identity: Vec<u8>,
+    pub(super) fields: Vec<FieldShape>,
+    pub(super) name: String,
+    pub(super) renamed: Vec<String>,
 }
 
 /// One text declaration with its kind, shape and ordered members.
-struct Description {
-    path: String,
-    kind: String,
-    record: bool,
-    properties: Vec<(String, Meta)>,
-    fields: Vec<FieldShape>,
-    variants: Vec<Variant>,
+pub(super) struct Description {
+    pub(super) path: String,
+    pub(super) kind: String,
+    pub(super) record: bool,
+    pub(super) properties: Vec<(String, Meta)>,
+    pub(super) fields: Vec<FieldShape>,
+    pub(super) variants: Vec<Variant>,
 }
 
 /// One registered profile kind's printing order facts.
-struct Registration {
-    kind: String,
-    record: bool,
-    property_order: Option<Vec<String>>,
-    groups: Vec<(String, Vec<String>)>,
+pub(super) struct Registration {
+    pub(super) kind: String,
+    pub(super) record: bool,
+    pub(super) property_order: Option<Vec<String>>,
+    pub(super) groups: Vec<(String, Vec<String>)>,
 }
 
 /// One logical text value, retaining exact integer spellings and float bits.
-enum Item {
+pub(super) enum Item {
     Absent,
     Some(Box<Item>),
     Boolean(bool),
@@ -106,7 +108,7 @@ pub(super) fn text_print(document: &Json) -> Option<Vec<u8>> {
 }
 
 /// Translate the case's explicit local kind registrations.
-fn registrations(context: Option<&Json>) -> Option<Vec<Registration>> {
+pub(super) fn registrations(context: Option<&Json>) -> Option<Vec<Registration>> {
     let Some(context) = context else {
         return Some(Vec::new());
     };
@@ -146,7 +148,7 @@ fn strings(value: &Json) -> Option<Vec<String>> {
 }
 
 /// Resolve a kind's shape through the core kinds and the case's registrations.
-fn kind_shape(kind: &str, registrations: &[Registration]) -> Option<bool> {
+pub(super) fn kind_shape(kind: &str, registrations: &[Registration]) -> Option<bool> {
     match kind {
         "Record" => Some(true),
         "Enum" => Some(false),
@@ -159,7 +161,7 @@ fn kind_shape(kind: &str, registrations: &[Registration]) -> Option<bool> {
 }
 
 /// Return a registered kind's ordering facts, none for a core kind, and refuse an unknown kind.
-fn registration<'a>(kind: &str, registrations: &'a [Registration]) -> Option<Option<&'a Registration>> {
+pub(super) fn registration<'a>(kind: &str, registrations: &'a [Registration]) -> Option<Option<&'a Registration>> {
     kind_shape(kind, registrations)?;
     if matches!(kind, "Record" | "Enum") {
         return Some(None);
@@ -194,6 +196,7 @@ fn description(value: &Json, registrations: &[Registration]) -> Option<Descripti
                 identity: member_identity(&name),
                 fields: payload,
                 name,
+                renamed: Vec::new(),
             });
         }
     }
@@ -221,11 +224,12 @@ fn field_shape(value: &Json) -> Option<FieldShape> {
             _ => return None,
         },
         name,
+        renamed: Vec::new(),
     })
 }
 
 /// The six-octet member identity of an exact UTF-8 name.
-fn member_identity(name: &str) -> Vec<u8> {
+pub(super) fn member_identity(name: &str) -> Vec<u8> {
     Sha256::digest(name.as_bytes())[..6].to_vec()
 }
 
@@ -495,7 +499,7 @@ fn expect(tokens: &[String], index: &mut usize, mark: &str) -> Option<()> {
 }
 
 /// Return the canonical spelling of one admitted text type.
-fn type_spelling(value: &Type) -> String {
+pub(super) fn type_spelling(value: &Type) -> String {
     match value {
         Type::Scalar(kind) => kind.clone(),
         Type::Nominal(path) => path.clone(),
@@ -511,7 +515,11 @@ fn type_spelling(value: &Type) -> String {
 }
 
 /// Print descriptions in path order, then consecutive same-type roots as one group.
-fn print(descriptions: &[Description], roots: &[(Type, Item)], registrations: &[Registration]) -> Option<String> {
+pub(super) fn print(
+    descriptions: &[Description],
+    roots: &[(Type, Item)],
+    registrations: &[Registration],
+) -> Option<String> {
     let mut entries = Vec::new();
     for description in ordered_descriptions(descriptions) {
         let registered = registration(&description.kind, registrations)?;
@@ -589,18 +597,29 @@ fn ordered_properties<'a>(properties: &'a [(String, Meta)], order: Option<&[Stri
 
 /// Render one variant and its named payload fields.
 fn render_variant(variant: &Variant) -> Option<String> {
+    let mut result = variant.name.clone();
+    if !variant.renamed.is_empty() {
+        result.push_str(&format!(" [renamed_from = [{}]]", variant.renamed.join(", ")));
+    }
     if variant.fields.is_empty() {
-        return Some(variant.name.clone());
+        return Some(result);
     }
     let fields = variant.fields.iter().map(render_field).collect::<Option<Vec<_>>>()?;
-    Some(format!("{}({})", variant.name, fields.join(", ")))
+    Some(format!("{result}({})", fields.join(", ")))
 }
 
 /// Render field metadata, storage type and explicit absent value.
 fn render_field(field: &FieldShape) -> Option<String> {
     let mut result = field.name.clone();
+    let mut metadata = Vec::new();
+    if !field.renamed.is_empty() {
+        metadata.push(format!("renamed_from = [{}]", field.renamed.join(", ")));
+    }
     if !field.canonical {
-        result.push_str(" [canonical = false]");
+        metadata.push("canonical = false".to_string());
+    }
+    if !metadata.is_empty() {
+        result.push_str(&format!(" [{}]", metadata.join(", ")));
     }
     result.push_str(": ");
     result.push_str(&type_spelling(&field.storage));
@@ -901,7 +920,7 @@ fn ambiguous_variant(slot: &Type, name: &str, descriptions: &[Description]) -> b
 }
 
 /// The final dotted path segment.
-fn last_segment(path: &str) -> &str {
+pub(super) fn last_segment(path: &str) -> &str {
     path.rsplit('.').next().unwrap_or(path)
 }
 

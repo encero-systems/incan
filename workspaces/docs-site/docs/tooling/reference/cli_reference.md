@@ -17,6 +17,7 @@ oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
+oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]
 oven inspect run ID --proofs
 
 incan --help | -h | help
@@ -303,12 +304,32 @@ project NAME
   platform android api-level N | platform ios DEPLOYMENT-TARGET
   definition DEFINITION
   system artifact NAME: CAPABILITY
+  bundled artifact NAME: PATH as RUNTIME-NAME, placement PLACEMENT, minimum platform MINIMUM
   static archive NAME: PATH (links as LINK), before DEPENDENCY, ...
   binding MODULE.NAME: ARTIFACT, ...
   header HEADER
 ```
 
 `--format json` prints `incan.interop-plan/1` with the same facts (the target's under `requirements`), each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
+
+## `oven interop stage`
+
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes. It first refreshes the project's `oven.lock`, as `build` does; with `--locked` it refuses a missing lock or one that would change, so it stages only files whose digests the lock records:
+
+| Adapter | Target | Staged file |
+| --- | --- | --- |
+| `android` | `aarch64-linux-android` with Android platform facts | `jniLibs/arm64-v8a/<runtime-name>` |
+| `ios` | `aarch64-apple-ios` or `aarch64-apple-ios-sim` with iOS platform facts | `Frameworks/<runtime-name>` |
+
+Each copy is verified against the SHA-256 digest the lock records. Beside the files, `incan-interop-adapter.json` records `schema-version` (`1`), `adapter`, the lock's graph identity as `lock`, `target`, each bundle's `name`, `runtime-name`, `declared-placement`, `minimum-platform`, `digest` and `staged-path` (output-relative), and the target's `system-capabilities`. The directory is assembled beside `--output` and moved into place whole. The report is:
+
+```text
+staged TRIPLE for the ADAPTER adapter in PATH
+  STAGED-PATH sha256:DIGEST
+  incan-interop-adapter.json
+```
+
+It never starts Gradle, Xcode or a signing tool, and produces no installable application. Refused: a target the project does not declare; with `--locked`, a missing `oven.lock` or a changed contract or bundled file, named by the lock refusal; an adapter whose target or platform facts do not match; an existing `--output`, which is never replaced; a bundled artifact that is not a regular file; and two bundled artifacts with one staged path.
 
 ## `incan mcp`
 

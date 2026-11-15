@@ -98,6 +98,33 @@ artifacts = ["bridge"]
 
 The binding names the archive's link name with `link = c.system_library("bridge")`. A build for that target links the archive statically. See [`[interop.c]`](../../tooling/reference/project_configuration.md#interopc) for `dependencies` and `origin`.
 
+## Stage bundled libraries for Android or iOS
+
+Declare a dynamic library or framework the application ships as a `bundled` artifact of its mobile target:
+
+```toml
+[[interop.c.targets]]
+target = "aarch64-linux-android"
+sdk = { capability = "android" }
+platform = { kind = "android", api-level = 24 }
+
+[[interop.c.targets.artifacts]]
+name = "bridge_runtime"
+kind = "bundled"
+path = "interop/android/libbridge_runtime.so"
+runtime-name = "libbridge_runtime.so"
+placement = "jniLibs/arm64-v8a"
+minimum-platform = "24"
+```
+
+Stage it for the platform's packager:
+
+```sh
+oven interop stage --target aarch64-linux-android --adapter android --output build/android-stage
+```
+
+The new directory holds `jniLibs/arm64-v8a/libbridge_runtime.so` and `incan-interop-adapter.json`, which records each file's digest and declared placement; `--adapter ios` stages `Frameworks/<runtime-name>` for `aarch64-apple-ios` or `aarch64-apple-ios-sim`. Point Gradle or Xcode at that directory. Staging refuses an existing output directory, so stage into a new one each time.
+
 ## Build and link your own C
 
 Declare the C library in the same `loaf.toml` with a [`[c]` facet](../../tooling/reference/project_configuration.md#c), which makes the Loaf a Clove:

@@ -44,6 +44,8 @@ from models import *                          # refused: wildcard (INCAN-P0001)
 
 A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b.incan`, `a/b/mod.incn`, `a/b/mod.incan`, `a/b/__init__.incn`, `a/b/__init__.incan`.
 
+Refused (`INCAN-I0001`): a module path that names none of these files in any directory it resolves from. The refusal comes from `incan check` and names the file that would define the module.
+
 ```incan
 # store/relative.incn
 from ..db.schema import Database          # accepted

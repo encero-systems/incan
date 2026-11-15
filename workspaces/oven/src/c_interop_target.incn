@@ -17,6 +17,9 @@ pub model CAbiTargetSelection:
     pub definitions: list[str] = []
     pub toolchain: Option[CCapabilityRequirement] = None
     pub sdk: Option[CCapabilityRequirement] = None
+    # The Clang the check selects explicitly (`INCAN_C_ABI_CLANG`, or the toolchain's own), empty for the platform's.
+    # It is evidence the check depends on, so it keys the unit; the compiler reads it from its environment.
+    pub verifier: str = ""
 
     pub def to_json(self) -> JsonValue:
         """The selection as the unit description spells it."""
@@ -45,7 +48,7 @@ pub model CAbiTargetSelection:
         mut sdk = ""
         if let Some(requirement) = self.sdk:
             sdk = f"{requirement.capability}:{requirement.version}"
-        return f"c-abi-target={self.target}|{platform}|{",".join(self.definitions)}|{toolchain}|{sdk}"
+        return f"c-abi-target={self.target}|{platform}|{",".join(self.definitions)}|{toolchain}|{sdk}|{self.verifier}"
 
 
 def requirement_json(requirement: CCapabilityRequirement) -> JsonValue:
@@ -78,3 +81,13 @@ pub def select_interop_target(
     return Err(
         f"`--interop-target {triple}` is not a target `{package}` declares; its `[[interop.c.targets]]` are {declared}",
     )
+
+
+pub def selected_abi_clang(toolchain_clang: str, explicit: str) -> str:
+    """
+    The Clang C ABI checks use: an explicit `INCAN_C_ABI_CLANG`, such as an Android NDK Clang for an Android target,
+    else the toolchain's own, else none, which leaves the platform's.
+    """
+    if explicit != "":
+        return explicit
+    return toolchain_clang

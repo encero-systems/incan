@@ -1,0 +1,9 @@
+# behavior: `oven interop stage --locked` stages only what `oven.lock` records: without a lock it is refused, as a staged bundle must match the locked contract (#3134)
+# cli-commands:
+#   oven interop stage --locked --target aarch64-linux-android --adapter android --output staged
+# expect-exit: 1
+# expect-stderr-contains:
+#   oven.lock is missing; run `oven lock`
+
+def main() -> None:
+    println("not run")

@@ -1,0 +1,34 @@
+[project]
+name = "interop_stage_android"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-linux-android"
+sdk = { capability = "android", version = ">=34" }
+platform = { kind = "android", api-level = 24 }
+headers = ["interop/include/bridge.h"]
+
+[[interop.c.targets.artifacts]]
+name = "bridge_runtime"
+kind = "bundled"
+path = "interop/android/libbridge_runtime.so"
+runtime-name = "libbridge_runtime.so"
+placement = "jniLibs/arm64-v8a"
+minimum-platform = "24"
+origin = { source = "https://example.invalid/bridge", revision = "v1.2.3", license = "MIT" }
+dependencies = ["log"]
+
+[[interop.c.targets.artifacts]]
+name = "log"
+kind = "system"
+capability = "android.library.log"
+
+[[interop.c.targets.bindings]]
+module = ["main"]
+name = "Bridge"
+artifacts = ["bridge_runtime"]

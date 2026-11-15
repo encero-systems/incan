@@ -6,7 +6,7 @@ from rust::std::time import Instant
 from std.fs import Path
 from std.primitives.hex import hexlify
 from corpus import load
-from native_twin import twin_decode, twin_encode
+from native_twin import twin_decode, twin_encode, with_input
 
 
 def main() -> None:
@@ -27,7 +27,8 @@ def run(arguments: list[str]) -> Result[None, str]:
     if repetitions < 1:
         return Err("repetitions must be positive")
     corpus = load(Path(arguments[0]))?
-    for item in corpus.cases:
+    for original in corpus.cases:
+        item = with_input(original, corpus.texts)?
         mut encode_times: list[float] = []
         mut decode_times: list[float] = []
         mut encoded: bytes = b""
@@ -43,7 +44,7 @@ def run(arguments: list[str]) -> Result[None, str]:
             if not supported:
                 break
             decode_started = Instant.now()
-            decoded = twin_decode(item.operation, encoded)?
+            decoded = twin_decode(item, encoded)?
             decode_times.append(decode_started.elapsed().as_secs_f64())
         if supported:
             encode_ns = median(encode_times) * 1000000000.0

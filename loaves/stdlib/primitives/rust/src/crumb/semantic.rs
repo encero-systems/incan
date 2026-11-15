@@ -7,10 +7,24 @@ use sha2::{Digest, Sha256};
 
 #[path = "semantic_adaptation.rs"]
 mod adaptation;
+#[path = "semantic_blocks.rs"]
+mod blocks;
+#[path = "semantic_columns.rs"]
+mod columns;
+#[path = "semantic_envelope.rs"]
+mod envelope;
 #[path = "semantic_hash.rs"]
 mod hash;
 #[path = "semantic_print.rs"]
 mod print;
+#[path = "semantic_read.rs"]
+mod read;
+#[path = "semantic_row_write.rs"]
+mod row_write;
+#[path = "semantic_rows.rs"]
+mod rows;
+#[path = "semantic_scan.rs"]
+mod scan;
 
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {
@@ -45,6 +59,9 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "hash_preimage" => hash_preimage(&parsed),
         "adaptation" => adaptation::adaptation(&parsed),
         "text_print" => print::text_print(&parsed),
+        "text_read" => read::text_read(&parsed),
+        "column_codec" => columns::encode(&parsed),
+        "binary_decode" => rows::encode(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -54,6 +71,8 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
     let decode_started = Instant::now();
     let decoded = match operation.as_str() {
         "hash_preimage" => verify_preimage(&encoded),
+        "column_codec" => columns::decode(&parsed),
+        "binary_decode" => rows::decode(&parsed),
         _ => Some(encoded.clone()),
     };
     let decode_ns = elapsed_ns(decode_started);
@@ -512,6 +531,110 @@ mod tests {
             b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n"
         );
         assert_eq!(printed.encoded, printed.decoded);
+    }
+
+    #[test]
+    fn column_dictionaries_round_trip_prefixes_and_refuse_zero_deltas() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"string","input_hex":"030d01000a00026161010162000162","expected":{"status":"accepted","keys_hex":["6161","6162","62"]}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            accepted.encoded,
+            [
+                0x03, 0x0d, 0x01, 0x00, 0x0a, 0x00, 0x02, 0x61, 0x61, 0x01, 0x01, 0x62, 0x00, 0x01, 0x62
+            ]
+        );
+        assert_eq!(accepted.decoded[0], 0);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"i8","input_hex":"020701000401000100","expected":{"status":"refused","kind":"nonminimal_delta"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x10nonminimal_delta");
+    }
+
+    #[test]
+    fn column_blocks_round_trip_packed_numbers_and_refuse_nonminimal_bases() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"01010003d808","type":"i8","logical_count":4,"expected":{"status":"accepted","values":[{"kind":"int","type":"i8","value":"0"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"3"},{"kind":"int","type":"i8","value":"4"}],"encoding":1}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(accepted.encoded, [0x01, 0x01, 0x00, 0x03, 0xd8, 0x08]);
+        assert_eq!(&accepted.decoded[..2], [0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_block","input_hex":"0101000209","type":"i8","logical_count":2,"expected":{"status":"refused","kind":"nonminimal_base"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0fnonminimal_base");
+    }
+
+    #[test]
+    fn text_read_prints_accepted_documents_and_positions_refusals() {
+        let source = "example.Point = Record { x: i64, y: i64 }\nexample.Point << (1, y=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let accepted = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            &accepted.encoded[2..],
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n"
+        );
+
+        let source = "example.Point = Record { x: i64 }\nexample.Point << (x=1, x=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let refused = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(refused.kind, 0);
+        assert_eq!(refused.encoded, b"\x01\x0fduplicate_field\x02\x18");
+    }
+
+    #[test]
+    fn row_envelopes_round_trip_references_and_refuse_seal_mismatches() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let refused = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            format!(
+                r#"{{"input_hex":"43524d42010101500101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770100020100013aba437d836d09b8dd1267631069d769c96ffe569621bbd420ac5a2cfb0a25e7","supplied_descriptions":{description}}}"#
+            ),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0dseal_mismatch");
+
+        let missing = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            r#"{"input_hex":"43524d420101002d010109070dcdc804d5010154000000000000000000000000000000000000000000000000000000000000000000","supplied_descriptions":[]}"#.to_string(),
+        );
+        assert_eq!(missing.kind, 0);
+        assert_eq!(missing.decoded, b"\x01\x10invalid_selector");
+    }
+
+    #[test]
+    fn column_envelopes_round_trip_groups_and_refuse_reserved_flags() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let input = "43524d42020100350101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770101010001010003000100";
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            format!(r#"{{"operation":"binary_decode","input_hex":"{input}","supplied_descriptions":{description}}}"#),
+        );
+        assert_eq!(accepted.kind, 0);
+        let encoded: String = accepted.encoded.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(encoded, input);
+        assert_eq!(&accepted.decoded[..3], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"binary_decode","input_hex":"43524d4202010200"}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0ereserved_flags");
     }
 
     #[test]

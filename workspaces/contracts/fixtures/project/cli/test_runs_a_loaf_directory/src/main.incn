@@ -1,11 +1,11 @@
-# behavior: `incan test` on an Incan Loaf's directory runs every test module of the Loaf, as it does for a Loaf with a Rust facet.
+# behavior: `incan test` on an Incan Loaf's directory runs every test module of the Loaf, as it does for a Loaf with a Rust facet, including a test module that imports the Loaf's `main` module (once refused with `duplicate Body IR source provenance for module main`).
 # cli-commands:
 #   test .
 # expect-stdout-contains:
 #   test_sums.incn::test_adds PASSED
 #   test_words.incn::test_joins PASSED
 
-def total(values: list[int]) -> int:
+pub def total(values: list[int]) -> int:
     """The Loaf's own function, exercised by its tests."""
     mut sum = 0
     for value in values:

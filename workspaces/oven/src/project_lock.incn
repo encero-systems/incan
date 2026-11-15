@@ -1,9 +1,11 @@
 """Resolve, compare and atomically publish the one oven.lock owned by a root project."""
 
 from std.fs import Path
+from c_interop import parse_c_targets
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader
+from intake import ManifestReader, read_manifest_snapshot
+from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
     DEFAULT_MODE,
@@ -149,7 +151,9 @@ def reconcile(
         if keeps_existing(known, requested_mode, mode):
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
     selected = resolve_registry(registry, facets, profile)?
-    generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
+    mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
+    generated.interop = root_interop(root, reader)?
+    generated.graph = graph_identity(generated)?
     root_entry = root_loaf(generated)?
     changed = existing is None or not same_resolution(existing, generated)
     if locked and changed:
@@ -158,6 +162,18 @@ def reconcile(
         write_lock(path, generated)?
         trace(f"lock refreshed {path.0} graph={generated.graph}")
     return Ok(LockResult(name=root_entry.name, version=root_entry.version, mode=mode, changed=changed))
+
+
+def root_interop(root: Path, reader: ManifestReader) -> Result[list[LockInterop], str]:
+    """
+    The root manifest's `[[interop.c.targets]]` contracts, each declared file identified by its bytes. Only the
+    `[interop]` table is read here, so a root of any kind, a Rust facet's included, locks as before.
+    """
+    snapshot = read_manifest_snapshot(root, reader).map_err((error) => error.message())?
+    manifest = root.joinpath("loaf.toml").0
+    table = snapshot.parsed.as_table().map_err((error) => f"{manifest}: {error.message()}")?
+    targets = parse_c_targets(table, manifest).map_err((error) => error.message())?
+    return locked_interop(root.0, targets)
 
 
 def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
@@ -405,6 +421,9 @@ def difference(existing: Option[OvenLock], generated: OvenLock) -> str:
             return f"version mode {known.mode} -> {generated.mode}"
         known_root = root_loaf(known)
         generated_root = root_loaf(generated)
+        interop = interop_difference(known.interop, generated.interop)
+        if interop != "":
+            return interop
         if known_root != generated_root:
             return "the root Loaf or one of its dependency edges"
         return "the resolved dependency graph"
