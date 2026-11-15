@@ -4,8 +4,10 @@ from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
+from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from bakery import bakery
+from files import json_text
+from home_paths import bakery
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from observation import Observation, SETTLE_SECONDS, now_seconds, observe
@@ -14,7 +16,6 @@ from registry_units import RegistryUnit, sole_library
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
 from pub::incan_platform.store import begin, commit, get, lease, put
 from store_path_conversion import snapshot
-from unit_freshness import fingerprint
 from frozen_inputs import admit_observations
 
 const PROFILE: str = "incan.registry-page/2"
@@ -22,7 +23,13 @@ const PROFILE: str = "incan.registry-page/2"
 
 pub def question(path: Path, observed: Observation, compiler: str) -> Result[str, str]:
     """Name an observed closure and compiler generation; locators are observations, never native unit identity."""
-    return fingerprint([PROFILE, path.0, observed.stamp, compiler])
+    return page_fingerprint([PROFILE, path.0, observed.stamp, compiler])
+
+
+def page_fingerprint(inputs: list[str]) -> Result[str, str]:
+    """Frame each question input independently without importing unit identity and publication policy."""
+    text = json_text(JsonValue.array([JsonValue.string(value) for value in inputs]))?
+    return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
 
 
 pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
