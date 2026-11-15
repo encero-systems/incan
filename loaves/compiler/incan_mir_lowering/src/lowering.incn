@@ -27,6 +27,7 @@ from pub::incan_mir_plan import (
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
 from trace_channel import emit, traced
+from pub::incan_platform.heap import release_free_heap
 from pub::incan_platform.probes import current_footprint, current_live_allocated
 from rust::incan_semantics_core import IncanType as RustType, CompilerNodeId
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
@@ -337,6 +338,7 @@ def lowered_plan(
         overflow_checks,
         record_report,
     )?
+    release_free_heap()
     mut statics = lower_computed_statics(
         context.as_ref(),
         program,
