@@ -37,6 +37,11 @@ pub fn flock(handle: &impl Handle) -> i64 {
     handle.number()
 }
 
+/// Return a fixed scalar so a source facade can preserve its native call result.
+pub fn facade_value(left: i64, right: i64) -> i64 {
+    left + right
+}
+
 /// A generic factory whose `new` is owner-specialized.
 pub struct PairFactory<T, U> {
     pub first: T,
