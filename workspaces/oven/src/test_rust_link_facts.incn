@@ -1,0 +1,90 @@
+"""A build fact's link work (RFC 119 rule 6) compiles its C objects with the declared, owner-resolved compiler."""
+
+from std.fs import Path
+from std.testing import fail
+from files import make_directory, read, write
+from observation import file_digest
+from rust_manifest import rust_facet, unit_fact_arguments
+from rust_target import compiler_version, host_triple
+from scratch import scratch_directory
+from toolchain import load_toolchain, rust_compiler
+
+const C_SOURCE: str = "int incan_twice(int value) { return 2 * value; }\n"
+const OWNER: str = "0000000000000000000000000000000000000000000000000000000000000000"
+
+
+# The manifest of a Loaf whose release build fact for this host builds one C object into a static library.
+const LINKED_MANIFEST: str = """[project]
+name = "crates-io/linked"
+version = "1.0.0"
+
+[rust]
+type = "lib"
+build-script = true
+
+[[rust.facts]]
+toolchain = "TOOLCHAIN"
+target = "TARGET"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "twice"
+target = "TARGET"
+executable = { name = "cc", owner = "sha256:OWNER", path = "bin/cc", digest = "sha256:COMPILER" }
+sources = [{ name = "twice-c", kind = "file", path = "c/twice.c", digest = "SOURCE" }]
+objects = [{ name = "twice.o", language = "c", arguments = [{ literal = "-O2" }, { literal = "-c" }, { input = "twice-c" }, { literal = "-o" }, { output = "twice.o" }] }]
+library = { kind = "static", name = "twice" }
+"""
+
+
+def linked_loaf(root: Path, rustc: str, compiler_digest: str) -> Result[Path, str]:
+    """A Loaf whose build fact for this host and the release profile declares one C object and its static library."""
+    loaf = root.joinpath("linked")
+    make_directory(loaf.joinpath("src"))?
+    make_directory(loaf.joinpath("c"))?
+    write(loaf.joinpath("src/lib.rs"), "// The Rust side of a Loaf whose C library a link fact builds.\n")?
+    write(loaf.joinpath("c/twice.c"), C_SOURCE)?
+    source = "sha256:" + file_digest(loaf.joinpath("c/twice.c"))?
+    toolchain = compiler_version(rustc)?.split("\n")[0].strip()
+    bound = LINKED_MANIFEST.replace("TOOLCHAIN", toolchain).replace("TARGET", host_triple(rustc)?)
+    manifest = bound.replace("OWNER", OWNER)
+    write(loaf.joinpath("loaf.toml"), manifest.replace("COMPILER", compiler_digest).replace("SOURCE", source))?
+    return Ok(loaf)
+
+
+pub def test_a_link_fact_builds_its_static_library_with_the_owner_s_verified_compiler() -> Result[None, str]:
+    """
+    A link fact's compiler is found under one of the link owners and run only when its bytes are the recorded digest.
+    Its objects compile from the Loaf with the declared arguments and are archived into the declared static library,
+    which the unit links through `-L native=` and `-l static=`, in a directory named by the recipe so its identity
+    follows the recipe. An absent owner, or a compiler of other bytes, refuses the unit by name.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    rustc = rust_compiler(load_toolchain()?)
+    owner = root.joinpath("owner")
+    make_directory(owner.joinpath("bin"))?
+    owner.joinpath("bin/cc").symlink_to(Path("/usr/bin/cc")).map_err((error) => error.message())?
+    loaf = linked_loaf(root, rustc, file_digest(owner.joinpath("bin/cc"))?)?
+    declared = rust_facet(loaf.0, false)?
+    arguments = unit_fact_arguments(declared, rustc, "release", [], [owner.0])?
+    assert len(arguments) == 4 and arguments[0] == "-L" and arguments[2] == "-l", f"{arguments}"
+    assert arguments[3] == "static=twice", f"{arguments}"
+    directory = arguments[1][len("native="):]
+    assert directory.startswith(loaf.joinpath(".oven-link").0 + "/"), directory
+    assert Path(directory).joinpath("libtwice.a").is_file(), directory
+    assert unit_fact_arguments(declared, rustc, "release", [], [owner.0])? == arguments, "a rebuilt recipe moved"
+    match unit_fact_arguments(declared, rustc, "release", [], [root.joinpath("absent").0]):
+        Ok(_) => fail("a link fact ran with no owner present")
+        Err(reason) =>
+            assert "crates-io/linked 1.0.0" in reason and "owner" in reason, reason
+    # The link is replaced, never written through: a compiler of other bytes stands where the recorded one was.
+    owner.joinpath("bin/cc").unlink().map_err((error) => error.message())?
+    write(owner.joinpath("bin/cc"), "#!/bin/sh\nexit 1\n")?
+    match unit_fact_arguments(declared, rustc, "release", [], [owner.0]):
+        Ok(_) => fail("a link fact ran a compiler whose bytes are not its recorded digest")
+        Err(reason) =>
+            assert "bin/cc" in reason and "digest" in reason, reason
+    return Ok(None)
