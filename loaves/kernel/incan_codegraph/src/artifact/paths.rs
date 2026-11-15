@@ -140,10 +140,24 @@ pub(super) fn portable(value: &mut Value, root: &Path, ids: &BTreeMap<String, St
             "declaration_id",
             "import_id",
             "source_id",
+            // A checked C call's and facade's links name records of the same export; mapped like the others, a
+            // reused export never carries the producing checkout's paths in them.
+            "call_id",
+            "binding_id",
+            "owner_declaration_id",
+            "facade_declaration_id",
+            "bridge_declaration_id",
         ] {
             if let Some(value) = fields.get_mut(key) {
                 if let Some(mapped) = value.as_str().and_then(|id| ids.get(id)) {
                     *value = Value::String(mapped.clone());
+                }
+            }
+        }
+        if let Some(Value::Array(links)) = fields.get_mut("raw_call_ids") {
+            for link in links {
+                if let Some(mapped) = link.as_str().and_then(|id| ids.get(id)) {
+                    *link = Value::String(mapped.clone());
                 }
             }
         }

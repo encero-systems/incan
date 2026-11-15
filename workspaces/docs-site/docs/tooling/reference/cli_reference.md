@@ -17,7 +17,7 @@ oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
-oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]
+oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
 oven inspect run ID --proofs
 
 incan --help | -h | help
@@ -35,6 +35,8 @@ incan toolchain install ARCHIVE
 ```
 
 There is no implicit command. Without `PATH`, `run`, `check` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+
+0.5.1's `--sdk-profile NAME` or `--sdk-profile=NAME` exits `2` on every command that took it (`check`, `build`, `run`, `test`, `oven lock`, `inspect bindings`, `inspect codegraph` and `oven inspect features`) and names its removal: ``unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses``.
 
 ## Help and version
 
@@ -93,7 +95,7 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 ## `oven test`
 
-`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test, a test that exceeds `--timeout` or an `XPASS` returns nonzero. Every module is compiled before any test runs.
+`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation; the tests of a file that uses a module- or session-scoped fixture run in one process for that file. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test, a test that exceeds `--timeout` or an `XPASS` returns nonzero. Every module is compiled before any test runs.
 
 Runner options select, order and report the collected tests. Each option that takes a value also accepts `--OPTION=VALUE`.
 
@@ -120,7 +122,7 @@ Runner options select, order and report the collected tests. Each option that ta
 
 An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, also with `--list`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
-Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@timeout(DURATION)` gives a test its own time limit in place of `--timeout`. Tests that share a `@resource(NAME)` never run at once, and a `@serial` test runs with no other test. `@test` is accepted and does not change execution. Fixtures and parametrized tests are refused.
+Collected test functions return `None` or `Result[None, E]`, and each of their parameters names a fixture or a `@parametrize` argument (see [`std.testing`](../../language/reference/stdlib/testing.md#fixtures-and-parametrization)). A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@timeout(DURATION)` gives a test its own time limit in place of `--timeout`. Tests that share a `@resource(NAME)` never run at once, and a `@serial` test runs with no other test. `@test` is accepted and does not change execution.
 
 ## `oven build`
 
@@ -263,7 +265,7 @@ Graph options, schemas, queries, context packs and snapshot checks are specified
 
 ## `incan inspect bindings`
 
-`incan inspect bindings [--format text|json] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
+`incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [--features A,B] [--no-default-features] [--all-features] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The feature options select the root package features the export is checked with, as for [`incan inspect codegraph`](agent_context_cli.md). The text report is:
 
 ```text
 binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
@@ -276,13 +278,17 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
 
+`--format receipt` prints 0.5.1's binding-use receipt, `schema_version` 2, with no source locations or paths: `bindings` (each binding's `module`, `name` and descriptor `identity`), `calls` (each direct native call's `binding_identity`, `symbol` and calling function `owner`, with its `name` and `visibility`), `facades` (each public function over a private raw bridge, with the bridge's calls), and `compatibility`. `--target TRIPLE` joins the project's `[[interop.c.targets]]` contract for `TRIPLE` as the current `oven.lock` records it: the receipt adds `target` with its `locked_target_identity`, and each binding's declared `target_artifacts`. `--target` requires `--format receipt`. Refused: a `--target` without a lock or with a stale one (`run oven lock`), an undeclared target, and a binding relation that names a binding the compilation did not produce.
+
 ## `incan inspect registry`
 
 `incan inspect registry IDENTITY [--project PATH] [--format json]` prints one public typed registry (see [checked and loaded registries](../../language/explanation/checked_and_loaded_registries.md)) of the project at `PATH` (default `.`) as the compiler checks it, without running any module. `IDENTITY` is the registry's `<module>::<binding>`, or the same prefixed with the package name. The document has `schema_version` `1`, `provenance` `checked`, `package` (`name`, `version`), `registry` (the definition: `identity`, `binding`, `public`, `key_type`, `descriptor_type`, `subjects`, and `reexport_paths` when nonempty) and `entries`, each with `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor` and `provenance`. An identity the package does not define exits `1` with ``checked registry `IDENTITY` was not found; available registries: ...``, listing package-qualified identities.
 
-## `incan tools metadata api`
+## `incan tools metadata api` and `model`
 
 `incan tools metadata api [PATH] [--format json]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation.
+
+`incan tools metadata model PATH MODEL [--format incan|json]` prints one [contract-backed model](contract_metadata.md) by its `logical_type_name` or `stable_model_id`. `PATH` is a project directory or source, whose publishable declared bundles are read through its checked library manifest, a bundle JSON file, or a `.incnlib` artifact. `incan` (default) prints the formatted model source; `json` prints the canonical bundle. A model that is not there exits `1` with ``model `MODEL` was not found in checked model metadata for PATH (available: ...)``.
 
 ## `oven inspect dependencies`
 
@@ -322,7 +328,7 @@ project NAME
 
 ## `oven interop stage`
 
-`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes. It first refreshes the project's `oven.lock`, as `build` does; with `--locked` it refuses a missing lock or one that would change, so it stages only files whose digests the lock records:
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`; 0.5.1's `--project PATH` is accepted for it) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes. It first refreshes the project's `oven.lock`, as `build` does; with `--locked` it refuses a missing lock or one that would change, so it stages only files whose digests the lock records:
 
 | Adapter | Target | Staged file |
 | --- | --- | --- |
@@ -338,6 +344,10 @@ staged TRIPLE for the ADAPTER adapter in PATH
 ```
 
 It never starts Gradle, Xcode or a signing tool, and produces no installable application. Refused: a target the project does not declare; with `--locked`, a missing `oven.lock` or a changed contract or bundled file, named by the lock refusal; an adapter whose target or platform facts do not match; an existing `--output`, which is never replaced; a bundled artifact that is not a regular file; and two bundled artifacts with one staged path.
+
+`--format json` prints 0.5.1's stage report instead: `target`, `adapter`, `manifest` (the manifest's path), `lock` (the lock's graph identity, where 0.5.1 named its receipt and plan), `bundled_files`, and `cargo_process_started` and `platform_build_process_started`, both `false`. 0.5.1's `--base-receipt` and `--store` are refused by name, exit `2`: 0.6 stages what `oven.lock` records, from the home's store.
+
+0.5.1's `incan oven interop bake` has no 0.6 command: an ordinary `oven build` compiles each [`[c]`](project_configuration.md#c) Clove and links the static archives `[interop.c]` declares. `incan oven interop bake` and `oven interop bake` exit `2` naming `oven build`. Every other `incan oven COMMAND` exits `2` naming `oven COMMAND`, and `incan inspect interop-plan` names `oven inspect interop-plan`.
 
 ## `incan mcp`
 

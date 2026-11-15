@@ -13,7 +13,7 @@ from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 from environments import ENV_USAGE, env_help
 from doctor import DOCTOR_USAGE, doctor_help
-from checked_metadata import API_USAGE, REGISTRY_USAGE, MetadataView, metadata_help
+from checked_metadata import API_USAGE, MODEL_USAGE, REGISTRY_USAGE, MetadataView, metadata_help
 from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
@@ -29,7 +29,7 @@ const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format tex
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
-const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]"
+const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
@@ -77,6 +77,7 @@ pub def usage(surface: str) -> str:
             INSTALL_USAGE,
             DOCTOR_USAGE,
             API_USAGE,
+            MODEL_USAGE,
             REGISTRY_USAGE,
         ],
     )
@@ -136,6 +137,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     elif command == "tools" and len(arguments) > 1 and arguments[0] == "metadata":
         if nested_help(arguments[1:], "api", ["--format"]):
             return Some(metadata_help(MetadataView.Api))
+        if nested_help(arguments[1:], "model", ["--format"]):
+            return Some(metadata_help(MetadataView.Model))
     elif command == "tools" and nested_help(arguments, "doctor", ["--format"]):
         return Some(doctor_help())
     elif command == "env" and env_help_requested(arguments):
@@ -155,6 +158,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                     "  --adapter android|ios  The fixed layout: jniLibs/arm64-v8a or Frameworks.",
                     "  --output PATH          A new directory; an existing one is never replaced.",
                     "  --locked               Refuse a missing or stale oven.lock instead of refreshing it.",
+                    "  --format text|json     The report: lines of text, or 0.5.1's JSON report.",
+                    "  --project PATH         0.5.1's spelling of PATH.",
                 ],
                 "oven interop stage --target aarch64-linux-android --adapter android --output staged",
             ),

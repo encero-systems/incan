@@ -1,0 +1,24 @@
+"""A module-scoped fixture the file's first test does not use."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture(scope="module")
+def late() -> int:
+    println("late setup")
+    yield 5
+    println("late teardown")
+
+
+def test_early() -> None:
+    println("early test")
+
+
+def test_uses_late(late: int) -> None:
+    println("uses late")
+    assert_eq(late, 5)
+
+
+def test_after(late: int) -> None:
+    println("after")
+    assert_eq(late, 5)

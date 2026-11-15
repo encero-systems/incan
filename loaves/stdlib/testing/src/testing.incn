@@ -253,10 +253,19 @@ pub def fixture() -> None:
     """
     Mark a function as a test fixture.
 
-    Fixtures provide setup values and dependency injection for tests. Function scope runs per test. Module/session
-    scopes are cached inside the generated per-file test harness process. One top-level `yield` statement splits setup
-    from teardown for function-scoped fixtures; teardown code cannot reference setup locals or fixture parameters in the
-    current runner transform.
+    Fixtures provide setup values and dependency injection for tests. A test or fixture receives a fixture by naming it
+    as a parameter; a fixture's own fixtures are set up first, again for each parameter that names them. The runner also
+    provides `tmp_path`, `tmp_workdir` and `env` by name. `autouse=true` runs a fixture for every test that does not
+    name it, after the fixtures the test names. Fixtures come from the test's own file, then from each `conftest.incn`
+    between its directory and `tests/`, the nearest first.
+
+    One top-level `yield` statement splits setup from teardown: the yielded value is injected, and the statements after
+    it run after the test, also when the test fails, and can read the setup's locals and parameters. An `async def`
+    fixture is awaited, and so are tests that use it.
+
+    `scope="module"` sets a fixture up once for its test file, on its first use, and tears it down after the file's last
+    test; `scope="session"` does the same for the file's test process.
+    `incan test` runs such a file's tests in one process, and every other test in its own.
 
     Example:
 

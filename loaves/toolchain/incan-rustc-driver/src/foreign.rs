@@ -201,6 +201,13 @@ fn foreign_module(declaration: &ForeignFunction, generator: &ast::attr::AttrIdGe
             value: AttributeValue::Text("static".into()),
         });
     }
+    // An Apple framework (`c.framework`) links as a framework, as 0.5.1's `#[link(kind = "framework")]` did.
+    if declaration.framework {
+        arguments.push(AttributeArgument {
+            name: "kind".into(),
+            value: AttributeValue::Text("framework".into()),
+        });
+    }
     module.attrs.push(crate::native_attributes::attribute_item(
         generator,
         &NativeAttribute {

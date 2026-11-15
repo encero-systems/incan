@@ -1,10 +1,13 @@
 """
-`incan inspect bindings [--format text|json] [PATH]`: the compiler-checked C binding declarations of a source or
-project, read from the same `c_binding` records its codegraph export carries.
+`incan inspect bindings [--format text|json|receipt] [--target TRIPLE] [PATH]`: the compiler-checked C binding
+declarations of a source or project, read from the same `c_binding` records its codegraph export carries, or with
+`--format receipt` 0.5.1's binding-use receipt (`binding_receipt`).
 """
 
 from std.fs import Path
 from std.json import JsonValue, parse
+from binding_receipt import binding_receipt
+from cli_help import refused_option
 from files import json_text
 from graph_inspection import graph_response
 from json_fields import required_items, required_text, string_value
@@ -12,42 +15,67 @@ from unit import project_root_of
 
 
 pub model BindingOptions:
-    """The selected source or project and the output format."""
+    """The selected source or project, the output format and, for a receipt, the joined target."""
 
     pub path: str = "."
     pub format: str = "text"
+    pub target: str = ""
+    # 0.5.1's feature options, passed to the codegraph export the bindings are read from.
+    pub features: list[str] = []
 
 
 pub def binding_options(arguments: list[str]) -> Result[BindingOptions, str]:
-    """Read `--format text|json` and one optional path."""
+    """
+    Read `--format text|json|receipt`, `--target TRIPLE` (a receipt's), the feature options and one optional path.
+    """
     mut options = BindingOptions()
     mut index = 0
     mut path_given = false
     while index < len(arguments):
         argument = arguments[index]
-        if argument == "--format":
+        if argument in ["--no-default-features", "--all-features"]:
+            options.features.append(argument)
+            index += 1
+            continue
+        if argument == "--features":
             if index + 1 >= len(arguments):
-                return Err("--format requires a value")
-            options.format = arguments[index + 1]
+                return Err("--features requires a value")
+            options.features.extend([argument, arguments[index + 1]])
             index += 2
             continue
-        if argument.startswith("-") or path_given:
+        if argument in ["--format", "--target"]:
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} requires a value")
+            if argument == "--format":
+                options.format = arguments[index + 1]
+            else:
+                options.target = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(refused_option(argument))
+        if path_given:
             return Err(f"unexpected argument `{argument}`")
         options.path = argument
         path_given = true
         index += 1
-    if options.format not in ["text", "json"]:
-        return Err(f"--format accepts text or json, not `{options.format}`")
+    if options.format not in ["text", "json", "receipt"]:
+        return Err(f"--format accepts text, json or receipt, not `{options.format}`")
+    if options.target != "" and options.format != "receipt":
+        return Err("`incan inspect bindings --target` requires `--format receipt`")
     return Ok(options)
 
 
 pub def inspect_bindings(options: BindingOptions) -> Result[i32, str]:
     """Print every checked C binding the source or project declares, ordered by file and name."""
-    export = graph_response(["codegraph", options.path, "--format", "jsonl"])?
+    export = graph_response(["codegraph", options.path, "--format", "jsonl"] + options.features)?
     base = Path(options.path).resolve().map_err((error) => f"{options.path}: {error.message()}")?
     mut root = base.0
     if Path(root).is_file():
         root = project_root_of(base).unwrap_or(base.parent()).0
+    if options.format == "receipt":
+        println(json_text(binding_receipt(export, root, options.target)?)?)
+        return Ok(0)
     mut found: list[Tuple[str, JsonValue]] = []
     for line in export.split("\n"):
         if line == "":

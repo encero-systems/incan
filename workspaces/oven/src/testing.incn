@@ -19,7 +19,7 @@ from incan_units import compile_unit, stored_executable, test_report, test_sourc
 from intake import read_project, source_root_of
 from json_fields import array, text_field
 from observation import trace_launch
-from runner_options import ReportFormat, RunnerOptions
+from runner_options import ReportFormat, RunnerOptions, count
 from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
 from runner_selection import keyword_matches, markers_match, shuffle_seed, shuffled
 from rust_target import decoded
@@ -129,6 +129,8 @@ pub model TestCase:
     pub marked: bool = true
     # A parametrized case's argument values, which its JSON record lists.
     pub parameters: list[str] = []
+    # In a file group, the function that runs this case inside the group entry its `native` names; empty otherwise.
+    pub member: str = ""
 
     pub def markers(self) -> list[str]:
         """The marker names reports and `-m` expressions see."""
@@ -161,6 +163,12 @@ pub def collected_cases(binary: Path, file: str, label: str, path: str = "") -> 
             xfail=reason(test, "xfail"),
             parameters=names(test, "parameters"),
         )
+        match test.get("case"):
+            Some(value) =>
+                match value.as_str():
+                    Some(text) => test_case.member = text
+                    None => pass
+            None => pass
         match test.get("marks"):
             None => test_case.marked = false
             Some(_) =>
@@ -305,6 +313,8 @@ model Running:
     child: Rc[RefCell[Child]]
     output: Path
     errors: Path
+    # The selection positions a file group settles together; empty for one test.
+    members: list[int] = []
 
 
 model Finished:
@@ -326,15 +336,26 @@ def execute(selected: list[TestCase], runner: RunnerOptions) -> Result[list[Outc
     mut active: list[Running] = []
     mut outcomes: list[Outcome] = []
     mut next = 0
+    mut claimed: list[bool] = [false for _ in selected]
     mut stopping = false
     while (next < len(selected) and not stopping) or len(active) > 0:
         while not stopping and next < len(selected) and len(active) < runner.jobs:
             test_case = selected[next]
+            if claimed[next]:
+                next += 1
+                continue
             if test_case.skip == None and not admissible(test_case, [selected[item.position] for item in active]):
                 break
             match test_case.skip:
                 Some(why) => settled[next] = Some(Finished(outcome=outcome_of(test_case, Status.Skipped, why, 0)))
-                None => active.append(launch(test_case, next, scratch)?)
+                None =>
+                    if test_case.member != "":
+                        members = group_members(selected, next, claimed)
+                        for member in members:
+                            claimed[member] = true
+                        active.append(launch_group(selected, members, scratch)?)
+                    else:
+                        active.append(launch(test_case, next, scratch)?)
             next += 1
         active = reaped(selected, active, settled, runner, saturated(selected, next, active, runner))?
         while len(outcomes) < len(selected):
@@ -372,15 +393,19 @@ def reaped(
                 Some(status) => ended = Some(status.success())
                 None => pass
         elapsed = int(item.started.elapsed().as_millis())
-        limit = limit_of(selected[item.position], runner)
+        limit = limit_of(selected[item.position], runner) * group_size(item)
         match ended:
             Some(passed) =>
-                settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
+                if len(item.members) > 0:
+                    settle_group(selected, item, elapsed, runner, settled)?
+                else:
+                    settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
             None =>
                 if limit > 0 and elapsed >= limit:
                     _ = item.child.borrow_mut().kill()
                     _ = item.child.borrow_mut().wait()
-                    settled[item.position] = Some(timed_out(selected[item.position], item, elapsed, limit)?)
+                    for member in [item.position] + item.members[1:]:
+                        settled[member] = Some(timed_out(selected[member], item, elapsed, limit)?)
                 else:
                     running.append(item)
     if len(running) > 0 and len(running) == len(active):
@@ -589,3 +614,215 @@ def write_err(data: bytes) -> None:
     """Write bytes to standard error; a closed stream cannot be told about, so a failed write is ignored."""
     mut err = stderr()
     _ = err.write_all(data)
+
+
+def group_members(selected: list[TestCase], first: int, claimed: list[bool]) -> list[int]:
+    """
+    The positions one file group runs together: every selected case of its executable and group entry from `first` on
+    that is not claimed or skipped, in selection order.
+    """
+    lead = selected[first]
+    mut members: list[int] = []
+    for position in range(first, len(selected)):
+        candidate = selected[position]
+        if claimed[position] or candidate.skip != None or candidate.member == "":
+            continue
+        if candidate.binary == lead.binary and candidate.native == lead.native:
+            members.append(position)
+    return members
+
+
+def launch_group(selected: list[TestCase], members: list[int], scratch: Path) -> Result[Running, str]:
+    """Start a file group once for its selected cases, which it reads from `INCAN_TEST_CASES`."""
+    lead = selected[members[0]]
+    output = scratch.joinpath(f"{members[0]}.out")
+    errors = scratch.joinpath(f"{members[0]}.err")
+    cases = ",".join([selected[member].member for member in members])
+    mut command = Command.new(lead.binary)
+    command.arg("--exact").arg(lead.native).arg("--nocapture").env("INCAN_TEST_CASES", cases)
+    if lead.project != "":
+        command.current_dir(lead.project)
+    command.stdin(Stdio.null())
+    command.stdout(File.create(output.0).map_err((error) => f"{output.0}: {error}")?)
+    command.stderr(File.create(errors.0).map_err((error) => f"{errors.0}: {error}")?)
+    trace_launch(lead.binary)
+    child = command.spawn().map_err((error) => f"cannot run {lead.binary}: {error}")?
+    return Ok(
+        Running(
+            position=members[0],
+            started=Instant.now(),
+            child=Rc.new(RefCell.new(child)),
+            output=output,
+            errors=errors,
+            members=members,
+        ),
+    )
+
+
+pub model GroupCase:
+    """What a file group printed for one case: its own output, whether it finished, and its failure message."""
+
+    pub output: str = ""
+    pub finished: bool = false
+    pub passed: bool = false
+    pub message: str = ""
+    # The case's own duration, as the group measured it.
+    pub duration_ms: int = 0
+
+
+pub def group_case(printed: str, entry: str, native: str) -> GroupCase:
+    """
+    One case of a file group's output: what the group printed since the previous case ended, such as a shared fixture
+    set up for this case, then the case's own lines between its `incan-case-start` and `incan-case-end` markers, and
+    its end marker's verdict, duration and message. The native harness's own lines are left out.
+    """
+    start = f"incan-case-start {entry}"
+    end = f"incan-case-end {entry} "
+    mut found = GroupCase()
+    mut inside = false
+    mut pending: list[str] = []
+    mut lines: list[str] = []
+    for line in printed.split("\n"):
+        text = harness_free(line, native)
+        if text == start:
+            inside = true
+            lines = pending
+        elif inside and text.startswith(end):
+            parts = text[len(end):].split(" ")
+            found.finished = true
+            found.passed = parts[0] == "passed"
+            if len(parts) > 1:
+                match count("duration", parts[1]):
+                    Ok(milliseconds) => found.duration_ms = milliseconds
+                    Err(_) => pass
+            if len(parts) > 2:
+                found.message = " ".join(parts[2:])
+            inside = false
+        elif inside:
+            lines.append(text)
+        elif text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
+            pending = []
+        elif kept_edge(text):
+            pending.append(text)
+    found.output = joined(lines)
+    return found
+
+
+def group_finished(
+    test_case: TestCase,
+    item: Running,
+    printed: str,
+    tail: str,
+    elapsed: int,
+    runner: RunnerOptions,
+) -> Result[Finished, str]:
+    """
+    One case of an ended file group, settled from its markers as `judged` settles a test of its own.
+
+    1. A case the group never finished failed, with the group's own error output.
+    2. An expected failure inverts the observed outcome, unless `--run-xfail` runs it plainly.
+    3. Any other case holds when its end marker says it passed; a failure shows the message it was raised with.
+    """
+    found = group_case(printed, test_case.member, test_case.native)
+    mut finished = Finished(
+        outcome=outcome_of(test_case, Status.Passed, "", group_duration(found, elapsed)),
+        output=RustString.from(found.output + tail).into_bytes(),
+    )
+    # 1. The group ended before this case finished.
+    if not found.finished:
+        finished.outcome.status = Status.Failed
+        finished.errors = item.errors.read_bytes().map_err((error) => error.message())?
+        finished.note = f"{test_case.binary} ended before {test_case.member} finished\n"
+        return Ok(finished)
+    # 2. An expected failure inverts the observed outcome.
+    match test_case.xfail:
+        Some(why) =>
+            if not runner.run_xfail:
+                finished.outcome.reason = why
+                if found.passed:
+                    finished.outcome.status = Status.XPassed
+                else:
+                    finished.outcome.status = Status.XFailed
+                return Ok(finished)
+        None => pass
+    # 3. The end marker's verdict.
+    if not found.passed:
+        finished.outcome.status = Status.Failed
+        finished.errors = RustString.from(f"{found.message}\n").into_bytes()
+    return Ok(finished)
+
+
+def group_size(item: Running) -> int:
+    """How many tests a started process runs: its file group's cases, or one."""
+    if len(item.members) > 0:
+        return len(item.members)
+    return 1
+
+
+pub def group_tail(printed: str, native: str) -> str:
+    """
+    What a file group printed after its last case ended, such as a shared fixture's teardown; the last case's output
+    ends with it. The native harness's own lines are left out.
+    """
+    mut after: list[str] = []
+    for line in printed.split("\n"):
+        text = harness_free(line, native)
+        if text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
+            after = []
+        elif kept_edge(text):
+            after.append(text)
+    return joined(after)
+
+
+def harness_free(line: str, native: str) -> str:
+    """A printed line without the `test NAME ... ` prefix the native harness writes before a test's own output."""
+    prefix = f"test {native} ... "
+    if line.startswith(prefix):
+        return line[len(prefix):]
+    return line
+
+
+def kept_edge(text: str) -> bool:
+    """Whether a line outside every case is the group's own output rather than the native harness's."""
+    return not (
+        text == ""
+        or text == "running 1 test"
+        or text == "ok"
+        or text == "FAILED"
+        or text.startswith("test result:")
+    )
+
+
+def joined(lines: list[str]) -> str:
+    """Lines as printed text, each ending its line."""
+    if len(lines) == 0:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def settle_group(
+    selected: list[TestCase],
+    item: Running,
+    elapsed: int,
+    runner: RunnerOptions,
+    mut settled: list[Option[Finished]],
+) -> Result[None, str]:
+    """Settle every case of an ended file group; the last case's output ends with what the group printed after it."""
+    printed = decoded(item.output.read_bytes().map_err((error) => error.message())?)
+    native = selected[item.position].native
+    tail = group_tail(printed, native)
+    last = len(item.members) - 1
+    for index in range(len(item.members)):
+        member = item.members[index]
+        mut after = ""
+        if index == last:
+            after = tail
+        settled[member] = Some(group_finished(selected[member], item, printed, after, elapsed, runner)?)
+    return Ok(None)
+
+
+def group_duration(found: GroupCase, elapsed: int) -> int:
+    """A grouped case's own duration as its group measured it, or the group's when the case never finished."""
+    if found.finished:
+        return found.duration_ms
+    return elapsed

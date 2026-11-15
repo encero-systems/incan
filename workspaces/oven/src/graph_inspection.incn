@@ -36,7 +36,7 @@ from rust_manifest import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
 from unit_freshness import artifact_identity, fingerprint
-from cli_help import render as render_help
+from cli_help import refused_option, render as render_help
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
@@ -46,6 +46,7 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--format",
     "--limit",
     "--substitute",
+    "--features",
     "--stale",
     "--task",
     "--budget",
@@ -71,6 +72,8 @@ pub model GraphOptions:
     pub task: str = ""
     pub budget: int = 8000
     pub risk: bool = false
+    # 0.5.1's feature options: the root package's features the inspected unit is checked with.
+    pub request: FeatureRequest = FeatureRequest()
 
 
 pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
@@ -86,7 +89,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         return Err("expected `codegraph`")
     if arguments[0] != "codegraph":
         if arguments[0].startswith("-"):
-            return Err(f"unknown option `{arguments[0]}`")
+            return Err(refused_option(arguments[0]))
         return Err(f"unknown command `{arguments[0]}`")
     # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
     mut result = GraphOptions()
@@ -96,6 +99,21 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         if value == "--risk":
             result.risk = true
             index += 1
+            continue
+        if value in ["--no-default-features", "--all-features"]:
+            if value == "--no-default-features":
+                result.request.default_features = false
+            else:
+                result.request.all_features = true
+            index += 1
+            continue
+        if value == "--features":
+            if index + 1 >= len(arguments):
+                return Err("--features needs a value")
+            for feature in arguments[index + 1].split(","):
+                if feature.strip() != "":
+                    result.request.features.append(feature.strip())
+            index += 2
             continue
         if value == "--allow-errors":
             result.allow_errors = true
@@ -113,7 +131,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
             apply_flag(result, value, arguments[index + 1])?
             index += 2
         elif value.startswith("-"):
-            return Err(f"unknown option `{value}`")
+            return Err(refused_option(value))
         elif result.path != "":
             return Err(f"unexpected argument `{value}`")
         else:
@@ -151,6 +169,9 @@ pub def help_text() -> str:
             "  --allow-errors              Export unchecked units' parseable facts (the default).",
             "  --risk                      Include optional local git observations.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
+            "  --features A,B              Add public root-package features.",
+            "  --no-default-features       Disable the root package's default feature.",
+            "  --all-features              Select every declared root-package feature.",
         ],
         "incan inspect codegraph . --query defs main",
     )
@@ -266,13 +287,13 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     source = entry_source(path)
     mut paths: list[GraphUnit] = []
     if source.is_file() and source.name().endswith(".incn"):
-        paths = inspect_source(source, selected.profile, toolchain, selected.substitutes)?
+        paths = inspect_source(source, selected.profile, toolchain, selected.substitutes, selected.request)?
     else:
         root = owning_project(path, selected.path)?
         paths = inspect_rust(
             root,
             selected.profile,
-            FeatureRequest(),
+            selected.request,
             selected.substitutes,
             toolchain,
             selected.query == "defs",
@@ -614,11 +635,12 @@ def inspect_source(
     profile: str,
     toolchain: Toolchain,
     substitutes: Dict[str, str],
+    request: FeatureRequest = FeatureRequest(),
 ) -> Result[list[GraphUnit], str]:
     """
     Inspect the source closure through checked interfaces, without building an Incan library.
 
-    1. A source outside any project is inspected alone.
+    1. A source outside any project is inspected alone, and selects no features.
     2. A project's dependency graphs are prepared, and the registry graphs join them.
     3. A library is inspected as its project's library; any other source as the project's own unit that contains it.
     4. The standard Loaves the units reach join the answer.
@@ -626,12 +648,14 @@ def inspect_source(
     # 1. A source outside any project stands alone, with no dependencies to prepare.
     match project_root_of(source):
         None =>
+            if len(request.features) > 0 or not request.default_features or request.all_features:
+                return Err("feature selection requires a project")
             parent = source.parent()
             graph = inspect_incan(source, profile, toolchain)?
             return Ok([GraphUnit(path=graph, root=parent, source_root=parent.0)])
         Some(root) =>
             # 2. A project's dependencies contribute the graphs they published, and registry Loaves theirs.
-            prepared = prepare_graph(root, profile, FeatureRequest(), substitutes, toolchain)?
+            prepared = prepare_graph(root, profile, request, substitutes, toolchain)?
             mut paths = prepared.paths + registry_graphs(registry_artifacts(prepared.facets, prepared.request)?)
             # 3. A library is already among the prepared graphs; any other source adds the graph of its own unit.
             if source.name() != "lib.incn":

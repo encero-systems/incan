@@ -5,10 +5,10 @@ This page specifies `incan inspect codegraph` retrieval, context packing and sna
 ## CLI signatures
 
 ```text
-incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]...
-incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]...
-incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]...
-incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict] [--risk] [--substitute NAME=DIR]...
+incan inspect codegraph PATH [--profile NAME] [--format json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH --query KIND TERM [--profile NAME] [--limit N] [--format json|jsonl] [--strict] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH --task TASK [--profile NAME] [--budget N] [--format compact|json|jsonl] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
+incan inspect codegraph PATH --stale SNAPSHOT [--profile NAME] [--strict] [--risk] [--substitute NAME=DIR]... [FEATURE OPTIONS]
 incan mcp PATH [--profile NAME]
 ```
 
@@ -25,6 +25,7 @@ incan mcp PATH [--profile NAME]
 | `--strict` | Boolean, default `false` | Refuses the export if any selected unit fails checking; reports its diagnostics. The default exports available facts and warns about unchecked units on stderr. |
 | `--risk` | Boolean, default `false` | Adds optional local git observations. Missing git history contributes no risk records. |
 | `--substitute NAME=DIR` | Repeatable dependency mapping | Replaces the local dependency of package `NAME` with the project at `DIR` wherever the dependency graph reaches it. |
+| `--features A,B`, `--no-default-features`, `--all-features` | Root-package feature selection, as for [unit commands](cli_reference.md#unit-options); default features | The inspected unit and its dependencies are checked with this selection. A source outside any project refuses it. Each selection has its own export. |
 
 Unknown options exit `2`. Absent values, invalid formats, unknown query kinds, invalid limits or budgets, missing paths and conflicting task selectors exit `1` with a diagnostic. A task request fails if even its header cannot fit. Empty query results return no hits; alongside unchecked-unit warnings they do not prove absence of callers or references.
 

@@ -1,145 +1,130 @@
-//! Fixtures a test file receives from the `conftest.incn` beside it, as 0.5.1 shares them.
+//! Fixtures a test file receives from `conftest.incn` files, as 0.5.1 shares them.
 //!
-//! A `conftest.incn` in the test file's own directory under `tests/` contributes its fixtures to the file's tests; a
-//! fixture the test file declares itself takes precedence. The generated case entries (`crate::test_cases`) call a
-//! shared fixture through an import of the `conftest` module, so the conftest is checked with each fixture the test
-//! file uses made public: `pub ` is written before its `def`, on the same line, so every line keeps its number. A
-//! conftest in a parent directory is not read, and a `yield` or async conftest fixture a test uses refuses by name.
+//! Every `conftest.incn` from the test file's directory up to the `tests` directory above it contributes its fixtures;
+//! a nearer conftest's fixture takes precedence over a farther one's, and a fixture the test file declares itself over
+//! both. As 0.5.1 compiled a test file together with its conftests, the checked test file carries each conftest's text
+//! after its own, with every shadowed fixture blanked and every import the file or a nearer conftest already makes
+//! blanked too, so plain, `yield` and async shared fixtures are ordinary declarations beside the tests.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::discovery::{CollectionEvalContext, discover_tests_and_fixtures_with_context};
-use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, TestInfo};
-use incan_frontend::ast::{Declaration, Visibility};
+use incan_driver::testing::types::{DiscoveryResult, FixtureInfo};
+use incan_frontend::ast::Declaration;
+use incan_frontend::decorator_resolution::collect_declaration_import_aliases;
 
-/// The `conftest.incn` beside a test file and the fixtures it declares.
+/// One `conftest.incn` a test file receives fixtures from, and the fixtures it declares.
 pub(crate) struct Conftest {
     pub(crate) path: PathBuf,
     pub(crate) discovery: DiscoveryResult,
 }
 
 impl Conftest {
-    /// Find and collect the `conftest.incn` beside `test_file` when the file lies under a `tests` directory.
-    pub(crate) fn beside(
+    /// The conftests of `test_file`, nearest first: its own directory's, then each parent's up to the nearest `tests`
+    /// directory above it. Each is collected seeing its parents' fixtures, which it may depend on.
+    pub(crate) fn chain(
         test_file: &Path,
         context: &CollectionEvalContext,
         session: &CompilationSession,
-    ) -> Result<Option<Self>, String> {
-        let under_tests = test_file
+    ) -> Result<Vec<Self>, String> {
+        let Some(root) = test_file
             .ancestors()
             .skip(1)
-            .any(|directory| directory.file_name().and_then(|name| name.to_str()) == Some("tests"));
-        let Some(path) = test_file.parent().map(|directory| directory.join("conftest.incn")) else {
-            return Ok(None);
+            .find(|directory| directory.file_name().and_then(|name| name.to_str()) == Some("tests"))
+        else {
+            return Ok(Vec::new());
         };
-        if !under_tests || !path.is_file() {
-            return Ok(None);
-        }
-        let path = path
-            .canonicalize()
-            .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
-        let discovery = discover_tests_and_fixtures_with_context(&path, &[], &[], &[], context, session)?;
-        Ok(Some(Self { path, discovery }))
-    }
-
-    /// Refuse, by name, a shared `yield` or async fixture that a test uses, directly, through another shared fixture or
-    /// as an autouse fixture; one that no test uses stays out of the way.
-    pub(crate) fn refuse_unsupported(&self, inherited: &[&FixtureInfo], tests: &[TestInfo]) -> Result<(), String> {
-        for fixture in inherited
-            .iter()
-            .filter(|fixture| fixture.has_teardown || fixture.is_async)
-        {
-            let used = fixture.autouse
-                || tests.iter().any(|test| test.required_fixtures.contains(&fixture.name))
-                || self
-                    .discovery
-                    .fixtures
-                    .iter()
-                    .any(|other| other.dependencies.contains(&fixture.name));
-            if used {
-                return Err(format!(
-                    "unsupported conftest fixture `{}` on the native harness: a shared fixture cannot `yield` or be async",
-                    fixture.name
-                ));
+        let directories: Vec<&Path> = test_file
+            .ancestors()
+            .skip(1)
+            .take_while(|directory| directory.starts_with(root))
+            .collect();
+        let mut chain = Vec::new();
+        let mut visible: Vec<String> = Vec::new();
+        for directory in directories.iter().rev() {
+            let path = directory.join("conftest.incn");
+            if !path.is_file() {
+                continue;
             }
+            let path = path
+                .canonicalize()
+                .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+            let discovery = discover_tests_and_fixtures_with_context(&path, &visible, &[], &[], context, session)?;
+            visible.extend(discovery.fixtures.iter().map(|fixture| fixture.name.clone()));
+            chain.push(Self { path, discovery });
         }
-        Ok(())
+        chain.reverse();
+        Ok(chain)
     }
 
-    /// The fixture names the conftest offers a test file.
-    pub(crate) fn names(&self) -> Vec<String> {
-        self.discovery
-            .fixtures
+    /// Every fixture name a chain offers a test file.
+    pub(crate) fn names(chain: &[Self]) -> Vec<String> {
+        chain
             .iter()
-            .map(|fixture| fixture.name.clone())
+            .flat_map(|conftest| conftest.discovery.fixtures.iter().map(|fixture| fixture.name.clone()))
             .collect()
     }
+}
 
-    /// The conftest's fixtures a test file does not declare itself, which its entries call through the import.
-    pub(crate) fn inherited<'a>(&'a self, own: &[FixtureInfo]) -> Vec<&'a FixtureInfo> {
-        self.discovery
-            .fixtures
-            .iter()
-            .filter(|fixture| !own.iter().any(|declared| declared.name == fixture.name))
-            .collect()
-    }
-
-    /// The conftest's text with each of `names` that is private made public and each `yield` fixture blanked, as a
-    /// test file's own are (`crate::test_cases`), keeping every line break.
-    pub(crate) fn exported_source(&self, names: &[&str], session: &CompilationSession) -> Result<String, String> {
-        let source = std::fs::read_to_string(&self.path)
-            .map_err(|error| format!("cannot read {}: {error}", self.path.display()))?;
+/// A chain's text to append to a test file, and the shared fixtures it keeps, nearest conftest first.
+///
+/// 1. A fixture the test file or a nearer conftest declares shadows a farther one's: the farther one is blanked.
+/// 2. An import whose every name is already imported, by the test file or a nearer conftest, and a conftest's module
+///    docstring are blanked.
+/// 3. Every other line is kept, so a shared fixture still sees its own conftest's imports and helpers.
+pub(crate) fn appended<'a>(
+    chain: &'a [Conftest],
+    own_fixtures: &[FixtureInfo],
+    own_imports: HashSet<String>,
+    session: &CompilationSession,
+) -> Result<(String, Vec<&'a FixtureInfo>), String> {
+    let mut declared: HashSet<String> = own_fixtures.iter().map(|fixture| fixture.name.clone()).collect();
+    let mut imported = own_imports;
+    let mut text = String::new();
+    let mut kept = Vec::new();
+    for conftest in chain {
+        let source = std::fs::read_to_string(&conftest.path)
+            .map_err(|error| format!("cannot read {}: {error}", conftest.path.display()))?;
         let program = session
-            .parse_source(&self.path, &source, false)
-            .map_err(|errors| format!("cannot parse {}: {errors:?}", self.path.display()))?;
-        let mut insertions = Vec::new();
-        let mut blanked = Vec::new();
+            .parse_source(&conftest.path, &source, false)
+            .map_err(|errors| format!("cannot parse {}: {errors:?}", conftest.path.display()))?;
+        let mut regions = Vec::new();
         for declaration in &program.declarations {
-            let Declaration::Function(function) = &declaration.node else {
-                continue;
-            };
-            if self
-                .discovery
-                .fixtures
-                .iter()
-                .any(|fixture| fixture.has_teardown && fixture.name == function.name)
-            {
-                let mut start = function
-                    .decorators
-                    .iter()
-                    .map(|decorator| decorator.span.start)
-                    .fold(declaration.span.start, usize::min);
-                if start > 0 && source.as_bytes().get(start - 1) == Some(&b'@') {
-                    start -= 1;
+            match &declaration.node {
+                // 1. A shadowed fixture.
+                Declaration::Function(function)
+                    if declared.contains(&function.name)
+                        && conftest
+                            .discovery
+                            .fixtures
+                            .iter()
+                            .any(|fixture| fixture.name == function.name) =>
+                {
+                    regions.push(crate::test_entries::declaration_region(&source, declaration, function));
                 }
-                blanked.push((start, declaration.span.end));
-                continue;
+                // A conftest's module docstring belongs at the top of its own file only.
+                Declaration::Docstring(_) => regions.push((declaration.span.start, declaration.span.end)),
+                // 2. An import the checked file already makes.
+                Declaration::Import(_) => {
+                    let names = collect_declaration_import_aliases(std::slice::from_ref(declaration));
+                    if !names.is_empty() && names.keys().all(|name| imported.contains(name)) {
+                        regions.push((declaration.span.start, declaration.span.end));
+                    }
+                    imported.extend(names.into_keys());
+                }
+                _ => {}
             }
-            if matches!(function.visibility, Visibility::Public) || !names.contains(&function.name.as_str()) {
-                continue;
-            }
-            // The `def` follows the function's decorators; the declaration may start at the first of them.
-            let after_decorators = function
-                .decorators
-                .iter()
-                .map(|decorator| decorator.span.end)
-                .fold(declaration.span.start, usize::max);
-            let keyword = source
-                .get(after_decorators..)
-                .and_then(|rest| rest.find("def "))
-                .map(|offset| after_decorators + offset)
-                .ok_or_else(|| format!("conftest fixture `{}` has no `def`", function.name))?;
-            insertions.push(keyword);
         }
-        let mut exported = String::with_capacity(source.len() + 4 * insertions.len());
-        for (offset, character) in source.char_indices() {
-            if insertions.contains(&offset) {
-                exported.push_str("pub ");
+        for fixture in &conftest.discovery.fixtures {
+            if declared.insert(fixture.name.clone()) {
+                kept.push(fixture);
             }
-            let hidden = blanked.iter().any(|(start, end)| offset >= *start && offset < *end);
-            exported.push(if hidden && character != '\n' { ' ' } else { character });
         }
-        Ok(exported)
+        // 3. The rest of the conftest, after the file and any nearer conftest.
+        text.push_str("\n\n");
+        text.push_str(&crate::test_entries::blank(&source, &regions));
     }
+    Ok((text, kept))
 }

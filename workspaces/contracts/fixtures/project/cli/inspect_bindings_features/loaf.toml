@@ -1,0 +1,13 @@
+[project]
+name = "inspect_bindings_features"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = []
+extras = ["dep:extra"]
+
+[dependencies]
+extra = { path = "deps/extra", optional = true }

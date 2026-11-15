@@ -138,15 +138,44 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
         .flat_map(|module| &module.nominal_declarations)
         .filter(|declaration| matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_)))
         .map(|declaration| (declaration.name.clone(), declaration.canonical.clone()))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    for module in modules {
-        for body in &mut module.bodies {
-            for (name, identity) in &identities {
-                std::sync::Arc::make_mut(&mut body.named_type_identities)
-                    .entry(name.clone())
-                    .or_insert_with(|| identity.clone());
-            }
+        .collect::<BTreeMap<_, _>>();
+    extend_shared_identities(
+        modules
+            .iter_mut()
+            .flat_map(|module| module.bodies.iter_mut())
+            .map(|body| &mut body.named_type_identities),
+        &identities,
+    );
+}
+
+/// Add each missing identity to the bodies' shared identity maps. A map that already names every identity is kept,
+/// and the maps that were one shared map stay one shared extension: this runs again on every runtime resolution, and
+/// a private copy per body of a module-wide map multiplied the checked program.
+fn extend_shared_identities<'a>(
+    maps: impl Iterator<Item = &'a mut incan_semantics_core::body_ir::SharedIdentities>,
+    identities: &BTreeMap<String, CanonicalSymbolId>,
+) {
+    // Keyed by the shared map's address; holding the original keeps that address from being reused while it is a key.
+    let mut extended = std::collections::HashMap::new();
+    for map in maps {
+        if identities.keys().all(|name| map.contains_key(name)) {
+            continue;
         }
+        // A map no other body or copy holds is extended in place.
+        if let Some(owned) = std::sync::Arc::get_mut(map) {
+            for (name, identity) in identities {
+                owned.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            continue;
+        }
+        let (_, shared) = extended.entry(std::sync::Arc::as_ptr(map)).or_insert_with(|| {
+            let mut copy = map.as_ref().clone();
+            for (name, identity) in identities {
+                copy.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            (std::sync::Arc::clone(map), std::sync::Arc::new(copy))
+        });
+        *map = std::sync::Arc::clone(shared);
     }
 }
 
@@ -194,20 +223,17 @@ pub(super) fn runtime_declarations(
     Ok(bindings)
 }
 
-/// Collect a test unit's modules again with the test file read from `source`: the file with its generated case
-/// entries (`crate::test_cases`), and the `conftest.incn` beside it read from its exported text when the entries
-/// import its fixtures (`crate::test_conftest`). The test module keeps its logical identity, as ordinary collection
+/// Collect a test unit's modules again with the test file read from `source`: the file with its conftests and its
+/// generated case entries (`crate::test_cases`). The test module keeps its logical identity, as ordinary collection
 /// gives it.
 fn collect_test_entries(
     path: &Path,
     source: String,
-    conftest: Option<(PathBuf, String)>,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let segments = incan_frontend::module::logical_module_segments_from_file(&session.source_root, path)
         .unwrap_or_else(|| vec!["main".to_string()]);
-    let mut overlay = std::collections::HashMap::from([(path.to_path_buf(), source)]);
-    overlay.extend(conftest);
+    let overlay = std::collections::HashMap::from([(path.to_path_buf(), source)]);
     incan_driver::modules::collect_document_modules(path.to_path_buf(), session, segments, &overlay)
 }
 
@@ -264,12 +290,8 @@ pub(super) fn checked_modules(
     // A test file whose tests take fixtures or parameters is checked with its generated case entries, and rustc reads
     // their spans from the same text.
     crate::spans::retain_checked_source(&path, collected.source.as_deref())?;
-    if let Some((conftest, exported)) = &collected.conftest {
-        crate::spans::retain_checked_source(conftest, Some(exported.as_str()))?;
-    }
     if let Some(source) = collected.source {
-        modules = collect_test_entries(&path, source, collected.conftest, &session)
-            .map_err(|failure| receipt.diagnostic(failure))?;
+        modules = collect_test_entries(&path, source, &session).map_err(|failure| receipt.diagnostic(failure))?;
         session
             .resolve_rust_facts(&modules)
             .map_err(|error| error.to_string())?;
@@ -1071,4 +1093,52 @@ pub(super) fn take_rust_enums(
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+#[cfg(test)]
+mod shared_identity_tests {
+    use super::*;
+    use incan_semantics_core::HirSourceSpan;
+    use incan_semantics_core::body_ir::SharedIdentities;
+    use std::sync::Arc;
+
+    /// One canonical model identity for a fixture map entry.
+    fn identity(name: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId::module_declaration(
+            vec!["fixture".to_owned()],
+            name,
+            SemanticSourceTargetKind::Model,
+            HirSourceSpan::new(0, 1),
+        )
+    }
+
+    /// Bodies that share one identity map keep sharing one extended map, and a map that already names every identity
+    /// is kept as it is, so a repeated runtime resolution adds no private copy per body.
+    #[test]
+    fn shared_identity_maps_stay_shared_when_extended() -> Result<(), Box<dyn std::error::Error>> {
+        let module_wide: SharedIdentities = Arc::new(BTreeMap::from([("Owned".to_owned(), identity("Owned"))]));
+        let complete: SharedIdentities = Arc::new(BTreeMap::from([("Native".to_owned(), identity("Native"))]));
+        let mut maps = vec![
+            Arc::clone(&module_wide),
+            Arc::clone(&module_wide),
+            Arc::clone(&complete),
+        ];
+        let native = BTreeMap::from([("Native".to_owned(), identity("Native"))]);
+
+        extend_shared_identities(maps.iter_mut(), &native);
+
+        let [first, second, kept] = &maps[..] else {
+            return Err("the fixture holds three maps".into());
+        };
+        assert!(
+            Arc::ptr_eq(first, second),
+            "bodies that shared one map received private copies"
+        );
+        assert!(first.contains_key("Owned") && first.contains_key("Native"));
+        assert!(
+            Arc::ptr_eq(kept, &complete),
+            "a map that already named every identity was copied"
+        );
+        Ok(())
+    }
 }

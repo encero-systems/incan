@@ -157,7 +157,7 @@ def apply_value(mut runner: RunnerOptions, name: str, value: str) -> Result[None
     return Ok(None)
 
 
-def count(name: str, value: str) -> Result[int, str]:
+pub def count(name: str, value: str) -> Result[int, str]:
     """A nonnegative decimal count of at most nine digits."""
     if len(value) == 0 or len(value) > 9:
         return Err(f"`{name}` takes a nonnegative count, got `{value}`")

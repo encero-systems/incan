@@ -134,16 +134,17 @@ pub def read_lock_text(source: str, provenance: str) -> Result[OvenLock, str]:
 def read_interop(value: TomlValue, source: str) -> Result[LockInterop, str]:
     """Decode one `[[interop]]` contract and its artifact tables."""
     table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
-    require_keys(table, ["target", "requirements", "headers", "artifact"], source, "interop")?
+    require_keys(table, ["package", "target", "requirements", "headers", "artifact"], source, "interop")?
     mut entry = LockInterop(
         target=required_text(table, "target", source)?,
+        package=optional_text(table, "package", source)?,
         requirements=required_text(table, "requirements", source)?,
         headers=optional_texts(table, "headers", source)?,
     )
     if let Some(values) = optional_array(table, "artifact", source)?:
         for item in values:
             artifact = item.as_table().map_err((error) => f"{source}: {error.message()}")?
-            keys = ["name", "kind", "path", "digest", "runtime-name", "placement", "capability"]
+            keys = ["name", "kind", "path", "digest", "runtime-name", "placement", "capability", "origin"]
             require_keys(artifact, keys, source, "interop artifact")?
             entry.artifacts.append(
                 LockInteropArtifact(
@@ -154,9 +155,21 @@ def read_interop(value: TomlValue, source: str) -> Result[LockInterop, str]:
                     runtime_name=optional_text(artifact, "runtime-name", source)?,
                     placement=optional_text(artifact, "placement", source)?,
                     capability=optional_text(artifact, "capability", source)?,
+                    source=origin_text(artifact, "source", source)?,
+                    revision=origin_text(artifact, "revision", source)?,
+                    license=origin_text(artifact, "license", source)?,
                 ),
             )
     return Ok(entry)
+
+
+def origin_text(artifact: Dict[str, TomlValue], key: str, source: str) -> Result[str, str]:
+    """One field of an interop artifact's inline `origin` table, empty when the artifact has no origin."""
+    if "origin" not in artifact:
+        return Ok("")
+    origin = artifact["origin"].as_table().map_err((error) => f"{source}: {error.message()}")?
+    require_keys(origin, ["source", "revision", "license"], source, "interop artifact origin")?
+    return required_text(origin, key, source)
 
 
 def read_toolchain(value: TomlValue, source: str) -> Result[LockToolchain, str]:
@@ -577,16 +590,18 @@ def render_loaf(entry: LockLoaf) -> str:
 
 
 def sorted_interop(entries: list[LockInterop]) -> list[LockInterop]:
-    """Interop contracts by target, so the file's layout is stable."""
+    """Interop contracts by package and target, so the file's layout is stable."""
     mut ordered: Dict[str, LockInterop] = {}
     for entry in entries:
-        ordered[entry.target] = entry
+        ordered[f"{entry.package}\t{entry.target}"] = entry
     return [ordered[key] for key in sorted([key for key in ordered.keys()])]
 
 
 def render_interop(entry: LockInterop) -> str:
     """Render one target's contract and its artifact tables, omitting empty fields."""
     mut text = "\n[[interop]]\n"
+    if entry.package != "":
+        text += f"package = {quoted(entry.package)}\n"
     text += f"target = {quoted(entry.target)}\nrequirements = {quoted(entry.requirements)}\n"
     text += f"headers = {string_array(entry.headers)}\n"
     for artifact in entry.artifacts:
@@ -601,6 +616,10 @@ def render_interop(entry: LockInterop) -> str:
         ]:
             if value != "":
                 text += f"{name} = {quoted(value)}\n"
+        if artifact.source != "":
+            quoted_origin = [quoted(artifact.source), quoted(artifact.revision), quoted(artifact.license)]
+            text += "origin = { source = " + quoted_origin[0] + ", revision = " + quoted_origin[1]
+            text += ", license = " + quoted_origin[2] + " }\n"
     return text
 
 

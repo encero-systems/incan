@@ -1,0 +1,46 @@
+# behavior: the runner provides `tmp_path`, a fresh directory, `tmp_workdir`, a fresh directory that is the working directory, and `env`, `std.testing`'s environment helper imported from 0.5.1's crate path, by parameter name, to tests and fixtures, as 0.5.1 does (#3149)
+# expect-stdout-contains:
+#   test_builtin_fixtures.incn::test_tmp_path PASSED
+#   test_builtin_fixtures.incn::test_tmp_workdir PASSED
+#   test_builtin_fixtures.incn::test_env PASSED
+#   test_builtin_fixtures.incn::test_fixture_receives_a_builtin PASSED
+
+"""Built-in fixtures, requested by parameter name as in 0.5.1."""
+
+from rust::std::env import current_dir
+from rust::std::path import PathBuf
+from rust::incan_stdlib::testing import TestEnv
+from std.testing import assert_eq, assert_is_some, fixture
+
+
+@fixture
+def scratch(tmp_path: PathBuf) -> PathBuf:
+    """A fixture receives a built-in fixture like any other."""
+    return tmp_path
+
+
+def test_tmp_path(tmp_path: PathBuf) -> None:
+    """`tmp_path` is an existing directory."""
+    assert_eq(tmp_path.is_dir(), true)
+
+
+def test_tmp_workdir(tmp_workdir: PathBuf) -> None:
+    """`tmp_workdir` is an existing directory and the working directory."""
+    assert_eq(tmp_workdir.is_dir(), true)
+    match tmp_workdir.canonicalize():
+        Ok(expected) =>
+            match current_dir():
+                Ok(directory) => assert_eq(directory == expected, true)
+                Err(_) => assert false
+        Err(_) => assert false
+
+
+def test_env(mut env: TestEnv) -> None:
+    """`env` sets variables for the test."""
+    env.set("INCAN_BUILTIN_FIXTURE", "set")
+    assert_eq(assert_is_some(env.get("INCAN_BUILTIN_FIXTURE")), "set")
+
+
+def test_fixture_receives_a_builtin(scratch: PathBuf) -> None:
+    """A fixture's own built-in fixture is set up for it."""
+    assert_eq(scratch.is_dir(), true)

@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from c_interop import parse_c_targets
+from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
 from intake import ManifestReader, read_manifest_snapshot
@@ -61,7 +62,7 @@ pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
             index += 2
             continue
         if argument.startswith("-"):
-            return Err(f"unknown option `{argument}`")
+            return Err(refused_option(argument))
         if path_seen:
             return Err(f"one PATH is locked at a time; `{argument}` is a second")
         command.path = argument
@@ -152,7 +153,8 @@ def reconcile(
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
     selected = resolve_registry(registry, facets, profile)?
     mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
-    generated.interop = root_interop(root, reader)?
+    projects = [("", root.0)] + [(facet_package(facet), facet.project) for facet in facets]
+    generated.interop = local_interop(root.0, projects, reader)?
     generated.graph = graph_identity(generated)?
     root_entry = root_loaf(generated)?
     changed = existing is None or not same_resolution(existing, generated)
@@ -164,10 +166,34 @@ def reconcile(
     return Ok(LockResult(name=root_entry.name, version=root_entry.version, mode=mode, changed=changed))
 
 
-def root_interop(root: Path, reader: ManifestReader) -> Result[list[LockInterop], str]:
+pub def local_interop(
+    root: str,
+    projects: list[Tuple[str, str]],
+    reader: ManifestReader,
+) -> Result[list[LockInterop], str]:
     """
-    The root manifest's `[[interop.c.targets]]` contracts, each declared file identified by its bytes. Only the
-    `[interop]` table is read here, so a root of any kind, a Rust facet's included, locks as before.
+    Each local project's `[[interop.c.targets]]` contracts, as `(package, root)` pairs name them: the root's, then each
+    path dependency's under its package, every declared file identified by its bytes.
+    """
+    mut entries: list[LockInterop] = []
+    mut seen: list[str] = []
+    for package, named in projects:
+        project = Path(named).resolve().map_err((error) => f"{named}: {error.message()}")?.0
+        if project in seen:
+            continue
+        seen.append(project)
+        for entry in project_interop(Path(project), reader)?:
+            mut scoped = entry
+            if project != root:
+                scoped.package = package
+            entries.append(scoped)
+    return Ok(entries)
+
+
+def project_interop(root: Path, reader: ManifestReader) -> Result[list[LockInterop], str]:
+    """
+    One manifest's `[[interop.c.targets]]` contracts. Only the `[interop]` table is read here, so a project of any
+    kind, a Rust facet's included, locks as before.
     """
     snapshot = read_manifest_snapshot(root, reader).map_err((error) => error.message())?
     manifest = root.joinpath("loaf.toml").0
@@ -428,3 +454,10 @@ def difference(existing: Option[OvenLock], generated: OvenLock) -> str:
             return "the root Loaf or one of its dependency edges"
         return "the resolved dependency graph"
     return "the missing lock"
+
+
+def facet_package(facet: LocalFacet) -> str:
+    """The package name a local project's lock facts are keyed by: its declared name, else its directory's."""
+    if facet.package != "":
+        return facet.package
+    return Path(facet.project).name()

@@ -1,0 +1,15 @@
+# behavior: a module-scoped `yield` fixture is set up at its first use, just before the first test that needs it, and torn down after the file's last test, as 0.5.1 does (#3149).
+# cli-commands:
+#   test tests/test_lazy.incn --nocapture
+# expect-stdout:
+#   early test
+#   test_lazy.incn::test_early PASSED
+#   late setup
+#   uses late
+#   test_lazy.incn::test_uses_late PASSED
+#   after
+#   late teardown
+#   test_lazy.incn::test_after PASSED
+
+def main() -> None:
+    println("main")
