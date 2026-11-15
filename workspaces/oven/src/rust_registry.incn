@@ -1,5 +1,16 @@
 """Read the registry closure a toolchain ships, and select the compiled registry units a build links."""
 
+pub from registry_advisory import Advisory, AdvisoryAction, audit_advisories, verify_advisory
+pub from registry_checkpoint import Checkpoint, verify_checkpoint
+pub from registry_revocation import (
+    Revocation,
+    RevocationKind,
+    require_active_trust,
+    require_not_revoked,
+    verify_key_revocation,
+    verify_revocation,
+)
+pub from registry_trust import Key, KeyKind, Root, Signature, StatementKind, Trust, delegate, pin, verify_statement
 from std.fs import Path
 from std.json import JsonValue
 from bakery import bakery, claim
