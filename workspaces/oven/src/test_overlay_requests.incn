@@ -72,26 +72,35 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     program = scratch.path().joinpath("program")
     program.mkdir(true, true).map_err((error) => error.message())?
+    write(program.joinpath("loaf.toml"), "[project]\nname = \"overlay-definition\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"main.incn\"\n\n[dependencies]\nchecked = { path = \"deps/checked\" }\n")?
+    checked = program.joinpath("deps").joinpath("checked")
+    checked.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(checked.joinpath("loaf.toml"), "[project]\nname = \"checked\"\nversion = \"0.1.0\"\n")?
+    write(checked.joinpath("src").joinpath("lib.incn"), "pub def checked_value() -> int:\n    return 4\n")?
     write(program.joinpath("helper.incn"), "pub def value(scale: int) -> int:\n    return scale * 2\n")?
     source = program.joinpath("main.incn")
-    write(source, "from helper import value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n")?
+    write(source, "from helper import value\nfrom pub::checked import checked_value\n\n\ndef main() -> None:\n    println(f\"{value(2)}\")\n    println(f\"{checked_value()}\")\n")?
     store = scratch.path().joinpath("store")
     ran = records_run(binary, source, store)
-    imported = overlay_with(binary, source, source, store, ["--hover", "5:17"])
-    own = overlay_with(binary, source, source, store, ["--hover", "4:5"])
-    definition = overlay_with(binary, source, source, store, ["--definition", "5:17"])
+    imported = overlay_with(binary, source, source, store, ["--hover", "6:17"])
+    own = overlay_with(binary, source, source, store, ["--hover", "5:5"])
+    definition = overlay_with(binary, source, source, store, ["--definition", "6:17"])
+    public_definition = overlay_with(binary, source, source, store, ["--definition", "7:17"])
     if store.exists():
         stop_engine(binary, store)?
     _ = ran?
     imported_answer = imported?
     own_answer = own?
     definition_answer = definition?
+    public_definition_answer = public_definition?
     imported_text = imported_answer.to_json().map_err((error) => error.message())?
     own_text = own_answer.to_json().map_err((error) => error.message())?
     definition_text = definition_answer.to_json().map_err((error) => error.message())?
+    public_definition_text = public_definition_answer.to_json().map_err((error) => error.message())?
     assert imported_text.contains("def value(scale: int) -> int"), imported_text
     assert own_text.contains("def main() -> None"), own_text
     assert definition_text.contains("helper.incn") and definition_text.contains("\"line\":1"), definition_text
+    assert public_definition_text.contains("deps/checked/src/lib.incn") and public_definition_text.contains("\"line\":1"), public_definition_text
     return Ok(None)
 
 
