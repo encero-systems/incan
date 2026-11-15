@@ -313,7 +313,8 @@ def unit_entry(
         ("refusal", ""),
     ]:
         fields[key] = JsonValue.string(value)
-    fields["revision"] = JsonValue.int(loaf.revision)
+    # Installed records carry no numbers, so the revision is a decimal string.
+    fields["revision"] = JsonValue.string(str(loaf.revision))
     fields["features"] = JsonValue.array([JsonValue.string(feature) for feature in sorted(facet.features)])
     linked = [identities[edge.key()] for edge in facet.local if edge.key() in identities]
     fields["dependencies"] = JsonValue.array([JsonValue.object({"entry": JsonValue.string(item)}) for item in linked])
