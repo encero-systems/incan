@@ -490,20 +490,15 @@ fn ordered_entries(entries: &[(Value, Value)]) -> Result<Vec<usize>, Refused> {
 }
 
 fn indexed_charged(cells: Vec<Vec<u8>>, budget: &mut Budget) -> Result<Vec<u8>, Refused> {
-    let total = cells
-        .iter()
-        .try_fold(0usize, |sum, cell| sum.checked_add(cell.len()))
+    let elements = u64::try_from(cells.len()).map_err(|_| "limit_exceeded")?;
+    let data = columns::indexed(&cells);
+    let copied_bytes = u64::try_from(data.len())
+        .map_err(|_| "limit_exceeded")?
+        .checked_mul(2)
         .ok_or("limit_exceeded")?;
-    let width = match total {
-        0..=255 => 1,
-        256..=65_535 => 2,
-        65_536..=4_294_967_295 => 4,
-        _ => 8,
-    };
-    let layout = crate::crumb::indexed(cells, width);
-    budget.bytes(u64::try_from(layout.byte_charge).map_err(|_| "limit_exceeded")?)?;
-    budget.elements(u64::try_from(layout.element_charge).map_err(|_| "limit_exceeded")?)?;
-    Ok(layout.data)
+    budget.bytes(copied_bytes)?;
+    budget.elements(elements)?;
+    Ok(data)
 }
 
 fn frame_charged(data: &[u8], budget: &mut Budget) -> Result<Vec<u8>, Refused> {

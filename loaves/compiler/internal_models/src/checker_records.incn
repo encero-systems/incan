@@ -35,7 +35,7 @@ const GRAPH_NAMESPACE_SELECTOR: bytes = b"grnams\x00"
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
 
 
-pub def encode_record(record: Borrowed[CheckedRecord]) -> Result[bytes, CodecFault]:
+pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
     """Encode one checked owner as one bounded Crumb row of the checker-record model."""
     logical = record_value(record)?
     return encode_rows(checker_description(), [RowRecord(key=CHECKER_SELECTOR, value=logical)], MAX_RECORD_BYTES).map_err(
@@ -522,4 +522,3 @@ def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecor
     if local.root != final.root:
         return Err(CodecFault.BodyChanged)
     return Ok([local, final])
-
