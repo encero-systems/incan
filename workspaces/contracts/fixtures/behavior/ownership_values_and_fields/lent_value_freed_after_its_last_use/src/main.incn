@@ -1,0 +1,57 @@
+# behavior: a local that a callee only reads is lent to it, and its storage ends right after its last use, never at the end of its scope, so the statements that follow run without the memory it held (#1604)
+# expect-stdout:
+#   lent to a reader: freed after its last use
+#   lent in a branch: freed after its last use
+
+"""Measure the live heap right after the last use of a large local that was only ever lent."""
+
+from rust::drop_probe import live_heap_bytes
+
+const SIZE: int = 4096
+
+
+def build(size: int) -> list[str]:
+    """Build a list whose items each own heap storage."""
+    mut items: list[str] = []
+    for index in range(size):
+        items.append(f"item number {index} with heap storage of its own")
+    return items
+
+
+def measure(items: list[str]) -> int:
+    """Only read the list, so a caller lends it."""
+    return len(items)
+
+
+def lent_to_a_reader() -> int:
+    """Lend a local at its last use and return what the heap still holds after that call."""
+    before = live_heap_bytes()
+    items = build(SIZE)
+    counted = measure(items)
+    held = live_heap_bytes() - before
+    return held + counted * 0
+
+
+def lent_in_a_branch(flag: bool) -> int:
+    """Lend a local on one branch only; after the branches join, neither path reads it again."""
+    before = live_heap_bytes()
+    items = build(SIZE)
+    mut counted = 0
+    if flag:
+        counted = measure(items)
+    held = live_heap_bytes() - before
+    return held + counted * 0
+
+
+def report(label: str, held: int) -> None:
+    """Print whether the heap was back where it started, from `held` bytes measured before printing."""
+    if held < SIZE:
+        println(f"{label}: freed after its last use")
+    else:
+        println(f"{label}: still holds {held} bytes after its last use")
+
+
+def main() -> None:
+    _ = lent_to_a_reader() + lent_in_a_branch(true)
+    report("lent to a reader", lent_to_a_reader())
+    report("lent in a branch", lent_in_a_branch(true))
