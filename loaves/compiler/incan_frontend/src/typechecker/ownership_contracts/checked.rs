@@ -878,6 +878,13 @@ impl TypeChecker {
         self.borrow_layout_query(ty, false)
     }
 
+    /// Return whether no value of `ty` can hold a borrow: it is not a view type, and it names no native reference, no
+    /// Rust type with lifetime parameters and no type still open, at any depth. Such a value retains no dependency on
+    /// the inputs it was computed from.
+    pub(in crate::typechecker) fn type_holds_no_borrow(&self, ty: &ResolvedType) -> bool {
+        !self.type_holds_borrow(ty) && !self.type_holds_native_loan(ty)
+    }
+
     /// Return whether the complete result is one user-defined nominal whose stored layout carries a borrow. Builtin
     /// carriers keep their recursive ownership modes; class, model, enum and newtype values own their aggregate
     /// storage even when one of its fields retains the declared source.

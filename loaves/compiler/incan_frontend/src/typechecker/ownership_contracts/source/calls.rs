@@ -417,6 +417,14 @@ impl Builder<'_> {
             })
             && conditional_result(result))
         .then(|| result.clone());
+        // A source declaration's result that can hold no borrow carries no dependency on the call's inputs: only a
+        // view type, a native reference or a type still open can retain one, and a source signature cannot name a
+        // lifetime-bearing Rust type (RFC 164, types that hold borrows).
+        let fresh_result = matches!(
+            call.kind,
+            super::super::InputCallKind::Explicit | super::super::InputCallKind::Ordinary
+        ) && contract.is_none_or(|contract| contract.result_source.is_none())
+            && self.checker.type_holds_no_borrow(result);
         if view.is_none()
             && native_dependencies.is_none()
             && !native_independent_result
@@ -424,6 +432,7 @@ impl Builder<'_> {
             && !owned_dependent_result
             && !clone_result
             && !plain_result(result)
+            && !fresh_result
             && result_requirement.is_none()
             && !lends_nothing
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
