@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from compiler_source_projection import SourceProjection, SourceProjectionRecord, project_source
+from intake import ManifestReader, read_project, source_root_of
 from overlay_hover import declaration_facets, identifier_at, imported_module, imported_path, program_origin
 
 
@@ -26,15 +27,43 @@ pub def overlay_definition(
     origin = program_origin(program, entry)?
     if let Some(owner) = declaration_owner(project_source(origin, document, text)?, name):
         return location(program.joinpath(document), text, owner)
-    match imported_module(text, name):
-        None => return Ok(JsonValue.null())
-        Some(found) =>
-            logical = imported_path(document, found[0])
-            source = program.joinpath(logical)
+    if let Some(found) = imported_module(text, name):
+        logical = imported_path(document, found[0])
+        source = program.joinpath(logical)
+        imported = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+        match declaration_owner(project_source(origin, logical, imported)?, found[1]):
+            Some(owner) => return location(source, imported, owner)
+            None => return Ok(JsonValue.null())
+    if let Some(found) = public_import(text, name):
+        project = read_project(program, ManifestReader()).map_err((error) => error.message())?
+        for dependency in project.intent.dependencies:
+            if dependency.alias != found[0]:
+                continue
+            root = program.joinpath(dependency.path)
+            dependency_project = read_project(root, ManifestReader()).map_err((error) => error.message())?
+            source = Path(source_root_of(dependency_project)).joinpath("lib.incn")
             imported = source.read_text("utf-8", "strict").map_err((error) => error.message())?
-            match declaration_owner(project_source(origin, logical, imported)?, found[1]):
+            projection = project_source(dependency_project.intent.name, source.0, imported)?
+            match declaration_owner(projection, found[1]):
                 Some(owner) => return location(source, imported, owner)
                 None => return Ok(JsonValue.null())
+    return Ok(JsonValue.null())
+
+
+def public_import(text: str, name: str) -> Option[list[str]]:
+    """The local dependency alias and original name of a `from pub::ALIAS import …` binding."""
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line.startswith("from pub::") or " import " not in line:
+            continue
+        parts = line[10:].split(" import ")
+        if len(parts) != 2:
+            continue
+        for item in parts[1].replace("(", "").replace(")", "").split(","):
+            pieces = item.strip().split(" as ")
+            if pieces[len(pieces) - 1].strip() == name:
+                return Some([parts[0].strip(), pieces[0].strip()])
+    return None
 
 
 def declaration_owner(projection: SourceProjection, name: str) -> Option[SourceProjectionRecord]:
@@ -51,9 +80,5 @@ def location(path: Path, source: str, owner: SourceProjectionRecord) -> Result[J
     rows = source[:owner.start].split("\n")
     line = len(rows)
     column = len(rows[len(rows) - 1]) + 1
-    fields = {
-        "path": JsonValue.string(path.0),
-        "line": JsonValue.int(line),
-        "column": JsonValue.int(column),
-    }
+    fields = {"path": JsonValue.string(path.0), "line": JsonValue.int(line), "column": JsonValue.int(column)}
     return Ok(JsonValue.object(fields))
