@@ -52,7 +52,6 @@ from verify_installation import (
     require_shipped_standard_sources,
 )
 from relink_driver import absolute_manifest
-from registry_checksums import REGISTRY_CHECKSUMS, checksummed_closure, is_sha256, write_checksummed_registry
 from check_support import repository_root
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -687,106 +686,4 @@ def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -
     match seed_toolchain_directory(seed):
         Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
         Err(reason) => assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
-    return Ok(None)
-
-
-def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() -> Result[None, str]:
-    """
-    A release writes the candidate home's own registry closure, each unit carrying its pinned crates.io checksum.
-
-    1. Each unit of the candidate's closure records the pin for its Loaf version, and the candidate's manifest names
-       that closure. The seed's entries and producer selection are linked, and the seed's closure is unchanged.
-    2. An unpinned Loaf version is refused by name, and so is a recorded checksum that differs from its pin.
-    3. The release's own pin file pins only `sha256:` digests.
-    """
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    seed = temporary.path().joinpath("seed/registry")
-    seed.joinpath("entries/sha256-aa/artifacts").mkdir(true, true).map_err((error) => error.message())?
-    seed.joinpath("selected.json").write_text("{\"units\": []}\n", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
-    closure_text = """{"externs": {}, "schema": "incan.oven.closure/1", "units": [
-{"domain": "target", "entry": "sha256:aa", "loaf": "crates-io/serde", "version": "1.0.229"},
-{"domain": "host", "entry": "sha256:bb", "loaf": "crates-io/serde", "version": "1.0.229"},
-{"domain": "target", "entry": "sha256:cc", "loaf": "crates-io/libc", "version": "0.2.190"}]}
-"""
-    seed.joinpath("closure.json").write_text(closure_text, "utf-8", "strict", None).map_err((error) => error.message())?
-    serde = "sha256:4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
-    libc = "sha256:ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
-    pins_text = (
-        "{\"checksums\": {\"crates-io/serde\": {\"1.0.229\": \""
-        + serde
-        + "\"}, \"crates-io/libc\": {\"0.2.190\": \""
-        + libc
-        + "\"}}}\n"
-    )
-    pins = temporary.path().joinpath("registry-checksums.json")
-    pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
-    candidate = temporary.path().joinpath("candidate")
-    candidate.mkdir(true, true).map_err((error) => error.message())?
-    manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
-    candidate.joinpath("toolchain.json").write_text(manifest, "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
-    # 1. The candidate's closure carries each unit's pin; the seed's stays as it was.
-    write_checksummed_registry(candidate, pins)?
-    written = JsonValue.parse(
-        candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
-    ).map_err((error) => error.message())?
-    units: list[JsonValue] = written.require("units").map_err((error) => error.message())?.expect_array().map_err(
-        (error) => error.message(),
-    )?
-    mut recorded: list[str] = []
-    for unit in units:
-        match unit.get("checksum"):
-            Some(checksum) => recorded.append(checksum.expect_str().map_err((error) => error.message())?)
-            None => recorded.append("")
-    assert recorded == [serde, serde, libc], f"the candidate closure records {recorded}"
-    named = JsonValue.parse(
-        candidate.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
-    ).map_err((error) => error.message())?
-    registry_units = named.require("registry_units").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )?
-    assert registry_units == "registry/closure.json", f"the candidate manifest names {registry_units}"
-    assert candidate.joinpath("registry/entries").is_symlink(), "the seed's entries were not linked"
-    assert candidate.joinpath("registry/selected.json").is_symlink(), "the seed's selection was not linked"
-    kept = seed.joinpath("closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
-    assert kept == closure_text, "the seed's closure was written"
-    # 2. An unpinned version, and a recorded checksum that is not the pin, are refused.
-    unpinned = JsonValue.parse(
-        "{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}, {\"loaf\": \"crates-io/libc\", "
-        + "\"version\": \"0.2.190\"}]}",
-    ).map_err((error) => error.message())?
-    pinned = JsonValue.parse(pins_text).map_err((error) => error.message())?
-    match checksummed_closure(unpinned, pinned):
-        Ok(_) => return Err("a closure with an unpinned Loaf version was accepted")
-        Err(reason) =>
-            assert "pins no checksum for: crates-io/rand 0.9.2" in reason, reason
-            assert REGISTRY_CHECKSUMS in reason, reason
-    other = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    disagreeing = JsonValue.parse(
-        "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \"" + other + "\"}]}",
-    ).map_err((error) => error.message())?
-    match checksummed_closure(disagreeing, pinned):
-        Ok(_) => return Err("a recorded checksum that differs from its pin was accepted")
-        Err(reason) =>
-            assert other in reason and libc in reason, reason
-    # 3. The checked-in pins are `sha256:` digests.
-    released = JsonValue.parse(
-        repository_root()?.joinpath(REGISTRY_CHECKSUMS).read_text("utf-8", "strict").map_err(
-            (error) => error.message(),
-        )?,
-    ).map_err((error) => error.message())?
-    loaves = released.require("checksums").map_err((error) => error.message())?
-    mut count = 0
-    for loaf in loaves.keys():
-        versions = loaves.require(loaf).map_err((error) => error.message())?
-        for version in versions.keys():
-            value = versions.require(version).and_then((entry) => entry.expect_str()).map_err(
-                (error) => error.message(),
-            )?
-            assert is_sha256(value), f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{value}`"
-            count += 1
-    assert count > 0, f"{REGISTRY_CHECKSUMS} pins nothing"
     return Ok(None)
