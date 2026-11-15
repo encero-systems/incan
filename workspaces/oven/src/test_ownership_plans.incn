@@ -662,7 +662,6 @@ def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
         .arg(source.0)
         .args(["--profile", "release"])
         .env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("native.plan").0)
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?

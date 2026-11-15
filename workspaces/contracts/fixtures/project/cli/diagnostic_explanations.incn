@@ -37,7 +37,6 @@
 #   explain INCAN-U0001
 #   explain incan-t0001
 # environment:
-#   INCAN_ENGINE=records
 # expect-stdout-contains:
 #   Examples:
 #   Common causes:

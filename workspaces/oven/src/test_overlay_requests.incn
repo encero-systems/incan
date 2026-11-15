@@ -250,7 +250,6 @@ def records_run(binary: str, source: Path, store: Path) -> Result[tuple[JsonValu
         .arg("run")
         .arg(source.0)
         .arg("--engine-report")
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?

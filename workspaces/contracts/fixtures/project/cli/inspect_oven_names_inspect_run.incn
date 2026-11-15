@@ -4,7 +4,7 @@
 #   oven inspect oven --receipt receipt.json
 # expect-stdout:
 # expect-stderr-contains:
-#   inspect oven` read 0.5's Oven Alpha receipts, which 0.6 does not write: run `oven inspect run ID --proofs` with INCAN_ENGINE=records for a run's evidence
+#   inspect oven` read 0.5's Oven Alpha receipts, which 0.6 does not write: run `oven inspect run ID --proofs` for a run's evidence
 # expect-exit: 2
 
 def main() -> None:

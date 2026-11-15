@@ -303,7 +303,7 @@ def trace_completion_contract(root: Path) -> Result[None, str]:
     modes = ["off", "success", "missing", "compatibility", "bound"]
     for mode in modes:
         mut command = Command.new(binary)
-        command.arg("run").arg(source.0).env("OVEN_OWNER", "off").env("INCAN_ENGINE", "legacy")
+        command.arg("run").arg(source.0).env("OVEN_OWNER", "off")
         command.env_remove("INCAN_ENGINE_TRACE").env_remove("INCAN_JEC_TRACE").env_remove("OVEN_TRACE")
         command.env_remove("INCAN_ENGINE_REQUEST")
         if mode == "success" or mode == "bound":

@@ -333,7 +333,7 @@ def build_project(binary: str, project: Path, bakery: Path, failure: Path) -> Re
     """Build `project` without an owner, retaining one bakery while the one-shot native-plan failure is consumed."""
     mut command = Command.new(binary)
     command.arg("build").arg(project.0).current_dir(project.0)
-    command.env("OVEN_OWNER", "off").env("INCAN_ENGINE", "records")
+    command.env("OVEN_OWNER", "off")
     command.env("INCAN_BAKERY", bakery.0).env("INCAN_TEST_PLAN_FAILURE_ONCE", failure.0)
     return command.output().map_err((error) => f"cannot run {binary}: {error}")
 

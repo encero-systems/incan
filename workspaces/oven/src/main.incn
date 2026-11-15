@@ -4,9 +4,7 @@ from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import exit
 from rust::std::string import String as RustString
-from std.environ import get_or
 from std.fs import Path
-from engine_selector import Engine, select as select_engine
 from engine_client import execute as execute_records, execute_overlay, serve_overlays
 from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
@@ -263,13 +261,8 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(report) => println(report)
         return
     if records_route(command, rest):
-        match select_engine(get_or("INCAN_ENGINE", "legacy")):
-            Err(reason) =>
-                fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
-            Ok(Engine.Records) =>
-                records_command(command, rest)
-                return
-            Ok(Engine.Legacy) => pass
+        records_command(command, rest)
+        return
     if command == "run":
         run(rest)
         return
@@ -335,7 +328,7 @@ def dispatch(command: str, rest: list[str]) -> None:
             syntax_error("inspect", f"unknown command `{rest[0]}`")
         syntax_error(
             "inspect",
-            "inspects `dependencies PATH`, `interop-plan [--target TRIPLE] [PATH]`, or `run ID --proofs` with INCAN_ENGINE=records",
+            "inspects `dependencies PATH`, `interop-plan [--target TRIPLE] [PATH]`, or `run ID --proofs`",
         )
     if command == "inspect" and len(rest) > 0 and rest[0] == "bindings":
         match binding_options(rest[1:]):
@@ -1027,7 +1020,7 @@ def require_command_options(command: str, options: Options) -> Result[None, str]
             return Err("--direct does not verify against a declared interop target; it describes no project")
         return Ok(None)
     if options.engine_report:
-        return Err("--engine-report requires INCAN_ENGINE=records run or build")
+        return Err("--engine-report requires run or build")
     if options.locked and command not in ["run", "build", "test"]:
         return Err("--locked requires run, build or test")
     if options.interop_target != "" and command not in ["run", "build", "test", "check"]:
