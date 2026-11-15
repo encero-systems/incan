@@ -168,16 +168,16 @@ pub(super) fn retain_modules_with_selected(
         }
     }
 
-    // A published callable keeps the base's read-only rule under the base's own hypothesis; only the inputs of
-    // callables nothing outside the module can name follow the never-consumed rule.
+    // Every callable follows the never-consumed rule; a published one also keeps each input the base's read-only rule
+    // lends under the base's own hypothesis, so no published input that was shared before becomes owned.
     let base = candidate_parameters(modules, selected, InputRule::Base);
     let published = published_reads::read_only_parameters(modules, context, &field_types, base)
         .into_iter()
         .filter(|&(module_index, body_index, _)| published_body(modules, module_index, body_index))
         .collect::<HashSet<_>>();
     let mut candidates = candidate_parameters(modules, selected, InputRule::NeverConsumed);
-    candidates.extend(published);
-    consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &mut candidates);
+    candidates.extend(published.iter().copied());
+    consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &published, &mut candidates);
 
     let signatures = collect_signatures(modules, context, &candidates);
     for (module_index, body_index, parameter_index) in &candidates {
@@ -230,8 +230,8 @@ fn retain_shared_parameter(
 }
 
 /// Select every ordinary non-Copy input whose source contract leaves access inferred, under `rule`. The base rule
-/// selects every eligible callable's inputs for the published read-only fixed point (`published_reads`); the
-/// never-consumed rule selects only the inputs of callables nothing outside the module can name. Such a frame receives
+/// selects every eligible callable's inputs for the read-only fixed point (`published_reads`); the never-consumed rule
+/// selects them too, published or not, since an explicit ownership contract is the only override. Such a frame receives
 /// shared storage because the binding is immutable; a move, store, return or owned call inside it materializes the
 /// independent value at that operation, unless the body consumes the input on any path (`consumed_reads`). Open trait
 /// slots and their checked implementations keep the trait's authored ABI because an implementation body cannot refine
@@ -244,7 +244,6 @@ fn candidate_parameters(
 ) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
     let copy_nominals = copy_nominal_identities(modules);
-    let published_copy_nominals = HashSet::new();
     for (module_index, module) in modules.iter().enumerate() {
         let trait_implementations = module
             .trait_implementations
@@ -269,19 +268,11 @@ fn candidate_parameters(
                     !trait_implementations.contains(identity) && !method_partial_targets.contains(identity)
                 })
                 && !has_open_trait_receiver(body);
-            let published = published_body(modules, module_index, body_index);
-            if !eligible || (rule == InputRule::NeverConsumed && published) {
+            if !eligible {
                 continue;
             }
-            // A published signature keeps its established passing of a Copy nominal; every other callable copies one
-            // in, as it does a scalar, under either rule, so the base's hypothesis matches the final decision.
-            let copied = if published {
-                &published_copy_nominals
-            } else {
-                &copy_nominals
-            };
             for (parameter_index, parameter) in body.params.iter().enumerate() {
-                if parameter_is_candidate(body, parameter, rule, copied) {
+                if parameter_is_candidate(body, parameter, rule, &copy_nominals) {
                     candidates.insert((module_index, body_index, parameter_index));
                 }
             }
@@ -331,8 +322,8 @@ fn has_open_trait_receiver(body: &bir::Body) -> bool {
     })
 }
 
-/// Which rule selects an input for shared access: the base's read-only rule, which published callables keep, or the
-/// never-consumed rule of a callable nothing outside the module can name.
+/// Which rule selects an input for shared access: the base's read-only rule, whose lent inputs a published callable
+/// also keeps, or the never-consumed rule every callable follows.
 #[derive(Clone, Copy, PartialEq)]
 enum InputRule {
     Base,
