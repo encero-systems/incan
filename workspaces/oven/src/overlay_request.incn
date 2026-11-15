@@ -1,6 +1,6 @@
 """
 `incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
-[--engine-report] [--build] [--hover LINE:COLUMN]`, and `incan check --overlay-serve [--profile debug|release]`, which
+[--engine-report] [--build] [--hover LINE:COLUMN] [--definition LINE:COLUMN]`, and `incan check --overlay-serve [--profile debug|release]`, which
 answers one such request per JSON line on standard input.
 """
 
@@ -21,6 +21,9 @@ pub model OverlayRequest:
     # A hover's one-based line and column in the buffer; 0 asks for diagnostics instead.
     pub hover_line: int = 0
     pub hover_column: int = 0
+    # A definition's one-based line and column in the buffer; 0 asks for no definition.
+    pub definition_line: int = 0
+    pub definition_column: int = 0
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
@@ -46,6 +49,12 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
             return Err("a hover names a line and a column")
         answered.hover_line = place[0].expect_int().map_err((error) => error.message())?
         answered.hover_column = place[1].expect_int().map_err((error) => error.message())?
+    if let Some(position) = request.get("definition"):
+        place = position.expect_array().map_err((error) => error.message())?
+        if len(place) != 2:
+            return Err("a definition names a line and a column")
+        answered.definition_line = place[0].expect_int().map_err((error) => error.message())?
+        answered.definition_column = place[1].expect_int().map_err((error) => error.message())?
     return Ok(answered)
 
 
@@ -62,7 +71,7 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
                 request.report = true
             index += 1
             continue
-        if argument in ["--overlay", "--document-version", "--profile", "--format", "--hover"]:
+        if argument in ["--overlay", "--document-version", "--profile", "--format", "--hover", "--definition"]:
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
             value = arguments[index + 1]
@@ -74,6 +83,12 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
                     return Err(f"`--hover` is LINE:COLUMN, got `{value}`")
                 request.hover_line = int(place[0])
                 request.hover_column = int(place[1])
+            elif argument == "--definition":
+                place = value.split(":")
+                if len(place) != 2 or not decimal(place[0]) or not decimal(place[1]):
+                    return Err(f"`--definition` is LINE:COLUMN, got `{value}`")
+                request.definition_line = int(place[0])
+                request.definition_column = int(place[1])
             elif argument == "--document-version":
                 if not decimal(value):
                     return Err(f"`--document-version` is a non-negative integer, got `{value}`")

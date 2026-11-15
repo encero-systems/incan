@@ -17,6 +17,7 @@ from engine_programs import read_program, program_handle, selected_program, rest
 from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
 from overlay_hover import overlay_hover
+from overlay_definition import overlay_definition
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -49,6 +50,8 @@ from pub::incan_platform.trace import Operation
 const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
 # The schema of the document an overlay hover answers with.
 const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
+# The schema of the document an overlay definition answers with.
+const OVERLAY_DEFINITION_SCHEMA: str = "incan.overlay-definition/1"
 # While an overlay request runs, its console is collected here instead of being relayed to the terminal.
 static console_capture: dict[str, str] = {}
 
@@ -134,6 +137,8 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     # A hover reads records and the buffer; it needs no mirror and no engine request.
     if request.hover_line > 0:
         return hover_answer(store, editor, program, entry, document, text, request)
+    if request.definition_line > 0:
+        return definition_answer(editor, program, entry, document, text, request)
     # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
     overlay = store.parent().joinpath("editor").joinpath(editor)
     _ = mirror_overlay(program, overlay, document, text)?
@@ -188,6 +193,32 @@ def hover_answer(
     answer = {"schema": JsonValue.string(OVERLAY_HOVER_SCHEMA), "version": JsonValue.int(request.version), "editor_view": JsonValue.string(
         editor,
     ), "hover": hover}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def definition_answer(
+    editor: str,
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer go-to-definition from the buffer and the source projections ordinary builds publish."""
+    definition = overlay_definition(
+        program,
+        entry,
+        document,
+        text,
+        request.definition_line,
+        request.definition_column,
+    )?
+    answer = {
+        "schema": JsonValue.string(OVERLAY_DEFINITION_SCHEMA),
+        "version": JsonValue.int(request.version),
+        "editor_view": JsonValue.string(editor),
+        "definition": definition,
+    }
     return JsonValue.object(answer).to_json().map_err((error) => error.message())
 
 
