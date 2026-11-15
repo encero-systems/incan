@@ -18,6 +18,10 @@ pub def test_inline_code_becomes_a_direct_source_module() -> Result[None, str]:
     assert inline_arguments(["--command", code], "incan")?[1] == replaced[1]
     assert inline_arguments([f"--command={code}"], "incan")?[1] == replaced[1]
     assert inline_arguments(["src/main.incn", "--locked"], "incan")? == ["src/main.incn", "--locked"]
+    # Code that defines no `main` runs with one that does nothing, as 0.5.1 runs it.
+    bare = Path(inline_arguments(["-c", "\"\"\"inline\"\"\""], "incan")?[1])
+    expected = "\"\"\"inline\"\"\"\n\n\ndef main() -> None:\n    pass\n"
+    assert bare.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
     return Ok(None)
 
 
