@@ -301,8 +301,16 @@ pub(super) fn checked_modules(
     let collected = crate::test_unit::collect(unit, &session)?;
     // A test file whose tests take fixtures or parameters is checked with its generated case entries, and rustc reads
     // their spans from the same text; so is every module and hosting conftest of a test batch.
-    crate::spans::retain_checked_sources(&collected.sources)?;
-    if collected.sources.iter().any(|(file, _)| *file == path) {
+    let entry_text = collected
+        .sources
+        .iter()
+        .find(|(file, _)| *file == path)
+        .map(|(_, text)| text.as_str());
+    crate::spans::retain_checked_source(&path, entry_text)?;
+    for (file, text) in collected.sources.iter().filter(|(file, _)| *file != path) {
+        crate::spans::retain_checked_source(file, Some(text))?;
+    }
+    if entry_text.is_some() {
         modules = collect_test_entries(&path, collected.sources, collected.frame.as_deref(), &session)
             .map_err(|failure| receipt.diagnostic(failure))?;
         session

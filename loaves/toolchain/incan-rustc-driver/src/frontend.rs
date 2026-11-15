@@ -762,7 +762,6 @@ fn compile_unit(
             .transpose()?,
         publication,
         receipt,
-        checked_sources: Vec::new(),
     };
     // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
     if hands_off.is_some_and(|hands_off| hands_off()) {

@@ -45,10 +45,6 @@ pub(crate) struct RustcHandoff {
     /// A library unit's Loaf and the directory it is published in once the rlib exists (DD-0007).
     pub(crate) publication: Option<(PathBuf, PreparedLoafPublication)>,
     pub(crate) receipt: RefusalReceipt,
-    /// The test files checked with generated case entries, each with the text it was checked as: the plan's spans
-    /// resolve against these texts, and the checking process's record of them ends with that process. Filled when
-    /// the handoff is written; a compile in the checking process reads its own record.
-    pub(crate) checked_sources: Vec<(PathBuf, String)>,
 }
 
 impl RustcHandoff {
@@ -87,8 +83,7 @@ impl RustcHandoff {
 
     /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
     /// its path for the caller that runs it.
-    pub(crate) fn hand_off(mut self, timing: &mut Timing) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        self.checked_sources = crate::spans::checked_texts()?;
+    pub(crate) fn hand_off(self, timing: &mut Timing) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = self.output.with_extension("rustc-handoff");
         let written = write(&self, &path);
         drop(self);
@@ -113,7 +108,6 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
     drop(encoded);
     std::fs::remove_file(Path::new(path))?;
     timing.mark("rustc_handoff_read");
-    crate::spans::retain_checked_sources(&handoff.checked_sources)?;
     let identity = crate::identity::verify(&handoff.sysroot)?;
     timing.mark("rustc_identity_verified");
     handoff.compile(&identity)
