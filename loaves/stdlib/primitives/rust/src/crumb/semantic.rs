@@ -19,6 +19,10 @@ mod hash;
 mod print;
 #[path = "semantic_read.rs"]
 mod read;
+#[path = "semantic_row_cells.rs"]
+mod row_cells;
+#[path = "semantic_row_cursor.rs"]
+mod row_cursor;
 #[path = "semantic_row_write.rs"]
 mod row_write;
 #[path = "semantic_rows.rs"]
@@ -607,14 +611,50 @@ mod tests {
         );
         assert_eq!(refused.kind, 0);
         assert!(refused.encoded.is_empty());
-        assert_eq!(refused.decoded, b"\x01\x0dseal_mismatch");
+        assert_eq!(refused.decoded, b"\x01\x0dseal_mismatch\x37\x00\x00");
 
         let missing = evaluate_semantic_case(
             "binary_decode".to_string(),
             r#"{"input_hex":"43524d420101002d010109070dcdc804d5010154000000000000000000000000000000000000000000000000000000000000000000","supplied_descriptions":[]}"#.to_string(),
         );
         assert_eq!(missing.kind, 0);
-        assert_eq!(missing.decoded, b"\x01\x10invalid_selector");
+        assert_eq!(missing.decoded, b"\x01\x10invalid_selector\x09\x00\x00");
+    }
+
+    #[test]
+    fn row_refusals_name_their_envelope_offset_field_and_variant() {
+        let header = "43524d420101007401006b3f0604046b696e640304456e756d076e6f6d696e616c04071ddb0b3ce6d3000470617468030d6578616d706c652e53746174650a70726f7065727469657306000100282606030269640406013f54400c82046e616d65030552656164790a70726f70657274696573060000010003000";
+        let decode = |input: &str, supplied: &str| {
+            evaluate_semantic_case(
+                "binary_decode".to_string(),
+                format!(r#"{{"input_hex":"{input}","supplied_descriptions":{supplied}}}"#),
+            )
+            .decoded
+        };
+        assert_eq!(decode("43524d", "[]"), b"\x01\x09truncated\x03\x00\x00");
+        assert_eq!(decode("43524d43010100", "[]"), b"\x01\x09bad_magic\x00\x00\x00");
+        assert_eq!(decode("43524d42010102", "[]"), b"\x01\x0ereserved_flags\x06\x00\x00");
+        assert_eq!(
+            decode("43524d4201010000ff", "[]"),
+            b"\x01\x0etrailing_bytes\x08\x00\x00"
+        );
+        // The enum's only variant has no payload fields; an offset width of three is refused inside the variant.
+        assert_eq!(
+            decode(&format!("{header}100"), "[]")[..3],
+            [0, 0, 1],
+            "the unmodified inline enum is accepted"
+        );
+        assert_eq!(
+            decode(&format!("{header}300"), "[]"),
+            b"\x01\x14invalid_offset_width\x7a\x00\x01\x06\x01\x3f\x54\x40\x0c\x82"
+        );
+        // A boolean cell of two is refused at its own byte, inside its stored field.
+        let boolean = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[{"kind":"map","entries":[[{"kind":"string","value":"id"},{"kind":"binary","hex":"013f54400c82"}],[{"kind":"string","value":"name"},{"kind":"string","value":"age"}],[{"kind":"string","value":"type"},{"kind":"string","value":"boolean"}],[{"kind":"string","value":"canonical"},{"kind":"boolean","value":true}],[{"kind":"string","value":"absent"},{"kind":"string","value":"required"}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let refused = decode(
+            "43524d42010100310101071ddb0b3ce6d3001da133a298ed40ff061c1219f095f290c49ba4ed00e4c9dad4afcf37eb2519ae01000401000102",
+            boolean,
+        );
+        assert_eq!(refused, b"\x01\x0cinvalid_cell\x38\x01\x06\x01\x3f\x54\x40\x0c\x82\x00");
     }
 
     #[test]
