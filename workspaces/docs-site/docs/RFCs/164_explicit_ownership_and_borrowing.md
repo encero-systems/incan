@@ -295,6 +295,8 @@ For a reusable buffer, a later use of the previous projection prevents a conflic
 
 `Owned[T]` must require an owned value of `T`. A non-copyable input is transferred; a copyable input may be copied according to its checked contract. A live conflicting borrow must prevent transfer. Owning a value must not erase borrowing dependencies inside that value, imply independent mutable interiors, or grant thread-safety properties.
 
+Incan source spells borrows only through these forms. `&T` and `&mut T` in Incan source are refused, with a hint naming the matching form: `Borrowed[T]` for `&T`, and `BorrowedMut[T]` or `Reference[T]` for `&mut T`. A `&T` or `&mut T` in an imported Rust signature reads as `Borrowed[T]` or `BorrowedMut[T]`.
+
 Ordinary `T` must retain the inference rules of its surrounding declaration. An explicit mode must constrain inference and must not be an optimization hint. Aliases and generic substitutions must preserve that mode. User-defined types with similar names must not gain compiler privileges by spelling alone. These forms must not require a runtime wrapper allocation solely to represent the annotation.
 
 Shared access must obey the underlying type's checked interior-mutability operations where such operations exist; this RFC does not make shared access a promise of deep immutability. Interior mutation cannot invalidate a live safe projection. Any runtime guard needed by the imported or declared contract must remain attached to that projection's validity.
