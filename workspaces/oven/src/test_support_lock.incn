@@ -1,0 +1,78 @@
+"""The standard Loaves' native support crates select their registry crates through a lock, as a project's do."""
+
+from std.fs import Path
+from std.json import JsonValue
+from std.testing import fail
+from loaf_local_graph import LocalFacet
+from lock_format import DEFAULT_MODE
+from registry_units import RegistryUnit, RegistryUnits
+from rust_activation import DependencyDomain
+from toolchain_native import support_lock
+
+const ARCHIVE: str = "sha256:8aaf6eed3d6cbe70c2c20d5b5b7ae889dedcd02ae07b00de2bb3e1d988af4181"
+
+
+def support_facet(project: str, loaf: str) -> LocalFacet:
+    """A support facet under `/repo` that requests `loaf` at any 1.x version."""
+    request = JsonValue.object(
+        {
+            "loaf": JsonValue.string(loaf),
+            "req": JsonValue.string("1"),
+            "features": JsonValue.array([]),
+        },
+    )
+    return LocalFacet(
+        project=f"/repo/{project}",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[request],
+        registry_aliases=[loaf.split("/")[-1]],
+        package=project.split("/")[-1],
+        version="0.6.0-dev.9",
+    )
+
+
+def release_unit(name: str, version: str) -> RegistryUnit:
+    """A release-profile unit of `crates-io/NAME` pinned to a loaves.pub index line."""
+    return RegistryUnit(
+        loaf=f"crates-io/{name}",
+        version=version,
+        domain="target",
+        directory=f"{name}-{version}",
+        entry=f"{name}-{version}",
+        profile="release",
+        registry="loaves.pub",
+        revision=1,
+        source_digest=ARCHIVE,
+    )
+
+
+pub def test_the_support_crates_registry_selection_is_a_lock_that_binds_their_build() -> Result[None, str]:
+    """
+    One route: the support facets resolve their registry crates as `oven lock` resolves a project's, at release. The
+    lock records each selected unit with its registry, revision and archive digest and each support facet as a path
+    Loaf relative to the repository; the registry the support build selects from is bound to exactly what the lock
+    records, with no installation preference left to decide.
+    """
+    kernel = support_facet("loaves/kernel/incan_lang", "crates-io/hex")
+    facets = [kernel, support_facet("loaves/stdlib/data", "crates-io/hex")]
+    units = [release_unit("hex", "1.0.0"), release_unit("hex", "1.1.0")]
+    registry = RegistryUnits(units=units, search=[], installation_bindings=[("target", "hex-1.1.0")])
+    lock, bound = support_lock(facets, registry, Path("/repo"), "compiler-identity", "aarch64-apple-darwin")?
+    assert lock.mode == DEFAULT_MODE, lock.mode
+    mut paths: list[str] = []
+    mut registered: list[str] = []
+    for entry in lock.loaves:
+        if entry.origin == "path":
+            paths.append(entry.path)
+        elif entry.origin == "toolchain":
+            registered.append(f"{entry.name} {entry.version} {entry.registry} {entry.revision} {entry.checksum}")
+        else:
+            fail(f"a support lock has a {entry.origin} entry")
+    assert sorted(paths) == ["loaves/kernel/incan_lang", "loaves/stdlib/data"], f"{paths}"
+    # The lock's default mode takes the lowest compatible version, as `oven lock` does for a new project.
+    assert registered == [f"crates-io/hex 1.0.0 loaves.pub 1 {ARCHIVE}"], f"{registered}"
+    assert bound.recorded_bindings == [("target", "hex-1.0.0")], f"{bound.recorded_bindings}"
+    assert bound.installation_bindings == []
+    return Ok(None)
