@@ -13,7 +13,7 @@ use std::fmt::Display;
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
-use crate::ast::{Declaration, Program, Span, Spanned};
+use crate::ast::{Declaration, Program, Span, Spanned, Statement};
 use crate::diagnostics::{CompileError, DiagnosticRanges, DiagnosticRecipe, ErrorKind};
 use incan_semantics_core::SymbolOrigin;
 
@@ -432,6 +432,7 @@ impl OwnerSyntax {
     fn with_profile(declaration: &Spanned<Declaration>, header_only: bool) -> Result<Self, AnchorFault> {
         let mut inventory = SyntaxInventory {
             header_only,
+            statements: undocumented_statements(declaration),
             ..SyntaxInventory::default()
         };
         declaration
@@ -460,6 +461,17 @@ impl OwnerSyntax {
     }
 }
 
+/// A function's statements after the documentation that leads them, when documentation leads them. The checker checks
+/// nothing in documentation, so it has no node to anchor: leaving it out of the root and the paths keeps a docstring
+/// edit from changing either, and the statements after it keep their paths.
+fn undocumented_statements(declaration: &Spanned<Declaration>) -> Option<&[Spanned<Statement>]> {
+    let Declaration::Function(function) = &declaration.node else {
+        return None;
+    };
+    let leading = crate::documentation::leading_documentation(&function.body);
+    (leading > 0).then(|| &function.body[leading..])
+}
+
 // ---- Syntax inventory serializer ----
 
 /// Serialization failure of an owner's syntax.
@@ -483,9 +495,12 @@ impl ser::Error for InventoryError {
 /// One pass over an owner's syntax: every `HirSourceSpan` is recorded with its structural path and contributes only
 /// its expansion identity to the hash; every other value is hashed with a type tag and explicit lengths.
 #[derive(Default)]
-struct SyntaxInventory {
+struct SyntaxInventory<'syntax> {
     /// Declaration/default records do not depend on the selected function's statement body.
     header_only: bool,
+    /// A function's statements after the documentation that leads them, which stand for its whole body. Absent when
+    /// no documentation leads them.
+    statements: Option<&'syntax [Spanned<Statement>]>,
     hasher: Sha256,
     path: Vec<String>,
     /// Next element index of each open sequence, tuple or map.
@@ -506,7 +521,7 @@ struct SpanFields {
 
 type InventoryResult = Result<(), InventoryError>;
 
-impl SyntaxInventory {
+impl SyntaxInventory<'_> {
     /// Hash a tagged, length-delimited value.
     fn scalar(&mut self, tag: u8, bytes: &[u8]) -> InventoryResult {
         self.hasher.update([tag]);
@@ -594,7 +609,7 @@ impl SyntaxInventory {
     }
 }
 
-impl ser::Serializer for &mut SyntaxInventory {
+impl ser::Serializer for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
     type SerializeSeq = Self;
@@ -798,7 +813,7 @@ impl ser::Serializer for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeSeq for &mut SyntaxInventory {
+impl ser::SerializeSeq for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -813,7 +828,7 @@ impl ser::SerializeSeq for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeTuple for &mut SyntaxInventory {
+impl ser::SerializeTuple for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -828,7 +843,7 @@ impl ser::SerializeTuple for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeTupleStruct for &mut SyntaxInventory {
+impl ser::SerializeTupleStruct for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -843,7 +858,7 @@ impl ser::SerializeTupleStruct for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeTupleVariant for &mut SyntaxInventory {
+impl ser::SerializeTupleVariant for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -860,7 +875,7 @@ impl ser::SerializeTupleVariant for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeMap for &mut SyntaxInventory {
+impl ser::SerializeMap for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -880,7 +895,7 @@ impl ser::SerializeMap for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeStruct for &mut SyntaxInventory {
+impl ser::SerializeStruct for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
@@ -890,11 +905,17 @@ impl ser::SerializeStruct for &mut SyntaxInventory {
             span.field = key;
             return value.serialize(&mut **self);
         }
-        if self.header_only && key == "body" && self.path.iter().map(String::as_str).eq(["node", "Function"]) {
+        let function_body = key == "body" && self.path.iter().map(String::as_str).eq(["node", "Function"]);
+        if self.header_only && function_body {
             return Ok(());
         }
+        // The statements after the leading documentation serialize as the whole body would without it.
+        let statements = self.statements.filter(|_| function_body);
         self.enter(key);
-        value.serialize(&mut **self)?;
+        match statements {
+            Some(statements) => statements.serialize(&mut **self)?,
+            None => value.serialize(&mut **self)?,
+        }
         self.path.pop();
         Ok(())
     }
@@ -905,7 +926,7 @@ impl ser::SerializeStruct for &mut SyntaxInventory {
     }
 }
 
-impl ser::SerializeStructVariant for &mut SyntaxInventory {
+impl ser::SerializeStructVariant for &mut SyntaxInventory<'_> {
     type Ok = ();
     type Error = InventoryError;
 
