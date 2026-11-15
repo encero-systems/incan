@@ -22,4 +22,4 @@ pub from record_scope import (
     PreparationEvidence,
     READ_SCHEMA,
 )
-pub from store_record_source import StoreRecordSource, encode_record_key
+pub from store_record_source import StoreRecordSource, encode_record_key, selected_record_bytes

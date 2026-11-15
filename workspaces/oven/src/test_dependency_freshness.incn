@@ -49,6 +49,9 @@ from freshness_fixtures import fixture, make_executable, reconcile, unit_key, wr
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
     scratch = scratch_directory()?
+    if get_or("INCAN_E2_NAMESPACE_ONLY", "") == "1":
+        verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
+        return Ok(None)
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     verify_closure_readings(scratch.path().joinpath("closure.json"))?
@@ -101,6 +104,17 @@ enum SemanticEdit(str):
     Documentation = "documentation"
     GenericInstantiation = "generic-instantiation"
     Dependency = "dependency"
+    NamespaceBody = "namespace-body-only"
+    NamespaceSignature = "namespace-signature"
+    NamespaceModel = "namespace-model"
+    NamespaceConst = "namespace-const"
+    NamespaceClass = "namespace-class"
+    NamespaceEnum = "namespace-enum"
+    NamespaceStatic = "namespace-static"
+    NamespaceTrait = "namespace-trait"
+    NamespaceNewtype = "namespace-newtype"
+    NamespaceTypeAlias = "namespace-type-alias"
+    NamespaceReexport = "namespace-reexport"
 
 
 @derive(Eq)
@@ -110,6 +124,7 @@ enum MatrixFixture(str):
     Hello = "hello"
     Siblings = "siblings"
     Library = "library"
+    Namespaces = "namespaces"
 
 
 @derive(Eq)
@@ -129,6 +144,9 @@ model MatrixCase:
     target: str
     base: Dict[str, str]
     edited: Dict[str, str]
+    expected_module_checks: int = -1
+    expected_body_ir_modules: int = -1
+    expected_lowered_modules: int = -1
 
 
 model PhaseCounts:
@@ -139,6 +157,12 @@ model PhaseCounts:
     body_ir: int = 0
     lowering: int = 0
     llvm: int = 0
+    module_checks: int = 0
+    body_ir_modules: int = 0
+    lowered_modules: int = 0
+    checked_module_paths: list[str] = []
+    body_ir_module_paths: list[str] = []
+    lowering_items: list[str] = []
 
     def display(self) -> str:
         """Render one stable compact count row for a failure or timing receipt."""
@@ -146,13 +170,30 @@ model PhaseCounts:
 
     def after(self, before: PhaseCounts) -> PhaseCounts:
         """Return work added after an earlier cumulative trace snapshot from the same records service."""
+        lowering_items = self.lowering_items[len(before.lowering_items):]
         return PhaseCounts(
             declarations=self.declarations - before.declarations,
             bodies=self.bodies - before.bodies,
             body_ir=self.body_ir - before.body_ir,
             lowering=self.lowering - before.lowering,
             llvm=self.llvm - before.llvm,
+            module_checks=self.module_checks - before.module_checks,
+            body_ir_modules=self.body_ir_modules - before.body_ir_modules,
+            lowered_modules=lowering_module_count(lowering_items),
+            checked_module_paths=self.checked_module_paths[len(before.checked_module_paths):],
+            body_ir_module_paths=self.body_ir_module_paths[len(before.body_ir_module_paths):],
+            lowering_items=lowering_items,
         )
+
+
+def lowering_module_count(items: list[str]) -> int:
+    """Count unique source modules in one non-cumulative lowering trace slice."""
+    mut modules: set[str] = set()
+    for item in items:
+        fields = item.split("\t")
+        if len(fields) >= 5 and fields[4] != "":
+            modules.add(fields[4])
+    return len(modules)
 
 
 model MatrixBuild:
@@ -179,7 +220,17 @@ model SemanticEditMatrix:
         2. Keep exact digests of the warm records and selected native artifacts, then remove only this scratch target.
         3. Build the edited source cold and require every cold record and artifact to have identical warm bytes.
         """
-        for scenario in semantic_edit_cases():
+        cases = semantic_edit_cases()
+        for scenario in [scenario for scenario in cases if scenario.expected_module_checks >= 0]:
+            match self.verify_case(scenario):
+                Ok(_) => pass
+                Err(reason) => self.failures.append(f"{scenario.edit.value()}: {reason}")
+        if len(self.failures) != 0:
+            return Err("E2 namespace admission differences:\n- " + "\n- ".join(self.failures))
+        if get_or("INCAN_E2_NAMESPACE_ONLY", "") == "1":
+            self.write_rows()?
+            return Ok(None)
+        for scenario in [scenario for scenario in cases if scenario.expected_module_checks < 0]:
             match self.verify_case(scenario):
                 Ok(_) => pass
                 Err(reason) => self.failures.append(f"{scenario.edit.value()}: {reason}")
@@ -196,10 +247,28 @@ model SemanticEditMatrix:
         self.write_sources(project, scenario.edited)?
         mut warm = self.build(scenario, project, MatrixBuildKind.Warm)?
         warm.counts = warm.counts.after(base.counts)
+        mut phase_differences: list[str] = []
+        if scenario.expected_module_checks >= 0 and warm.counts.module_checks != scenario.expected_module_checks:
+            phase_differences.append(
+                f"warm module checks: expected {scenario.expected_module_checks}, found {warm.counts.module_checks}",
+            )
+            phase_differences.append("checked modules: " + ", ".join(warm.counts.checked_module_paths))
+        if scenario.expected_body_ir_modules >= 0 and warm.counts.body_ir_modules != scenario.expected_body_ir_modules:
+            phase_differences.append(
+                f"warm Body IR modules: expected {scenario.expected_body_ir_modules}, found {warm.counts.body_ir_modules}",
+            )
+            phase_differences.append("Body IR modules: " + ", ".join(warm.counts.body_ir_module_paths))
+        if scenario.expected_lowered_modules >= 0 and warm.counts.lowered_modules != scenario.expected_lowered_modules:
+            phase_differences.append(
+                f"warm lowered modules: expected {scenario.expected_lowered_modules}, found {warm.counts.lowered_modules}",
+            )
+            phase_differences.append("lowering items: " + ", ".join(warm.counts.lowering_items))
         self.stop_engine(project.joinpath("warm-store"))?
         target = project.joinpath("target")
         if not target.is_dir():
             return Err("warm build produced no target directory")
+        warm_target = project.joinpath("warm-target")
+        _ = target.copy(warm_target, true, false).map_err((error) => error.message())?
         remove_dir_all(target.0).map_err((error) => str(error))?
         cold = self.build(scenario, project, MatrixBuildKind.Cold)?
         self.stop_engine(project.joinpath("cold-store"))?
@@ -208,14 +277,27 @@ model SemanticEditMatrix:
                 return Err(f"cold output {path} is absent from the incremental build")
             if cold.artifacts[path] != warm.artifacts[path]:
                 return Err(f"incremental and cold bytes differ for {path}")
+            comparison = Command
+                .new("cmp")
+                .arg(warm_target.joinpath(path).0)
+                .arg(target.joinpath(path).0)
+                .output()
+                .map_err((error) => str(error))?
+            if not comparison.status.success():
+                return Err(f"cmp rejected incremental and cold bytes for {path}")
         if len(cold.artifacts) == 0:
             return Err("the cold build exposed no compiler records or selected artifacts")
+        if len(phase_differences) != 0:
+            return Err("; ".join(phase_differences))
         self.rows.append(
             "\t".join(
                 [
                     scenario.edit.value(),
                     scenario.fixture.value(),
                     warm.counts.display(),
+                    str(warm.counts.module_checks),
+                    str(warm.counts.body_ir_modules),
+                    str(warm.counts.lowered_modules),
                     str(warm.wall_ms),
                     str(cold.wall_ms),
                     "identical",
@@ -304,6 +386,7 @@ model SemanticEditMatrix:
     def phase_counts(self, traces: Path, native: Path) -> Result[PhaseCounts, str]:
         """Count actual work observations from the edited build, never inventories of retained products."""
         mut counts = PhaseCounts()
+        mut lowered_modules: set[str] = set()
         for trace in traces.iterdir().map_err((error) => error.message())?:
             if not trace.is_file():
                 continue
@@ -314,10 +397,20 @@ model SemanticEditMatrix:
                     counts.bodies += 1
                 elif "\"phase\":\"body_ir\"" in line and "\"action\":\"built\"" in line:
                     counts.body_ir += 1
+                if "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::typecheck_module\"" in line:
+                    counts.module_checks += 1
+                    counts.checked_module_paths.append(line)
+                elif "\"kind\":\"begin\"" in line and "\"function\":\"incan_driver::build_body_ir_module\"" in line:
+                    counts.body_ir_modules += 1
+                    counts.body_ir_module_paths.append(line)
         if native.is_file():
             for line in native.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
                 if line.startswith("redo-item: lowering\t"):
                     counts.lowering += 1
+                    counts.lowering_items.append(line)
+                    fields = line.split("\t")
+                    if len(fields) >= 5:
+                        lowered_modules.add(fields[4])
                 elif line.startswith("redo-codegen: "):
                     document = parse(line[len("redo-codegen: "):]).map_err((error) => error.message())?
                     execution = document.require("execution").map_err((error) => error.message())?.expect_str().map_err(
@@ -326,13 +419,17 @@ model SemanticEditMatrix:
                     if execution == "all_on_success":
                         partitions = document.require("partitions").map_err((error) => error.message())?
                         counts.llvm += partitions.expect_int().map_err((error) => error.message())?
+        counts.lowered_modules = len(lowered_modules)
         return Ok(counts)
 
     def write_rows(self) -> Result[None, str]:
         """Write optional development-loop samples without changing the test's verdict or ordinary console."""
         destination = get_or("INCAN_E2_MATRIX_REPORT", "")
         if destination != "":
-            header = "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\twarm_ms\tcold_ms\tverdict\n"
+            header = (
+                "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\tchecked_modules\t"
+                + "body_ir_modules\tlowered_modules\twarm_ms\tcold_ms\tverdict\n"
+            )
             Path(destination)
                 .write_text(header + "\n".join(self.rows) + "\n", "utf-8", "strict", None)
                 .map_err((error) => error.message())?
@@ -540,7 +637,189 @@ def semantic_edit_cases() -> list[MatrixCase]:
                 ["pub def selected() -> int:", "    return 2", "", "", "pub def stable() -> int:", "    return 7"],
             )},
         ),
+        MatrixCase(
+            edit=SemanticEdit.NamespaceBody,
+            fixture=MatrixFixture.Namespaces,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hello\""]), "independent.incn": fixture_source(
+                ["pub def stable() -> int:", "    return 7"],
+            )},
+            edited={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hullo\""]), "independent.incn": fixture_source(
+                ["pub def stable() -> int:", "    return 7"],
+            )},
+            expected_module_checks=1,
+            expected_body_ir_modules=1,
+            expected_lowered_modules=1,
+        ),
+        MatrixCase(
+            edit=SemanticEdit.NamespaceSignature,
+            fixture=MatrixFixture.Namespaces,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"one\""]), "independent.incn": fixture_source(
+                ["pub def stable() -> int:", "    return 7"],
+            )},
+            edited={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> int:", "    return 1"]), "independent.incn": fixture_source(
+                ["pub def stable() -> int:", "    return 7"],
+            )},
+            expected_module_checks=2,
+            expected_body_ir_modules=2,
+            expected_lowered_modules=2,
+        ),
+        MatrixCase(
+            edit=SemanticEdit.NamespaceModel,
+            fixture=MatrixFixture.Namespaces,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hello\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            edited={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hullo\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            expected_module_checks=1,
+            expected_body_ir_modules=1,
+            expected_lowered_modules=1,
+        ),
+        namespace_family_case(SemanticEdit.NamespaceConst, ["pub const LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceClass, ["pub class Marker:", "    pub value: int"]),
+        namespace_family_case(SemanticEdit.NamespaceEnum, ["pub enum Mode:", "    Fast", "    Slow"]),
+        namespace_family_case(SemanticEdit.NamespaceStatic, ["pub static LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceTrait, ["pub trait Marker:", "    def mark(self) -> int"]),
+        namespace_family_case(SemanticEdit.NamespaceNewtype, ["pub type EvidenceId = newtype str"]),
+        namespace_family_case(SemanticEdit.NamespaceTypeAlias, ["pub type Answer = int | str"]),
+        namespace_reexport_case(),
     ]
+
+
+def namespace_family_case(edit: SemanticEdit, declarations: list[str], append_stable: bool = true) -> MatrixCase:
+    """Require one unchanged declaration-family namespace to stay admitted across a sibling body edit."""
+    main = fixture_source(
+        [
+            "from provider import value",
+            "from independent import stable",
+            "",
+            "",
+            "def main() -> None:",
+            "    println(value())",
+            "    println(stable())",
+        ],
+    )
+    mut independent_lines = declarations
+    if append_stable:
+        independent_lines.extend(["", "", "pub def stable() -> int:", "    return 7"])
+    independent = fixture_source(independent_lines)
+    return MatrixCase(
+        edit=edit,
+        fixture=MatrixFixture.Namespaces,
+        target="main.incn",
+        base={"main.incn": main, "provider.incn": fixture_source(
+            ["pub def value() -> str:", "    return \"hello\""],
+        ), "independent.incn": independent},
+        edited={"main.incn": main, "provider.incn": fixture_source(
+            ["pub def value() -> str:", "    return \"hullo\""],
+        ), "independent.incn": independent},
+        expected_module_checks=1,
+        expected_body_ir_modules=1,
+        expected_lowered_modules=1,
+    )
+
+
+def namespace_reexport_case() -> MatrixCase:
+    """Require a real public source re-export namespace to stay admitted across an unrelated body edit."""
+    main = fixture_source(
+        ["from independent import stable", "from provider import value", "", "", "def main() -> None:",
+         "    println(stable())", "    println(value())"],
+    )
+    provider = fixture_source(["pub def value() -> str:", "    return \"hello\""])
+    edited_provider = fixture_source(["pub def value() -> str:", "    return \"hullo\""])
+    origin = fixture_source(["pub def stable() -> int:", "    return 7"])
+    facade = fixture_source(["pub from origin import stable"])
+    manifest = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    return MatrixCase(
+        edit=SemanticEdit.NamespaceReexport,
+        fixture=MatrixFixture.Namespaces,
+        target="src/main.incn",
+        base={"loaf.toml": manifest, "src/main.incn": main, "src/provider.incn": provider, "src/origin.incn": origin,
+              "src/independent.incn": facade},
+        edited={"loaf.toml": manifest, "src/main.incn": main, "src/provider.incn": edited_provider, "src/origin.incn": origin,
+                "src/independent.incn": facade},
+        expected_module_checks=1,
+        expected_body_ir_modules=1,
+        expected_lowered_modules=1,
+    )
 
 
 def fixture_source(lines: list[str]) -> str:

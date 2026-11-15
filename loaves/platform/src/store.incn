@@ -535,6 +535,19 @@ pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
     return Ok(live)
 
 
+pub def verify_segments(view: Snapshot) -> list[StoreError]:
+    """Read every byte of every segment retained by the generation and report content-name damage."""
+    mut damaged: list[StoreError] = []
+    for digest in view.segments:
+        path = view.root.joinpath("segments").joinpath(f"{digest}.seg")
+        match file_digest(path, "sha256"):
+            Err(error) => damaged.append(failure("integrity", path.value, error.message()))
+            Ok(found) =>
+                if hexlify(found) != digest:
+                    damaged.append(failure("integrity", path.value, "segment does not match its digest"))
+    return damaged
+
+
 # ---- Segments ----
 
 
@@ -555,15 +568,25 @@ pub def begin(view: Snapshot) -> Transaction:
 pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
     """`transaction` with a value written under `key`, valid only while `expect` holds at commit."""
     mut next = transaction
-    next.writes.append(Write(key=key, kind=KIND_VALUE, value=value, expect=expect))
+    stage_put(next, key, value, expect)
     return next
 
 
 pub def delete(transaction: Transaction, key: str) -> Transaction:
     """`transaction` with a tombstone written under `key`."""
     mut next = transaction
-    next.writes.append(Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
+    stage_delete(next, key)
     return next
+
+
+pub def stage_put(mut transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> None:
+    """Stage one value directly in a caller-owned transaction without copying its accumulated writes."""
+    transaction.writes.append(Write(key=key, kind=KIND_VALUE, value=value, expect=expect))
+
+
+pub def stage_delete(mut transaction: Transaction, key: str) -> None:
+    """Stage one tombstone directly in a caller-owned transaction without copying its accumulated writes."""
+    transaction.writes.append(Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
 
 
 pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:

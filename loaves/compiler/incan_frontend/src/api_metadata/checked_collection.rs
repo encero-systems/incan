@@ -86,7 +86,30 @@ pub fn collect_checked_api_metadata(
             && let CheckedExportKind::Alias(checked) = &export.kind
         {
             alias.projected_type = checked.projected_type.as_ref().map(type_ref_from_resolved);
-            alias.projected_function = checked_provider_alias_projection(alias, export, checker);
+            alias.projected_function = checked
+                .projected_function
+                .as_ref()
+                .map(|function| {
+                    let projected = crate::library_manifest::function_export_from_checked(
+                        module_path.first().map_or("", String::as_str),
+                        function,
+                    );
+                    ApiProjectedFunction {
+                        source_path: alias.target_path.clone(),
+                        callable: ApiCallableMetadata {
+                            ownership: projected.ownership,
+                            name: alias.name.clone(),
+                            anchor: alias.anchor.clone(),
+                            type_params: projected.type_params,
+                            receiver: None,
+                            params: projected.params,
+                            return_type: projected.return_type,
+                            is_async: projected.is_async,
+                        },
+                        decorators: Vec::new(),
+                    }
+                })
+                .or_else(|| checked_provider_alias_projection(alias, export, checker));
         }
     }
 

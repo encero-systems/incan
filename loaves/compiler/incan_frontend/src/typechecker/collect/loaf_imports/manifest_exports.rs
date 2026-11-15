@@ -525,7 +525,7 @@ impl TypeChecker {
     ///
     /// `api` is the checked API the declaration belongs to; a partial's leftover defaulted parameters are completed
     /// from its target there (#1760).
-    pub(in crate::typechecker::collect) fn symbol_kind_from_api_declaration(
+    pub(in crate::typechecker) fn symbol_kind_from_api_declaration(
         &self,
         api: Option<&CheckedApiMetadataPackage>,
         declaration: &ApiDeclaration,

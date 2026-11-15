@@ -10,19 +10,23 @@ from checker_records import (
     CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledBodyValue,
+    CompiledNamespaceValue,
     GraphBodyValue,
+    GraphNamespaceValue,
     decode_graph_body_values,
-    decode_compiled_body_outputs,
+    decode_graph_namespace_value,
     encode_record,
     encode_graph_body_values,
-    encode_compiled_body_outputs,
+    encode_graph_namespace_value,
     decode_record,
+    content_digest,
     semantic_digest,
     from_native_final_fields,
     from_native_fields,
     from_native_local_fields,
     native_fields,
 )
+from compiled_body_frames import CompiledBodyOutput, decode_compiled_body_frame, encode_compiled_body_outputs
 from rust::incan_frontend::checker_records import (
     fixture_record,
     verify_fixture,
@@ -40,7 +44,11 @@ pub def canonical_record_controls() -> Result[None, str]:
         changed = checked_fixture(moved, "main", declaration)?
         before = encode_record(base).map_err((_) => "encode")?
         after = encode_record(changed).map_err((_) => "moved encode")?
+        assert before[:4] == b"CRMB"
         assert before == after
+        assert content_digest(base).map_err((_) => "content digest")? == content_digest(changed).map_err(
+            (_) => "content digest",
+        )?
         assert semantic_digest(base).map_err((_) => "digest")? == semantic_digest(changed).map_err((_) => "digest")?
         # The source checker and native owner were destroyed inside fixture_record before encoding.
         decoded = decode_record(before, CHECKER_PROFILE, changed.owner, changed.root).map_err((_) => "decode")?
@@ -60,6 +68,7 @@ pub def canonical_record_controls() -> Result[None, str]:
     final_value_controls()?
     ownership_record_controls()?
     input_protocol_controls()?
+    graph_namespace_controls()?
     return Ok(None)
 
 
@@ -89,12 +98,15 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
         body_ir=b"owner-frame",
-        dependency_reads=[CompiledBodyDependencyRead(
-            package=Some("provider"),
-            module="lib",
-            name="value",
-            identity="provider|module:lib|value|function|module|0|() -> int",
-        )],
+        dependency_reads=[
+            CompiledBodyDependencyRead(
+                package=Some("provider"),
+                module="lib",
+                name="value",
+                identity="provider|module:lib|value|function|module|0|() -> int",
+                reference_subject="expr:main#10..17",
+            ),
+        ],
     )
     fallback = CompiledBodyFallback(
         module="src/main.incn",
@@ -108,26 +120,114 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         identity=None,
         reason="checked owner has no stable declaration identity",
     )
-    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback, identityless])).map_err(
-        (_) => "compiled output encode",
-    )?
-    decoded = decode_compiled_body_outputs(encoded).map_err((_) => "compiled output decode")?
-    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 2
-    assert (
-        decoded.values[0].module == value.module
-        and decoded.values[0].name == value.name
-        and decoded.values[0].identity == value.identity
+    namespace = CompiledNamespaceValue(
+        module="src/main.incn",
+        interface=b"checked-interface",
+        body_ir=b"whole-module-frame",
+        dependencies=["src/helper.incn", "src/provider.incn"],
+        lowering_inputs=[["main#decl.0..10", "witness"]],
     )
-    assert decoded.values[0].dependency_reads == value.dependency_reads
-    assert (
-        decoded.values[0].declaration == value.declaration
-        and decoded.values[0].local == value.local
-        and decoded.values[0].final == value.final
-        and decoded.values[0].body_ir == value.body_ir
-    )
-    assert decoded.fallbacks[0] == fallback
-    assert decoded.fallbacks[1] == identityless
+    encoded = encode_compiled_body_outputs(
+        CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
+    ).map_err((_) => "compiled output encode")?
+    assert len(encoded) == 4
+    for frame in encoded:
+        assert frame[8:12] == b"CRMB"
+    match decode_compiled_body_frame(encoded[0]).map_err((_) => "compiled value decode")?:
+        CompiledBodyOutput.Namespace(decoded) =>
+            assert decoded.module == namespace.module and decoded.interface == namespace.interface
+            assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
+            assert decoded.lowering_inputs == namespace.lowering_inputs
+        _ => return Err("compiled namespace decoded as another output kind")
+    match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled value decode")?:
+        CompiledBodyOutput.Value(decoded) =>
+            assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
+            assert decoded.dependency_reads[0].reference_subject == "expr:main#10..17"
+            assert decoded.dependency_reads == value.dependency_reads
+            assert (
+                decoded.declaration == value.declaration
+                and decoded.local == value.local
+                and decoded.final == value.final
+                and decoded.body_ir == value.body_ir
+            )
+        _ => return Err("compiled value decoded as another output kind")
+    match decode_compiled_body_frame(encoded[2]).map_err((_) => "compiled fallback decode")?:
+        CompiledBodyOutput.Fallback(decoded) =>
+            assert decoded == fallback
+        _ => return Err("compiled fallback decoded as another output kind")
+    match decode_compiled_body_frame(encoded[3]).map_err((_) => "identityless fallback decode")?:
+        CompiledBodyOutput.Fallback(decoded) =>
+            assert decoded == identityless
+        _ => return Err("identityless fallback decoded as another output kind")
+    compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
+
+
+def compiled_output_size_controls(
+    declaration: CheckedRecord,
+    local: CheckedRecord,
+    final: CheckedRecord,
+) -> Result[None, str]:
+    """Many owner frames may exceed the former aggregate bound while one oversized owner remains refused."""
+    body_ir = "".join(["x" for _ in range(1000000)]).encode()
+    mut values: list[CompiledBodyValue] = []
+    for index in range(70):
+        suffix = str(index + 100)
+        identity = "function:main::owner_" + suffix
+        values.append(
+            CompiledBodyValue(
+                module="src/main.incn",
+                name="owner_" + suffix,
+                identity=identity,
+                declaration=owner_record(declaration, identity)?,
+                local=owner_record(local, identity)?,
+                final=owner_record(final, identity)?,
+                body_ir=body_ir,
+            ),
+        )
+    frames = encode_compiled_body_outputs(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
+        (_) => "many-owner compiled output encode",
+    )?
+    assert len(frames) == 70
+    assert sum([len(frame) for frame in frames]) > 67108864
+
+    mut oversized_value = values[0]
+    oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
+        Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
+            assert bound == "compiled-output-frame-bytes"
+            assert observed > maximum and maximum == 67108864
+        _ => return Err("compiled output accepted an owner frame over its bound")
+
+    mut fallbacks: list[CompiledBodyFallback] = []
+    for index in range(4097):
+        fallbacks.append(
+            CompiledBodyFallback(
+                module="src/main.incn",
+                name="owner_" + str(index + 10000),
+                identity=None,
+                reason="fixture",
+            ),
+        )
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
+        Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
+            assert bound == "compiled-output-frame-count"
+            assert observed == 4097 and maximum == 4096
+        _ => return Err("compiled output accepted too many owner frames")
+    return Ok(None)
+
+
+def owner_record(record: CheckedRecord, identity: str) -> Result[bytes, str]:
+    """Rebind one fixture record to a stable owner for aggregate-independent transport coverage."""
+    return encode_record(
+        CheckedRecord(
+            profile=record.profile,
+            owner=identity,
+            root=record.root,
+            family=record.family,
+            fields=record.fields,
+        ),
+    ).map_err((_) => "owner record encode")
 
 
 def projected_owner_controls() -> Result[None, str]:
@@ -173,14 +273,12 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
     assert fault_is(decode_record(encoded, "wrong", record.owner, record.root), "profile")
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, "wrong", record.root), "owner")
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, record.owner, "wrong"), "body")
-    match encoded.decode():
-        Ok(text) =>
-            assert fault_is(
-                decode_record((text + "x").encode(), CHECKER_PROFILE, record.owner, record.root),
-                "malformed",
-            )
-        Err(_) =>
-            assert false
+    mut trailing: list[u8] = []
+    for byte in encoded:
+        octet: u8 = byte.wrapping_resize()
+        trailing.append(octet)
+    trailing.append(120)
+    assert fault_is(decode_record(trailing, CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(encoded[:len(encoded) - 1], CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"01:x", CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"1:\xff", CHECKER_PROFILE, record.owner, record.root), "malformed")
@@ -233,6 +331,7 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     transport = encode_graph_body_values(
         [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
     ).map_err((_) => "graph transport encode")?
+    assert transport[:4] == b"CRMB"
     selected = decode_graph_body_values(transport).map_err((_) => "graph transport decode")?
     assert len(selected) == 1
     assert selected[0].identity == local.owner
@@ -259,6 +358,22 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     ):
         Err(CodecFault.Malformed) => pass
         _ => return Err("graph transport accepted crossed families")
+    return Ok(None)
+
+
+def graph_namespace_controls() -> Result[None, str]:
+    """The composite checked namespace is one Crumb row while interface and Body IR bytes remain opaque."""
+    value = GraphNamespaceValue(
+        module="src/main.incn",
+        interface=b"checked-interface",
+        body_ir=b"module-body-ir",
+        lowering_inputs=[["main#decl.0..10", "witness"]],
+    )
+    encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
+    assert encoded[:4] == b"CRMB"
+    decoded = decode_graph_namespace_value(encoded).map_err((_) => "graph namespace decode")?
+    assert decoded.module == value.module and decoded.interface == value.interface
+    assert decoded.body_ir == value.body_ir and decoded.lowering_inputs == value.lowering_inputs
     return Ok(None)
 
 

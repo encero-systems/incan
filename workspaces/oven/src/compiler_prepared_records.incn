@@ -1,0 +1,55 @@
+"""Authenticate compiler facts staged in the current unpublished graph transaction."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::internal_models.records import (
+    ReadFault,
+    ReadScope,
+    RevisionEvidence,
+    SelectedFact,
+    RecordRead,
+    RecordSource,
+    RecordRequest,
+    encode_record_key,
+    selected_record_bytes,
+)
+
+
+pub class PreparedBodyRecordSource with RecordSource:
+    """Authenticate reads from the exact values staged by one compiled-body publication transaction."""
+
+    scope: ReadScope
+    values: Dict[str, bytes] = {}
+
+    @staticmethod
+    pub def open(scope: ReadScope) -> PreparedBodyRecordSource:
+        """Create an empty source bound to one compiler profile and publication preparation."""
+        return PreparedBodyRecordSource(scope=scope)
+
+    pub def add(mut self, key: str, value: bytes) -> None:
+        """Make one exact pending value available to later producers in the same transaction."""
+        self.values[key] = value
+
+    pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
+        """Bind the same staged values to the next producer profile without weakening its read-scope check."""
+        scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+        return PreparedBodyRecordSource(scope=scope, values=self.values)
+
+    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+        """Return one staged selection with full-value evidence, or fail when publication left it unavailable."""
+        if scope != self.scope:
+            return RecordRead.Failed(ReadFault.SnapshotMismatch)
+        key = match encode_record_key(request.key):
+            Ok(value) => value
+            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
+
+        if key not in self.values:
+            return RecordRead.Failed(ReadFault.UnfinishedSupplier)
+        value = self.values[key]
+        selected = match selected_record_bytes(value, request):
+            Some(result) => result
+            None => return RecordRead.Failed(ReadFault.InvalidEvidence)
+
+        semantic = hexlify(sha256.digest(value))
+        evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
+        return RecordRead.Found(SelectedFact(evidence=evidence, value=selected, selection_digest=semantic))

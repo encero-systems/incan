@@ -492,6 +492,7 @@ impl TypeCheckInfo {
             inferred_call_result_type: self.calls.inferred_call_result_types.remove(&key),
             method_call: self.calls.resolved_method_calls.remove(&key),
             identity: self.references.resolved_identities.remove(&key),
+            stable_declaration_context: self.references.stable_declaration_contexts.remove(&key),
             callable_params: self.calls.call_site_callable_params.remove(&key),
             monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
             body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
@@ -575,6 +576,11 @@ impl TypeCheckInfo {
         );
         put(&mut self.calls.resolved_method_calls, key, facts.method_call);
         put(&mut self.references.resolved_identities, key, facts.identity);
+        put(
+            &mut self.references.stable_declaration_contexts,
+            key,
+            facts.stable_declaration_context,
+        );
         put(&mut self.calls.call_site_callable_params, key, facts.callable_params);
         put(
             &mut self.calls.call_site_monomorph_type_args,

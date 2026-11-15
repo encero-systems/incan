@@ -399,6 +399,14 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
 fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result<(), Box<dyn std::error::Error>> {
     use crate::symbols::ResolvedType;
     use crate::typechecker::canonical_nodes::NodeBindingError;
+    for info in incan_lang::lang::types::numerics::NUMERIC_TYPES {
+        let expected = ResolvedType::Numeric(info.id);
+        let mut fields = Vec::new();
+        super::super::types::type_fields(&expected, &mut fields)?;
+        let mut reader = fields.iter();
+        assert_eq!(super::super::types::read_type(&mut reader)?, expected);
+        assert_eq!(reader.next(), None);
+    }
     for leaf in [ResolvedType::Named("E".into()), ResolvedType::TypeVar("E".into())] {
         let expected = ResolvedType::Generic(
             "Result".into(),

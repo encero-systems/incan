@@ -411,6 +411,11 @@ impl TypeChecker {
             arguments,
             return_type,
         } = completion;
+        if let Some(identity) = method_info.identity.clone()
+            && let ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) = receiver_ty
+        {
+            self.record_nominal_member_identity(owner, call_site_span, identity);
+        }
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);

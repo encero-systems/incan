@@ -47,6 +47,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
     encode_body_inventory,
@@ -56,8 +57,10 @@ from compiler_body_values import (
     select_body_values,
 )
 from compiler_body_publication import (
+    dependency_owner,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
+    projection_refusals,
     publish_compiled_bodies,
     retained_owner_record,
 )
@@ -65,6 +68,7 @@ from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
+from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
 from scratch import scratch_directory
@@ -226,27 +230,150 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     edited = original.replace("return 1", "return 3")
     before = project_source("package", "src/main.incn", original)?
     after = project_source("package", "src/main.incn", edited)?
-
     assert before.header.text == "from std import env\n\ntype Count = int\n\n"
     assert before.header.digest() == after.header.digest()
-    assert len(before.owners) == 3 and len(after.owners) == 3
+    assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
         assert before.owners[index].key == after.owners[index].key
         assert signature_record(before.owners[index]).digest() == signature_record(after.owners[index]).digest()
         if before.owners[index].digest() != after.owners[index].digest():
             changed += 1
-    assert changed == 1
-    assert before.owners[0].text.startswith("model Item")
-    assert before.owners[1].text.startswith("def first")
-    assert before.owners[2].text.startswith("def second")
+    assert changed == 1, f"changed owners: {changed}"
+    assert before.owners[0].text.startswith("model Item"), before.owners[0].text
+    assert before.owners[1].text.strip().startswith("value: Count"), before.owners[1].text
+    assert before.owners[2].text.startswith("def first"), before.owners[2].text
+    assert before.owners[3].text.startswith("def second"), before.owners[3].text
     assert before.owners[0].start < before.owners[0].end
+
+    projected_bindings = project_source(
+        "package",
+        "src/bindings.incn",
+        "pub stable = partial choose(value=7)\npub forwarded = alias stable\n",
+    )?
+    assert projected_owner(projected_bindings, "partial:stable")?.text.startswith("pub stable = partial")
+    assert projected_owner(projected_bindings, "alias:forwarded")?.text.startswith("pub forwarded = alias")
+    assert compiler_source_projection.compiled_owner_source(projected_bindings, "src/bindings.incn", "stable")?.key.facet == "partial:stable"
+    projected_enum = project_source(
+        "package",
+        "src/messages.incn",
+        "pub model Cancelled:\n    reason: str\n\npub enum CompletionStatus:\n    Ready\n    Failed\n    Cancelled\n",
+    )?
+    assert compiler_source_projection.compiled_owner_source(
+        projected_enum,
+        "src/messages.incn",
+        "Failed",
+        "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
+    )?.key.facet == "enum:CompletionStatus"
+    assert compiler_source_projection.compiled_owner_source(
+        projected_enum,
+        "src/messages.incn",
+        "Cancelled",
+        "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
+    )?.key.facet == "enum:CompletionStatus"
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 8
+    assert len(published.keys) == 10
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
+
+    default_source = "@derive(Eq)\npub model RecordKey:\n    \"\"\"One decorated record with independently witnessed fields.\"\"\"\n\n    pub context: str = \"base\"\n    pub other: int\n\n    pub def rendered(self) -> str:\n        return self.context\n"
+    default_projection = project_source("package", "src/default.incn", default_source)?
+    default_owner = projected_owner(default_projection, "default:model:RecordKey:context")?
+    field_owner = projected_owner(default_projection, "field:model:RecordKey:other")?
+    model_owner = projected_owner(default_projection, "model:RecordKey")?
+    assert default_owner.text == "\"base\""
+    assert default_owner.start < default_owner.end
+    assert compiler_source_projection.compiled_owner_source(
+        default_projection,
+        "src/default.incn",
+        "context",
+        "field:package::src::default::RecordKey::context|signature",
+    )?.key == default_owner.key
+    assert compiler_source_projection.compiled_owner_source(
+        default_projection,
+        "src/default.incn",
+        "other",
+        "field:package::src::default::RecordKey::other|signature",
+    )?.key == field_owner.key
+    repeated_field_source = "pub model Snapshot:\n    pub pin: int = 1\n\npub model Publication:\n    pub pin: int = 2\n\npub model PreparedPayload:\n    pub pin: int\n"
+    repeated_field_projection = project_source("package", "src/store.incn", repeated_field_source)?
+    snapshot_pin = projected_owner(repeated_field_projection, "default:model:Snapshot:pin")?
+    publication_pin = projected_owner(repeated_field_projection, "default:model:Publication:pin")?
+    prepared_pin = projected_owner(repeated_field_projection, "field:model:PreparedPayload:pin")?
+    assert dependency_owner(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Publication::pin|signature",
+    )?.key == publication_pin.key
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Snapshot::pin|signature",
+    )?.key == snapshot_pin.key
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Publication::pin|signature",
+    )?.key == publication_pin.key
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::PreparedPayload::pin|signature",
+    )?.key == prepared_pin.key
+    identityless = compiler_source_projection.compiled_owner_source(repeated_field_projection, "src/store.incn", "pin")
+    match identityless:
+        Ok(_) => return Err("identity-less repeated field unexpectedly selected one declaration")
+        Err(reason) =>
+            assert reason == "compiled field body has no stable declaration identity: src/store.incn:pin", reason
+    projected_default = publish_source_projection(published.snapshot, default_projection)?
+    declaration = family_key("declaration", "model-record-key")
+    declared_default = commit(
+        put(begin(projected_default.snapshot), encode_record_key(declaration)?, b"record key declaration"),
+    ).map_err((error) => error.message())?
+    complete_default = publish_owner_pair(
+        declared_default,
+        "record-key-context",
+        default_owner.key,
+        default_projection.header.key,
+        [declaration],
+    )?
+
+    changed_default_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("\"base\"", "\"changed\""),
+    )?
+    changed_default = projected_owner(changed_default_projection, "default:model:RecordKey:context")?
+    assert changed_default.key == default_owner.key and changed_default.digest() != default_owner.digest()
+    changed_default_source = publish_source_projection(complete_default, changed_default_projection)?
+    assert invalid_body_owners(changed_default_source.snapshot, [model_owner.key, default_owner.key], "profile")? == [
+        "record-key-context",
+    ]
+
+    changed_field_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("other: int", "other: str"),
+    )?
+    assert projected_owner(changed_field_projection, "default:model:RecordKey:context")?.digest() == default_owner.digest()
+    assert projected_owner(changed_field_projection, "field:model:RecordKey:other")?.digest() != field_owner.digest()
+    changed_field_source = publish_source_projection(complete_default, changed_field_projection)?
+    assert invalid_body_owners(changed_field_source.snapshot, [model_owner.key], "profile")? == []
+
+    changed_method_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("return self.context", "return \"method edit\""),
+    )?
+    assert projected_owner(changed_method_projection, "default:model:RecordKey:context")?.digest() == default_owner.digest()
+    changed_method_source = publish_source_projection(complete_default, changed_method_projection)?
+    assert invalid_body_owners(changed_method_source.snapshot, [model_owner.key], "profile")? == []
     return Ok(None)
 
 
@@ -260,11 +387,7 @@ pub def test_retained_owner_selection_skips_an_absent_owner() -> Result[None, st
 
 pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[None, str]:
     """Multiple current source owners with the same logical name fail closed instead of disappearing as history."""
-    projection = project_source(
-        "app",
-        "src/main.incn",
-        "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n",
-    )?
+    projection = project_source("app", "src/main.incn", "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n")?
     match retained_owner_record(projection, "item"):
         Ok(_) => return Err("an ambiguous retained owner was silently selected or skipped")
         Err(message) =>
@@ -327,10 +450,17 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "profile",
     )? == ["first", "second"]
 
-    removed_projection = project_source("package", "src/main.incn", source.replace("def first() -> int:\n    return 1\n\n", ""))?
+    removed_projection = project_source(
+        "package",
+        "src/main.incn",
+        source.replace("def first() -> int:\n    return 1\n\n", ""),
+    )?
     assert removed_projection.declarations.text != projection.declarations.text
     removed = publish_source_projection(complete, removed_projection)?
-    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == ["first", "second"]
+    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == [
+        "first",
+        "second",
+    ]
 
     import_source = source.replace("from std import env", "from std import fs")
     import_projection = project_source("package", "src/main.incn", import_source)?
@@ -339,6 +469,58 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "first",
         "second",
     ]
+    return Ok(None)
+
+
+pub def test_prepared_hex_digit_body_ir_read_uses_its_bounded_selection() -> Result[None, str]:
+    """The source-security Body IR witness reaches lowering as a bounded selection of its staged full value."""
+    identity = "function:source_security::hex_digit|incan.source-signature/2:sha256:c7eb8b5e2655ce2b3f16c90d879e3ca79b8ccd8979da0b85d5f29d8ea68a3799"
+    body = RecordKey(
+        family="body-ir",
+        identity_profile="incan.stable-declaration/1",
+        origin="oven",
+        identity=identity,
+        facet="checked",
+        context="sha256:15ee0f3936c78447af632913a51179e11313a4b360fe9e6f5345dca51e6865c4",
+    )
+    output = RecordKey(
+        family="lowering-demand",
+        identity_profile=body.identity_profile,
+        origin=body.origin,
+        identity=body.identity,
+        facet="__incan_module_15_115_111_117_114_99_101_95_115_101_99_117_114_105_116_121_5221_5388",
+        context="00a30f846a1d2c4844c74bf193c0076ca9cb49f6088a7dfa6258977f337cf37c",
+    )
+    checking_scope = ReadScope(snapshot="prepared-source-hex-digit", profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(checking_scope)
+    body_ir: bytes = list.repeat(90u8, 65537)
+    encoded = encode_record_key(body)?
+    source.add(encoded, body_ir)
+    lowering_scope = ReadScope(snapshot=checking_scope.snapshot, profile=LOWERING_PROFILE)
+    request = RecordRequest(
+        key=body,
+        selection=RecordSelection.Payload(PayloadSelection(reference=body.context, offset=0, length=0)),
+    )
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="compiled-check",
+        selector_witnesses="compiled-check",
+    )
+    mut reads = RecordReads.start(lowering_scope, preparation, [request])
+    match reads.read(source.for_profile(LOWERING_PROFILE), request):
+        RecordRead.Found(found) =>
+            assert len(found.value) == 0, f"prepared Body IR selection returned {len(found.value)} bytes"
+            assert found.evidence.scope == lowering_scope and found.evidence.request == request
+            assert found.evidence.revision != "" and found.evidence.semantic_digest != ""
+            assert found.selection_digest != ""
+        RecordRead.Failed(fault) =>
+            counters = reads.counters()
+            return Err(
+                f"prepared Body IR read failed {fault:?}: activation=valid request=valid scope=bound selected-value={counters.response_bytes} limit={request.byte_limit} revision-digest=nonempty",
+            )
+        _ => return Err("prepared Body IR read did not return the staged value")
+    receipt = reads.finish().map_err((fault) => f"prepared Body IR receipt failed: {fault:?}")?
+    assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
     return Ok(None)
 
 
@@ -357,7 +539,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .map_err((error) => error.message())?
     provider_root = scratch.path().joinpath("provider").joinpath("src")
     provider_root.mkdir(true, true).map_err((error) => error.message())?
-    provider_source = "pub def value() -> int:\n    return 1\n\npub enum CodecFault:\n    Invalid\n"
+    provider_source = ("pub def value() -> int:\n    return 1\n\n" + "pub enum CodecFault:\n    Invalid\n\n" + "pub model ProgramOutcome:\n    transaction: Option[int] = None\n\n" + "pub model NativeSelection:\n    transaction: Option[int] = None\n")
     provider_root
         .joinpath("lib.incn")
         .write_text(provider_source, "utf-8", "strict", None)
@@ -405,7 +587,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     output = scratch.path().joinpath("compiled-body-output")
     publish_binary(
         output,
-        encode_compiled_body_outputs(
+        compiled_output_bytes(
             CompiledBodyOutputs(
                 values=[
                     CompiledBodyValue(
@@ -422,18 +604,28 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                                 module="helper",
                                 name="value",
                                 identity="app|module:helper|value|function|module|0|() -> int",
+                                reference_subject="expr:main#10..17",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=None,
+                                module="lib",
+                                name="other",
+                                identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                                reference_subject="expr:main#20..27",
                             ),
                             CompiledBodyDependencyRead(
                                 package=Some("provider"),
                                 module="lib",
                                 name="CodecFault",
                                 identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
+                                reference_subject="type:main#expr.30..40/type.0",
                             ),
                             CompiledBodyDependencyRead(
                                 package=Some("provider"),
                                 module="lib",
                                 name="value",
                                 identity="provider|module:lib|value|function|module|0|() -> int",
+                                reference_subject="expr:main#50..57",
                             ),
                         ],
                     ),
@@ -456,6 +648,75 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert published.bodies == 1 and published.fallbacks == 1
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
+    diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")
+    publish_binary(
+        diagnostic_output,
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[
+                    CompiledBodyValue(
+                        module="src/main.incn",
+                        name="main",
+                        identity=identity,
+                        declaration=declaration,
+                        local=local,
+                        final=final,
+                        body_ir=b"owner-frame",
+                        dependency_reads=[
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="transaction",
+                                identity="member/field:engine_programs::transaction",
+                                reference_subject="expr:engine_programs#120..131",
+                            ),
+                        ],
+                    ),
+                ],
+                fallbacks=[],
+            ),
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
+        Ok(_) =>
+            assert false, "an ambiguous dependency source unexpectedly published"
+        Err(message) =>
+            assert message.contains("body_owner=src/main.incn:main; body_identity=" + identity), message
+            assert message.contains("reference_subject=expr:engine_programs#120..131"), message
+    listed = projection_refusals(
+        unit,
+        "app",
+        [
+            CompiledBodyValue(
+                module="src/main.incn",
+                name="main",
+                identity=identity,
+                declaration=declaration,
+                local=local,
+                final=final,
+                body_ir=b"owner-frame",
+                dependency_reads=[
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="transaction",
+                        identity="member/field:engine_programs::transaction",
+                        reference_subject="expr:engine_programs#120..131",
+                    ),
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="absent",
+                        identity="function:provider::absent|incan.source-signature/2:sha256:fixture",
+                        reference_subject="expr:engine_programs#140..146",
+                    ),
+                ],
+            ),
+        ],
+    )
+    assert len(listed) == 2, str(listed)
+    assert listed[0].contains("reference_subject=expr:engine_programs#120..131"), listed[0]
+    assert listed[1].contains("reference_subject=expr:engine_programs#140..146"), listed[1]
     fallback_key = RecordKey(
         family="eligibility",
         identity_profile="incan.stable-declaration/1",
@@ -465,14 +726,14 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         context="checker-record",
     )
     assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
-    assert fallback_reasons([
-        CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal"),
-    ]) == ["src/main.incn::other: exact producer refusal"]
+    assert fallback_reasons(
+        [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
+    ) == ["src/main.incn::other: exact producer refusal"]
 
     fallback_output = scratch.path().joinpath("fallback-body-output")
     publish_binary(
         fallback_output,
-        encode_compiled_body_outputs(
+        compiled_output_bytes(
             CompiledBodyOutputs(
                 values=[],
                 fallbacks=[
@@ -498,7 +759,8 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         )
         .map_err((error) => error.message())?
     match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
-        Ok(_) => assert false, "a checker-record fallback authenticated a lowering record"
+        Ok(_) =>
+            assert false, "a checker-record fallback authenticated a lowering record"
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
@@ -511,13 +773,19 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
     provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
-    assert invalid_body_owners(provider_body_edit.snapshot, [signature_record(provider_body.owners[0]).key], CHECKER_PROFILE)? == []
+    assert invalid_body_owners(
+        provider_body_edit.snapshot,
+        [signature_record(provider_body.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == []
 
     provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
     provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
-    assert invalid_body_owners(provider_signature_edit.snapshot, [signature_record(provider_signature.owners[0]).key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(
+        provider_signature_edit.snapshot,
+        [signature_record(provider_signature.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == [identity]
 
     module_signature = project_source(
         "app",
@@ -541,7 +809,11 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
     assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
     changed_signature = commit(
-        put(begin(published.snapshot), encode_record_key(project_slot)?, b"app|module:helper|value|function|module|0|() -> str"),
+        put(
+            begin(published.snapshot),
+            encode_record_key(project_slot)?,
+            b"app|module:helper|value|function|module|0|() -> str",
+        ),
     ).map_err((error) => error.message())?
     assert invalid_body_owners(changed_signature, [project_slot], CHECKER_PROFILE)? == [identity]
     removed = commit(delete(begin(published.snapshot), encode_record_key(project_slot)?)).map_err(
@@ -569,13 +841,16 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
         metadata = match file_metadata(path)?:
             Some(value) => value
             None => return Err("linked source fixture is missing")
-        inputs.append(CapturedInput(
-            path=path.0,
-            role=InputRole.Resolved,
-            metadata=metadata,
-            digest="capture-fixture",
-            settled=false,
-        ))
+
+        inputs.append(
+            CapturedInput(
+                path=path.0,
+                role=InputRole.Resolved,
+                metadata=metadata,
+                digest="capture-fixture",
+                settled=false,
+            ),
+        )
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
     declarations = [key for key in prepared.keys if key.family == "declaration-index"]
@@ -769,6 +1044,16 @@ def activation(family: str, identity: str, dependency: int) -> RankedActivation:
         ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
         prepared=prepared,
     )
+
+
+def compiled_output_bytes(outputs: CompiledBodyOutputs) -> Result[bytes, str]:
+    """Join independently bounded test frames exactly as the native compiler sidecar writer does."""
+    mut encoded: list[u8] = []
+    for frame in encode_compiled_body_outputs(outputs).map_err((error) => f"{error:?}")?:
+        for byte in frame:
+            octet: u8 = byte.wrapping_resize()
+            encoded.append(octet)
+    return Ok(encoded)
 
 
 def required(before: Snapshot, key: str) -> Result[bytes, str]:

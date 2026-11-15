@@ -394,7 +394,11 @@ def run(arguments: list[str]) -> None:
     match parse_options(own):
         Err(reason) => syntax_error("run", reason)
         Ok(options) =>
-            selected = validated("run", options)
+            mut selected = validated("run", options)
+            match build_source(Path(selected.path), selected.manifests):
+                Err(reason) => fail(f"{invoked()} run: {reason}", 1)
+                Ok(Some(source)) => selected.path = source.0
+                Ok(None) => pass
             prepared_lock("run", selected)
             finish("run", ran(selected, passed))
 

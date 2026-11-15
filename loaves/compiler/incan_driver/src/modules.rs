@@ -491,7 +491,7 @@ pub fn imported_module_deps_for<'m>(
 /// This is the identity-preserving form of [`imported_module_deps_for`]. Typecheck orchestration uses the indexes to
 /// attach immutable provider facts that were built once for each collected module without changing dependency order
 /// or collapsing modules that happen to share a short name.
-pub(crate) fn imported_module_dep_indexes_for(
+pub fn imported_module_dep_indexes_for(
     modules: &[ParsedModule],
     module_index: usize,
     module_idx_by_key: &HashMap<String, usize>,

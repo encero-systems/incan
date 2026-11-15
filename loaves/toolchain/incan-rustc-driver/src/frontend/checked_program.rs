@@ -123,12 +123,44 @@ pub(super) fn checked_modules(
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
+    let module_key_index = incan_driver::modules::module_key_index(&modules);
+    let namespace_dependencies = modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| {
+            let mut dependencies = incan_driver::modules::imported_module_dep_indexes_for(
+                &modules,
+                index,
+                &module_key_index,
+                session.own_standard_package(),
+            )
+            .into_iter()
+            .filter_map(|dependency| {
+                modules[dependency]
+                    .file_path
+                    .strip_prefix(&unit.project_root)
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned())
+            })
+            .collect::<Vec<_>>();
+            dependencies.sort();
+            dependencies.dedup();
+            (module.file_path.clone(), dependencies)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
                 callable_products.observe(module, checker);
-                graph_body_output.observe(module, checker);
+                graph_body_output.observe(
+                    module,
+                    checker,
+                    namespace_dependencies
+                        .get(&module.file_path)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                );
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -182,9 +214,22 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
-    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
+    let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
+    cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
+    for body in bodies[loaf_modules..].iter().flat_map(|module| &module.bodies) {
+        if cacheable_bodies
+            .iter()
+            .any(|(identity, _)| identity == &body.direct_call_id)
+        {
+            continue;
+        }
+        let mut witnessed = body.clone();
+        let witness = incan_semantics_core::semantic_digest::body_semantic_digest(&mut witnessed)
+            .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
+        cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
+    }
+    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
-    let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,

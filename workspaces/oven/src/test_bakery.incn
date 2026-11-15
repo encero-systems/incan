@@ -23,7 +23,7 @@ from bakery import (
 )
 from bakery_records import Fact, claim_file, staging_root
 from bakery_roots import collect, register_root
-from pub::incan_platform.store import begin, commit, delete, get, keys, put
+from pub::incan_platform.store import begin, commit, delete, fork, get, keys, put
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
@@ -235,6 +235,25 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     assert store.joinpath("quarantine").is_dir()
     assert payload_text(store, identity, "payload")? == "rebaked"
     prove_codec_repair(store, identity)?
+    return Ok(None)
+
+
+pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:
+    """Verification reads segments retained by another live view, not only records selected in the home view."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    other = fork(snapshot(store).map_err((error) => error.message())?, "other")
+        .map_err((error) => error.message())?
+    written = commit(put(begin(other), "other-only", b"one damaged frame"))
+        .map_err((error) => error.message())?
+    digest = written.segments[len(written.segments) - 1]
+    segment = store.joinpath("segments").joinpath(f"{digest}.seg")
+    data = segment.read_bytes().map_err((error) => error.message())?
+    segment.chmod(false).map_err((error) => error.message())?
+    segment.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    damaged = verify_all(store)?
+    assert len(damaged) == 1, f"verification reported {len(damaged)} damaged objects"
+    assert segment.0 in damaged[0], damaged[0]
     return Ok(None)
 
 

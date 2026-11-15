@@ -3,7 +3,7 @@
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, keys, put
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, keys, stage_put
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -45,7 +45,6 @@ pub model PublishedEvaluation:
 pub model PreparedEvaluation:
     """One evaluation and all graph records staged in a caller-owned transaction for atomic request publication."""
 
-    pub transaction: Transaction
     pub value_key: str
     pub value_digest: str
     pub receipt_key: str
@@ -86,8 +85,9 @@ pub def publish_evaluation(
     receipt: ReadReceipt,
 ) -> Result[PublishedEvaluation, str]:
     """Publish a value, evaluation, completed receipt and both edge directions in one store transaction."""
-    prepared = prepare_evaluation(begin(selected), claim_key, rank, value, receipt)?
-    published = commit(prepared.transaction).map_err((error) => error.message())?
+    mut transaction = begin(selected)
+    prepared = prepare_evaluation(transaction, claim_key, rank, value, receipt)?
+    published = commit(transaction).map_err((error) => error.message())?
     return Ok(
         PublishedEvaluation(
             snapshot=published,
@@ -102,7 +102,7 @@ pub def publish_evaluation(
 
 
 pub def prepare_evaluation(
-    transaction: Transaction,
+    mut transaction: Transaction,
     claim_key: str,
     rank: ProducerRank,
     value: bytes,
@@ -122,18 +122,17 @@ pub def prepare_evaluation(
     evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
     evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
 
-    mut prepared = put(transaction, value_key, value)
-    prepared = put(prepared, receipt_key, receipt_bytes)
-    prepared = put(prepared, evaluation_key, evaluation)
-    prepared = put(prepared, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
+    stage_put(transaction, value_key, value)
+    stage_put(transaction, receipt_key, receipt_bytes)
+    stage_put(transaction, evaluation_key, evaluation)
+    stage_put(transaction, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
     for index in range(len(edges)):
         edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
         identity = digest(edge)
-        prepared = put(prepared, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
-        prepared = put(prepared, f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}", edge)
+        stage_put(transaction, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
+        stage_put(transaction, f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}", edge)
     return Ok(
         PreparedEvaluation(
-            transaction=prepared,
             value_key=value_key,
             value_digest=value_digest,
             receipt_key=receipt_key,

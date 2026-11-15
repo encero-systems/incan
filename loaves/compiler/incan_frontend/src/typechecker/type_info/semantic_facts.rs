@@ -186,11 +186,17 @@ impl TypeCheckInfo {
         for (&span, identity) in &self.references.resolved_identities {
             let subject = CompilerNodeId::expression_at(module_identity, span);
             Self::record_semantic_reference(facts, &subject, span, identity, declarations);
-            if let Some(context) = stable_contexts.get(identity) {
+            let stable_context = self
+                .references
+                .stable_declaration_contexts
+                .get(&span)
+                .cloned()
+                .or_else(|| stable_contexts.get(identity).cloned());
+            if let Some(context) = stable_context {
                 facts.push(SemanticFact::new(
                     subject.clone(),
                     SemanticFactKind::StableDeclarationContext,
-                    SemanticFactValue::stable_declaration_context(context.clone()),
+                    SemanticFactValue::stable_declaration_context(context),
                 ));
             }
             if let Some(owner) = self.body_ir_reference_requirement(span, identity) {

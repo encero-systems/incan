@@ -367,8 +367,9 @@ impl TypeChecker {
         self.enter_annotation_owner(&func.name, &func.type_params)
     }
 
-    /// Consume a completed function declaration's lexical frame exactly once. Decoration is separate post-body work;
-    /// no declaration validation or default expression is repeated by this consumer.
+    /// Consume a completed function declaration's lexical frame exactly once and trace its stable owner until
+    /// checker-record publication classifies it. Decoration is separate post-body work; no declaration validation or
+    /// default expression is repeated by this consumer.
     pub(in crate::typechecker) fn check_prepared_function(
         &mut self,
         func: &FunctionDecl,
@@ -376,6 +377,21 @@ impl TypeChecker {
         prepared: PreparedFunctionCheck,
         record_program: Option<&Program>,
     ) {
+        let trace_identity = self
+            .declaration_view()
+            .function(span)
+            .and_then(|binding| binding.identity.as_ref())
+            .and_then(|canonical| self.type_info.declarations.source_identities.get(canonical))
+            .map(incan_semantics_core::stable_identity::StableDeclarationId::render_compact)
+            .unwrap_or_else(|| "<unavailable>".into());
+        let body_trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_owner_body",
+            identity = %trace_identity,
+            outcome = tracing::field::Empty,
+        );
+        self.body_check_traces.insert(span, body_trace.clone());
+        let _trace = body_trace.enter();
         let previous_function = std::mem::replace(&mut self.receiver_plan_inputs.current_function, prepared.function);
         let previous_raw_owner =
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);

@@ -48,6 +48,10 @@ pub fn lower_authored_modules(
                 .ok_or("module analysis is missing")
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let namespace_bodies = modules
+        .iter()
+        .map(|module| analysis.namespace_body_for_path(&module.file_path))
+        .collect::<Vec<_>>();
     let components = authored_components(modules, session.own_standard_package(), &cycle_peers);
     let waves = component_waves(&components, modules.len())?;
     let mut authored = (0..modules.len()).map(|_| None).collect::<Vec<Option<BodyIrModule>>>();
@@ -57,6 +61,7 @@ pub fn lower_authored_modules(
             &components,
             modules,
             &type_infos,
+            &namespace_bodies,
             &cycle_peers,
             bodies,
             &authored,
@@ -199,6 +204,7 @@ fn lower_component_wave(
     components: &[AuthoredComponent],
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
+    namespace_bodies: &[Option<&BodyIrModule>],
     cycle_peers: &[Vec<usize>],
     dependency_bodies: &[BodyIrModule],
     authored: &[Option<BodyIrModule>],
@@ -225,6 +231,7 @@ fn lower_component_wave(
                             &components[component_index],
                             modules,
                             type_infos,
+                            namespace_bodies,
                             cycle_peers,
                             dependency_bodies,
                             authored,
@@ -262,6 +269,7 @@ fn lower_component(
     component: &AuthoredComponent,
     modules: &[ParsedModule],
     type_infos: &[&TypeCheckInfo],
+    namespace_bodies: &[Option<&BodyIrModule>],
     cycle_peers: &[Vec<usize>],
     dependency_bodies: &[BodyIrModule],
     authored: &[Option<BodyIrModule>],
@@ -283,6 +291,10 @@ fn lower_component(
     let context_len = context_modules.len();
     for &index in &component.members {
         let module = &modules[index];
+        if let Some(restored) = namespace_bodies[index] {
+            context_modules.push(restored.clone());
+            continue;
+        }
         let completed = context_modules.len();
         for &peer in cycle_peers[index].iter().filter(|&&peer| peer > index) {
             context_modules.push(incan_frontend::body_ir::build_cycle_declarations(

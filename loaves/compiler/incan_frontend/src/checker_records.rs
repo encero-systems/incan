@@ -4,12 +4,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/15";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/17";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -25,10 +25,27 @@ pub struct GraphBodyRecord {
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 
+/// One graph-admitted editable namespace, already decoded through its checked-interface and kernel codecs.
+#[derive(Debug, Clone)]
+pub struct GraphNamespaceRecord {
+    /// Project-relative logical source path used by the source-projection record.
+    pub source: String,
+    /// Immutable public checker tables installed for downstream editable namespaces.
+    pub interface: Arc<crate::typechecker::ModuleDependencyInterface>,
+    /// Complete checked Body IR contribution used instead of this module's transient
+    /// [`crate::typechecker::TypeCheckInfo`].
+    pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
+    /// Stable Body IR owner ids paired with the lowering witnesses authenticated by this namespace's cold check.
+    pub lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+}
+
 /// Keyed source of independently bounded graph body pages.
 pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
     /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
     fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
+
+    /// Read and authenticate one complete editable namespace page by its project-relative source projection.
+    fn read_namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault>;
 }
 
 /// Immutable eager fixtures or a keyed page source shared by module checkers in one compilation session.
@@ -71,6 +88,8 @@ pub struct CheckedOwnerDependencyRead {
     pub declaration_name: String,
     /// Stable checked identity of the declaration whose declaration record authenticates this read.
     pub declaration_identity: String,
+    /// Compiler-owned semantic subject that introduced this exact dependency edge.
+    pub reference_subject: String,
 }
 
 /// One checked owner that cannot publish the complete record triple required for body reuse.
@@ -125,6 +144,14 @@ impl GraphBodyRecords {
         }
         match &self.source {
             Some(source) => source.read(identity),
+            None => Ok(None),
+        }
+    }
+
+    /// Read one complete namespace selected by the engine for this exact source projection.
+    pub fn namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+        match &self.source {
+            Some(source_records) => source_records.read_namespace(source),
             None => Ok(None),
         }
     }
@@ -198,6 +225,7 @@ pub fn checked_owner_record_outputs(
 ) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
     let facts = checker.type_info().semantic_fact_store(module_path);
     let dependencies = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts]);
+    let stable_contexts = stable_dependency_contexts(&facts);
     program
         .declarations
         .iter()
@@ -211,6 +239,7 @@ pub fn checked_owner_record_outputs(
                 .function_bindings_by_span
                 .get(&declaration.span)
             else {
+                checker.record_body_check_outcome(declaration.span, "fallback");
                 return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                     name: function.name.clone(),
                     identity: None,
@@ -220,6 +249,7 @@ pub fn checked_owner_record_outputs(
             let canonical = match binding.identity.as_ref() {
                 Some(identity) => identity,
                 None => {
+                    checker.record_body_check_outcome(declaration.span, "fallback");
                     return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                         name: function.name.clone(),
                         identity: None,
@@ -230,6 +260,7 @@ pub fn checked_owner_record_outputs(
             let identity = match checker.type_info().declarations.source_identities.get(canonical) {
                 Some(identity) => identity.render_compact(),
                 None => {
+                    checker.record_body_check_outcome(declaration.span, "fallback");
                     return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                         name: function.name.clone(),
                         identity: None,
@@ -257,31 +288,33 @@ pub fn checked_owner_record_outputs(
             };
             let mut dependency_reads = semantic_owner
                 .into_iter()
-                .flat_map(|owner| dependencies.reachable_from([owner.clone()]))
-                .filter(|dependency| dependency != canonical)
-                .filter_map(|dependency| match &dependency.origin {
-                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
-                        StableDeclarationId::from_canonical(&dependency, None, None).map(|stable| {
-                            CheckedOwnerDependencyRead {
-                                package: Some(library.clone()),
-                                module_path: module_path.clone(),
-                                declaration_name: dependency.declaration_name.clone(),
-                                declaration_identity: stable.render_compact(),
-                            }
-                        })
-                    }
+                .flat_map(|owner| dependencies.reachable_dependencies_from([owner.clone()]))
+                .filter(|dependency| &dependency.target != canonical)
+                .filter(|dependency| projectable_source_dependency(&dependency.target))
+                .filter_map(|dependency| match &dependency.target.origin {
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => checker
+                        .stable_dependency_identity_with_context(
+                            &dependency.target,
+                            stable_contexts.get(&dependency.target),
+                        )
+                        .map(|stable| CheckedOwnerDependencyRead {
+                            package: Some(library.clone()),
+                            module_path: module_path.clone(),
+                            declaration_name: dependency.target.declaration_name.clone(),
+                            declaration_identity: stable.render_compact(),
+                            reference_subject: dependency.subject.to_string(),
+                        }),
                     incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
-                        .type_info()
-                        .declarations
-                        .source_identities
-                        .get(&dependency)
-                        .cloned()
-                        .or_else(|| StableDeclarationId::from_canonical(&dependency, None, None))
+                        .stable_dependency_identity_with_context(
+                            &dependency.target,
+                            stable_contexts.get(&dependency.target),
+                        )
                         .map(|stable| CheckedOwnerDependencyRead {
                             package: None,
                             module_path: dependency_module.clone(),
-                            declaration_name: dependency.declaration_name.clone(),
+                            declaration_name: dependency.target.declaration_name.clone(),
                             declaration_identity: stable.render_compact(),
+                            reference_subject: dependency.subject.to_string(),
                         }),
                     _ => None,
                 })
@@ -290,6 +323,7 @@ pub fn checked_owner_record_outputs(
             dependency_reads.dedup();
             let refusal = missing_record_reason(checker, declaration.span);
             if let Some(reason) = refusal {
+                checker.record_body_check_outcome(declaration.span, "fallback");
                 return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                     name: function.name.clone(),
                     identity: Some(identity),
@@ -305,6 +339,11 @@ pub fn checked_owner_record_outputs(
             let Some(final_record) = checker.available_final_record(declaration.span).cloned() else {
                 return Some(Err("final record disappeared after eligibility selection".into()));
             };
+            if checker.restored_body_record(declaration.span) {
+                checker.record_body_check_outcome(declaration.span, "restored");
+            } else {
+                checker.record_body_check_outcome(declaration.span, "fresh");
+            }
             Some(Ok(CheckedOwnerRecordOutput::Value(CheckedOwnerRecordFields {
                 name: function.name.clone(),
                 span: declaration.span,
@@ -316,6 +355,130 @@ pub fn checked_owner_record_outputs(
             })))
         })
         .collect()
+}
+
+/// Only declarations with independent source projections cross a checked owner's publication boundary.
+fn projectable_source_dependency(dependency: &incan_semantics_core::CanonicalSymbolId) -> bool {
+    !matches!(
+        dependency.kind,
+        incan_semantics_core::SemanticSourceTargetKind::Local
+            | incan_semantics_core::SemanticSourceTargetKind::Parameter
+            | incan_semantics_core::SemanticSourceTargetKind::Receiver
+            | incan_semantics_core::SemanticSourceTargetKind::GenericBinder
+            | incan_semantics_core::SemanticSourceTargetKind::Module
+            | incan_semantics_core::SemanticSourceTargetKind::RustItem
+            | incan_semantics_core::SemanticSourceTargetKind::Builtin
+            | incan_semantics_core::SemanticSourceTargetKind::Other(_)
+    )
+}
+
+impl crate::typechecker::TypeChecker {
+    /// Resolve the checked stable identity used by one editable dependency read.
+    fn stable_dependency_identity(
+        &self,
+        dependency: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Option<StableDeclarationId> {
+        self.stable_dependency_identity_with_context(dependency, None)
+    }
+
+    /// Resolve one dependency with the exact enclosing declaration retained at its checked reference site.
+    fn stable_dependency_identity_with_context(
+        &self,
+        dependency: &incan_semantics_core::CanonicalSymbolId,
+        context: Option<&incan_semantics_core::CanonicalStableDeclarationContext>,
+    ) -> Option<StableDeclarationId> {
+        if let Some(identity) = self.type_info().declarations.source_identities.get(dependency).cloned() {
+            return Some(identity);
+        }
+        if let Some(context) = context {
+            return stable_member_identity(dependency, &context.owner, context.binding_ordinal);
+        }
+        if let Some(owner) = self
+            .type_info()
+            .calls
+            .compiler_generated_member_identities
+            .get(dependency)
+        {
+            return stable_member_identity(dependency, owner, 0);
+        }
+        let owner = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .find_map(|(index, symbol)| {
+                let crate::symbols::SymbolKind::Type(info) = &symbol.kind else {
+                    return None;
+                };
+                nominal_type_owns_member(info, dependency)
+                    .then(|| self.symbols.identity_of(index))
+                    .flatten()
+            });
+        if let Some(owner) = owner {
+            return stable_member_identity(dependency, owner, 0);
+        }
+        StableDeclarationId::from_canonical(dependency, None, None)
+    }
+}
+
+/// Bind a checked member to the canonical declaration retained for its enclosing nominal.
+fn stable_member_identity(
+    member: &incan_semantics_core::CanonicalSymbolId,
+    owner: &incan_semantics_core::CanonicalSymbolId,
+    binding_ordinal: u32,
+) -> Option<StableDeclarationId> {
+    let owner = StableDeclarationId::from_canonical(owner, None, None)?;
+    let context = StableDeclarationContext { owner, binding_ordinal };
+    StableDeclarationId::from_canonical(member, None, Some(context))
+}
+
+/// Join each canonical reference target to its unique checked stable context; disagreement stays absent.
+fn stable_dependency_contexts(
+    facts: &incan_semantics_core::SemanticFactStore,
+) -> BTreeMap<incan_semantics_core::CanonicalSymbolId, incan_semantics_core::CanonicalStableDeclarationContext> {
+    let mut grouped = BTreeMap::<_, BTreeSet<_>>::new();
+    for subject in facts.subjects() {
+        let identities = facts.symbol_identities_for(subject).collect::<BTreeSet<_>>();
+        if identities.len() != 1 {
+            continue;
+        }
+        let Some(identity) = identities.into_iter().next() else {
+            continue;
+        };
+        grouped
+            .entry(identity.clone())
+            .or_default()
+            .extend(facts.stable_declaration_contexts_for(subject).cloned());
+    }
+    grouped
+        .into_iter()
+        .filter_map(|(identity, contexts)| {
+            (contexts.len() == 1)
+                .then(|| contexts.into_iter().next().map(|context| (identity, context)))
+                .flatten()
+        })
+        .collect()
+}
+
+/// Test canonical member provenance carried by one checked nominal type; spelling is never consulted.
+fn nominal_type_owns_member(
+    info: &crate::symbols::TypeInfo,
+    dependency: &incan_semantics_core::CanonicalSymbolId,
+) -> bool {
+    match info {
+        crate::symbols::TypeInfo::Class(info) => info
+            .fields
+            .values()
+            .any(|field| field.identity.as_ref() == Some(dependency)),
+        crate::symbols::TypeInfo::Model(info) => info
+            .fields
+            .values()
+            .any(|field| field.identity.as_ref() == Some(dependency)),
+        crate::symbols::TypeInfo::Enum(info) => info.variant_identities.values().any(|identity| identity == dependency),
+        crate::symbols::TypeInfo::Builtin
+        | crate::symbols::TypeInfo::TypeAlias
+        | crate::symbols::TypeInfo::Newtype(_) => false,
+    }
 }
 
 /// Name the first missing producer stage using its retained refusal when one was emitted.
@@ -346,7 +509,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use super::{CheckedOwnerDependencyRead, CheckedOwnerRecordOutput, checked_owner_record_outputs};
+    use super::{
+        CheckedOwnerDependencyRead, CheckedOwnerRecordOutput, checked_owner_record_outputs, stable_dependency_contexts,
+    };
     use crate::library_exports::collect_checked_public_exports;
     use crate::library_manifest::LibraryManifest;
     use crate::loaf_index::LoafIndex;
@@ -423,15 +588,15 @@ mod tests {
             return Err("the dependency-consuming owner fell back".into());
         };
         assert_eq!(owner.name, "main");
-        assert_eq!(
-            owner.dependency_reads,
-            vec![CheckedOwnerDependencyRead {
-                package: Some("provider".into()),
-                module_path: vec!["lib".into()],
-                declaration_name: "value".into(),
-                declaration_identity: "function:pub::provider::lib::value".into(),
-            }]
-        );
+        let read = owner
+            .dependency_reads
+            .first()
+            .ok_or("missing provider dependency read")?;
+        assert_eq!(read.package, Some("provider".into()));
+        assert_eq!(read.module_path, vec!["lib".to_string()]);
+        assert_eq!(read.declaration_name, "value");
+        assert_eq!(read.declaration_identity, "function:pub::provider::lib::value");
+        assert!(read.reference_subject.starts_with("expr:main#"));
         for source in [
             "def main() -> None:\n    println(\"hello\")\n",
             "def greeting() -> str:\n    return \"hello\"\n\ndef main() -> None:\n    println(greeting())\n",
@@ -445,6 +610,200 @@ mod tests {
         assert_ne!(
             signature,
             local_callee_identity(&base.replace("-> int", "-> str").replace("return 1", "return \"one\""))?
+        );
+        Ok(())
+    }
+
+    /// Public-package fields with the same spelling retain the selected model in each dependency identity.
+    #[test]
+    fn public_package_member_reads_keep_their_selected_nominal() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = "pub model First:\n    pub pin: Option[int] = None\n\n    pub def message(self) -> str:\n        return \"first\"\n\npub model Second:\n    pub pin: Option[int] = None\n\n    pub def message(self) -> str:\n        return \"second\"\n";
+        let (loaves, _directory) = provider_index(provider)?;
+        let source = "from pub::provider import First, Second\n\ndef first(value: First) -> Option[int]:\n    return value.pin\n\ndef second(value: Second) -> Option[int]:\n    return value.pin\n\ndef first_message(value: First) -> str:\n    return value.message()\n\ndef second_message(value: Second) -> str:\n    return value.message()\n";
+        let consumer = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_loaves(loaves);
+        checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.type_info().semantic_fact_store(&["main".into()]);
+        let contexts = stable_dependency_contexts(&facts);
+        let mut reads = contexts
+            .iter()
+            .filter(|(identity, _)| identity.declaration_name == "pin" || identity.declaration_name == "message")
+            .filter_map(|(identity, context)| {
+                checker
+                    .stable_dependency_identity_with_context(identity, Some(context))
+                    .map(|identity| identity.render_compact())
+            })
+            .collect::<Vec<_>>();
+        reads.sort();
+        assert_eq!(
+            reads,
+            vec![
+                "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::First)[0]",
+                "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::Second)[0]",
+                "member/method:pub::provider::lib::message#in(model:pub::provider::lib::First)[0]",
+                "member/method:pub::provider::lib::message#in(model:pub::provider::lib::Second)[0]",
+            ]
+        );
+        Ok(())
+    }
+
+    /// An editable sibling enum variant keeps the provider enum as its stable owner, even when another top-level
+    /// declaration has the variant's spelling.
+    #[test]
+    fn sibling_nominal_member_stable_dependency_identity_keeps_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = program(
+            "pub model Cancelled:\n    reason: str\n\npub model First:\n    pub transaction: str\n\npub model Second:\n    pub transaction: str\n\npub enum CompletionStatus:\n    Success\n    Failed\n    Cancelled\n",
+        )?;
+        let module_path = vec!["engine_messages".into()];
+        let mut provider_checker = TypeChecker::new();
+        provider_checker.set_current_module_path(Some(module_path.clone()));
+        provider_checker.register_dependency_module_path_segments("engine_messages", module_path.clone());
+        let interface = provider_checker
+            .build_dependency_interface_component(
+                &[(
+                    "engine_messages",
+                    &provider,
+                    Arc::from(crate::module::exported_symbols(&provider)),
+                )],
+                &[],
+                true,
+            )
+            .pop()
+            .ok_or("provider namespace was not publishable")?;
+
+        let consumer = program(
+            "from engine_messages import CompletionStatus, First, Second\n\ndef selected() -> CompletionStatus:\n    return CompletionStatus.Failed\n\ndef cancelled() -> CompletionStatus:\n    return CompletionStatus.Cancelled\n\ndef first(value: First) -> str:\n    return value.transaction\n\ndef second(value: Second) -> str:\n    return value.transaction\n",
+        )?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.register_dependency_module_path_segments("engine_messages", module_path);
+        checker.select_dependency_interfaces(vec![interface]);
+        checker
+            .check_with_imports(&consumer, &[("engine_messages", &provider)])
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let mut reads = checker
+            .symbols
+            .all_symbols()
+            .iter()
+            .flat_map(|symbol| match &symbol.kind {
+                crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) => {
+                    info.variant_identities.values().collect::<Vec<_>>()
+                }
+                crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Model(info)) => info
+                    .fields
+                    .values()
+                    .filter_map(|field| field.identity.as_ref())
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .filter(|identity| {
+                identity.declaration_name == "Failed"
+                    || identity.declaration_name == "Cancelled"
+                    || identity.declaration_name == "transaction"
+            })
+            .map(|identity| {
+                checker
+                    .stable_dependency_identity(identity)
+                    .map(|stable| stable.render_compact())
+                    .ok_or_else(|| "missing variant dependency identity".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        reads.sort();
+        reads.dedup();
+        assert_eq!(
+            reads,
+            vec![
+                "member/field:engine_messages::transaction#in(model:engine_messages::First)[0]",
+                "member/field:engine_messages::transaction#in(model:engine_messages::Second)[0]",
+                "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
+                "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
+            ]
+        );
+        let facts = checker.type_info().semantic_fact_store(&["main".into()]);
+        let contexts = stable_dependency_contexts(&facts);
+        let mut field_reads = contexts
+            .iter()
+            .filter(|(identity, _)| identity.declaration_name == "transaction")
+            .filter_map(|(identity, context)| {
+                checker
+                    .stable_dependency_identity_with_context(identity, Some(context))
+                    .map(|identity| identity.render_compact())
+            })
+            .collect::<Vec<_>>();
+        field_reads.sort();
+        assert_eq!(
+            field_reads,
+            vec![
+                "member/field:engine_messages::transaction#in(model:engine_messages::First)[0]",
+                "member/field:engine_messages::transaction#in(model:engine_messages::Second)[0]",
+            ]
+        );
+        Ok(())
+    }
+
+    /// A generated field identity retains its checked enclosing declaration when same-spelled defaults coexist.
+    #[test]
+    fn local_field_reads_keep_their_stable_declaration_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let program = program(
+            "pub model ProgramOutcome:\n    pub transaction: Option[int] = None\n\npub model NativeSelection:\n    pub transaction: Option[int] = None\n",
+        )?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["engine_programs".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let owner = checker
+            .symbols
+            .lookup("ProgramOutcome")
+            .and_then(|symbol| checker.symbols.identity_of(symbol))
+            .cloned()
+            .ok_or("missing ProgramOutcome identity")?;
+        let dependency = owner.generated_member("transaction", incan_semantics_core::SemanticSourceTargetKind::Field);
+        let context = incan_semantics_core::CanonicalStableDeclarationContext {
+            owner: owner.clone(),
+            binding_ordinal: 0,
+        };
+        assert_eq!(
+            checker
+                .stable_dependency_identity_with_context(&dependency, Some(&context))
+                .map(|identity| identity.render_compact()),
+            Some("member/field:engine_programs::transaction#in(model:engine_programs::ProgramOutcome)[0]".into())
+        );
+        checker
+            .type_info
+            .record_compiler_generated_member_identity(dependency.clone(), owner);
+        assert_eq!(
+            checker
+                .stable_dependency_identity(&dependency)
+                .map(|identity| identity.render_compact()),
+            Some("member/field:engine_programs::transaction#in(model:engine_programs::ProgramOutcome)[0]".into())
+        );
+        Ok(())
+    }
+
+    /// A body-local parameter read, as in Oven's `apple_sdk.retained_sdk`, is not an external source dependency.
+    #[test]
+    fn body_parameter_reads_stay_inside_their_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def retained_sdk(basis: str) -> Result[str, str]:\n    if basis != \"selected\":\n        return Err(\"the developer selection changed\")\n    return Ok(basis)\n";
+        let program = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["apple_sdk".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&program, &checker, &["apple_sdk".into()])?;
+        let CheckedOwnerRecordOutput::Value(owner) = &outputs[0] else {
+            return Err("retained_sdk did not publish a checked owner".into());
+        };
+        assert!(
+            owner.dependency_reads.is_empty(),
+            "body-local parameter escaped as a source dependency: {:?}",
+            owner.dependency_reads
         );
         Ok(())
     }

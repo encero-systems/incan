@@ -240,6 +240,8 @@ pub struct ReferenceArtifacts {
     /// identity. Absence means resolution did not prove an identity for that reference — consumers fail closed
     /// rather than reconstruct one.
     pub resolved_identities: HashMap<crate::ast::Span, CanonicalSymbolId>,
+    /// Exact declaring nominal retained for a same-spelled field or variant at this reference site.
+    pub stable_declaration_contexts: HashMap<crate::ast::Span, incan_semantics_core::CanonicalStableDeclarationContext>,
     /// RFC 120 identities selected for statement-owned write targets at their exact authored identifier spans.
     ///
     /// Single, tuple-unpack, chained, and compound assignments retain one target span per written identifier. Keying
