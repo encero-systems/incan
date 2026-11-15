@@ -1,0 +1,11 @@
+[project]
+name = "crates-io/tiny-b"
+version = "1.0.0"
+
+[rust]
+name = "tiny_b"
+type = "lib"
+edition = "2021"
+
+[dependencies]
+tiny-a = { loaf = "crates-io/tiny-a", version = "^1", features = ["wide"], default-features = false }

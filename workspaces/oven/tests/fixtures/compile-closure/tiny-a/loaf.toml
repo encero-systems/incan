@@ -1,0 +1,12 @@
+[project]
+name = "crates-io/tiny-a"
+version = "1.0.0"
+
+[project.features]
+default = []
+wide = []
+
+[rust]
+name = "tiny_a"
+type = "lib"
+edition = "2021"
