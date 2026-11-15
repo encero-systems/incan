@@ -157,7 +157,7 @@ pub def move_closure(
     return Ok(None)
 
 
-pub def stored_callable(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def stored_callable(mut builder: Builder, operand: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Read the callable an assignment stores; a partial moves out whole, because its binding carries its flags."""
     match operand:
         RustOperand.Place(read) =>
@@ -222,16 +222,16 @@ pub def synthesize(mut builder: Builder, function: Function) -> None:
 
 
 pub def lower_closure(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
-    parameters: &list[RustCallableParam],
-    captures: &list[RustOperand],
-    capture_locals: &list[RustLocalId],
-    statements: &list[RustStatement],
-    result: &RustOperand,
+    parameters: Borrowed[list[RustCallableParam]],
+    captures: Borrowed[list[RustOperand]],
+    capture_locals: Borrowed[list[RustLocalId]],
+    statements: Borrowed[list[RustStatement]],
+    result: Borrowed[RustOperand],
     consumes_environment: bool,
-    native_storage: &Option[NativeClosureStorage],
+    native_storage: Borrowed[Option[NativeClosureStorage]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -340,7 +340,7 @@ pub def lower_closure(
     return Ok(None)
 
 
-def capture_operand(mut builder: Builder, capture: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+def capture_operand(mut builder: Builder, capture: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """
     A capture the closure borrows is a fresh shared loan of its exact place, unless that place already holds a shared
     reference, which is copied; any other capture is read as a value.
@@ -358,14 +358,14 @@ def capture_operand(mut builder: Builder, capture: &RustOperand, span: SourceSpa
 
 
 def lift_closure(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     name: str,
     captures: list[PlanType],
-    parameters: &list[RustCallableParam],
-    capture_locals: &list[RustLocalId],
-    statements: &list[RustStatement],
-    result: &RustOperand,
+    parameters: Borrowed[list[RustCallableParam]],
+    capture_locals: Borrowed[list[RustLocalId]],
+    statements: Borrowed[list[RustStatement]],
+    result: Borrowed[RustOperand],
     signature: list[PlanType],
     consumes_environment: bool,
     span: SourceSpan,
@@ -536,12 +536,12 @@ pub def adopt_lifted(mut builder: Builder, mut lifted: Builder) -> None:
 
 
 pub def lower_generator_expression(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
-    source: &RustOperand,
-    captures: &list[RustOperand],
-    body: &RustGeneratorBody,
+    source: Borrowed[RustOperand],
+    captures: Borrowed[list[RustOperand]],
+    body: Borrowed[RustGeneratorBody],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -610,7 +610,7 @@ pub def lower_generator_expression(
     return Ok(None)
 
 
-def generator_source_value(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+def generator_source_value(mut builder: Builder, source: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Borrow a stored list source for a lazy expression, while moving independently owned sources as before."""
     match source:
         RustOperand.Place(read) =>
@@ -651,7 +651,7 @@ pub def step_callable(
 
 
 def lift_generator_step(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     name: str,
     item: PlanType,
@@ -659,7 +659,7 @@ def lift_generator_step(
     capture_locals: list[int],
     result: PlanType,
     item_local: int,
-    block: &RustBlock,
+    block: Borrowed[RustBlock],
     span: SourceSpan,
 ) -> Result[Function, str]:
     """
@@ -721,10 +721,10 @@ pub def later_clause_index(mut builder: Builder, iterator: int) -> int:
 
 
 pub def lower_later_clause(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     clause: int,
-    body: &RustBlock,
+    body: Borrowed[RustBlock],
     span: SourceSpan,
 ) -> Result[None, str]:
     """

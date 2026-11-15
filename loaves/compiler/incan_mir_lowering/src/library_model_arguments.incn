@@ -8,7 +8,7 @@ from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
 
 
-pub def local_generic_item(declaration: &NominalDeclaration, instances: &list[NominalInstance]) -> Result[str, str]:
+pub def local_generic_item(declaration: Borrowed[NominalDeclaration], instances: Borrowed[list[NominalInstance]]) -> Result[str, str]:
     """Select the retained template of a local closed carrier, so its storage aliases the ADT published by this Loaf."""
     for instance in instances:
         if (
@@ -20,12 +20,12 @@ pub def local_generic_item(declaration: &NominalDeclaration, instances: &list[No
 
 
 pub def library_model_arguments(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
-    instances: &list[NominalInstance],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
+    instances: Borrowed[list[NominalInstance]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[PlanType], str]:
     """Transport retained instance arguments against the enclosing layout pass's ordered union inventory."""
     native_item: str = str(declaration.native_item)
@@ -55,11 +55,11 @@ pub def library_model_arguments(
 
 
 def native_arguments(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[PlanType], str]:
     """Preserve fixed native arguments using the caller's already collected union inventory."""
     mut arguments: list[PlanType] = []
@@ -78,12 +78,12 @@ def native_arguments(
 
 
 def instance_native_arguments(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
-    instance: &NominalInstance,
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
+    instance: Borrowed[NominalInstance],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[PlanType], str]:
     """Close native templates using the caller's union inventory and preserve each argument's field storage."""
     mut templates: list[RustType] = []
@@ -115,9 +115,9 @@ def instance_native_arguments(
 
 
 def stored_argument_type(
-    declaration: &NominalDeclaration,
-    template: &NominalDeclaration,
-    argument: &RustType,
+    declaration: Borrowed[NominalDeclaration],
+    template: Borrowed[NominalDeclaration],
+    argument: Borrowed[RustType],
     ty: PlanType,
 ) -> Result[PlanType, str]:
     """Transport a stored generic callable's owning ABI into its native owner argument, using the same field facts."""

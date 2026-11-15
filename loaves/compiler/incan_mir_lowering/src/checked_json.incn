@@ -39,8 +39,8 @@ from table_views import borrowed_at, borrowed_table
 
 pub def lower_checked_deserialize(
     constructor_owner: Arc[ConstructorIndex],
-    module: &BodyIrModule,
-    instances: &list[NominalInstance],
+    module: Borrowed[BodyIrModule],
+    instances: Borrowed[list[NominalInstance]],
     file: str,
     mut intrinsics: list[EnumDeclaration],
     start: int = 0,
@@ -100,7 +100,7 @@ pub def lower_checked_deserialize(
     return Ok((functions, externals, pending))
 
 
-def checked_success(hook: &Body) -> Result[RustType, str]:
+def checked_success(hook: Borrowed[Body]) -> Result[RustType, str]:
     """Read the already validated standard Result success without reconstructing a nominal identity by spelling."""
     match hook.return_type:
         RustType.Generic(base=base, args=arguments) =>
@@ -112,9 +112,9 @@ def checked_success(hook: &Body) -> Result[RustType, str]:
 
 def checked_json_function(
     constructors: Arc[ConstructorIndex],
-    module: &BodyIrModule,
-    hook: &Body,
-    selected: &Body,
+    module: Borrowed[BodyIrModule],
+    hook: Borrowed[Body],
+    selected: Borrowed[Body],
     arguments: list[RustType],
     name: str,
     owner: PlanType,

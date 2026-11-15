@@ -55,9 +55,9 @@ from rust::incan_lang::lang::surface::result_methods import ResultMethodId as Ru
 
 pub def lower_try_propagation(
     mut builder: Builder,
-    destination: &RustPlace,
-    operand: &RustOperand,
-    routing: &TryErrorRouting,
+    destination: Borrowed[RustPlace],
+    operand: Borrowed[RustOperand],
+    routing: Borrowed[TryErrorRouting],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -103,7 +103,7 @@ pub def lower_result_construction(
 pub def lower_option_construction(
     mut builder: Builder,
     target: Place,
-    elements: &list[RustArgumentElement],
+    elements: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Build only an explicitly retained intrinsic Some node in the checked Option destination."""
@@ -142,9 +142,9 @@ pub def lower_none_assignment(
 
 pub def lower_carrier_method(
     mut builder: Builder,
-    method: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    method: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
@@ -186,7 +186,7 @@ pub def lower_carrier_method(
 
 def carrier_receiver(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """
@@ -211,7 +211,7 @@ def carrier_receiver(
     return argument_place(builder, arguments, 0, span)
 
 
-def indexes_a_list(place: &RustPlace) -> bool:
+def indexes_a_list(place: Borrowed[RustPlace]) -> bool:
     """Report whether a place reaches its value through a list index."""
     for projection in place.projection:
         match projection:
@@ -220,7 +220,7 @@ def indexes_a_list(place: &RustPlace) -> bool:
     return false
 
 
-def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def element_copy(mut builder: Builder, source: Borrowed[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """Read a list element into an owned copy and return its place."""
     match indexed_read(builder, source, span)?.kind:
         OperandKind.Move(place) => return Ok(place)
@@ -230,7 +230,7 @@ def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
 
 pub def retained_reference_value(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
@@ -301,7 +301,7 @@ def retained_reference_place(mut builder: Builder, source: RustPlace, span: Sour
     return Ok(Some(scalar_place(builder, source, span)?))
 
 
-def native_copy_type(builder: &Builder, ty: PlanType) -> bool:
+def native_copy_type(builder: Borrowed[Builder], ty: PlanType) -> bool:
     """Require retained native Copy capability for the exact owned carrier requested by a typed boundary."""
     match ty:
         PlanType.Model(owner, _name) =>
@@ -319,7 +319,7 @@ def native_copy_type(builder: &Builder, ty: PlanType) -> bool:
 
 pub def typed_carrier_operand(
     mut builder: Builder,
-    operand: &RustOperand,
+    operand: Borrowed[RustOperand],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -356,7 +356,7 @@ pub def typed_carrier_operand(
     return Ok(value)
 
 
-pub def frozen_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def frozen_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Keep only checked static literals or existing frozen values; dynamic text remains named-refused."""
     match value:
         RustOperand.Constant(constant) => return frozen_literal(builder, constant, span)

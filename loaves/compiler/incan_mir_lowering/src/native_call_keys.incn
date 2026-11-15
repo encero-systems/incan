@@ -9,7 +9,7 @@ from tuples import type_name
 pub def native_result_mismatch(
     mut builder: Builder,
     declaration: LoafCallable,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
 ) -> Result[Option[str], str]:
     """
     Disambiguate checked native records: 1. Read the original result slot. 2. Compare their closed checked types.

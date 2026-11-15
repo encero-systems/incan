@@ -29,7 +29,7 @@ from native_type_identity import OWNED_CALLABLE_STORAGE, ConstructorIndex, const
 from compiler_record_adapters import authored_plan_symbol_id, semantic_key_matches_native
 
 
-pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
+pub def native_alias_boundary(nominals: Borrowed[list[NominalDeclaration]], source: PlanType, target: PlanType) -> bool:
     """Require a retained nominal carrier and unchanged loan mode; rustc proves exact type equality before any move."""
     if alias_reference_mode(source) != alias_reference_mode(target):
         return false
@@ -69,7 +69,7 @@ def alias_reference_mode(ty: PlanType) -> int:
         _ => return 0
 
 
-def retained_nominal_carrier(nominals: &list[NominalDeclaration], ty: PlanType) -> bool:
+def retained_nominal_carrier(nominals: Borrowed[list[NominalDeclaration]], ty: PlanType) -> bool:
     """Require a compiled nominal alias or a closed source template whose consumer owns its native declaration."""
     match ty:
         (PlanType.Model(owner, _name) | PlanType.ModelRef(owner, _name) | PlanType.ModelMutRef(owner, _name)) =>
@@ -80,7 +80,7 @@ def retained_nominal_carrier(nominals: &list[NominalDeclaration], ty: PlanType) 
         _ => return false
 
 
-pub def context_free_type(ty: &RustType) -> Result[PlanType, str]:
+pub def context_free_type(ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Resolve a callable component without source declarations, explicitly typing the empty borrowed inventories."""
     nominals: list[NominalDeclaration] = []
     enums: list[RustEnumDeclaration] = []
@@ -91,12 +91,12 @@ pub def context_free_type(ty: &RustType) -> Result[PlanType, str]:
 
 
 pub def native_source_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    ty: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    ty: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     source_file: str = "",
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
@@ -226,13 +226,13 @@ pub def native_source_type(
 
 
 def source_function_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    parameters: &list[IncanCallableParam],
-    result: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    parameters: Borrowed[list[IncanCallableParam]],
+    result: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """Lower one complete callable signature through the same retained nominal and input-access context."""
     mut signature: list[PlanType] = []
@@ -246,13 +246,13 @@ def source_function_type(
 
 
 def explicit_ownership_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     constructor: str,
-    arguments: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    arguments: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[Option[PlanType], str]:
     """Lower one canonical ownership wrapper to the physical reference mode selected by its registry identity."""
     match ownership_mode(constructor):
@@ -269,13 +269,13 @@ def explicit_ownership_type(
 
 
 def frozen_collection_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     constructor: str,
-    arguments: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    arguments: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """Retain native frozen payloads directly and source frozen text or bytes through their static storage ABI."""
     native = constructor.startswith("$")
@@ -293,13 +293,13 @@ def frozen_collection_type(
 
 
 pub def stored_field_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    declaration: &NominalDeclaration,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    declaration: Borrowed[NominalDeclaration],
     slot: int,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """
     Use the Body IR field's owning callable fact at every construction and projection of its closed owner.
@@ -320,12 +320,12 @@ pub def stored_field_type(
 
 
 def layout_reaches(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
-    owner: &NominalDeclaration,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
+    owner: Borrowed[NominalDeclaration],
     ty: PlanType,
     mut path: list[int],
 ) -> bool:
@@ -367,7 +367,7 @@ def layout_reaches(
         _ => return false
 
 
-def is_native_str(ty: &RustType) -> bool:
+def is_native_str(ty: Borrowed[RustType]) -> bool:
     """Recognize the checker's unsized Rust str referent before ordinary owned-text projection."""
     match ty:
         RustType.RustInteropPath(path) => return str(path) == "str"
@@ -452,12 +452,12 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 
 
 pub def callable_parameter_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    parameter: &IncanCallableParam,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    parameter: Borrowed[IncanCallableParam],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
     element = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
@@ -471,9 +471,9 @@ pub def callable_parameter_type(
 
 
 def numeric_newtype_iterator(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    element: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    element: Borrowed[RustType],
 ) -> Option[PlanType]:
     """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
     match element:
@@ -498,11 +498,11 @@ def numeric_newtype_iterator(
 
 
 def hashed_leaf(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    ty: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    ty: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[ListLeaf, str]:
     """
     Admit an enum set element or dictionary key only when its retained layout hashes.
@@ -542,7 +542,7 @@ def hashed_leaf(
     return hashed_element(nominals, ty)
 
 
-def intrinsic_carrier(ty: &RustType) -> bool:
+def intrinsic_carrier(ty: Borrowed[RustType]) -> bool:
     """Whether a checked type can name a retained intrinsic carrier: only Option, Result and Union are retained."""
     match ty:
         RustType.Generic(base=base, args=_arguments) => return standard_carrier(str(base)) or ty.is_union()
@@ -566,12 +566,12 @@ pub def carrier_name(carrier: Carrier) -> Option[str]:
 
 
 def layout_tuple_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    elements: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    elements: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """Resolve each tuple element in the retained layout context, so a list or carrier element keeps its identity."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
@@ -585,12 +585,12 @@ def layout_tuple_type(
 
 
 def zip_pair_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    element: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    element: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Option[PlanType]:
     """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
     match element:
@@ -604,12 +604,12 @@ def zip_pair_type(
 
 
 def pair_layout(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    elements: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    elements: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Option[PlanType]:
     """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
     if len(elements) != 2:

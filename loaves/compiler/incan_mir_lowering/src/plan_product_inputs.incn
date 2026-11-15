@@ -14,13 +14,13 @@ from scalar_store import record_scalar_inputs, scalar_inputs
 
 
 pub def ordinary_product_inputs(
-    context: &BodyIrModule,
-    body: &RustBody,
+    context: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     source: str,
     file: str,
     overflow_checks: bool,
     products: Option[str],
-    admitted: &BTreeMap[CompilerNodeId, str],
+    admitted: Borrowed[BTreeMap[CompilerNodeId, str]],
     records: bool,
     unchecked: Option[str] = None,
 ) -> Option[tuple[list[str], list[tuple[int, int]]]]:
@@ -61,7 +61,7 @@ pub def ordinary_product_inputs(
             return Some((scalar_inputs(input, name, span, overflow_checks, witness), unpositioned))
 
 
-pub def graph_owner(body: &RustBody) -> bool:
+pub def graph_owner(body: Borrowed[RustBody]) -> bool:
     """Whether the compiled graph records this body as an owner: a module-level declaration, never a member."""
     match body.canonical:
         None => return false

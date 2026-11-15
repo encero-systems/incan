@@ -20,7 +20,7 @@ from pub::incan_mir_plan import (
 )
 
 
-pub def type_name(ty: &RustType) -> str:
+pub def type_name(ty: Borrowed[RustType]) -> str:
     """Name every canonical type kind even when its legacy Display implementation is empty."""
     match ty:
         RustType.NativeCChar | RustType.NativePointer(mutable=_, pointee=_) => return str(ty)
@@ -54,7 +54,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Unknown => return "Unknown"
 
 
-pub def generic_tuple_type(ty: &RustType) -> Result[PlanType, str]:
+pub def generic_tuple_type(ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Read annotation-shaped tuples through the same collection registry the Body IR frontend uses."""
     match ty:
         RustType.Generic(base=base, args=elements) =>
@@ -65,7 +65,7 @@ pub def generic_tuple_type(ty: &RustType) -> Result[PlanType, str]:
     return Err(f"unsupported Body IR type {type_name(ty)}")
 
 
-pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
+pub def tuple_type(elements: Borrowed[list[RustType]]) -> Result[PlanType, str]:
     """Admit only tuple elements whose native scalar layout is already supported."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
     if len(elements) == 1:
@@ -90,7 +90,7 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
     return Ok(PlanType.Tuple(types))
 
 
-pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, str]:
+pub def tuple_element(ty: PlanType, source: Borrowed[RustType]) -> Result[TupleElement, str]:
     """Retain a resolved tuple element's scalar, text, collection, nominal, function-pointer or nested tuple layout."""
     match sized_numeric(ty):
         Some(kind) => return Ok(TupleElement.Numeric(kind))
@@ -135,7 +135,7 @@ pub def is_tuple_type(ty: PlanType) -> bool:
         _ => return false
 
 
-pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
+pub def tuple_slot(projection: Borrowed[PlaceElem], count: int) -> Result[int, str]:
     """Accept a checker-proven structural field or a constant tuple index, including negative indices."""
     mut slot = -1
     match projection:

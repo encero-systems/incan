@@ -20,8 +20,8 @@ from table_views import borrowed_at, borrowed_table
 
 
 pub def fallible_methods(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     owner: int,
     native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
@@ -124,7 +124,7 @@ pub def fallible_methods(
     return Ok(None)
 
 
-def published_default(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+def published_default(module: Borrowed[BodyIrModule], identity: Borrowed[CanonicalSymbolId]) -> bool:
     """Require a complete published body; original owning modules were validated before their contexts were joined."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
@@ -152,9 +152,9 @@ pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
 
 
 def poll_abi(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &Body,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[Body],
     owner: int,
     arguments: list[RustType],
     mut intrinsics: list[EnumDeclaration],

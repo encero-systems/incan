@@ -59,7 +59,7 @@ pub def program_refusals(
 
 
 def body_refusals(
-    modules: &list[BodyIrModule],
+    modules: Borrowed[list[BodyIrModule]],
     sources: list[str],
     files: list[str],
     entry: int,
@@ -198,9 +198,9 @@ def finish_selected_census(selection: str, selected_count: int, progress: bool, 
 
 
 def append_context_refusals(
-    template_constructors: &ConstructorIndex,
-    mut context: &mut BodyIrModule,
-    templates: &BodyIrModule,
+    template_constructors: Borrowed[ConstructorIndex],
+    mut context: BorrowedMut[BodyIrModule],
+    templates: Borrowed[BodyIrModule],
     mut program: ProgramContext,
     unions: list[RustType],
     sources: list[str],
@@ -253,10 +253,10 @@ def append_context_refusals(
 
 
 pub def append_generator_constructor(
-    constructors: &ConstructorIndex,
+    constructors: Borrowed[ConstructorIndex],
     mut functions: list[Function],
-    module: &BodyIrModule,
-    body: &RustBody,
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     source: str,
     file: str,
     mut intrinsics: list[EnumDeclaration],

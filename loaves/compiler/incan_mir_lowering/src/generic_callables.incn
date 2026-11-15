@@ -16,10 +16,10 @@ from table_views import borrowed_at
 
 pub def owned_callable_slots(
     mut builder: Builder,
-    original: &RustBody,
-    closed: &RustBody,
-    arguments: &list[RustArgument],
-    binding: &RustBinding,
+    original: Borrowed[RustBody],
+    closed: Borrowed[RustBody],
+    arguments: Borrowed[list[RustArgument]],
+    binding: Borrowed[RustBinding],
     receiver_slots: int,
 ) -> Result[list[int], str]:
     """Select storage from retained generic parameters and evaluated closure facts; method bindings exclude their receiver slot."""
@@ -37,10 +37,10 @@ pub def owned_callable_slots(
 
 def owned_slots_for_bindings(
     mut builder: Builder,
-    original: &RustBody,
-    closed: &RustBody,
-    arguments: &list[RustArgument],
-    bindings: &list[RustBoundArgument],
+    original: Borrowed[RustBody],
+    closed: Borrowed[RustBody],
+    arguments: Borrowed[list[RustArgument]],
+    bindings: Borrowed[list[RustBoundArgument]],
     receiver_slots: int,
 ) -> Result[list[int], str]:
     """Collect the generic value slots whose bound argument is an owned closure, whatever order the call evaluated in."""
@@ -105,7 +105,7 @@ def validate_uniform_storage(original: RustBody, owned: list[int]) -> Result[Non
     return Ok(None)
 
 
-def is_generic_value(ty: &RustType) -> bool:
+def is_generic_value(ty: Borrowed[RustType]) -> bool:
     """Recognize the retained declaration category before checked substitution erases its source role."""
     match ty:
         RustType.TypeVar(_name) => return true

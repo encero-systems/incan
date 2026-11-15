@@ -54,7 +54,7 @@ from list_values import element_read, value_operand
 pub def lower_format(
     mut builder: Builder,
     destination: Place,
-    retained: &list[RustFormatPart],
+    retained: Borrowed[list[RustFormatPart]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower an f-string, retaining literal boundaries and the checked display or nominal Debug style."""
@@ -68,7 +68,7 @@ pub def lower_format(
 
 def append_format_part(
     mut builder: Builder,
-    part: &RustFormatPart,
+    part: Borrowed[RustFormatPart],
     mut parts: list[str],
     mut values: list[Place],
     span: SourceSpan,
@@ -91,12 +91,12 @@ def append_format_part(
     return Ok(None)
 
 
-def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def type_parameter_display_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Use the shared formatter's generic Display contract, including its copied borrowed-field observations."""
     return display_value_operand(builder, value, span, true)
 
 
-def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def debug_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Borrow structural nominal places through their retained Debug implementation before materializing other values."""
     match native_enum_text(builder, value, true, span)?:
         Some(text) => return Ok(text)
@@ -169,14 +169,14 @@ def display_tuple_place(mut builder: Builder, value: RustPlace, span: SourceSpan
     return Ok(Some(display_tuple(builder, target, span)?))
 
 
-pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+pub def display_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
     return display_value_operand(builder, value, span, false)
 
 
 def display_value_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     span: SourceSpan,
     type_parameter: bool,
 ) -> Result[Place, str]:
@@ -440,7 +440,7 @@ def clone_display_place(
 pub def lower_string_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Evaluate a replacement before dropping its old value, preserving retained text ownership."""

@@ -7,24 +7,24 @@ from rust::incan_std_primitives::errors import raise_value_error
 from validation_errors import make_coded_validation_error
 
 
-pub def text_codec_encoding_valid(encoding: &RustString) -> bool:
+pub def text_codec_encoding_valid(encoding: Borrowed[RustString]) -> bool:
     """Validate the normalized encoding before a computed receiver or error policy is evaluated."""
     return is_utf8_encoding_label(normalize_encoding_label(encoding.as_str()))
 
 
-pub def text_codec_errors_valid(errors: &RustString) -> bool:
+pub def text_codec_errors_valid(errors: Borrowed[RustString]) -> bool:
     """Admit only the decoder's strict and replacement policies before reading its receiver."""
     return errors.as_str() == "strict" or errors.as_str() == "replace"
 
 
-pub def validate_encoder_label(encoding: &RustString) -> None:
+pub def validate_encoder_label(encoding: Borrowed[RustString]) -> None:
     """Preserve the encoder's normalized label diagnostic before primitive conversion reads its receiver."""
     label = normalize_encoding_label(encoding.as_str())
     if not is_utf8_encoding_label(label):
         raise_value_error(f"str.encode() supports only utf-8 in this release, got encoding '{label}'")
 
 
-pub def decode_replacement_policy(encoding: &RustString, errors: &RustString) -> tuple[bool, bool]:
+pub def decode_replacement_policy(encoding: Borrowed[RustString], errors: Borrowed[RustString]) -> tuple[bool, bool]:
     """Validate decoder options in surface order and return `(accepted, replace_invalid)`."""
     label = normalize_encoding_label(encoding.as_str())
     if not is_utf8_encoding_label(label):
@@ -36,7 +36,7 @@ pub def decode_replacement_policy(encoding: &RustString, errors: &RustString) ->
     return (true, false)
 
 
-pub def invalid_decoder_options(encoding: &RustString, errors: &RustString) -> RuntimeError:
+pub def invalid_decoder_options(encoding: Borrowed[RustString], errors: Borrowed[RustString]) -> RuntimeError:
     """Adapt one rejected decoder option pair to its established ordered surface error."""
     label = normalize_encoding_label(encoding.as_str())
     if not is_utf8_encoding_label(label):
@@ -50,6 +50,6 @@ pub def invalid_decoder_options(encoding: &RustString, errors: &RustString) -> R
     )
 
 
-pub def invalid_utf8_error(detail: &RustString) -> RuntimeError:
+pub def invalid_utf8_error(detail: Borrowed[RustString]) -> RuntimeError:
     """Adapt primitive UTF-8 validation detail to the established coded decoder error."""
     return make_coded_validation_error(f"'utf-8' codec can't decode bytes: {detail}", "invalid-utf8")

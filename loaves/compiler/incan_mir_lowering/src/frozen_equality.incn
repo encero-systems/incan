@@ -18,7 +18,7 @@ from static_storage import computed_static_root
 from element_places import is_element_place, element_place_type
 
 
-pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+pub def frozen_place(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Option[Place], str]:
     """Keep a frozen owner or field; a bare baked aggregate gets its existing typed temporary."""
     match value:
         RustOperand.Place(read) =>
@@ -95,9 +95,9 @@ pub def borrow_frozen(mut builder: Builder, value: Place, span: SourceSpan) -> R
 
 pub def compare_frozen(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Compare identical checked wrappers through native PartialEq; other operations retain their named refusal."""

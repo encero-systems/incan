@@ -11,15 +11,15 @@ from table_views import borrowed_at, borrowed_table
 
 
 pub def display_functions(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[DisplayFunction], str]:
     """Resolve only the retained selected identity with its exact shared receiver and string-returning signature."""
     mut functions: list[DisplayFunction] = []
     unions: list[RustType] = []
-    nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
-    enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+    nominals: Borrowed[list[NominalDeclaration]] = borrowed_table(module.nominal_declarations)
+    enums: Borrowed[list[RustEnumDeclaration]] = borrowed_table(module.enum_declarations)
     for owner in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, owner)
         match declaration.display_method:
@@ -80,7 +80,7 @@ pub def display_functions(
     return Ok(functions)
 
 
-def string_result(ty: &RustType) -> bool:
+def string_result(ty: Borrowed[RustType]) -> bool:
     """Require the exact checked string result without permitting an implicit formatting conversion."""
     match ty:
         RustType.Primitive(IncanPrimitiveType.Str) => return true

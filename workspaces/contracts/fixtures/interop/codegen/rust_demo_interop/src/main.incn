@@ -102,7 +102,7 @@ pub def setup(mut commands: Commands) -> int:
     return commands.spawned
 
 
-pub def move_items(first: &mut Widget, second: &mut Gadget) -> None:
+pub def move_items(mut first: BorrowedMut[Widget], mut second: BorrowedMut[Gadget]) -> None:
     """Mutate references stored in a native tuple while their owner stays in this frame."""
     mut items = FooBar.pair(first, second)
     for widget, gadget in items.iter_mut():
@@ -228,7 +228,7 @@ model CfgSnapshot:
     target: str
 
 
-def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
+def cfg_predicate(predicate: Borrowed[Predicate], snapshot: CfgSnapshot) -> Option[bool]:
     return Some(predicate.value > 0 and len(snapshot.target) > 0)
 
 

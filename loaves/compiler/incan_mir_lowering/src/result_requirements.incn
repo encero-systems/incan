@@ -5,7 +5,7 @@ from rust::incan_semantics_core::body_ir import Body
 from rust::incan_lang::lang::types::collections import CollectionTypeId
 
 
-pub def validate_result_requirements(body: &Body) -> Result[None, str]:
+pub def validate_result_requirements(body: Borrowed[Body]) -> Result[None, str]:
     """Unresolved or dependent substitutions retain a refusal, never implicit independent storage."""
     match body.checked_input_profile:
         None => return Ok(None)
@@ -19,7 +19,7 @@ pub def validate_result_requirements(body: &Body) -> Result[None, str]:
     return Ok(None)
 
 
-pub def independent_result(ty: &IncanType) -> bool:
+pub def independent_result(ty: Borrowed[IncanType]) -> bool:
     """Only closed scalar carriers discharge this initial conditional contract; nominal/native views stay refused."""
     match ty:
         IncanType.Primitive(_kind) => return true

@@ -327,7 +327,7 @@ pub model ExternalFunction:
     pub span: SourceSpan
 
 
-pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
+pub def semantic_type_matches(declaration: Borrowed[EnumDeclaration], ty: Borrowed[SemanticType]) -> bool:
     """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
     match declaration.semantic_key:
         Some(retained) => return retained == ty.clone()

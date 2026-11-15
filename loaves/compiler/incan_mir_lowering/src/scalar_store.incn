@@ -107,7 +107,7 @@ pub def record_scalar_inputs(body: str, name: str, span: SourceSpan, overflow: b
 pub def retained_scalar(
     directory: str,
     inputs: list[str],
-    unit: &UnitNominals,
+    unit: Borrowed[UnitNominals],
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
 ) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function], list[str]]]:
@@ -154,8 +154,8 @@ pub def retained_scalar(
 pub def retain_scalar(
     directory: str,
     inputs: list[str],
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     nominals: list[ProductNominal] = [],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
@@ -176,7 +176,7 @@ pub def retain_scalar(
 pub def finalize_scalar(
     directory: str,
     key: str,
-    function: &Function,
+    function: Borrowed[Function],
     reused: bool,
     references: list[NominalReference],
     positions: list[tuple[int, int]],
@@ -301,8 +301,8 @@ pub def report_scalar_refusal(
 
 def encoded_record(
     inputs: list[str],
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     nominals: list[ProductNominal],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],

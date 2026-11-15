@@ -71,7 +71,7 @@ pub model BodyIrRecordProvenance:
     pub package_versions: BTreeMap[str, str]
 
 
-pub def authored_callee(callee: &RustCallee) -> CompilerCallee:
+pub def authored_callee(callee: Borrowed[RustCallee]) -> CompilerCallee:
     """Project every Callee alternative without changing its already checked target payload."""
     match callee:
         RustCallee.Function(target) => return CompilerCallee.Function(target.clone())
@@ -95,7 +95,7 @@ pub def native_callee(callee: CompilerCallee) -> RustCallee:
         CompilerCallee.CheckedBridge(target) => return RustCallee.CheckedBridge(target)
 
 
-pub def authored_rvalue(value: &RustRvalue, provenance: &BodyIrRecordProvenance) -> Result[CompilerRvalue, str]:
+pub def authored_rvalue(value: Borrowed[RustRvalue], provenance: Borrowed[BodyIrRecordProvenance]) -> Result[CompilerRvalue, str]:
     """Project every Rvalue alternative and author the one checked type stored directly by this family."""
     match value:
         RustRvalue.Use(operand) => return Ok(CompilerRvalue.Use(operand.clone()))
@@ -156,8 +156,8 @@ pub def native_rvalue(value: CompilerRvalue) -> Result[RustRvalue, str]:
             return Ok(RustRvalue.Generator(source=source, captured_operands=captures, body=body))
         CompilerRvalue.Match(scrutinee, arms) => return Ok(RustRvalue.Match(scrutinee=scrutinee, arms=arms))
 pub def authored_statement_kind(
-    kind: &RustStatementKind,
-    provenance: &BodyIrRecordProvenance,
+    kind: Borrowed[RustStatementKind],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerStatementKind, str]:
     """Project every normalized statement alternative, recursively authoring all nested control-flow blocks."""
     match kind:
@@ -249,8 +249,8 @@ pub def native_statement_kind(kind: CompilerStatementKind) -> Result[RustStateme
 
 
 pub def authored_statement(
-    statement: &RustStatement,
-    provenance: &BodyIrRecordProvenance,
+    statement: Borrowed[RustStatement],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerStatement, str]:
     """Project one statement with the same provenance used for nested checked facts."""
     return Ok(
@@ -266,7 +266,7 @@ pub def native_statement(statement: CompilerStatement) -> Result[RustStatement, 
     return Ok(RustStatement(kind=native_statement_kind(statement.kind)?, span=native_hir_source_span(statement.span)?))
 
 
-pub def authored_block(block: &RustBlock, provenance: &BodyIrRecordProvenance) -> Result[CompilerBlock, str]:
+pub def authored_block(block: Borrowed[RustBlock], provenance: Borrowed[BodyIrRecordProvenance]) -> Result[CompilerBlock, str]:
     """Project a complete ordered block and recurse through every direct nested statement."""
     mut statements: list[CompilerStatement] = []
     for statement in block.stmts.iter():
@@ -286,8 +286,8 @@ pub def native_block(block: CompilerBlock) -> Result[RustBlock, str]:
 
 
 def authored_optional_block(
-    block: &Option[RustBlock],
-    provenance: &BodyIrRecordProvenance,
+    block: Borrowed[Option[RustBlock]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[CompilerBlock], str]:
     """Represent an optional recursive block as an exact zero-or-one authored list."""
     match block:
@@ -304,7 +304,7 @@ def native_optional_block(blocks: list[CompilerBlock]) -> Result[Option[RustBloc
     return Ok(Some(native_block(blocks[0])?))
 
 
-def authored_type(ty: &RustType, provenance: &BodyIrRecordProvenance) -> Result[CheckedType, str]:
+def authored_type(ty: Borrowed[RustType], provenance: Borrowed[BodyIrRecordProvenance]) -> Result[CheckedType, str]:
     """Complete one checked type using authenticated owning files and package versions."""
     return authored_plan_checked_type(
         ty,
@@ -315,8 +315,8 @@ def authored_type(ty: &RustType, provenance: &BodyIrRecordProvenance) -> Result[
 
 
 def authored_identity(
-    identity: &RustCanonicalSymbolId,
-    provenance: &BodyIrRecordProvenance,
+    identity: Borrowed[RustCanonicalSymbolId],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CanonicalSymbolId, str]:
     """Complete one canonical identity using authenticated owning files and package versions."""
     return authored_plan_symbol_id(
@@ -327,7 +327,7 @@ def authored_identity(
     )
 
 
-pub def authored_body(body: &RustBody, provenance: &BodyIrRecordProvenance) -> Result[CompilerBody, str]:
+pub def authored_body(body: Borrowed[RustBody], provenance: Borrowed[BodyIrRecordProvenance]) -> Result[CompilerBody, str]:
     """
     Project every live Body field, including the three skipped semantic facts and an independent identity map.
 
@@ -399,9 +399,9 @@ pub def native_body(body: CompilerBody) -> Result[RustBody, str]:
 
 
 pub def authored_trait_adoption(
-    adoption: &RustTraitAdoption,
-    adopter: &RustCanonicalSymbolId,
-    provenance: &BodyIrRecordProvenance,
+    adoption: Borrowed[RustTraitAdoption],
+    adopter: Borrowed[RustCanonicalSymbolId],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerTraitAdoption, str]:
     """Attach the concrete adopter and carry methods None versus Some empty plus every required-field witness."""
     return Ok(
@@ -418,7 +418,7 @@ pub def authored_trait_adoption(
 
 pub def native_trait_adoption(
     adoption: CompilerTraitAdoption,
-    adopter: &CanonicalSymbolId,
+    adopter: Borrowed[CanonicalSymbolId],
 ) -> Result[RustTraitAdoption, str]:
     """Restore an adoption only when its embedded adopter agrees with the enclosing nominal declaration."""
     if adoption.adopter != adopter:
@@ -435,8 +435,8 @@ pub def native_trait_adoption(
 
 
 def authored_validated_constructor(
-    contract: &Option[RustValidatedConstructor],
-    provenance: &BodyIrRecordProvenance,
+    contract: Borrowed[Option[RustValidatedConstructor]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[Option[CompilerValidatedConstructor], str]:
     """Project the checked validation targets and preserve the canonical order of required field slots."""
     match contract:
@@ -472,8 +472,8 @@ def native_validated_constructor(
 
 
 pub def authored_nominal_declaration(
-    declaration: &RustNominalDeclaration,
-    provenance: &BodyIrRecordProvenance,
+    declaration: Borrowed[RustNominalDeclaration],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerNominalDeclaration, str]:
     """Project every live nominal field and retain default frames, adoption witnesses and callable ownership slots."""
     authored_canonical = authored_identity(declaration.canonical, provenance)?
@@ -563,8 +563,8 @@ pub def native_nominal_declaration(declaration: CompilerNominalDeclaration) -> R
 
 
 pub def authored_loaf_callable(
-    callable: &RustLoafCallable,
-    provenance: &BodyIrRecordProvenance,
+    callable: Borrowed[RustLoafCallable],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerLoafCallable, str]:
     """Project all callable signature/default facts and its authenticated declaration-only frame."""
     authored = CompilerLoafCallable(
@@ -603,8 +603,8 @@ pub def native_loaf_callable(callable: CompilerLoafCallable) -> Result[RustLoafC
 
 
 pub def authored_body_ir_module(
-    module: &RustBodyIrModule,
-    provenance: &BodyIrRecordProvenance,
+    module: Borrowed[RustBodyIrModule],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[CompilerBodyIrModule, str]:
     """Project all 18 live module fields, keeping runtime bindings and selected entrypoints invocation-only."""
     mut callables: list[CompilerLoafCallable] = []
@@ -677,8 +677,8 @@ pub def native_body_ir_module(module: CompilerBodyIrModule) -> Result[RustBodyIr
 
 
 def authored_trait_arguments(
-    arguments: &list[RustTraitTypeArgument],
-    provenance: &BodyIrRecordProvenance,
+    arguments: Borrowed[list[RustTraitTypeArgument]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[TraitTypeArgument], str]:
     """Project ordered trait binders and their checked arguments."""
     mut authored: list[TraitTypeArgument] = []
@@ -700,8 +700,8 @@ def native_trait_arguments(arguments: list[TraitTypeArgument]) -> Result[list[Ru
 
 
 def authored_trait_default(
-    selected: &Option[RustTraitDefaultInstantiation],
-    provenance: &BodyIrRecordProvenance,
+    selected: Borrowed[Option[RustTraitDefaultInstantiation]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[Option[TraitDefaultInstantiation], str]:
     """Project a selected trait-default scope without combining it with method binders."""
     match selected:
@@ -735,8 +735,8 @@ def native_trait_default(
 
 
 def authored_trait_fields(
-    fields: &list[RustTraitFieldImplementation],
-    provenance: &BodyIrRecordProvenance,
+    fields: Borrowed[list[RustTraitFieldImplementation]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[TraitFieldWitness], str]:
     """Project every required-field witness as a pair of canonical identities."""
     mut authored: list[TraitFieldWitness] = []
@@ -763,7 +763,7 @@ def native_trait_fields(fields: list[TraitFieldWitness]) -> Result[list[RustTrai
     return Ok(native)
 
 
-def authored_types(types: &list[RustType], provenance: &BodyIrRecordProvenance) -> Result[list[CheckedType], str]:
+def authored_types(types: Borrowed[list[RustType]], provenance: Borrowed[BodyIrRecordProvenance]) -> Result[list[CheckedType], str]:
     """Project an ordered checked-type inventory through the authenticated provenance boundary."""
     mut authored: list[CheckedType] = []
     for ty in types:
@@ -780,8 +780,8 @@ def native_checked_types(types: list[CheckedType]) -> Result[list[RustType], str
 
 
 def authored_identities(
-    identities: &list[RustCanonicalSymbolId],
-    provenance: &BodyIrRecordProvenance,
+    identities: Borrowed[list[RustCanonicalSymbolId]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[CanonicalSymbolId], str]:
     """Project an ordered identity inventory through the authenticated provenance boundary."""
     mut authored: list[CanonicalSymbolId] = []
@@ -799,8 +799,8 @@ def native_identities(identities: list[CanonicalSymbolId]) -> Result[list[RustCa
 
 
 def authored_optional_identity(
-    identity: &Option[RustCanonicalSymbolId],
-    provenance: &BodyIrRecordProvenance,
+    identity: Borrowed[Option[RustCanonicalSymbolId]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[Option[CanonicalSymbolId], str]:
     """Project one optional canonical identity without treating absence as a name lookup permission."""
     match identity:
@@ -816,8 +816,8 @@ def native_optional_identity(identity: Option[CanonicalSymbolId]) -> Result[Opti
 
 
 def authored_optional_identities(
-    identities: &Option[list[RustCanonicalSymbolId]],
-    provenance: &BodyIrRecordProvenance,
+    identities: Borrowed[Option[list[RustCanonicalSymbolId]]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[Option[list[CanonicalSymbolId]], str]:
     """Preserve None versus Some empty while projecting an optional complete method inventory."""
     match identities:
@@ -835,8 +835,8 @@ def native_optional_identities(
 
 
 def authored_shared_identities(
-    identities: &Arc[BTreeMap[str, RustCanonicalSymbolId]],
-    provenance: &BodyIrRecordProvenance,
+    identities: Borrowed[Arc[BTreeMap[str, RustCanonicalSymbolId]]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[NamedTypeIdentity], str]:
     """Copy every SharedIdentities map entry without carrying Arc allocation identity into the authored contract."""
     return authored_identity_map(identities, provenance)
@@ -850,8 +850,8 @@ def native_shared_identities(
 
 
 def authored_identity_map(
-    identities: &BTreeMap[str, RustCanonicalSymbolId],
-    provenance: &BodyIrRecordProvenance,
+    identities: Borrowed[BTreeMap[str, RustCanonicalSymbolId]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[NamedTypeIdentity], str]:
     """Project every ordered identity-map entry into an owned key and authored identity."""
     mut authored: list[NamedTypeIdentity] = []
@@ -870,8 +870,8 @@ def native_identity_map(identities: list[NamedTypeIdentity]) -> Result[BTreeMap[
 
 
 def authored_optional_body(
-    body: &Option[RustBody],
-    provenance: &BodyIrRecordProvenance,
+    body: Borrowed[Option[RustBody]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[CompilerBody], str]:
     """Project an optional recursive Body as an exact zero-or-one authored list."""
     match body:
@@ -889,8 +889,8 @@ def native_optional_body(bodies: list[CompilerBody]) -> Result[Option[RustBody],
 
 
 def authored_optional_boxed_body(
-    body: &Option[Box[RustBody]],
-    provenance: &BodyIrRecordProvenance,
+    body: Borrowed[Option[Box[RustBody]]],
+    provenance: Borrowed[BodyIrRecordProvenance],
 ) -> Result[list[CompilerBody], str]:
     """Project an optional boxed Body without treating allocation indirection as record data."""
     match body:
@@ -907,7 +907,7 @@ def native_optional_boxed_body(bodies: list[CompilerBody]) -> Result[Option[Box[
     return Ok(Some(Box.new(native_body(bodies[0])?)))
 
 
-def authored_optional_indexes(indexes: &Option[list[usize]]) -> Option[list[int]]:
+def authored_optional_indexes(indexes: Borrowed[Option[list[usize]]]) -> Option[list[int]]:
     """Project optional native indexes without collapsing None into Some empty."""
     match indexes:
         Some(values) => return Some([int(value) for value in values])

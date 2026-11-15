@@ -30,7 +30,7 @@ from element_places import is_element_place, element_place_type
 from table_views import borrowed_at
 
 
-pub def nominal_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+pub def nominal_place(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Option[Place], str]:
     """Locate structural model storage or materialize an indexed model once after checking its retained carrier."""
     match value:
         RustOperand.Place(read) =>
@@ -93,7 +93,7 @@ pub def debug_model(mut builder: Builder, value: Place, span: SourceSpan) -> Res
     return native_format_text(builder, operand, true, span)
 
 
-pub def debug_model_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+pub def debug_model_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Accept explicit Debug formatting only for a retained nominal place."""
     match nominal_place(builder, value, span)?:
         Some(place) => return debug_model(builder, place, span)
@@ -115,9 +115,9 @@ def comparison_name(operator: BinOp) -> Result[str, str]:
 def compare_places(
     mut builder: Builder,
     destination: Place,
-    operator: &BinOp,
+    operator: Borrowed[BinOp],
     first: Place,
-    right: &RustOperand,
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Borrow matching carriers; native traits are verified by rustc, while source traits require retained witnesses."""
@@ -151,9 +151,9 @@ def compare_places(
 pub def compare_models(
     mut builder: Builder,
     destination: Place,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Use native Rust comparison implementations or retained source derives and implementation frames."""
@@ -164,7 +164,7 @@ pub def compare_models(
 
 pub def display_model_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
     """Prefer a source carrier's checked string method across Loaf boundaries; native carriers use their Rust implementation."""
@@ -209,7 +209,7 @@ def display_checked_model(mut builder: Builder, owner: int, place: Place, span: 
 
 pub def serialize_model_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     destination: Place,
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -244,7 +244,7 @@ pub def is_json_serialize_method(target: MethodTarget) -> bool:
 
 
 pub def refuse_overridden_json_default(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     receiver: PlanType,
     method: str,
@@ -265,7 +265,7 @@ pub def refuse_overridden_json_default(
     return Ok(None)
 
 
-def declares_own_method(owner: &NominalDeclaration, body: &Body, method: str) -> bool:
+def declares_own_method(owner: Borrowed[NominalDeclaration], body: Borrowed[Body], method: str) -> bool:
     """Whether a body is a method spelled `method` declared inside the model `owner`, as an adopter's override is."""
     match body.canonical:
         Some(identity) =>
@@ -295,11 +295,11 @@ pub def is_json_deserialize_method(target: NamedCallableTarget) -> bool:
 
 
 pub def lower_model_from_json(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &NamedCallableTarget,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[NamedCallableTarget],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Parse a model that derives serde's Deserialize through legacy's serde decoding and its error text."""

@@ -32,8 +32,8 @@ from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def generic_models(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     referenced: list[str],
     instances: list[NominalInstance],
     file: str,
@@ -118,7 +118,7 @@ pub def generic_models(
     return Ok(models)
 
 
-pub def referenced_templates(module: &BodyIrModule) -> list[str]:
+pub def referenced_templates(module: Borrowed[BodyIrModule]) -> list[str]:
     """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
     mut referenced: list[str] = []
     for body_position in range(len(module.bodies)):
@@ -142,14 +142,14 @@ pub def referenced_templates(module: &BodyIrModule) -> list[str]:
     return referenced
 
 
-def retain_frame_templates(body: &Body, mut referenced: list[str]) -> None:
+def retain_frame_templates(body: Borrowed[Body], mut referenced: list[str]) -> None:
     """Preserve template requirements from checked locals, including parameters, and the frame's return type."""
     retain_type_templates(body.return_type, referenced)
     for local in body.locals:
         retain_type_templates(local.ty, referenced)
 
 
-def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
+def retain_type_templates(ty: Borrowed[RustType], mut referenced: list[str]) -> None:
     """Record exact checked generic heads through the structural types a retained frame may instantiate."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
@@ -171,9 +171,9 @@ def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
 
 
 pub def generic_field_type(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    ty: Borrowed[RustType],
     parameters: list[str],
 ) -> Result[GenericLayoutType, str]:
     """Translate a checked field structurally, preserving binders and exact nominal owners before native instantiation."""
@@ -202,17 +202,17 @@ pub def generic_field_type(
         _ =>
             unions: list[RustType] = []
             intrinsics: list[EnumDeclaration] = []
-            nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
-            enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+            nominals: Borrowed[list[NominalDeclaration]] = borrowed_table(module.nominal_declarations)
+            enums: Borrowed[list[RustEnumDeclaration]] = borrowed_table(module.enum_declarations)
             return Ok(
                 GenericLayoutType.Concrete(native_source_type(constructors, nominals, enums, unions, ty, intrinsics)?),
             )
 
 
 def generic_callable_input(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    parameter: &IncanCallableParam,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    parameter: Borrowed[IncanCallableParam],
     parameters: list[str],
 ) -> Result[GenericLayoutType, str]:
     """
@@ -235,7 +235,7 @@ def generic_callable_input(
     return Ok(GenericLayoutType.Concrete(storage))
 
 
-def generic_layout_path(module: &BodyIrModule, base: str) -> Result[str, str]:
+def generic_layout_path(module: Borrowed[BodyIrModule], base: str) -> Result[str, str]:
     """Use the checked declaration's native item or its local carrier; collection heads have fixed native ADTs."""
     match collection_type(base):
         Some(CollectionTypeId.List) => return Ok("std::vec::Vec")

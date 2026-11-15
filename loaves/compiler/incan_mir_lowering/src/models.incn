@@ -41,9 +41,9 @@ from compiler_record_adapters import authored_plan_symbol_id
 
 
 pub def model_type(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
+    ty: Borrowed[RustType],
     source_file: str = "",
 ) -> Result[PlanType, str]:
     """
@@ -118,10 +118,10 @@ pub def model_type(
 
 
 def retained_nominal_type(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     base: str,
-    arguments: &list[RustType],
+    arguments: Borrowed[list[RustType]],
 ) -> Result[Option[PlanType], str]:
     """Normalize one queried specialization once and name the retained sibling keys when its closed layout is missing."""
     mut owner = -1
@@ -146,9 +146,9 @@ def retained_nominal_type(
 
 
 def retained_model_type(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
+    ty: Borrowed[RustType],
 ) -> Result[PlanType, str]:
     """Resolve a model carrier with typed empty borrowed inventories for the unavailable enum and union context."""
     enums: list[RustEnumDeclaration] = []
@@ -157,7 +157,7 @@ def retained_model_type(
     return retained_type(constructors, declarations, enums, unions, ty, intrinsics)
 
 
-pub def runtime_storage_marker(ty: &RustType) -> Option[PlanType]:
+pub def runtime_storage_marker(ty: Borrowed[RustType]) -> Option[PlanType]:
     """Preserve closed native storage without inventing source decimal precision or replacing static loans by owners."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
@@ -173,7 +173,7 @@ pub def runtime_storage_marker(ty: &RustType) -> Option[PlanType]:
     return None
 
 
-def rejected_nominal_name(declarations: &list[NominalDeclaration], name: str) -> str:
+def rejected_nominal_name(declarations: Borrowed[list[NominalDeclaration]], name: str) -> str:
     """Report a rejected carrier's source name only through its retained canonical owner, without granting layout admission."""
     for declaration_position in range(len(declarations)):
         declaration = borrowed_at(declarations, declaration_position)
@@ -185,7 +185,7 @@ def rejected_nominal_name(declarations: &list[NominalDeclaration], name: str) ->
     return name
 
 
-pub def hashed_element(declarations: &list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+pub def hashed_element(declarations: Borrowed[list[NominalDeclaration]], ty: Borrowed[RustType]) -> Result[ListLeaf, str]:
     """
     Admit a retained model as a set element or dictionary key with derived Hash and derived or canonically selected source Eq.
 
@@ -216,14 +216,14 @@ def model_equality(declaration: NominalDeclaration) -> bool:
 
 
 pub def model_place(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
-    locals: &list[Local],
-    value: &RustPlace,
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
+    locals: Borrowed[list[Local]],
+    value: Borrowed[RustPlace],
     span: SourceSpan,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     offset: int = 0,
 ) -> Result[Place, str]:
     """
@@ -245,15 +245,15 @@ pub def model_place(
 
 
 pub def model_prefix(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
-    locals: &list[Local],
-    value: &RustPlace,
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
+    locals: Borrowed[list[Local]],
+    value: Borrowed[RustPlace],
     count: int,
     span: SourceSpan,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     offset: int = 0,
 ) -> Result[Place, str]:
     """
@@ -352,14 +352,14 @@ pub def model_prefix(
 
 
 pub def field_path(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     root: PlanType,
     projections: list[RustPlaceElem],
     count: int,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[FieldProjection], str]:
     """Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering."""
     mut ty = root
@@ -372,13 +372,13 @@ pub def field_path(
 
 
 pub def field_steps(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     root: PlanType,
-    projection: &RustPlaceElem,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    projection: Borrowed[RustPlaceElem],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[FieldProjection], str]:
     """
     Select one source field or payload as stored, ending at the value the source names.
@@ -397,13 +397,13 @@ pub def stored_steps(field: FieldProjection) -> list[FieldProjection]:
 
 
 pub def field_step_type(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     root: PlanType,
-    projection: &RustPlaceElem,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    projection: Borrowed[RustPlaceElem],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """The type of the value one source field step names, through a boxed class field's box."""
     steps = field_steps(constructors, declarations, root, projection, enums, unions, intrinsics)?
@@ -411,13 +411,13 @@ pub def field_step_type(
 
 
 def field_projection(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     root: PlanType,
-    projection: &RustPlaceElem,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    projection: Borrowed[RustPlaceElem],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[FieldProjection, str]:
     """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
     match field_referent(root):
@@ -482,7 +482,7 @@ def field_referent(ty: PlanType) -> Option[PlanType]:
     return None
 
 
-pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
+pub def field_slot(value: Borrowed[RustPlaceElem], declaration: Borrowed[NominalDeclaration]) -> Result[int, str]:
     """Require an exact stored field or its checked trait requirement binding; never resolve a missing identity by name."""
     # Legacy #459-like pattern-only imports require the typed enum parameter until dev.8.
     match value:
@@ -524,8 +524,8 @@ def checked_field_identity(
 
 
 pub def constructor_index(
-    declarations: &list[NominalDeclaration],
-    target: &ConstructorTarget,
+    declarations: Borrowed[list[NominalDeclaration]],
+    target: Borrowed[ConstructorTarget],
     count: int,
     expected: PlanType,
 ) -> Result[int, str]:
@@ -575,16 +575,16 @@ def validate_constructor_binding(binding: ArgumentBinding, count: int, fields: i
 
 
 def receiver_field(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
     index: int,
     owner: int,
-    value: &RustPlace,
+    value: Borrowed[RustPlace],
     count: int,
     span: SourceSpan,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
     fields = field_path(

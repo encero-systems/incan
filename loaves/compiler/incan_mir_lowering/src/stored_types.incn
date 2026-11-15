@@ -18,7 +18,7 @@ from table_views import borrowed_at
 from type_parameters import substitute
 
 
-pub def stored_type(module: &BodyIrModule, constructors: &ConstructorIndex, ty: &RustType) -> Option[str]:
+pub def stored_type(module: Borrowed[BodyIrModule], constructors: Borrowed[ConstructorIndex], ty: Borrowed[RustType]) -> Option[str]:
     """
     Spell N without reading diagnostic type names or expanding a nominal's fields.
 
@@ -29,9 +29,9 @@ pub def stored_type(module: &BodyIrModule, constructors: &ConstructorIndex, ty: 
 
 
 def type_selector(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
-    ty: &RustType,
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
+    ty: Borrowed[RustType],
     unwrapping: list[str],
 ) -> Option[str]:
     """Resolve one checked type; only transparent newtypes recurse into a declaration's storage."""
@@ -87,9 +87,9 @@ def primitive_selector(primitive: Primitive) -> Option[str]:
 
 
 def selectors(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
-    arguments: &list[RustType],
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
+    arguments: Borrowed[list[RustType]],
     unwrapping: list[str],
 ) -> Option[list[str]]:
     """Retain all argument selectors in declared order, or decline the complete enclosing type."""
@@ -102,10 +102,10 @@ def selectors(
 
 
 def composite_selector(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
     kind: str,
-    arguments: &list[RustType],
+    arguments: Borrowed[list[RustType]],
     unwrapping: list[str],
 ) -> Option[str]:
     """Apply the canonical container grammar; unions sort by spelling digest, then spelling on a collision."""
@@ -128,8 +128,8 @@ def selected_carrier(base: str, arguments: list[RustType]) -> str:
 
 
 def nominal_selector(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
     base: str,
     arguments: list[RustType],
     unwrapping: list[str],
@@ -181,9 +181,9 @@ def nominal_selector(
 
 
 def retained_nominal_selector(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
-    declaration: &NominalDeclaration,
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
+    declaration: Borrowed[NominalDeclaration],
     unwrapping: list[str],
 ) -> Option[str]:
     """Use a retained closed model or transparent newtype; an open template has no closed selector."""
@@ -203,12 +203,12 @@ def retained_nominal_selector(
 
 
 def declared_selector(
-    module: &BodyIrModule,
-    constructors: &ConstructorIndex,
+    module: Borrowed[BodyIrModule],
+    constructors: Borrowed[ConstructorIndex],
     kind: str,
-    identity: &CanonicalSymbolId,
-    package: &Option[RecordPackageIdentity],
-    arguments: &list[RustType],
+    identity: Borrowed[CanonicalSymbolId],
+    package: Borrowed[Option[RecordPackageIdentity]],
+    arguments: Borrowed[list[RustType]],
     unwrapping: list[str],
 ) -> Option[str]:
     """Hash only the producer namespace and canonical declaration path, then append closed type selectors."""

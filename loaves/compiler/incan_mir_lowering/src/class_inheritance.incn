@@ -5,7 +5,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDecla
 from table_views import borrowed_at
 
 
-pub def specialize_classes(module: &BodyIrModule) -> Result[list[Body], str]:
+pub def specialize_classes(module: Borrowed[BodyIrModule]) -> Result[list[Body], str]:
     """Add one concrete receiver frame per inherited implementation after original module validation."""
     mut result: list[Body] = []
     for declaration_position in range(len(module.nominal_declarations)):
@@ -43,7 +43,7 @@ def already_instantiated(retained: list[CanonicalSymbolId], identity: CanonicalS
     return false
 
 
-def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, str]:
+def instantiate_body(body: Borrowed[Body], owner: Borrowed[NominalDeclaration]) -> Result[Body, str]:
     """Close only the explicit receiver; other ancestor-typed self values remain a named unsupported boundary."""
     if len(body.locals) == 0 or len(body.params) == 0 or len(body.type_parameters) != 0 or body.is_async:
         return Err("unsupported Body IR inherited class receiver frame")

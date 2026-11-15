@@ -67,11 +67,11 @@ from carrier_operands import bind_enum_fields, bind_payload_in_place, boundary_o
 
 
 pub def lower_enum_match(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
-    scrutinee: &RustOperand,
-    arms: &list[RustMatchArm],
+    scrutinee: Borrowed[RustOperand],
+    arms: Borrowed[list[RustMatchArm]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch checked variants in source arm order, with independent owner snapshots on each branch."""
@@ -133,7 +133,7 @@ def dispatch_enum_arm(
     mut builder: Builder,
     source: Place,
     owner: int,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     selected: int,
     rejected: int,
     span: SourceSpan,
@@ -159,14 +159,14 @@ def dispatch_enum_arm(
     return Ok(slot)
 
 
-def is_binding_alternation(pattern: &RustPattern) -> bool:
+def is_binding_alternation(pattern: Borrowed[RustPattern]) -> bool:
     """Report whether a pattern is an alternation whose alternatives bind names."""
     match pattern:
         RustPattern.Or(_alternatives) => return pattern_binds(pattern)
         _ => return false
 
 
-def binds_through_alternation(pattern: &RustPattern) -> bool:
+def binds_through_alternation(pattern: Borrowed[RustPattern]) -> bool:
     """Report whether an arm's pattern binds through an alternation: at its top, or as an item of a tuple there."""
     if is_binding_alternation(pattern):
         return true
@@ -182,7 +182,7 @@ def binds_through_alternation(pattern: &RustPattern) -> bool:
 def bind_alternatives(
     mut builder: Builder,
     source: Place,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     selected: int,
     rejected: int,
     incoming: list[int],
@@ -216,7 +216,7 @@ def bind_alternatives(
 def bind_alternative(
     mut builder: Builder,
     source: Place,
-    alternative: &RustPattern,
+    alternative: Borrowed[RustPattern],
     selected: int,
     rejected: int,
     incoming: list[int],
@@ -247,7 +247,7 @@ def bind_alternative(
 def tuple_paths(
     mut builder: Builder,
     fields: list[Place],
-    items: &list[RustPattern],
+    items: Borrowed[list[RustPattern]],
     index: int,
     choices: list[int],
     selected: int,
@@ -299,7 +299,7 @@ def tuple_paths(
 def bind_tuple_item(
     mut builder: Builder,
     field: Place,
-    item: &RustPattern,
+    item: Borrowed[RustPattern],
     choice: int,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -323,8 +323,8 @@ def same_owners(left: list[int], right: list[int]) -> bool:
 
 def match_scrutinee_place(
     mut builder: Builder,
-    scrutinee: &RustOperand,
-    arms: &list[RustMatchArm],
+    scrutinee: Borrowed[RustOperand],
+    arms: Borrowed[list[RustMatchArm]],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """
@@ -362,7 +362,7 @@ def match_scrutinee_place(
         _ => return Err("unsupported Body IR nonplace enum match scrutinee")
 
 
-def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def exclusive_element(mut builder: Builder, source: Borrowed[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """
     Reborrow the list element an in-place match names through the runtime's checked `borrow_list_mut`.
 
@@ -409,7 +409,7 @@ def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan
     return Ok(Place(local=reference.local, projection=Projection.Deref(element), span=span))
 
 
-def validate_in_place_list_match(source: PlanType, arms: &list[RustMatchArm]) -> Result[bool, str]:
+def validate_in_place_list_match(source: PlanType, arms: Borrowed[list[RustMatchArm]]) -> Result[bool, str]:
     """Admit only an owned list referent with checked exclusive variable bindings or ignored wildcard arms."""
     match source:
         PlanType.List(_leaf, _depth) => pass
@@ -419,7 +419,7 @@ def validate_in_place_list_match(source: PlanType, arms: &list[RustMatchArm]) ->
     return Ok(true)
 
 
-def validate_in_place_list_pattern(pattern: &RustPattern) -> Result[None, str]:
+def validate_in_place_list_pattern(pattern: Borrowed[RustPattern]) -> Result[None, str]:
     """Borrow the opaque Rust pattern without moving its binding record out of a shared match arm."""
     match pattern:
         RustPattern.Var(binding) =>
@@ -431,11 +431,11 @@ def validate_in_place_list_pattern(pattern: &RustPattern) -> Result[None, str]:
 
 
 def lower_structural_match(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
     source: Place,
-    arms: &list[RustMatchArm],
+    arms: Borrowed[list[RustMatchArm]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch primitive and structural patterns, retaining checked list bindings as references to matched storage."""
@@ -511,9 +511,9 @@ def is_model_type(ty: PlanType) -> bool:
 
 
 def lower_arm_guard(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    arm: &RustMatchArm,
+    arm: Borrowed[RustMatchArm],
     incoming: list[int],
     scrutinee: int,
     rejected: int,
@@ -641,7 +641,7 @@ def release_unshared_replacements(
 pub def bind_structural_pattern(
     mut builder: Builder,
     source: Place,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Initialize structural bindings through the retained payload ownership policy after every component matched."""
@@ -771,7 +771,7 @@ def kept_by_every_arm(local: int, arm_owners: list[list[int]]) -> bool:
     return true
 
 
-def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustMatchArm) -> Result[None, str]:
+def lower_enum_arm_body(module: Borrowed[BodyIrModule], mut builder: Builder, arm: Borrowed[RustMatchArm]) -> Result[None, str]:
     """Borrow the retained arm's statements and stop once its control flow terminates."""
     for statement in arm.body_stmts:
         lower_statement(module, builder, statement)?
@@ -784,7 +784,7 @@ pub def bind_enum_payload(
     mut builder: Builder,
     source: Place,
     variant: int,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind payloads through native downcasts, preserving checked copies, borrows, clones and single-owner moves."""
@@ -862,7 +862,7 @@ def reborrowed_payload(
     return Ok(read_place(reborrow, true, span))
 
 
-pub def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+pub def enum_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[bool, str]:
     """Classify the retained value type without reading an index; enum comparison materializes the value only once."""
     match value:
         RustOperand.Place(read) =>

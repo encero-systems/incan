@@ -8,7 +8,7 @@ from models import constructor_index
 from numerics import numeric_constant
 
 
-pub def numeric_newtype_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+pub def numeric_newtype_literal(mut builder: Builder, value: Borrowed[RustConstant], span: SourceSpan) -> Result[Operand, str]:
     """Require one exact canonical owner, physical address, tuple slot and numeric width before producing a value."""
     match value:
         RustConstant.NumericNewtype(constant) =>

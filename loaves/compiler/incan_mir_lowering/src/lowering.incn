@@ -124,9 +124,9 @@ pub enum UnitPlanning:
 
 
 def validate_project_module(
-    module: &BodyIrModule,
-    modules: &list[BodyIrModule],
-    retained: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
+    modules: Borrowed[list[BodyIrModule]],
+    retained: Borrowed[BodyIrModule],
 ) -> Result[int, str]:
     """Validate one module, resolving trait implementations against its current slice and retained project authority."""
     count = validate_declarations_and_bodies(module, modules)?
@@ -143,7 +143,7 @@ def validate_project_module(
     return Ok(count)
 
 
-def validate_declarations_and_bodies(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
+def validate_declarations_and_bodies(module: Borrowed[BodyIrModule], modules: Borrowed[list[BodyIrModule]]) -> Result[int, str]:
     """
     Validate a module's retained declarations and bodies; trait implementations are validated by the caller.
 
@@ -220,7 +220,7 @@ pub def unit_plan(
 
 pub def program_context(
     constructors: Arc[ConstructorIndex],
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
     unions: list[RustType],
     overflow_checks: bool = true,
@@ -247,7 +247,7 @@ pub def program_context(
 
 
 def lowered_plan(
-    modules: &list[BodyIrModule],
+    modules: Borrowed[list[BodyIrModule]],
     sources: list[str],
     files: list[str],
     entry: int,
@@ -585,7 +585,7 @@ pub def resume_unit_plan(
     )
 
 
-def rebase_emitted_frames(context: &BodyIrModule, previous: EmittedFrames) -> EmittedFrames:
+def rebase_emitted_frames(context: Borrowed[BodyIrModule], previous: EmittedFrames) -> EmittedFrames:
     """Rebase ordinary-frame body positions after resolved dependency modules enter before authored modules."""
     mut emitted = no_emitted_frames()
     for position in range(len(context.bodies)):
@@ -760,10 +760,10 @@ def finish_unit_plan(
 
 pub def initial_plan_roots(
     constructors: Arc[ConstructorIndex],
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration],
-    nominal_instances: &list[NominalInstance],
+    nominal_instances: Borrowed[list[NominalInstance]],
     kind: str,
     unions: list[RustType],
     overflow_checks: bool,
@@ -819,10 +819,10 @@ pub def initial_plan_roots(
 def resume_plan_roots(
     mut program: ProgramContext,
     constructors: Arc[ConstructorIndex],
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration],
-    nominal_instances: &list[NominalInstance],
+    nominal_instances: Borrowed[list[NominalInstance]],
     kind: str,
     unions: list[RustType],
     previous_nominal_count: int,
@@ -875,10 +875,10 @@ def resume_plan_roots(
 
 
 pub def layout_tables(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     file: str,
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
     retained_intrinsics: list[EnumDeclaration] = [],
 ) -> Result[tuple[ConstructorIndex, list[RustType], list[EnumDeclaration]], str]:
     """Create matched constructor, union and intrinsic tables for either planning entry point."""
@@ -889,7 +889,7 @@ pub def layout_tables(
 
 
 def completed_plan(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     entry_owner: str,
     kind: str,
     tests: list[str],
@@ -934,11 +934,11 @@ def completed_plan(
 
 
 def lower_plan_frames(
-    template_constructors: &ConstructorIndex,
-    mut context: &mut BodyIrModule,
-    templates: &BodyIrModule,
+    template_constructors: Borrowed[ConstructorIndex],
+    mut context: BorrowedMut[BodyIrModule],
+    templates: Borrowed[BodyIrModule],
     mut program: ProgramContext,
-    owners: &list[str],
+    owners: Borrowed[list[str]],
     sources: list[str],
     files: list[str],
     entry: int,
@@ -998,10 +998,10 @@ def lower_plan_frames(
 
 def initial_plan_layouts(
     constructors: Arc[ConstructorIndex],
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration],
-    nominal_instances: &list[NominalInstance],
+    nominal_instances: Borrowed[list[NominalInstance]],
     kind: str,
     unions: list[RustType],
     overflow_checks: bool,
@@ -1019,9 +1019,9 @@ def initial_plan_layouts(
 
 
 def finish_instance_layouts(
-    original_constructors: &ConstructorIndex,
-    retained_constructors: &ConstructorIndex,
-    mut context: &mut BodyIrModule,
+    original_constructors: Borrowed[ConstructorIndex],
+    retained_constructors: Borrowed[ConstructorIndex],
+    mut context: BorrowedMut[BodyIrModule],
     original_nominal_count: int,
     mut functions: list[Function],
     mut models: list[ModelDeclaration],
@@ -1049,15 +1049,15 @@ def finish_instance_layouts(
 
 
 def lower_requested_frames(
-    template_constructors: &ConstructorIndex,
-    mut context: &mut BodyIrModule,
-    templates: &BodyIrModule,
+    template_constructors: Borrowed[ConstructorIndex],
+    mut context: BorrowedMut[BodyIrModule],
+    templates: Borrowed[BodyIrModule],
     mut program: ProgramContext,
     mut instances: list[Instance],
     unions: list[RustType],
     sources: list[str],
     files: list[str],
-    owners: &list[str],
+    owners: Borrowed[list[str]],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut intrinsics: list[EnumDeclaration],
@@ -1104,8 +1104,8 @@ def lower_requested_frames(
 
 
 def finalize_plan_layouts(
-    constructors: &ConstructorIndex,
-    context: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    context: Borrowed[BodyIrModule],
     mut functions: list[Function],
     mut models: list[ModelDeclaration],
     mut enums: list[EnumDeclaration],
@@ -1133,15 +1133,15 @@ pub type PlanContexts = tuple[BodyIrModule, ConstructorIndex, list[str], BodyIrM
 
 
 pub def plan_contexts(
-    modules: &list[BodyIrModule],
-    sources: &list[str],
-    files: &list[str],
+    modules: Borrowed[list[BodyIrModule]],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
     trace: bool,
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
-    validation_context: &BodyIrModule,
-    retained_templates: &ConstructorIndex,
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
+    validation_context: Borrowed[BodyIrModule],
+    retained_templates: Borrowed[ConstructorIndex],
 ) -> Result[PlanContexts, str]:
     """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
     footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
@@ -1158,14 +1158,14 @@ pub def plan_contexts(
 
 def plan_contexts_parallel(
     modules: Arc[list[BodyIrModule]],
-    sources: &list[str],
-    files: &list[str],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
     trace: bool,
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
-    validation_context: &BodyIrModule,
-    retained_templates: &ConstructorIndex,
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
+    validation_context: Borrowed[BodyIrModule],
+    retained_templates: Borrowed[ConstructorIndex],
 ) -> Result[PlanContexts, str]:
     """Validate a resumed runtime slice and project its body-weighted module ranges concurrently."""
     footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
@@ -1181,10 +1181,10 @@ def plan_contexts_parallel(
 
 
 def specialize_plan_context(
-    mut context: &mut BodyIrModule,
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
-    retained_templates: &ConstructorIndex,
+    mut context: BorrowedMut[BodyIrModule],
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
+    retained_templates: Borrowed[ConstructorIndex],
     footprint_trace: bool,
     trace: bool,
 ) -> Result[tuple[BodyIrModule, ConstructorIndex, list[NominalInstance], list[str]], str]:
@@ -1215,7 +1215,7 @@ def specialize_plan_context(
     return Ok((source_context, constructors, nominal_instances, template_references))
 
 
-pub def source_file_index(modules: &list[BodyIrModule], files: &list[str]) -> Result[BTreeMap[str, str], str]:
+pub def source_file_index(modules: Borrowed[list[BodyIrModule]], files: Borrowed[list[str]]) -> Result[BTreeMap[str, str], str]:
     """Bind every checked module identity to its aligned source input without inferring files from reference sites."""
     if len(modules) != len(files):
         return Err("invalid Body IR project source provenance")
@@ -1259,11 +1259,11 @@ def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
 
 
 def validate_plan_inputs(
-    modules: &list[BodyIrModule],
-    sources: &list[str],
-    files: &list[str],
+    modules: Borrowed[list[BodyIrModule]],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
-    retained: &BodyIrModule,
+    retained: Borrowed[BodyIrModule],
 ) -> Result[None, str]:
     """Validate source provenance and checked authority, including retained continuation facts, before indexing."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
@@ -1278,7 +1278,7 @@ def validate_plan_inputs(
     return Ok(None)
 
 
-def main_selection(context: &BodyIrModule, entry_owner: str) -> tuple[bool, bool]:
+def main_selection(context: Borrowed[BodyIrModule], entry_owner: str) -> tuple[bool, bool]:
     """Separate the checked program entry from an ordinary declaration merely spelled main."""
     mut selected = false
     mut declared = false

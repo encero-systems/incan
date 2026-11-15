@@ -95,7 +95,7 @@ pub def indexed_location(starts: list[int], span: RustSpan, file: str) -> Source
     return plan_span(file=file, line=low + 1, column=offset - starts[low] + 1)
 
 
-pub def builder_location(builder: &Builder, span: &RustSpan) -> SourceSpan:
+pub def builder_location(builder: Borrowed[Builder], span: Borrowed[RustSpan]) -> SourceSpan:
     """Map a span in the frame's source through its line starts; a frame without them scans its source."""
     if len(builder.line_starts) == 0:
         return location(span, builder.source, builder.file)
@@ -127,7 +127,7 @@ pub def scalar_place(mut builder: Builder, value: RustPlace, span: SourceSpan) -
     return scalar_storage_place(builder.locals, builder.reference_values, target)
 
 
-pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def scalar_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Preserve each scalar read's checked ownership fact rather than inferring it."""
     match value:
         RustOperand.Place(read) => return place_read(builder, read.place, read.fact, span)
@@ -168,7 +168,7 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
             return scalar_constant(constant, span)
 
 
-def type_token_literal(mut builder: Builder, represented: &RustType, span: SourceSpan) -> Result[Operand, str]:
+def type_token_literal(mut builder: Builder, represented: Borrowed[RustType], span: SourceSpan) -> Result[Operand, str]:
     """Construct the existing SDK marker as a typed zero-sized constant with its checked represented type."""
     argument = native_source_type(
         builder.constructors,
@@ -185,7 +185,7 @@ def type_token_literal(mut builder: Builder, represented: &RustType, span: Sourc
 def retained_tuple_constant(
     mut builder: Builder,
     layout: PlanType,
-    elements: &list[RustConstant],
+    elements: Borrowed[list[RustConstant]],
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Materialize a retained literal tuple at its checked field carriers, transferring owned fields into one cleanup owner."""
@@ -255,7 +255,7 @@ pub def reference_read_fact(fact: OwnershipFact) -> bool:
 
 pub def reference_value_read(
     mut builder: Builder,
-    value: &RustPlace,
+    value: Borrowed[RustPlace],
     fact: OwnershipFact,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:

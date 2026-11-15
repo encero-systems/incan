@@ -27,11 +27,11 @@ from table_views import borrowed_at
 
 
 pub def model_default_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     index: int,
-    binding: &ArgumentBinding,
-    elements: &list[ArgumentElement],
+    binding: Borrowed[ArgumentBinding],
+    elements: Borrowed[list[ArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Use the retained constructor frame only when checked field slots are omitted."""
@@ -57,11 +57,11 @@ pub def model_default_arguments(
 
 
 pub def method_default_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[ArgumentElement],
-    body: &Body,
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[ArgumentElement]],
+    body: Borrowed[Body],
     types: list[PlanType],
     span: SourceSpan,
 ) -> Result[Option[list[Operand]], str]:
@@ -107,11 +107,11 @@ pub def method_default_arguments(
 
 
 pub def default_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    binding: &ArgumentBinding,
-    elements: &list[ArgumentElement],
-    body: &Body,
+    binding: Borrowed[ArgumentBinding],
+    elements: Borrowed[list[ArgumentElement]],
+    body: Borrowed[Body],
     types: list[PlanType],
     span: SourceSpan,
     parameter_offset: int,
@@ -134,11 +134,11 @@ pub def default_arguments(
 
 
 pub def library_default_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    declaration: &LoafCallable,
-    binding: &ArgumentBinding,
-    elements: &list[ArgumentElement],
+    declaration: Borrowed[LoafCallable],
+    binding: Borrowed[ArgumentBinding],
+    elements: Borrowed[list[ArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     parameter_offset: int,
@@ -167,8 +167,8 @@ pub def library_default_arguments(
 
 def written_operands(
     mut builder: Builder,
-    binding: &ArgumentBinding,
-    elements: &list[ArgumentElement],
+    binding: Borrowed[ArgumentBinding],
+    elements: Borrowed[list[ArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     owned: bool,
@@ -188,9 +188,9 @@ def written_operands(
 
 def mapped_written_operands(
     mut builder: Builder,
-    bindings: &list[BoundArgument],
+    bindings: Borrowed[list[BoundArgument]],
     default_count: int,
-    elements: &list[ArgumentElement],
+    elements: Borrowed[list[ArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     owned: bool,
@@ -243,7 +243,7 @@ def checked_omitted_slots(bindings: list[BoundArgument], defaults: list[usize], 
 
 def library_default(
     mut builder: Builder,
-    default: &CallableParamDefault,
+    default: Borrowed[CallableParamDefault],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -260,9 +260,9 @@ def library_default(
 
 
 pub def evaluate_default(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    body: &Body,
+    body: Borrowed[Body],
     index: int,
     ty: PlanType,
     span: SourceSpan,
@@ -328,7 +328,7 @@ pub def evaluate_default(
 
 def borrowed_default_owner(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     before: list[int],
     span: SourceSpan,
 ) -> Result[int, str]:

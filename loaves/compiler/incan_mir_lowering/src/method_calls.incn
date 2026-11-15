@@ -67,11 +67,11 @@ from rust::incan_lang::lang::surface::iterator_methods import (
 
 
 pub def lower_method_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Close retained source trait arguments in the caller's checked frame before choosing an implementation."""
@@ -86,11 +86,11 @@ pub def lower_method_call(
 
 
 def lower_checked_method_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
@@ -176,11 +176,11 @@ def lower_checked_method_call(
 
 
 def lower_compiled_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
     implementation_only: bool,
 ) -> Result[bool, str]:
@@ -204,10 +204,10 @@ def lower_compiled_method(
 
 
 def concrete_iterator_collect(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[MethodTarget, str]:
     """Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698)."""
@@ -261,10 +261,10 @@ def concrete_iterator_collect(
 
 
 def retained_iterator_default(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Prefer retained Incan Iterator identity/collection defaults absent from the native SDK trait."""
@@ -295,11 +295,11 @@ def retained_iterator_default(
 
 
 def lower_retained_method_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the concrete receiver and execute its selected body, naming the frame when its receiver is refused."""
@@ -325,11 +325,11 @@ def lower_retained_method_call(
 
 
 def lower_selected_library_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Use a checked SDK instantiation while preserving source implementation priority, including collection elements."""
@@ -350,11 +350,11 @@ def lower_selected_library_method(
 
 
 def lower_sdk_element_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Borrow a retained SDK collection element for its authenticated ordinary SDK method, preserving source dispatch."""
@@ -373,13 +373,13 @@ def lower_sdk_element_method(
 
 
 def call_method_body(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
+    target: Borrowed[MethodTarget],
     index: int,
     reference: Place,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Invoke the selected method with its checked receiver and arguments, retaining async captures in a future."""
@@ -399,11 +399,11 @@ def call_method_body(
 
 
 def retain_sdk_factory_result(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    body: &RustBody,
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    body: Borrowed[RustBody],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Keep a selected SDK default's concrete result where its checked interface still uses a tuple iterator frame."""
@@ -452,10 +452,10 @@ def retain_sdk_factory_result(
 
 
 pub def source_method_symbol(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    body: &RustBody,
+    target: Borrowed[MethodTarget],
+    body: Borrowed[RustBody],
     span: SourceSpan,
 ) -> str:
     """Preserve an explicit equality source member's owned input and drop timing while its native trait slot borrows."""
@@ -504,11 +504,11 @@ pub def source_method_symbol(
 
 
 pub def instantiated_method_body(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
+    target: Borrowed[MethodTarget],
     index: int,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[RustBody, str]:
     """Close only the selected method's retained parameters and queue its exact executable instance."""
@@ -531,11 +531,11 @@ pub def instantiated_method_body(
 
 
 def sdk_forwarded_type_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    body: &RustBody,
-    arguments: &list[RustArgumentElement],
+    target: Borrowed[MethodTarget],
+    body: Borrowed[RustBody],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[RustType], str]:
     """
@@ -618,11 +618,11 @@ def sdk_forwarded_type_arguments(
 
 
 pub def method_ordinary_operands(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    body: &RustBody,
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    body: Borrowed[RustBody],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Bind the ordinary slots once, excluding the method's separately prepared receiver."""
@@ -649,11 +649,11 @@ pub def method_ordinary_operands(
 
 
 def lower_global_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Call a computed model static's selected method under its actual storage lock, preserving mutation and unwinding rather than copying a receiver out of storage."""

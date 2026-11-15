@@ -46,12 +46,12 @@ from list_methods import call_destination, materialized_receiver
 
 
 pub def lower_library_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    delegation: Borrowed[RustLoafCallable],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -163,10 +163,10 @@ pub def lower_library_method(
 
 
 def library_method_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    target: &MethodTarget,
+    delegation: Borrowed[RustLoafCallable],
+    target: Borrowed[MethodTarget],
     reference: Place,
     names: list[str],
 ) -> Result[list[RustType], str]:
@@ -200,9 +200,9 @@ def library_method_arguments(
 
 def library_method_result(
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    target: &MethodTarget,
-    destination: &Option[RustPlace],
+    delegation: Borrowed[RustLoafCallable],
+    target: Borrowed[MethodTarget],
+    destination: Borrowed[Option[RustPlace]],
     names: list[str],
     closed: list[RustType],
     span: SourceSpan,
@@ -229,7 +229,7 @@ def library_method_result(
         None => return Ok(result)
 
 
-def library_receiver_arguments(builder: &Builder, receiver: Place, names: list[str]) -> Result[list[RustType], str]:
+def library_receiver_arguments(builder: Borrowed[Builder], receiver: Place, names: list[str]) -> Result[list[RustType], str]:
     """Close SDK owner binders from the retained receiver; a trait's Self binder takes that entire concrete owner."""
     if len(names) == 0:
         return Ok([])
@@ -251,10 +251,10 @@ def library_receiver_arguments(builder: &Builder, receiver: Place, names: list[s
 
 
 def library_receiver(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    declared: &RustType,
-    argument: &RustArgumentElement,
+    declared: Borrowed[RustType],
+    argument: Borrowed[RustArgumentElement],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Borrow the receiver place as the stdlib method declares it, shared or exclusive, never moving its owner."""
@@ -310,11 +310,11 @@ def library_receiver(
 
 
 pub def lower_standard_slot(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """

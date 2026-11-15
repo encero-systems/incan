@@ -9,7 +9,7 @@ from traits import append_specialized_project_trait_bodies
 from table_views import borrowed_at
 
 
-pub def project_context(modules: &list[BodyIrModule], entry: int) -> Result[tuple[BodyIrModule, list[str]], str]:
+pub def project_context(modules: Borrowed[list[BodyIrModule]], entry: int) -> Result[tuple[BodyIrModule, list[str]], str]:
     """Retain one joined planning context and the source-provenance order of its owning modules."""
     mut context = selected_context(modules, entry)
     mut projections: list[BodyIrModule] = []
@@ -50,7 +50,7 @@ pub def project_context_parallel(
     return Ok((context, owners))
 
 
-def selected_context(modules: &list[BodyIrModule], entry: int) -> BodyIrModule:
+def selected_context(modules: Borrowed[list[BodyIrModule]], entry: int) -> BodyIrModule:
     """Create the compact joined shell carrying only the selected entry module's unit-level facts."""
     entry_module = borrowed_at(modules, entry)
     mut context = BodyIrModule.declarations_only(str(entry_module.module_id.path()))
@@ -73,7 +73,7 @@ def project_modules(modules: Arc[list[BodyIrModule]], start: int, end: int) -> R
     return Ok(projections)
 
 
-def project_module(modules: &list[BodyIrModule], module_position: int) -> Result[BodyIrModule, str]:
+def project_module(modules: Borrowed[list[BodyIrModule]], module_position: int) -> Result[BodyIrModule, str]:
     """Normalize one validated module's declarations into a mergeable source-order projection."""
     module = borrowed_at(modules, module_position)
     mut projection = BodyIrModule.declarations_only(str(module.module_id.path()))
@@ -100,7 +100,7 @@ def project_module(modules: &list[BodyIrModule], module_position: int) -> Result
     return Ok(projection)
 
 
-def merge_project_modules(mut context: &mut BodyIrModule, projections: list[BodyIrModule]) -> Result[list[str], str]:
+def merge_project_modules(mut context: BorrowedMut[BodyIrModule], projections: list[BodyIrModule]) -> Result[list[str], str]:
     """Merge independently projected modules in source order under the existing collision rules."""
     mut owners: list[str] = []
     for projection_position in range(len(projections)):
@@ -134,7 +134,7 @@ def merge_project_modules(mut context: &mut BodyIrModule, projections: list[Body
     return Ok(owners)
 
 
-def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
+def retains_callable(context: Borrowed[BodyIrModule], candidate: Borrowed[LoafCallable]) -> bool:
     """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
     # Borrow by position: iterating the borrowed list would clone every callable, body included, per candidate.
     for position in range(len(context.loaf_callables)):
@@ -143,7 +143,7 @@ def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
     return false
 
 
-def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:
+def retains_nominal(context: Borrowed[BodyIrModule], candidate: Borrowed[NominalDeclaration]) -> Result[bool, str]:
     """Reuse one exact published record; canonical duplicates with differing layout or execution facts remain refused."""
     # Borrow by position: iterating the borrowed list would clone every record per candidate.
     for position in range(len(context.nominal_declarations)):
@@ -157,7 +157,7 @@ def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> R
     return Ok(false)
 
 
-def retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result[bool, str]:
+def retains_enum(context: Borrowed[BodyIrModule], candidate: Borrowed[EnumDeclaration]) -> Result[bool, str]:
     """Keep distinct checked enum owners while refusing conflicting records or unqualified carrier collisions."""
     # Borrow by position: iterating the borrowed list would clone every record per candidate.
     for position in range(len(context.enum_declarations)):

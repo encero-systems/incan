@@ -42,7 +42,7 @@ from stored_types import stored_type
 from pub::incan_mir_plan import source_span as plan_span
 
 
-pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
+pub def static_slot(declarations: Borrowed[list[StaticDeclaration]], value: Borrowed[GlobalPlace]) -> Result[int, str]:
     """Resolve global storage only by retained canonical identity and exact checked carrier."""
     mut slot = 0
     for declaration in declarations:
@@ -89,11 +89,11 @@ pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: lis
 
 
 pub def lower_model_declarations(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration],
-    nominal_instances: &list[NominalInstance],
+    nominal_instances: Borrowed[list[NominalInstance]],
     publish_generics: bool = false,
     start: int = 0,
 ) -> Result[list[ModelDeclaration], str]:
@@ -231,7 +231,7 @@ pub class ViewLifetimeLayout:
 
     @staticmethod
     pub def start(
-        declarations: &list[NominalDeclaration], enums: &list[RustEnumDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]], enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeLayout:
         """Index direct borrow storage and propagate it once through the reverse nominal dependency graph."""
         cached: BTreeMap[str, int] = BTreeMap.new()
@@ -250,8 +250,8 @@ pub class ViewLifetimeLayout:
 
     def index_declarations(
         mut self,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> None:
         """Record each stored nominal dependency and every owner with a direct reference slot."""
         for declaration in declarations:
@@ -264,7 +264,7 @@ pub class ViewLifetimeLayout:
                 for field in variant.fields:
                     self.index_type(owner, field)
 
-    def index_type(mut self, owner: str, ty: &RustType) -> None:
+    def index_type(mut self, owner: str, ty: Borrowed[RustType]) -> None:
         """Index direct references and transitive nominal dependencies using the storage rules of `type_lifetimes`."""
         match ty:
             RustType.Ref(inner) =>
@@ -322,18 +322,18 @@ pub class ViewLifetimeLayout:
 
     pub def declaration(
         mut self,
-        declaration: &NominalDeclaration,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declaration: Borrowed[NominalDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> int:
         """Count physical references retained by one source layout; callable fields bind their own signatures."""
         return self.named(str(declaration.name), declarations, enums).count
 
     pub def enum_declaration(
         mut self,
-        declaration: &RustEnumDeclaration,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declaration: Borrowed[RustEnumDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> int:
         """Count physical references retained by an enum's payloads in source variant order."""
         return self.named(declaration.carrier_name(), declarations, enums).count
@@ -341,8 +341,8 @@ pub class ViewLifetimeLayout:
     def named(
         mut self,
         name: str,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeCount:
         """Resolve one nominal once when acyclic; a cycle is bounded without caching its path-dependent partial count."""
         match self.cached.get(name):
@@ -375,9 +375,9 @@ pub class ViewLifetimeLayout:
 
     def nominal_fields(
         mut self,
-        declaration: &NominalDeclaration,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declaration: Borrowed[NominalDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeCount:
         """Measure stored nominal fields once in checked declaration order."""
         mut measured = ViewLifetimeCount(count=0, complete=true)
@@ -387,9 +387,9 @@ pub class ViewLifetimeLayout:
 
     def enum_fields(
         mut self,
-        declaration: &RustEnumDeclaration,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        declaration: Borrowed[RustEnumDeclaration],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeCount:
         """Measure every enum payload in source variant order."""
         mut measured = ViewLifetimeCount(count=0, complete=true)
@@ -400,9 +400,9 @@ pub class ViewLifetimeLayout:
 
     def type_lifetimes(
         mut self,
-        ty: &RustType,
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        ty: Borrowed[RustType],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeCount:
         """Count reference slots through structural fields and source nominal view layouts."""
         match ty:
@@ -436,9 +436,9 @@ pub class ViewLifetimeLayout:
 
     def element_lifetimes(
         mut self,
-        elements: &list[RustType],
-        declarations: &list[NominalDeclaration],
-        enums: &list[RustEnumDeclaration],
+        elements: Borrowed[list[RustType]],
+        declarations: Borrowed[list[NominalDeclaration]],
+        enums: Borrowed[list[RustEnumDeclaration]],
     ) -> ViewLifetimeCount:
         """Sum structural reference slots without copying retained field types."""
         mut measured = ViewLifetimeCount(count=0, complete=true)
@@ -452,14 +452,14 @@ def combined_view_lifetimes(left: ViewLifetimeCount, right: ViewLifetimeCount) -
     return ViewLifetimeCount(count=left.count + right.count, complete=left.complete and right.complete)
 
 
-def lifecycle_text(value: &Option[str]) -> Option[str]:
+def lifecycle_text(value: Borrowed[Option[str]]) -> Option[str]:
     """Copy a checked optional label without treating empty text as absence."""
     match value:
         Some(text) => return Some(str(text))
         None => return None
 
 
-def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle]:
+def planned_lifecycle(value: Borrowed[Option[CheckedLifecycle]]) -> Option[FieldLifecycle]:
     """Keep the five source-checked labels as ordinary Incan plan data."""
     match value:
         None => return None
@@ -474,7 +474,7 @@ def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle
 
 
 def planned_field_metadata(
-    module: &BodyIrModule, constructors: &ConstructorIndex, declaration: &NominalDeclaration,
+    module: Borrowed[BodyIrModule], constructors: Borrowed[ConstructorIndex], declaration: Borrowed[NominalDeclaration],
 ) -> Option[list[FieldMetadata]]:
     """Retain checked visibility and defaults; derive stored selectors from each original typed field slot."""
     match declaration.reflection_metadata:
@@ -518,7 +518,7 @@ def planned_field_metadata(
             return Some(result)
 
 
-pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list[str]], str]:
+pub def serde_propagation(module: Borrowed[BodyIrModule]) -> Result[tuple[list[str], list[str]], str]:
     """
     Name the nominals a serde-deriving declaration's fields hold, as legacy's serde derive propagation collects them:
     the names reached under Serialize, then those reached under Deserialize.
@@ -550,7 +550,7 @@ pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list
     return Ok((serialize, deserialize))
 
 
-def declared_beside(module: &BodyIrModule, name: str, source: &NominalDeclaration) -> bool:
+def declared_beside(module: Borrowed[BodyIrModule], name: str, source: Borrowed[NominalDeclaration]) -> bool:
     """Whether `name` is a source enum or nominal declared in the same module as `source`."""
     for declaration_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, declaration_position)
@@ -563,7 +563,7 @@ def declared_beside(module: &BodyIrModule, name: str, source: &NominalDeclaratio
     return false
 
 
-def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
+def reached_names(ty: Borrowed[RustType], names: list[str]) -> Result[list[str], str]:
     """
     Add the nominal names one field type holds to `names`.
 
@@ -601,9 +601,9 @@ pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[st
 
 
 def library_fields(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
     file: str,
     mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
@@ -645,17 +645,17 @@ def library_fields(
     return (fields, unavailable)
 
 
-pub def library_item(declaration: &NominalDeclaration) -> str:
+pub def library_item(declaration: Borrowed[NominalDeclaration]) -> str:
     """Name the compiled item that owns a layout a linked Loaf declares, or nothing for a layout declared here."""
     return str(declaration.native_item)
 
 
-pub def library_enum_item(declaration: &RustEnumDeclaration) -> str:
+pub def library_enum_item(declaration: Borrowed[RustEnumDeclaration]) -> str:
     """Name the compiled item that owns an enum a linked Loaf declares, or nothing for an enum declared here."""
     return str(declaration.native_item)
 
 
-def serde_field_names(declaration: &NominalDeclaration) -> list[str]:
+def serde_field_names(declaration: Borrowed[NominalDeclaration]) -> list[str]:
     """
     Name each aliased field by its alias in the declaration's serde form, as legacy's `#[serde(rename)]` does.
 

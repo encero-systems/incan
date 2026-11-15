@@ -153,7 +153,7 @@ def loop_local_owner(mut builder: Builder, local: int) -> bool:
     return true
 
 
-pub def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
+pub def lower_block(module: Borrowed[BodyIrModule], mut builder: Builder, block: Borrowed[RustBlock]) -> Result[None, str]:
     """Validate source acknowledgments, retain refusal locations, and stop after termination."""
     # Receipts are minted by the frame's own source module, which for an imported body is not the entry module.
     if not block.unsafe_acknowledgments_valid(builder.module_identity):
@@ -171,7 +171,7 @@ pub def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlo
     return Ok(None)
 
 
-pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
+pub def lower_statement(module: Borrowed[BodyIrModule], mut builder: Builder, statement: Borrowed[RustStatement]) -> Result[None, str]:
     """Preserve statement order and refuse constructs outside the supported slice."""
     mut span = builder_location(builder, statement.span)
     match builder.anchor:
@@ -231,11 +231,11 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
 
 
 def lower_unsafe_region(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    statement: &RustStatement,
-    acknowledgment: &RustUnsafeAcknowledgment,
-    body: &RustBlock,
+    statement: Borrowed[RustStatement],
+    acknowledgment: Borrowed[RustUnsafeAcknowledgment],
+    body: Borrowed[RustBlock],
 ) -> Result[None, str]:
     """Validate the typed source receipt before lowering exactly the operations retained under its acknowledgment."""
     if not acknowledgment.matches_region(builder.module_identity, statement.span, body.scope):
@@ -243,7 +243,7 @@ def lower_unsafe_region(
     return lower_block(module, builder, body)
 
 
-def source_future_place(mut builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def source_future_place(mut builder: Builder, awaited: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await."""
     match awaited:
         RustOperand.Place(read) =>
@@ -254,9 +254,9 @@ def source_future_place(mut builder: Builder, awaited: &RustOperand, span: Sourc
 
 
 def lower_native_race(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     arms: list[RustRaceArm],
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -296,9 +296,9 @@ def lower_native_race(
 
 
 def race_callback(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    arm: &RustRaceArm,
+    arm: Borrowed[RustRaceArm],
     input: PlanType,
     result: PlanType,
     span: SourceSpan,
@@ -360,14 +360,14 @@ pub def validate_callback_place(mut builder: Builder, value: RustPlace) -> Resul
     return Ok(None)
 
 
-def race_destination(mut builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
+def race_destination(mut builder: Builder, destination: Borrowed[Option[RustPlace]], span: SourceSpan) -> Result[Place, str]:
     """Require the frontend's shared race result slot before building any winner branch."""
     match destination:
         Some(place) => return scalar_place(builder, place, span)
         None => return Err("unsupported Body IR Race without destination")
 
 
-def lower_race_callback(module: &BodyIrModule, mut builder: Builder, body: &RustBlock) -> Result[None, str]:
+def lower_race_callback(module: Borrowed[BodyIrModule], mut builder: Builder, body: Borrowed[RustBlock]) -> Result[None, str]:
     """Lower straight-line winner callbacks; unretained control transfers and suspension remain refused."""
     for statement in body.stmts:
         match statement.kind:
@@ -397,7 +397,7 @@ def validate_race_assignment(value: RustRvalue) -> Result[None, str]:
         _ => return Ok(None)
 
 
-def lower_return(mut builder: Builder, value: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
+def lower_return(mut builder: Builder, value: Borrowed[Option[RustOperand]], span: SourceSpan) -> Result[None, str]:
     """Store the result in the return slot, drop every live owner, and return."""
     mut result = literal(Constant.Unit, span)
     match value:
@@ -406,7 +406,7 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
     return finish_return(builder, result, span)
 
 
-pub def return_operand(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def return_operand(mut builder: Builder, operand: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Materialize a returned value for the return slot's type, taking ownership of an owned result."""
     return_type = borrowed_at(builder.locals, 0).ty
     if builder.returned_view != IncanInputAccess.Inferred:
@@ -422,7 +422,7 @@ pub def return_operand(mut builder: Builder, operand: &RustOperand, span: Source
 
 def view_return_operand(
     mut builder: Builder,
-    operand: &RustOperand,
+    operand: Borrowed[RustOperand],
     return_type: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -433,7 +433,7 @@ def view_return_operand(
 
 def view_operand(
     mut builder: Builder,
-    operand: &RustOperand,
+    operand: Borrowed[RustOperand],
     expected: PlanType,
     access: IncanInputAccess,
     span: SourceSpan,
@@ -448,7 +448,7 @@ def view_operand(
 
 pub def authenticated_component_operand(
     mut builder: Builder,
-    operand: &RustOperand,
+    operand: Borrowed[RustOperand],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -468,7 +468,7 @@ pub def authenticated_component_operand(
 
 pub def carrier_payload(
     mut builder: Builder,
-    payload: &RustOperand,
+    payload: Borrowed[RustOperand],
     field: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -487,7 +487,7 @@ pub def carrier_payload(
     return boundary_operand(builder, payload, field, span)
 
 
-pub def borrowed_payload(payload: &RustOperand) -> bool:
+pub def borrowed_payload(payload: Borrowed[RustOperand]) -> bool:
     """Whether Body IR reads the payload's place under a shared or exclusive borrow."""
     match payload:
         RustOperand.Place(read) => return read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow
@@ -526,7 +526,7 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
     return Ok(None)
 
 
-def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+def lower_yield(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[None, str]:
     """Apply the checked generator's element boundary conversion before transferring an owned yield."""
     # A generator-expression step hands its one accepted element back to the chain instead of suspending.
     match builder.step_element:
@@ -550,11 +550,11 @@ def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> 
 
 
 def lower_if(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    condition: &RustOperand,
-    then_body: &RustBlock,
-    else_body: &Option[RustBlock],
+    condition: Borrowed[RustOperand],
+    then_body: Borrowed[RustBlock],
+    else_body: Borrowed[Option[RustBlock]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower a proven constant branch directly; otherwise join the independently lowered branches and their owners."""
@@ -628,7 +628,7 @@ def constant_boolean(mut builder: Builder, operand: Operand) -> Option[bool]:
     return None
 
 
-def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, span: SourceSpan) -> Result[None, str]:
+def lower_loop(module: Borrowed[BodyIrModule], mut builder: Builder, body: Borrowed[RustBlock], span: SourceSpan) -> Result[None, str]:
     """Lower a normalized loop: a header block that the body jumps back to, and an `after` block for `break`."""
     header = builder.new_block(span)
     after = builder.new_block(span)

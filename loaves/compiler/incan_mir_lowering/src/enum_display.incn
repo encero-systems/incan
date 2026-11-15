@@ -11,7 +11,7 @@ from element_places import is_element_place
 from decls import library_enum_item
 
 
-pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+pub def display_enum_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Option[Place], str]:
     """Use native Display for foreign layouts and retained derived Display for whole source enums."""
     match native_enum_text(builder, value, false, span)?:
         Some(text) => return Ok(Some(text))
@@ -42,7 +42,7 @@ pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: So
 
 pub def native_enum_text(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     debug: bool,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:

@@ -82,9 +82,9 @@ pub def runtime_redirects() -> RuntimeRedirects:
 
 
 pub def selected_runtime_requirements(
-    module: &BodyIrModule,
-    externals: &list[ExternalFunction],
-    functions: &list[Function],
+    module: Borrowed[BodyIrModule],
+    externals: Borrowed[list[ExternalFunction]],
+    functions: Borrowed[list[Function]],
 ) -> Result[list[RuntimeRequirement], str]:
     """Collect only declarations demanded by the external calls and deferred coroutines already lowered for a unit."""
     mut redirects = runtime_redirects()
@@ -92,7 +92,7 @@ pub def selected_runtime_requirements(
     return Ok(redirects.missing)
 
 
-pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> list[RuntimeRequirement]:
+pub def layout_runtime_requirements(modules: Borrowed[list[BodyIrModule]], file: str) -> list[RuntimeRequirement]:
     """
     Load generic-callable state layouts before any frame publishes combined enum indices.
 
@@ -119,7 +119,7 @@ pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> 
     return []
 
 
-def retains_decorated_binding(modules: &list[BodyIrModule]) -> bool:
+def retains_decorated_binding(modules: Borrowed[list[BodyIrModule]]) -> bool:
     """Whether any held module retains a decorated binding, the only caller of the runtime's binding state."""
     for module_position in range(len(modules)):
         if len(borrowed_at(modules, module_position).decorated_bindings) != 0:
@@ -127,7 +127,7 @@ def retains_decorated_binding(modules: &list[BodyIrModule]) -> bool:
     return false
 
 
-def runtime_declaration_loaded(modules: &list[BodyIrModule], canonical: &RustCanonicalSymbolId) -> bool:
+def runtime_declaration_loaded(modules: Borrowed[list[BodyIrModule]], canonical: Borrowed[RustCanonicalSymbolId]) -> bool:
     """Whether the resolved project already retains a checked or compiled body for one runtime declaration."""
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
@@ -141,10 +141,10 @@ def runtime_declaration_loaded(modules: &list[BodyIrModule], canonical: &RustCan
 
 
 pub def retain_runtime_instances(
-    template_constructors: &ConstructorIndex,
+    template_constructors: Borrowed[ConstructorIndex],
     mut program: ProgramContext,
-    mut module: &mut BodyIrModule,
-    templates: &BodyIrModule,
+    mut module: BorrowedMut[BodyIrModule],
+    templates: Borrowed[BodyIrModule],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
@@ -276,14 +276,14 @@ pub def retain_runtime_instances(
     return Ok(None)
 
 
-def runtime_selection(external: &ExternalFunction) -> CalleeKind:
+def runtime_selection(external: Borrowed[ExternalFunction]) -> CalleeKind:
     """The callee kind a call with this exact external signature names, as its redirect binding selects it."""
     if len(external.type_arguments) == 0:
         return CalleeKind.External(external.path)
     return CalleeKind.Instantiated(external.path, external.type_arguments)
 
 
-def settled_native(redirects: &RuntimeRedirects, external: &ExternalFunction) -> bool:
+def settled_native(redirects: Borrowed[RuntimeRedirects], external: Borrowed[ExternalFunction]) -> bool:
     """
     Whether this exact signature already settled as native linkage; runtime lookups are fixed for the queue. A
     signature with type arguments is reexamined, which for a native path costs two prefix checks.
@@ -301,7 +301,7 @@ def settle_native(mut redirects: RuntimeRedirects, external: ExternalFunction) -
         redirects.native.insert(external.path, true)
 
 
-def deferred_runtime(redirects: &RuntimeRedirects, path: str) -> bool:
+def deferred_runtime(redirects: Borrowed[RuntimeRedirects], path: str) -> bool:
     """Whether this attempt already found a runtime path's declaration missing; nothing loads it before the next one."""
     match redirects.deferred.get(path):
         None => return false
@@ -309,9 +309,9 @@ def deferred_runtime(redirects: &RuntimeRedirects, path: str) -> bool:
 
 
 def defer_missing_runtime(
-    module: &BodyIrModule,
-    externals: &list[ExternalFunction],
-    functions: &list[Function],
+    module: Borrowed[BodyIrModule],
+    externals: Borrowed[list[ExternalFunction]],
+    functions: Borrowed[list[Function]],
     mut redirects: RuntimeRedirects,
 ) -> Result[None, str]:
     """
@@ -336,7 +336,7 @@ def defer_missing_runtime(
 
 
 def retain_runtime_requirement(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     path: str,
     span: SourceSpan,
     mut redirects: RuntimeRedirects,
@@ -367,13 +367,13 @@ def retain_runtime_requirement(
 
 
 def retain_runtime_frame_call(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     external: ExternalFunction,
     mut intrinsics: list[EnumDeclaration],
-    unions: &list[RustType],
+    unions: Borrowed[list[RustType]],
     mut redirects: RuntimeRedirects,
 ) -> Result[bool, str]:
     """Forward a runtime call: 1. Read its public frame. 2. Adapt its ABI. 3. Retain its canonical callee."""
@@ -441,7 +441,7 @@ def retain_runtime_adapter(mut functions: list[Function], adapter: Function) -> 
     return Ok(None)
 
 
-def runtime_callable_frame(module: &BodyIrModule, path: str) -> Result[Option[tuple[Body, CalleeKind]], str]:
+def runtime_callable_frame(module: Borrowed[BodyIrModule], path: str) -> Result[Option[tuple[Body, CalleeKind]], str]:
     """Select an authenticated own or compiled frame; private same-named dependencies never grant its ABI."""
     match runtime_canonical(module, path)?:
         None => return Ok(None)
@@ -469,7 +469,7 @@ def runtime_callable_frame(module: &BodyIrModule, path: str) -> Result[Option[tu
                 Some((frame, native)) => return Ok(Some((frame, CalleeKind.External(native))))
 
 
-def own_runtime_frame(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[Option[Body], str]:
+def own_runtime_frame(module: Borrowed[BodyIrModule], identity: Borrowed[RustCanonicalSymbolId]) -> Result[Option[Body], str]:
     """A runtime producer uses its own checked callable body, without importing an artifact of itself."""
     mut found: Option[Body] = None
     for position in range(len(module.bodies)):
@@ -492,7 +492,7 @@ def compiled_frame(declaration: LoafCallable) -> Option[tuple[Body, str]]:
                 Some(frame) => return Some((frame.clone(), path))
 
 
-def runtime_canonical(module: &BodyIrModule, path: str) -> Result[Option[RustCanonicalSymbolId], str]:
+def runtime_canonical(module: Borrowed[BodyIrModule], path: str) -> Result[Option[RustCanonicalSymbolId], str]:
     """Resolve an admitted lowering facade from its checked public export map, retaining provider ownership."""
     mut owner = ""
     if path.startswith("incan_native_runtime::"):
@@ -520,13 +520,13 @@ def runtime_canonical(module: &BodyIrModule, path: str) -> Result[Option[RustCan
 
 
 def retain_runtime_future_instances(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut functions: list[Function],
     mut instances: list[Instance],
     mut intrinsics: list[EnumDeclaration],
-    unions: &list[RustType],
-    redirects: &RuntimeRedirects,
+    unions: Borrowed[list[RustType]],
+    redirects: Borrowed[RuntimeRedirects],
 ) -> Result[None, str]:
     """
     Select governed async bodies behind boxing shims.
@@ -600,7 +600,7 @@ def retain_runtime_future_instances(
     return Ok(None)
 
 
-def runtime_async_body(module: &BodyIrModule, path: str, arity: int) -> Result[Body, str]:
+def runtime_async_body(module: Borrowed[BodyIrModule], path: str, arity: int) -> Result[Body, str]:
     """Require a unique governed coroutine and its complete declared type binding before selecting its evaluator."""
     match runtime_body(module, path)?:
         Some(body) =>
@@ -610,7 +610,7 @@ def runtime_async_body(module: &BodyIrModule, path: str, arity: int) -> Result[B
         None => return Err(f"runtime publishes no governed async body for {path}")
 
 
-def runtime_owned_slots(body: &Body, external: ExternalFunction) -> Result[list[int], str]:
+def runtime_owned_slots(body: Borrowed[Body], external: ExternalFunction) -> Result[list[int], str]:
     """Keep environment ownership for original generic value slots selected by the exact runtime call ABI."""
     if len(body.params) != len(external.parameters):
         return Err(f"invalid governed runtime parameter arity for {external.path}")
@@ -628,7 +628,7 @@ def runtime_owned_slots(body: &Body, external: ExternalFunction) -> Result[list[
     return Ok(owned)
 
 
-pub def runtime_body(module: &BodyIrModule, path: str) -> Result[Option[Body], str]:
+pub def runtime_body(module: Borrowed[BodyIrModule], path: str) -> Result[Option[Body], str]:
     """Select a unique published runtime declaration; another package's same-named body is never a candidate."""
     canonical = runtime_canonical(module, path)?
     if canonical == None:
@@ -669,7 +669,7 @@ def retain_runtime_redirect(
     return Ok(None)
 
 
-pub def redirect_runtime_calls(mut functions: list[Function], redirects: &RuntimeRedirects) -> Result[None, str]:
+pub def redirect_runtime_calls(mut functions: list[Function], redirects: Borrowed[RuntimeRedirects]) -> Result[None, str]:
     """Borrow the settled redirect inventory while rewriting blocks, preserving operands and edges and refusing reentry."""
     for function_index in range(len(functions)):
         for block_index in range(runtime_block_count(functions, function_index)):
@@ -680,17 +680,17 @@ pub def redirect_runtime_calls(mut functions: list[Function], redirects: &Runtim
     return Ok(None)
 
 
-def runtime_block_count(functions: &list[Function], function_index: int) -> int:
+def runtime_block_count(functions: Borrowed[list[Function]], function_index: int) -> int:
     """Read the block count through a short loan that ends before a terminator is replaced."""
     function = borrowed_at(functions, function_index)
     return len(function.blocks)
 
 
 def redirected_runtime_terminator(
-    functions: &list[Function],
+    functions: Borrowed[list[Function]],
     function_index: int,
     block_index: int,
-    redirects: &RuntimeRedirects,
+    redirects: Borrowed[RuntimeRedirects],
 ) -> Result[Option[TerminatorKind], str]:
     """Borrow the shared inventory to select an owned replacement before mutation, retaining operands, span and edges."""
     function = borrowed_at(functions, function_index)
@@ -710,7 +710,7 @@ def redirected_runtime_terminator(
         _ => return Ok(None)
 
 
-def runtime_redirect(redirects: &RuntimeRedirects, selected: CalleeKind) -> Option[int]:
+def runtime_redirect(redirects: Borrowed[RuntimeRedirects], selected: CalleeKind) -> Option[int]:
     """Borrow the inventory and use its path index; exact native type arguments still select the binding."""
     mut path = ""
     match selected:
@@ -729,10 +729,10 @@ def runtime_redirect(redirects: &RuntimeRedirects, selected: CalleeKind) -> Opti
 
 
 def runtime_argument(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     ty: PlanType,
-    intrinsics: &list[EnumDeclaration],
-    unions: &list[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
+    unions: Borrowed[list[RustType]],
 ) -> Result[RustType, str]:
     """Retain closed carriers against shared layout inventories without copying tables or reopening checked bodies."""
     match ty:
@@ -842,10 +842,10 @@ def runtime_storage_argument(name: str) -> RustType:
 
 
 def runtime_callable_argument(
-    module: &BodyIrModule,
-    signature: &list[PlanType],
-    intrinsics: &list[EnumDeclaration],
-    unions: &list[RustType],
+    module: Borrowed[BodyIrModule],
+    signature: Borrowed[list[PlanType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
+    unions: Borrowed[list[RustType]],
 ) -> Result[RustType, str]:
     """Preserve every native callable input and result; the instance's owned slots separately retain environments."""
     if len(signature) == 0:
@@ -867,11 +867,11 @@ def runtime_callable_argument(
 
 
 def runtime_enum_argument(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     owner: int,
     name: str,
-    intrinsics: &list[EnumDeclaration],
-    unions: &list[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
+    unions: Borrowed[list[RustType]],
 ) -> Result[RustType, str]:
     """Read enum owners and closed union shapes from retained inventories, preserving Option and Result payloads."""
     if owner < 0:

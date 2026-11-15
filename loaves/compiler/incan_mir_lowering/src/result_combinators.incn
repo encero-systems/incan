@@ -68,11 +68,11 @@ pub def result_combinator(method: RustResultMethodId) -> Option[Combinator]:
 
 
 pub def lower_result_combinator(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     combinator: Combinator,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Take the receiver as an owned carrier, then branch on its active variant and call the callback on one side."""
@@ -133,7 +133,7 @@ def callback_place(mut builder: Builder, argument: RustArgumentElement, span: So
 
 def output_place(
     mut builder: Builder,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -144,7 +144,7 @@ def output_place(
 
 
 def observe(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     slot: int,
     input: EnumDeclaration,
@@ -179,7 +179,7 @@ def observe(
 
 
 def transform(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     combinator: Combinator,
     input: EnumDeclaration,
@@ -238,7 +238,7 @@ def transform(
 
 
 def call_callback(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     callback: Place,
     argument: Operand,
@@ -318,7 +318,7 @@ def drop_callback_argument(mut builder: Builder, held: Option[int], span: Source
 
 
 def call_callable_model(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     index: int,
     callback: Place,

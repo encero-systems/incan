@@ -66,7 +66,7 @@ from sequence_builtins import argument_type
 
 pub def argument_place(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -90,7 +90,7 @@ pub def argument_place(
 
 pub def shared_receiver_place(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -107,7 +107,7 @@ pub def shared_receiver_place(
     return argument_place(builder, arguments, index, span)
 
 
-pub def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def materialized_receiver(mut builder: Builder, source: Borrowed[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """Read a collection element once into temporary storage, retaining scalar copies and owned receiver values."""
     match element_read(builder, source, span)?:
         Some(item) =>
@@ -121,7 +121,7 @@ pub def materialized_receiver(mut builder: Builder, source: &RustPlace, span: So
 
 pub def argument_value(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -135,7 +135,7 @@ pub def argument_value(
 
 pub def call_destination(
     mut builder: Builder,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -151,7 +151,7 @@ pub def call_destination(
 
 pub def borrowed_list_argument(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     mutable: bool,
     span: SourceSpan,
@@ -166,8 +166,8 @@ pub def borrowed_list_argument(
 
 pub def lower_list_iter(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow stored list input or consume owned storage, never copying the complete source."""
@@ -238,8 +238,8 @@ pub def borrowed_list_generator_call(
 pub def lower_iterator_method(
     mut builder: Builder,
     method: RustIteratorMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower a checker-selected iterator or generator adapter, consumer, or collection terminal."""
@@ -264,8 +264,8 @@ pub def lower_iterator_method(
 
 pub def lower_bytes_as_slice(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the checker-selected runtime bytes receiver as an immutable native byte slice."""
@@ -291,8 +291,8 @@ pub def lower_bytes_as_slice(
 pub def lower_list_method(
     mut builder: Builder,
     method: RustListMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower one checker-selected list operation without interpreting its source or canonical spelling."""
@@ -376,8 +376,8 @@ pub def lower_list_method(
 def lower_list_reservation(
     mut builder: Builder,
     exact: bool,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Reserve additional capacity on the actual checked list receiver, preserving the existing int-to-usize contract."""
@@ -413,7 +413,7 @@ def lower_list_reservation(
 
 def list_method_receiver(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     mutable: bool,
     span: SourceSpan,
 ) -> Result[tuple[Operand, Option[tuple[RustGlobalPlace, Place]]], str]:
@@ -426,7 +426,7 @@ def list_method_receiver(
 
 pub def static_collection_receiver(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Option[tuple[RustGlobalPlace, Place]], str]:
@@ -440,7 +440,7 @@ pub def static_collection_receiver(
 
 def static_place_receiver(
     mut builder: Builder,
-    read: &RustPlaceOperand,
+    read: Borrowed[RustPlaceOperand],
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Option[tuple[RustGlobalPlace, Place]], str]:
@@ -464,7 +464,7 @@ def frozen_length(
     elements: list[PlanType],
     reference: PlanType,
     value: Operand,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Ask the runtime for one frozen collection's length through a shared reference to it."""
@@ -479,8 +479,8 @@ def frozen_length(
 
 pub def lower_list_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Read string, list, and hashed-collection lengths through the legacy runtime contracts."""
@@ -536,7 +536,7 @@ pub def lower_list_builtin(
     return list_length(builder, reference, destination, span)
 
 
-def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
+def indexes_nested_list(mut builder: Builder, arguments: Borrowed[list[RustArgumentElement]]) -> bool:
     """Recognize one index into a local list of lists, such as `rows[1]`."""
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) =>
@@ -580,8 +580,8 @@ def list_length(
 pub def lower_list_helper(
     mut builder: Builder,
     negated: bool,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -622,7 +622,7 @@ pub def lower_list_helper(
     return Ok(None)
 
 
-def admit_membership_equality(builder: &Builder, leaf: ListLeaf) -> Result[None, str]:
+def admit_membership_equality(builder: Borrowed[Builder], leaf: ListLeaf) -> Result[None, str]:
     """
     Admit elements whose native PartialEq is Incan's structural equality: scalars, text, enums, tuples, lists,
     dictionaries, sets, opaque native records and source models with derived equality. A source model with its own
@@ -689,7 +689,7 @@ pub def indexed_assignment_at(
     return Ok(None)
 
 
-def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[Operand, str]:
+def assignment_value(mut builder: Builder, value: Borrowed[RustRvalue], span: SourceSpan) -> Result[Operand, str]:
     """Materialize the checked single value before borrowing its indexing destination mutably."""
     match value:
         RustRvalue.Use(operand) => return value_operand(builder, operand, span)

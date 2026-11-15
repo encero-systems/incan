@@ -7,7 +7,7 @@ from decls import library_item
 from table_views import borrowed_at
 
 
-pub def native_argument_names(module: &BodyIrModule) -> Result[list[str], str]:
+pub def native_argument_names(module: Borrowed[BodyIrModule]) -> Result[list[str], str]:
     """
     Collect, once per module, the source carrier names found in foreign Rust storage arguments. Each needs its source
     ABI implementations; an ordinary Loaf's generic ADT imposes no SDK trait ABI.
@@ -36,7 +36,7 @@ def foreign_storage(origin: SymbolOrigin) -> bool:
         _ => return false
 
 
-def collect_names(ty: &RustType, mut names: list[str]) -> None:
+def collect_names(ty: Borrowed[RustType], mut names: list[str]) -> None:
     """Record each named argument in a checked argument tree once; canonical qualification has resolved aliases."""
     match ty:
         RustType.Named(value) =>

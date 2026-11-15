@@ -122,13 +122,13 @@ class Box:
         self.value += by
         return self.value
 
-def parse(box: &Box, value: int) -> int:
+def parse(box: Borrowed[Box], value: int) -> int:
     return value + 1
 
-def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+def as_int(func: (Borrowed[Box], int) -> str) -> (Borrowed[Box], int) -> int:
     return parse
 
-def keep(func: (&mut Box, int) -> int) -> (&mut Box, int) -> int:
+def keep(func: (BorrowedMut[Box], int) -> int) -> (BorrowedMut[Box], int) -> int:
     return func
 ```
 

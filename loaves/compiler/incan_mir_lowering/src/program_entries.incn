@@ -74,12 +74,12 @@ model ModuleFrames:
 pub def lower_ordinary_bodies(
     context: Arc[RustBodyIrModule],
     source_context: Arc[RustBodyIrModule],
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
     program: ProgramContext,
-    owners: &list[str],
-    sources: &list[str],
-    files: &list[str],
+    owners: Borrowed[list[str]],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
     kind: str,
     tests: list[str],
@@ -91,7 +91,7 @@ pub def lower_ordinary_bodies(
     unions: list[RustType],
     trace: bool,
     scalar_products: Option[str],
-    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    scalar_bodies: Borrowed[BTreeMap[CompilerNodeId, str]],
     overflow_checks: bool,
     record_report: Option[str],
 ) -> Result[None, str]:
@@ -266,7 +266,7 @@ def lower_module_frames(
 
 
 def lower_selected_module(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     program: ProgramContext,
     unions: list[RustType],
     positions: list[int],
@@ -278,7 +278,7 @@ def lower_selected_module(
     mut intrinsics: list[EnumDeclaration],
     trace: bool,
     scalar_products: Option[str],
-    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    scalar_bodies: Borrowed[BTreeMap[CompilerNodeId, str]],
     record_report: Option[str],
     mut nominals: UnitNominals,
 ) -> Result[ModuleFrames, str]:
@@ -345,11 +345,11 @@ def lower_selected_module(
 
 
 pub def lower_ordinary_bodies_serial(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     program: ProgramContext,
-    owners: &list[str],
-    sources: &list[str],
-    files: &list[str],
+    owners: Borrowed[list[str]],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
     kind: str,
     tests: list[str],
@@ -361,7 +361,7 @@ pub def lower_ordinary_bodies_serial(
     unions: list[RustType],
     trace: bool,
     scalar_products: Option[str],
-    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    scalar_bodies: Borrowed[BTreeMap[CompilerNodeId, str]],
     record_report: Option[str] = None,
 ) -> Result[None, str]:
     """
@@ -441,15 +441,15 @@ pub def lower_ordinary_bodies_serial(
 
 
 def lower_ordinary_frame(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     program: ProgramContext,
-    body: &RustBody,
+    body: Borrowed[RustBody],
     unions: list[RustType],
     source: str,
     file: str,
     mut intrinsics: list[EnumDeclaration],
     products: Option[str],
-    admitted: &BTreeMap[CompilerNodeId, str],
+    admitted: Borrowed[BTreeMap[CompilerNodeId, str]],
     record_report: Option[str],
     mut nominals: UnitNominals,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
@@ -563,9 +563,9 @@ def lower_ordinary_frame(
 
 
 pub def validate_program_entry_selection(
-    modules: &list[BodyIrModule],
+    modules: Borrowed[list[BodyIrModule]],
     entry: int,
-    retained: &BodyIrModule,
+    retained: Borrowed[BodyIrModule],
 ) -> Result[None, str]:
     """Apply standalone entry naming against the current modules or their already validated retained bodies."""
     for identity in modules[entry].program_entrypoints:
@@ -587,7 +587,7 @@ pub def validate_program_entry_selection(
     return Ok(None)
 
 
-def validate_selected_entry_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+def validate_selected_entry_body(module: Borrowed[BodyIrModule], identity: Borrowed[RustCanonicalSymbolId]) -> Result[bool, str]:
     """Validate an entry against its owning module without copying the module's bodies across the boundary."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
@@ -598,7 +598,7 @@ def validate_selected_entry_body(module: &BodyIrModule, identity: &RustCanonical
     return Ok(false)
 
 
-def validate_retained_entry_body(context: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+def validate_retained_entry_body(context: Borrowed[BodyIrModule], identity: Borrowed[RustCanonicalSymbolId]) -> Result[bool, str]:
     """Validate an unchanged selected entry whose owning module body lives only in continuation authority."""
     for body_position in range(len(context.bodies)):
         body = borrowed_at(context.bodies, body_position)
@@ -609,7 +609,7 @@ def validate_retained_entry_body(context: &BodyIrModule, identity: &RustCanonica
     return Ok(false)
 
 
-pub def selected_program_entries(context: &BodyIrModule) -> Result[list[str], str]:
+pub def selected_program_entries(context: Borrowed[BodyIrModule]) -> Result[list[str], str]:
     """Keep the unit's checked selector order while resolving canonical entries to their native wrappers."""
     mut entries: list[str] = []
     for identity in context.program_entrypoints:
@@ -625,7 +625,7 @@ pub def selected_program_entries(context: &BodyIrModule) -> Result[list[str], st
     return Ok(entries)
 
 
-def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, tests: list[str]) -> Option[str]:
+def async_entry_name(context: Borrowed[BodyIrModule], body: Borrowed[RustBody], in_entry: bool, tests: list[str]) -> Option[str]:
     """Name the native function that runs an async body under the executor: `main`, or a collected test's wrapper."""
     if not body.is_async:
         return None
@@ -638,8 +638,8 @@ def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, te
 
 
 def append_async_entry(
-    context: &BodyIrModule,
-    body: &RustBody,
+    context: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     function: Function,
     in_entry: bool,
     tests: list[str],
@@ -659,10 +659,10 @@ def append_async_entry(
 
 
 pub def collected_test_entries(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     entry_owner: str,
     tests: list[str],
-    functions: &list[Function],
+    functions: Borrowed[list[Function]],
     enums: list[EnumDeclaration],
 ) -> Result[list[str], str]:
     """Resolve zero-argument tests returning None or Result[None, E]; rustc's test harness reports Err as failure."""
@@ -708,9 +708,9 @@ def test_return_type(ty: PlanType, enums: list[EnumDeclaration]) -> bool:
 
 
 pub def loaf_exports(
-    context: &BodyIrModule,
-    emitted: &list[int],
-    declarations: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
+    emitted: Borrowed[list[int]],
+    declarations: Borrowed[BodyIrModule],
     templates: list[GenericModelDeclaration],
     enum_templates: list[GenericEnumDeclaration],
 ) -> list[PlanExport]:
@@ -788,7 +788,7 @@ pub model EmittedFrames:
     pub body_positions: list[int]
     pub positions: BTreeMap[RustCanonicalSymbolId, list[int]]
 
-    pub def contains(self, context: &BodyIrModule, candidate: &RustBody) -> bool:
+    pub def contains(self, context: Borrowed[BodyIrModule], candidate: Borrowed[RustBody]) -> bool:
         """Reuse an identical canonical frame revisited through module context; differing facts still face overload validation."""
         match candidate.canonical:
             None => return false
@@ -815,7 +815,7 @@ pub def no_emitted_frames() -> EmittedFrames:
     return EmittedFrames(body_positions=[], positions=positions)
 
 
-pub def ordinary_body(context: &BodyIrModule, body: &RustBody, emitted_frames: &EmittedFrames, kind: str) -> bool:
+pub def ordinary_body(context: Borrowed[BodyIrModule], body: Borrowed[RustBody], emitted_frames: Borrowed[EmittedFrames], kind: str) -> bool:
     """
     Whether a checked module's body lowers as an ordinary function, for compilation and the census alike.
 
@@ -835,9 +835,9 @@ pub def ordinary_body(context: &BodyIrModule, body: &RustBody, emitted_frames: &
 
 
 pub def comparison_bridge_instances(
-    context: &BodyIrModule,
-    models: &list[ModelDeclaration],
-    enums: &list[EnumDeclaration],
+    context: Borrowed[BodyIrModule],
+    models: Borrowed[list[ModelDeclaration]],
+    enums: Borrowed[list[EnumDeclaration]],
 ) -> list[Instance]:
     """
     Schedule the lazy method bodies that native comparison bridges call.

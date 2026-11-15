@@ -33,9 +33,9 @@ from table_views import borrowed_at, borrowed_table
 
 
 pub def string_conversion_callee(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &NamedCallableTarget,
+    target: Borrowed[NamedCallableTarget],
     span: SourceSpan,
 ) -> Result[Option[tuple[CalleeKind, PlanType]], str]:
     """Dispatch only the actual selected Package trait slot at its checked closed receiver, never a method spelling."""
@@ -93,7 +93,7 @@ pub def string_conversion_callee(
 
 pub def lower_string_conversions(
     constructor_owner: Arc[ConstructorIndex],
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration],
     start: int = 0,
@@ -147,7 +147,7 @@ pub def lower_string_conversions(
 
 def conversion_function(
     constructor_owner: Arc[ConstructorIndex],
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     index: int,
     name: str,
     result: PlanType,
@@ -203,9 +203,9 @@ def conversion_function(
 
 
 def underlying_conversion(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    owner: &NominalDeclaration,
+    owner: Borrowed[NominalDeclaration],
     result: PlanType,
     span: SourceSpan,
 ) -> Result[CalleeKind, str]:

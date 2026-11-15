@@ -21,7 +21,7 @@ pub def model_list_read(mut builder: Builder, source: RustPlace, span: SourceSpa
             return Ok(Some(prefixed_list_read(builder, source, count, span)?))
 
 
-pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
+pub def structural_prefix(mut builder: Builder, source: Borrowed[RustPlace]) -> Result[Option[tuple[int, bool]], str]:
     """
     Count the leading field, payload and tuple-element steps of a place rooted at a model, enum or tuple.
 

@@ -9,7 +9,7 @@ from checked_values import scalar_place
 
 pub def serialize_enum_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     destination: Place,
     span: SourceSpan,
 ) -> Result[bool, str]:

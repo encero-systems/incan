@@ -29,17 +29,17 @@ pub def frozen_list_length[T with Static](value: RuntimeFrozenList[T]) -> int:
     return int(value.len())
 
 
-pub def frozen_list_length_ref[T with Static](value: &RuntimeFrozenList[T]) -> int:
+pub def frozen_list_length_ref[T with Static](value: Borrowed[RuntimeFrozenList[T]]) -> int:
     """Measure borrowed baked list storage without requiring its elements to be Copy."""
     return int(value.len())
 
 
-pub def frozen_set_length_ref[T with Static](value: &RuntimeFrozenSet[T]) -> int:
+pub def frozen_set_length_ref[T with Static](value: Borrowed[RuntimeFrozenSet[T]]) -> int:
     """Measure borrowed baked set storage without consuming its wrapper or elements."""
     return int(value.len())
 
 
-pub def frozen_dict_length_ref[K with Static, V with Static](value: &RuntimeFrozenDict[K, V]) -> int:
+pub def frozen_dict_length_ref[K with Static, V with Static](value: Borrowed[RuntimeFrozenDict[K, V]]) -> int:
     """Measure borrowed baked dictionary storage without consuming either element carrier."""
     return int(value.len())
 
@@ -117,7 +117,7 @@ pub def frozen_dict_keys[K with (RuntimeClone, Static), V with Static](value: Ru
     while true:
         match entries.get(nonnegative_count(index)):
             Some(entry) =>
-                key: &K = entry[0]
+                key: Borrowed[K] = entry[0]
                 result.push(clone_native[K](key))
             None => return result
         index += 1
@@ -133,7 +133,7 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
     while true:
         match entries.get(nonnegative_count(index)):
             Some(entry) =>
-                key: &K = entry[0]
+                key: Borrowed[K] = entry[0]
                 result.push(f"{key}")
             None => return result
         index += 1
@@ -141,7 +141,7 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
 
 pub def frozen_dict_text_get[K with (Borrow[RustStr], Static), V with (RuntimeClone, Static)](
     value: RuntimeFrozenDict[K, V],
-    key: &str,
+    key: Borrowed[str],
 ) -> V:
     """Use borrowed text identity to find a value, cloning only the selected owned result."""
     match value.get[RustStr](key):
@@ -157,15 +157,15 @@ pub def frozen_dict_get[K with (PartialEq[K], Display, Static), V with (RuntimeC
     """Read one scalar key: 1. Retain typed static entries. 2. Copy the first matching value or raise KeyError."""
     # 1. Retain typed entries and the shared probe without cloning either.
     entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
-    reference: &K = key
+    reference: Borrowed[K] = key
     mut index = 0
     # 2. Copy only the first matching value.
     while true:
         match entries.get(nonnegative_count(index)):
             Some(entry) =>
-                stored: &K = entry[0]
+                stored: Borrowed[K] = entry[0]
                 if equal_native[K](stored, reference):
-                    item: &V = entry[1]
+                    item: Borrowed[V] = entry[1]
                     return clone_native[V](item)
             None => break
         index += 1
@@ -174,7 +174,7 @@ pub def frozen_dict_get[K with (PartialEq[K], Display, Static), V with (RuntimeC
 
 pub def frozen_dict_text_contains[K with (Borrow[RustStr], Static), V with Static](
     value: RuntimeFrozenDict[K, V],
-    key: &str,
+    key: Borrowed[str],
 ) -> bool:
     """Check borrowed text identity through the frozen dictionary's canonical lookup."""
     return value.contains_key[RustStr](key)
@@ -187,13 +187,13 @@ pub def frozen_dict_contains[K with (PartialEq[K], Static), V with Static](
     """Test scalar keys: 1. Retain typed static entries. 2. Stop at the first equal key without reading values."""
     # 1. Retain typed entries and the shared probe without cloning either.
     entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
-    reference: &K = key
+    reference: Borrowed[K] = key
     mut index = 0
     # 2. Stop at the first equal key without reading values.
     while true:
         match entries.get(nonnegative_count(index)):
             Some(entry) =>
-                stored: &K = entry[0]
+                stored: Borrowed[K] = entry[0]
                 if equal_native[K](stored, reference):
                     return true
             None => return false

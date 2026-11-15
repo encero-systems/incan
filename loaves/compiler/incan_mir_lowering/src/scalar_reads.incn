@@ -5,7 +5,7 @@ from numerics import numeric_carrier
 from table_views import borrowed_at
 
 
-pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int], source: Place) -> Result[Place, str]:
+pub def scalar_storage_place(locals: Borrowed[list[Local]], reference_values: Borrowed[list[int]], source: Place) -> Result[Place, str]:
     """Read a borrowed Copy scalar through its actual storage without allocating, cloning or consuming a reference value."""
     if source.projection != Projection.Whole:
         return Ok(source)

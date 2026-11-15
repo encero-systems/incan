@@ -24,21 +24,21 @@ pub def later_clauses(block: RustBlock) -> list[tuple[int, int, list[int]]]:
     return clauses
 
 
-pub def clause_iterator(body: &RustBlock) -> int:
+pub def clause_iterator(body: Borrowed[RustBlock]) -> int:
     """Read the whole iterator local a loop polls first, or -1."""
     if len(body.stmts) == 0:
         return -1
     return builtin_poll(borrowed_at(body.stmts, 0).kind)[0]
 
 
-pub def clause_item(body: &RustBlock) -> int:
+pub def clause_item(body: Borrowed[RustBlock]) -> int:
     """Read the whole local a loop's first poll fills, or -1."""
     if len(body.stmts) == 0:
         return -1
     return builtin_poll(borrowed_at(body.stmts, 0).kind)[1]
 
 
-def visit_block(block: &RustBlock, start: int, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
+def visit_block(block: Borrowed[RustBlock], start: int, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
     """Walk one block in order, recording each clause with the locals bound before it, and descend into filters."""
     mut assigned: list[int] = []
     assigned.extend(bound)
@@ -60,7 +60,7 @@ def visit_block(block: &RustBlock, start: int, bound: list[int], mut clauses: li
             assigned.append(local)
 
 
-def visit_filters(kind: &RustStatementKind, bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
+def visit_filters(kind: Borrowed[RustStatementKind], bound: list[int], mut clauses: list[tuple[int, int, list[int]]]) -> None:
     """Descend into a filter's branches with the locals bound so far."""
     match kind:
         RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
@@ -71,14 +71,14 @@ def visit_filters(kind: &RustStatementKind, bound: list[int], mut clauses: list[
         _ => pass
 
 
-def opens_clause(kind: &RustStatementKind, iterator: int) -> bool:
+def opens_clause(kind: Borrowed[RustStatementKind], iterator: int) -> bool:
     """Recognize a loop that polls the iterator the previous statement initialized and yields."""
     match kind:
         RustStatementKind.Loop(body=body) => return clause_iterator(body) == iterator and yields(body)
         _ => return false
 
 
-def yields(block: &RustBlock) -> bool:
+def yields(block: Borrowed[RustBlock]) -> bool:
     """Report whether a block yields, directly or in a nested filter or loop."""
     for position in range(len(block.stmts)):
         if statement_yields(borrowed_at(block.stmts, position).kind):
@@ -86,7 +86,7 @@ def yields(block: &RustBlock) -> bool:
     return false
 
 
-def statement_yields(kind: &RustStatementKind) -> bool:
+def statement_yields(kind: Borrowed[RustStatementKind]) -> bool:
     """Find a yield in one statement or the blocks it nests."""
     match kind:
         RustStatementKind.Yield(value=_value) => return true
@@ -100,7 +100,7 @@ def statement_yields(kind: &RustStatementKind) -> bool:
         _ => return false
 
 
-def builtin_poll(kind: &RustStatementKind) -> tuple[int, int]:
+def builtin_poll(kind: Borrowed[RustStatementKind]) -> tuple[int, int]:
     """Read a builtin poll's whole iterator and destination locals, or (-1, -1)."""
     match kind:
         RustStatementKind.IterNext(destination=destination, iterator=iterator, protocol=protocol) =>
@@ -122,7 +122,7 @@ def iterator_initialization(kind: RustStatementKind) -> tuple[int, int]:
         _ => return (-1, -1)
 
 
-def assigned_local(kind: &RustStatementKind) -> int:
+def assigned_local(kind: Borrowed[RustStatementKind]) -> int:
     """Read the whole local an assignment or a call fills, or -1."""
     match kind:
         RustStatementKind.Assign(place=place, rvalue=_value) => return whole_local(place)

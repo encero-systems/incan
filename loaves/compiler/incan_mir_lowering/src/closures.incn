@@ -63,7 +63,7 @@ from call_arguments import call_parameter_type
 from explicit_arguments import direct_view_access
 
 
-pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
+pub def function_pointer_type(parameters: Borrowed[list[IncanCallableParam]], result: Borrowed[RustType]) -> Result[PlanType, str]:
     """Build the native signature: 1. Retain checked input order and loans. 2. Append the owned return contract."""
     # 1. Retain checked input order and loans.
     mut signature: list[PlanType] = []
@@ -86,7 +86,7 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     return Ok(PlanType.FunctionPointer(signature))
 
 
-def callable_input(ty: &RustType) -> Result[PlanType, str]:
+def callable_input(ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Retain explicit native input loans; returned values still follow the owned callable component contract."""
     match ty:
         RustType.Ref(_inner) => return context_free_type(ty)
@@ -94,7 +94,7 @@ def callable_input(ty: &RustType) -> Result[PlanType, str]:
         _ => return callable_component(ty)
 
 
-def callable_result(ty: &RustType) -> Result[PlanType, str]:
+def callable_result(ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Admit a callable's result: any admitted component, or a lazy generator, such as a `flat_map` expansion."""
     match generator_type(ty):
         Some(Ok(result)) =>
@@ -204,7 +204,7 @@ pub def packed_input(
     return Err("unsupported Body IR checked rest pack representation")
 
 
-pub def callable_component(ty: &RustType) -> Result[PlanType, str]:
+pub def callable_component(ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Admit scalar, list, collection and recursively callable signature components; name every other type."""
     match ty:
         RustType.Primitive(primitive) => return primitive_type(primitive)
@@ -221,7 +221,7 @@ pub def callable_component(ty: &RustType) -> Result[PlanType, str]:
     return Err(f"unsupported Body IR callable signature type {ty}")
 
 
-pub def function_pointer_storage(body: &RustBody) -> list[int]:
+pub def function_pointer_storage(body: Borrowed[RustBody]) -> list[int]:
     """The return slot and explicit function annotations keep pointer storage; inferred item locals keep their type."""
     mut locals: list[int] = []
     match body.callable_representation:
@@ -263,7 +263,7 @@ pub def validate_callable_representation(body: RustBody) -> Result[None, str]:
             return Ok(None)
 
 
-pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> Result[PlanType, str]:
+pub def parameter_representation(body: Borrowed[RustBody], local: int, ty: PlanType) -> Result[PlanType, str]:
     """A selected generic value owns its environment; a call-only parameter owns one temporary lending envelope."""
     match ty:
         PlanType.FunctionPointer(signature) =>
@@ -281,7 +281,7 @@ pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> R
     return Ok(ty)
 
 
-pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanType:
+pub def local_representation(body: Borrowed[RustBody], local: int, ty: PlanType) -> PlanType:
     """Retain an instance's owned generic aliases at their checked environment-carrying ABI."""
     match ty:
         PlanType.FunctionPointer(signature) =>
@@ -295,7 +295,7 @@ pub def local_representation(body: &RustBody, local: int, ty: PlanType) -> PlanT
     return ty
 
 
-pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
+pub def return_representation(body: Borrowed[RustBody], ty: PlanType) -> Result[PlanType, str]:
     """
     A function whose one returned closure captures returns that closure's owned callable object. A direct returned
     view is a shared or exclusive reference to its source place, with the view's access; a carried view's carrier is
@@ -659,10 +659,10 @@ pub def source_function_item(
 
 
 def checked_function_item(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    statement: &RustStatementKind,
+    parameters: Borrowed[list[RustParameter]],
+    statement: Borrowed[RustStatementKind],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType, str], str]:
     """Require the same checked declaration and signature as the named read's retained forwarding call."""
@@ -679,10 +679,10 @@ def checked_function_item(
 
 
 def named_function_item(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    target: &RustNamedTarget,
+    parameters: Borrowed[list[RustParameter]],
+    target: Borrowed[RustNamedTarget],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType, str], str]:
     """Attach the canonical declaration name to an authenticated function item without reading its signature for a name."""
@@ -692,7 +692,7 @@ def named_function_item(
         None => return Err("unsupported Body IR unnamed function item")
 
 
-def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_component(mut builder: Builder, ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """
     Retain a function item's signature component through its checked frame's ordinary layout context.
 
@@ -709,7 +709,7 @@ def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]
     )
 
 
-def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_input(mut builder: Builder, ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """Retain an item's explicit input loan against its full nominal context; other inputs use owned components."""
     match ty:
         RustType.Ref(_inner) =>
@@ -733,7 +733,7 @@ def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
         _ => return item_component(builder, ty)
 
 
-def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_result(mut builder: Builder, ty: Borrowed[RustType]) -> Result[PlanType, str]:
     """A function item's result: a lazy generator, as `callable_result` admits one, or any item component."""
     match generator_type(ty):
         Some(Ok(result)) =>
@@ -746,8 +746,8 @@ def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
 def function_item_identity(
     module: RustModule,
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    target: &RustNamedTarget,
+    parameters: Borrowed[list[RustParameter]],
+    target: Borrowed[RustNamedTarget],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """A diagnostic source name becomes a plan item only after its canonical, instance and physical identities agree."""
@@ -770,11 +770,11 @@ def function_item_identity(
 
 
 def instantiated_item_signature(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    body: &RustBody,
-    target: &RustNamedTarget,
+    parameters: Borrowed[list[RustParameter]],
+    body: Borrowed[RustBody],
+    target: Borrowed[RustNamedTarget],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Close and schedule a generic item from its checked ordered arguments before admitting its callable signature."""
@@ -791,8 +791,8 @@ def instantiated_item_signature(
 
 def loaf_item_signature(
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    declaration: &LoafCallable,
+    parameters: Borrowed[list[RustParameter]],
+    declaration: Borrowed[LoafCallable],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Read a compiled function value's signature from its Loaf declaration, without requiring its implementation."""
@@ -867,10 +867,10 @@ def imported_item_body(module: RustModule, bodies: BodyIndex, target: RustNamedT
 
 
 def item_signature(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    body: &RustBody,
+    parameters: Borrowed[list[RustParameter]],
+    body: Borrowed[RustBody],
     span: SourceSpan,
     selected_name: Option[str],
 ) -> Result[tuple[str, PlanType], str]:
@@ -937,16 +937,16 @@ def item_signature(
     return Ok((name, PlanType.FunctionItem(name, signature)))
 
 
-def same_receiver_type(left: &RustType, right: &RustType) -> bool:
+def same_receiver_type(left: Borrowed[RustType], right: Borrowed[RustType]) -> bool:
     """Compare the referenced payloads without the Rust enum pattern's Box storage crossing the equality boundary."""
     return left == right
 
 
 def original_function_item(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    binding: &DecoratedBinding,
+    parameters: Borrowed[list[RustParameter]],
+    binding: Borrowed[DecoratedBinding],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Select the original through its checked initializer policy, never through operand inference."""
@@ -962,10 +962,10 @@ def original_function_item(
 
 
 def initialized_original_function_item(
-    module: &RustModule,
+    module: Borrowed[RustModule],
     mut builder: Builder,
-    parameters: &list[RustParameter],
-    binding: &DecoratedBinding,
+    parameters: Borrowed[list[RustParameter]],
+    binding: Borrowed[DecoratedBinding],
     span: SourceSpan,
 ) -> Result[tuple[str, PlanType], str]:
     """Select a cached instantiation's original only inside its authenticated closed initializer frame."""

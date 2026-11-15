@@ -66,8 +66,8 @@ def is_std_primitives_method(target: MethodTarget, section: str, module: str, na
 
 pub def lower_derived_clone(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -93,7 +93,7 @@ pub def lower_derived_clone(
 def clone_place(
     mut builder: Builder,
     source: Place,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Clone through the retained carrier and its owning implementation; compiled enums do not acquire local derives."""
@@ -167,7 +167,7 @@ def copy_clone_into(
     mut builder: Builder,
     source: Place,
     ty: PlanType,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Copy an admitted scalar or frozen string without consuming the receiver; a discarded copy has no effect."""
@@ -184,7 +184,7 @@ def copy_clone_into(
 def clone_string_into(
     mut builder: Builder,
     source: Place,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the source, replace a whole owned text destination after cloning, or immediately drop a discarded clone."""
@@ -207,7 +207,7 @@ def clone_string_into(
 def clone_builtin_place(
     mut builder: Builder,
     source: Place,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Copy builtin scalars and clone the owned storage of carriers through the existing borrowed payload operation."""
@@ -242,7 +242,7 @@ def clone_into(
     reference_type: PlanType,
     callee: CalleeKind,
     ty: PlanType,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the receiver and write the owned copy to the call's destination, replacing what it held."""
@@ -275,11 +275,11 @@ pub def comparison_dunder(target: MethodTarget) -> Option[BinOp]:
 
 
 pub def lower_comparison_dunder(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     operator: BinOp,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -305,7 +305,7 @@ pub def lower_comparison_dunder(
 
 def has_native_comparison(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     operator: BinOp,
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -327,9 +327,9 @@ def has_native_comparison(
 def compare_scalars(
     mut builder: Builder,
     operator: BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
-    destination: &Option[RustPlace],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """
@@ -369,9 +369,9 @@ def single_operand(argument: RustArgumentElement) -> Result[RustOperand, str]:
 
 
 def declares_own_comparison(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    receiver: &RustOperand,
+    receiver: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait."""
@@ -379,7 +379,7 @@ def declares_own_comparison(
     return declares_own_method(module, builder, receiver, dunders, span)
 
 
-pub def slot_name(target: &MethodTarget) -> str:
+pub def slot_name(target: Borrowed[MethodTarget]) -> str:
     """The checker-selected slot's declared name, empty for an unproven target."""
     match target.canonical:
         Some(identity) => return str(identity.declaration_name)
@@ -387,9 +387,9 @@ pub def slot_name(target: &MethodTarget) -> str:
 
 
 pub def receiver_declares_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    receiver: &RustArgumentElement,
+    receiver: Borrowed[RustArgumentElement],
     name: str,
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -404,9 +404,9 @@ pub def receiver_declares_method(
 
 
 def declares_own_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    receiver: &RustOperand,
+    receiver: Borrowed[RustOperand],
     names: list[str],
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -424,7 +424,7 @@ def declares_own_method(
         _ => return Ok(false)
 
 
-def owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: list[str]) -> bool:
+def owns_method(module: Borrowed[BodyIrModule], owner: Borrowed[CanonicalSymbolId], names: list[str]) -> bool:
     """Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)

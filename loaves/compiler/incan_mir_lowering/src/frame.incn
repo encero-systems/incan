@@ -159,15 +159,15 @@ pub model Builder:
     # the match, so a value an arm gives it belongs to the enclosing scope, not to the arm.
     pub released: list[int] = []
 
-    property nominals -> &list[RustNominalDeclaration]:
+    property nominals -> Borrowed[list[RustNominalDeclaration]]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""
         return self.program.nominals.as_ref()
 
-    property enums -> &list[RustEnumDeclaration]:
+    property enums -> Borrowed[list[RustEnumDeclaration]]:
         """Borrow the same ordered enum declarations used to assign this module's layout identities."""
         return self.program.enums.as_ref()
 
-    property constructors -> &ConstructorIndex:
+    property constructors -> Borrowed[ConstructorIndex]:
         """
         Borrow first-match constructor positions from the nominal table's program owner.
 
@@ -175,11 +175,11 @@ pub model Builder:
         """
         return self.program.constructors.as_ref()
 
-    property value_enums -> &list[RustValueEnumDeclaration]:
+    property value_enums -> Borrowed[list[RustValueEnumDeclaration]]:
         """Borrow checked value-enum metadata shared by ordinary and lifted frames."""
         return self.program.value_enums.as_ref()
 
-    property decorated_bindings -> &list[RustDecoratedBinding]:
+    property decorated_bindings -> Borrowed[list[RustDecoratedBinding]]:
         """Borrow authenticated callable bindings from their immutable module owner."""
         return self.program.decorated_bindings.as_ref()
 
@@ -220,8 +220,8 @@ pub def forget_owned(mut builder: Builder, index: int) -> None:
 
 
 def remaining_owned_places(
-    locals: &list[Local],
-    moved_tuple_fields: &list[tuple[int, int]],
+    locals: Borrowed[list[Local]],
+    moved_tuple_fields: Borrowed[list[tuple[int, int]]],
     index: int,
     span: SourceSpan,
 ) -> list[Place]:
@@ -465,7 +465,7 @@ pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, s
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 
-pub def place_type(locals: &list[Local], value: Place) -> PlanType:
+pub def place_type(locals: Borrowed[list[Local]], value: Place) -> PlanType:
     """Read retained scalar and owner projections, including supported collection reborrows."""
     match value.projection:
         Projection.VariantField(_variant, _slot, ty) => return ty

@@ -84,10 +84,10 @@ from explicit_arguments import reference_contract
 
 
 pub def lower_assignment(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &RustPlace,
-    value: &RustRvalue,
+    destination: Borrowed[RustPlace],
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first."""
@@ -146,10 +146,10 @@ pub def assignment_place(mut builder: Builder, destination: RustPlace, span: Sou
 
 
 def element_assignment(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &RustPlace,
-    value: &RustRvalue,
+    destination: Borrowed[RustPlace],
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Evaluate a replacement before reborrowing checked element storage, then write its last index or structural field."""
@@ -198,10 +198,10 @@ def element_assignment(
 
 
 def exclusive_view_element_assignment(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &RustPlace,
-    value: &RustRvalue,
+    destination: Borrowed[RustPlace],
+    value: Borrowed[RustRvalue],
     reference_type: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -229,10 +229,10 @@ def exclusive_view_element_assignment(
 
 
 pub def lower_local_assignment(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Handle callable and iteration bindings before assigning an ordinary stored value with checked ownership."""
@@ -309,10 +309,10 @@ pub def lower_local_assignment(
 
 
 def assign_stored_value(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     target: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign an ordinary stored value after callable construction and iteration-binding admission."""
@@ -430,7 +430,7 @@ def assign_stored_value(
 def in_place_iteration_binding(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """

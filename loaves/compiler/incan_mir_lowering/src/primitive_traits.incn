@@ -31,9 +31,9 @@ from table_views import borrowed_at
 
 
 pub def normalized_primitive_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    statement: &Statement,
+    statement: Borrowed[Statement],
     span: SourceSpan,
 ) -> Result[Option[Statement], str]:
     """
@@ -48,10 +48,10 @@ pub def normalized_primitive_call(
 
 
 def normalized_call_kind(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    statement: &Statement,
-    kind: &StatementKind,
+    statement: Borrowed[Statement],
+    kind: Borrowed[StatementKind],
     span: SourceSpan,
 ) -> Result[Option[Statement], str]:
     """Inspect a typed call kind while retaining its enclosing statement unchanged."""
@@ -80,10 +80,10 @@ def normalized_call_kind(
 
 
 def normalized_primitive_receiver(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[ArgumentElement],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[ArgumentElement]],
     span: SourceSpan,
 ) -> Result[Option[list[ArgumentElement]], str]:
     """
@@ -147,7 +147,7 @@ def retained_receiver_type(
         None => return Err("unsupported Body IR primitive receiver spread")
 
 
-def copied_arguments(arguments: &list[ArgumentElement]) -> list[ArgumentElement]:
+def copied_arguments(arguments: Borrowed[list[ArgumentElement]]) -> list[ArgumentElement]:
     """Copy argument records without copying or evaluating any represented runtime value."""
     mut result: list[ArgumentElement] = []
     for index in range(len(arguments)):
@@ -156,10 +156,10 @@ def copied_arguments(arguments: &list[ArgumentElement]) -> list[ArgumentElement]
 
 
 def primitive_receiver_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[ArgumentElement],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[ArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[ArgumentElement], str]:
     """Project a checked value enum's raw payload before using its source-owned primitive adapter."""
@@ -186,9 +186,9 @@ def primitive_receiver_arguments(
 
 
 def normalized_primitive_static(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &NamedCallableTarget,
+    target: Borrowed[NamedCallableTarget],
 ) -> Result[Option[NamedCallableTarget], str]:
     """
     Select a source associated implementation without reconstructing any callable identity.
@@ -256,7 +256,7 @@ def normalized_primitive_static(
     return Ok(Some(result))
 
 
-pub def has_adapter_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+pub def has_adapter_slot(module: Borrowed[BodyIrModule], slot: Borrowed[CanonicalSymbolId]) -> bool:
     """
     Authenticate an exact retained adapter slot before inspecting an unrelated call's operands.
 
@@ -279,9 +279,9 @@ pub def has_adapter_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> boo
 
 
 def adapter_owner(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    slot: &CanonicalSymbolId,
+    slot: Borrowed[CanonicalSymbolId],
     receiver: PlanType,
 ) -> Result[int, str]:
     """Select a unique checked adapter without changing the primitive's general storage or type compatibility."""

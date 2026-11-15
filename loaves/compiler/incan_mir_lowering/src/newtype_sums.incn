@@ -12,8 +12,8 @@ from call_arguments import fixed_arguments
 
 pub def lower_newtype_sum_add(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Add already projected integer or float payloads through the selected primitive operation."""
@@ -48,8 +48,8 @@ pub def lower_newtype_sum_add(
 
 pub def lower_newtype_sum_extract(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Extract the already selected final hook's Result with the retained frozen sum failure message."""

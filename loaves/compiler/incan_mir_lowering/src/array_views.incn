@@ -13,7 +13,7 @@ pub def borrow_array_slice(
     source: Place,
     elements: list[PlanType],
     mutable: bool,
-    fact: &OwnershipFact,
+    fact: Borrowed[OwnershipFact],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Borrow only an exact checked array element carrier, retaining exclusive authority for mutable views."""

@@ -14,12 +14,12 @@ model Labels:
     names: list[str]
 
 
-def has_label(values: &list[Labels], index: int, name: str) -> bool:
+def has_label(values: Borrowed[list[Labels]], index: int, name: str) -> bool:
     """Read a dynamically selected field while preserving the shared owner."""
     return name in values[index].names
 
 
-def lacks_label(values: &list[Labels], index: int, name: str) -> bool:
+def lacks_label(values: Borrowed[list[Labels]], index: int, name: str) -> bool:
     """Negate membership in the same indexed storage."""
     return name not in values[index].names
 

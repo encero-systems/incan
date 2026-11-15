@@ -96,9 +96,9 @@ from carrier_operands import boundary_plan_operand
 
 pub def lower_callable_bound_call(
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """
@@ -125,11 +125,11 @@ pub def lower_callable_bound_call(
 
 
 pub def lower_named_target(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
@@ -201,11 +201,11 @@ pub def lower_named_target(
 
 
 def lower_validated_constructor(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Construct one checked `Validate` model, then return its exact validator body's `Result`."""
@@ -260,7 +260,7 @@ def lower_validated_constructor(
 
 def validated_model_owner(
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
+    target: Borrowed[RustNamedCallableTarget],
 ) -> Result[Option[tuple[int, PlanType]], str]:
     """Resolve a generated constructor only through its checked receiver layout and retained exact identity."""
     match target.canonical:
@@ -296,9 +296,9 @@ def validated_model_owner(
 def validated_required_operands(
     mut builder: Builder,
     owner: int,
-    contract: &RustValidatedConstructor,
-    binding: &RustArgumentBinding,
-    elements: &list[RustArgumentElement],
+    contract: Borrowed[RustValidatedConstructor],
+    binding: Borrowed[RustArgumentBinding],
+    elements: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Bind the generated constructor's written arguments to its required canonical field slots."""
@@ -328,9 +328,9 @@ def validated_required_operands(
 def bound_validated_operands(
     mut builder: Builder,
     owner: int,
-    contract: &RustValidatedConstructor,
-    bindings: &list[RustBoundArgument],
-    elements: &list[RustArgumentElement],
+    contract: Borrowed[RustValidatedConstructor],
+    bindings: Borrowed[list[RustBoundArgument]],
+    elements: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Order a resolved written-argument map by generated constructor parameter slot."""
@@ -356,10 +356,10 @@ def bound_validated_operands(
 
 
 def validated_model_fields(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     owner: int,
-    contract: &RustValidatedConstructor,
+    contract: Borrowed[RustValidatedConstructor],
     required: list[Operand],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
@@ -399,7 +399,7 @@ def validated_model_fields(
 
 
 def validated_method_body(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     owner: int,
     identity: RustCanonicalSymbolId,
@@ -436,12 +436,12 @@ def require_validated_receiver(owner: int, receiver_type: PlanType) -> Result[No
 
 
 def lower_compiled_validator(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     owner: int,
     identity: RustCanonicalSymbolId,
     value: Place,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a dependency model's compiled validator through its producer-authenticated callable record."""
@@ -497,12 +497,12 @@ def lower_compiled_validator(
 
 
 def lower_type_parameter_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    body: &RustBody,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    body: Borrowed[RustBody],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
@@ -545,12 +545,12 @@ pub def checked_type_arguments(mut builder: Builder, arguments: list[RustType]) 
 
 
 def lower_local_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    body: &RustBody,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    body: Borrowed[RustBody],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a canonical retained body; local span identities must agree when present."""
@@ -581,11 +581,11 @@ def lower_local_call(
 
 
 def emit_local_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    body: &RustBody,
+    body: Borrowed[RustBody],
     operands: list[Operand],
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
@@ -594,7 +594,7 @@ def emit_local_call(
 
 
 pub def emit_selected_body_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     body: RustBody,
     callee: CalleeKind,
@@ -668,9 +668,9 @@ pub def lower_callable_result(
 
 pub def lower_callable_value(
     mut builder: Builder,
-    target: &RustLocalCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustLocalCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
@@ -679,11 +679,11 @@ pub def lower_callable_value(
 
 pub def call_callable_place(
     mut builder: Builder,
-    held: &RustPlaceOperand,
-    binding: &RustArgumentBinding,
-    arguments: &list[RustArgumentElement],
+    held: Borrowed[RustPlaceOperand],
+    binding: Borrowed[RustArgumentBinding],
+    arguments: Borrowed[list[RustArgumentElement]],
     first: int,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -806,7 +806,7 @@ pub def callable_object(
 
 pub def callable_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     signature: list[PlanType],
     span: SourceSpan,
     borrowing: bool = false,
@@ -970,8 +970,8 @@ pub def register_callable_item(mut builder: Builder, value: Operand, name: str, 
 
 pub def lower_callable_name(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Resolve a registered declaration name independently of the pointer's argument and result signature."""

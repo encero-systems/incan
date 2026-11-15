@@ -33,7 +33,7 @@ pub model BodyIndex:
         return None
 
 
-pub def body_index(module: &BodyIrModule) -> BodyIndex:
+pub def body_index(module: Borrowed[BodyIrModule]) -> BodyIndex:
     """Read bodies by reference once after specialization, retaining canonical keys without copying executable statements."""
     mut entries: BTreeMap[CanonicalSymbolId, list[int]] = BTreeMap.new()
     mut index = 0
@@ -46,7 +46,7 @@ pub def body_index(module: &BodyIrModule) -> BodyIndex:
     return BodyIndex(entries=Arc.new(entries), count=len(module.bodies))
 
 
-pub def extend_body_index(mut index: BodyIndex, module: &BodyIrModule) -> Result[None, str]:
+pub def extend_body_index(mut index: BodyIndex, module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """Index bodies appended since the retained context generation without revisiting earlier executable frames."""
     if index.count > len(module.bodies):
         return Err("invalid Body IR body index generation")

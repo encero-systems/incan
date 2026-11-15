@@ -58,7 +58,7 @@ pub def boolean_or(left: bool, right: bool) -> bool:
     return left or right
 
 
-pub def sum_int(values: &list[int]) -> int:
+pub def sum_int(values: Borrowed[list[int]]) -> int:
     """Sum integers: 1. Accumulate in source order through the checked builtin error boundary."""
     # 1. Reject overflow at the same first item as the original checked fold.
     mut total = 0
@@ -67,7 +67,7 @@ pub def sum_int(values: &list[int]) -> int:
     return total
 
 
-pub def sum_bool(values: &list[bool]) -> int:
+pub def sum_bool(values: Borrowed[list[bool]]) -> int:
     """Sum booleans by counting true values directly through their borrowed list."""
     mut total = 0
     for value in values:
@@ -92,47 +92,47 @@ def sum_overflows(total: int, value: int) -> bool:
     return false
 
 
-pub def minimum_int(values: &list[int]) -> int:
+pub def minimum_int(values: Borrowed[list[int]]) -> int:
     """Borrow integer elements through legacy's minimum helper, including its empty-list error."""
     return list_min_copy(values)
 
 
-pub def maximum_int(values: &list[int]) -> int:
+pub def maximum_int(values: Borrowed[list[int]]) -> int:
     """Borrow integer elements through legacy's maximum helper, including its empty-list error."""
     return list_max_copy(values)
 
 
-pub def minimum_float(values: &list[float]) -> float:
+pub def minimum_float(values: Borrowed[list[float]]) -> float:
     """Use legacy floating minimum and its NaN and empty-list conventions."""
     return list_min_f64(values)
 
 
-pub def maximum_float(values: &list[float]) -> float:
+pub def maximum_float(values: Borrowed[list[float]]) -> float:
     """Use legacy floating maximum and its NaN and empty-list conventions."""
     return list_max_f64(values)
 
 
-pub def minimum_bool(values: &list[bool]) -> bool:
+pub def minimum_bool(values: Borrowed[list[bool]]) -> bool:
     """Order borrowed booleans with false before true, preserving the empty-list error."""
     return list_min_copy(values)
 
 
-pub def maximum_bool(values: &list[bool]) -> bool:
+pub def maximum_bool(values: Borrowed[list[bool]]) -> bool:
     """Order borrowed booleans with true after false, preserving the empty-list error."""
     return list_max_copy(values)
 
 
-pub def minimum_text(values: &list[str]) -> str:
+pub def minimum_text(values: Borrowed[list[str]]) -> str:
     """Clone the smallest borrowed string through the same helper as legacy."""
     return list_min_clone(values)
 
 
-pub def maximum_text(values: &list[str]) -> str:
+pub def maximum_text(values: Borrowed[list[str]]) -> str:
     """Clone the largest borrowed string through the same helper as legacy."""
     return list_max_clone(values)
 
 
-pub def read_file_text(path: &str) -> Result[str, str]:
+pub def read_file_text(path: Borrowed[str]) -> Result[str, str]:
     """Read UTF-8 text: 1. Call native file I/O. 2. Preserve its error's Display text."""
     # 1. Read the original borrowed path; 2. preserve the original error text.
     match read_to_string(path):
@@ -140,7 +140,7 @@ pub def read_file_text(path: &str) -> Result[str, str]:
         Err(error) => return Err(error.to_string())
 
 
-pub def write_file_text(path: &str, content: &str) -> Result[None, str]:
+pub def write_file_text(path: Borrowed[str], content: Borrowed[str]) -> Result[None, str]:
     """Write UTF-8 text: 1. Call native file I/O. 2. Retain unit success or the original error text."""
     # 1. Write the original borrowed text; 2. preserve unit success or the original error text.
     match native_write(path, content):
@@ -148,12 +148,12 @@ pub def write_file_text(path: &str, content: &str) -> Result[None, str]:
         Err(error) => return Err(error.to_string())
 
 
-pub def truth_text(value: &str) -> bool:
+pub def truth_text(value: Borrowed[str]) -> bool:
     """Empty text is false; every nonempty string is true."""
     return str_len(value) != 0
 
 
-pub def truth_list[T](value: &list[T]) -> bool:
+pub def truth_list[T](value: Borrowed[list[T]]) -> bool:
     """Test list emptiness without consuming its owner."""
     return len(value) != 0
 

@@ -55,9 +55,9 @@ pub def is_future(ty: PlanType) -> bool:
 
 
 pub def future_type(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    ty: Borrowed[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[PlanType], str]:
     """Use the same retained output ABI for source and SDK futures; construction identity stays with the call."""
@@ -82,7 +82,7 @@ pub def future_type(
         _ => return Ok(None)
 
 
-pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
+pub def evaluator_name(module: Borrowed[BodyIrModule], body: Borrowed[Body]) -> str:
     """Separate coroutine and integer main bodies from their process entry and construction shims."""
     name = function_name(module, body)
     if body.is_async:
@@ -93,9 +93,9 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
 
 
 def capture_types(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &Body,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[Body],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """
@@ -141,8 +141,8 @@ def validate_collection_capture(kind: IncanCallableParamKind, ty: PlanType) -> R
 
 
 pub def validate_futures(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
@@ -207,9 +207,9 @@ pub def boxed_future_constructor(
 
 
 pub def construct_future(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    body: &Body,
+    body: Borrowed[Body],
     arguments: list[Operand],
     destination: Place,
     span: SourceSpan,
@@ -248,7 +248,7 @@ pub def construct_future(
 
 
 pub def await_future(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     future: Place,
     destination: Place,
@@ -314,7 +314,7 @@ pub def async_test_name(native: str) -> str:
 
 
 pub def async_entry(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     body: Function,
     mut intrinsics: list[EnumDeclaration],
     entry_name: str,

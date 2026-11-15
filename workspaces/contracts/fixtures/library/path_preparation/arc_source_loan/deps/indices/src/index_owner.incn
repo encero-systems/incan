@@ -11,7 +11,7 @@ pub model Index:
     pub generic_owners: dict[str, int]
 
 
-pub def borrowed_index(owner: &Arc[Index]) -> &Index:
+pub def borrowed_index(owner: Borrowed[Arc[Index]]) -> Borrowed[Index] from owner:
     """Borrow the source index while retaining its Arc owner."""
-    index: &Index = owner.as_ref()
+    index: Borrowed[Index] = owner.as_ref()
     return index

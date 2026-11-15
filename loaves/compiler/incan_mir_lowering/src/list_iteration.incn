@@ -71,7 +71,7 @@ from hashed_collections import iterable_call
 from sequence_builtins import argument_type
 
 
-pub def operand_list_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+pub def operand_list_place(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Require the checked bare list root before preparing an iterator or receiver borrow."""
     match value:
         RustOperand.Place(read) => return list_root_place(builder, read.place, span)
@@ -95,7 +95,7 @@ def pair_holds_list(ty: PlanType) -> bool:
         _ => return is_list(ty)
 
 
-pub def inherit_borrowed_item(mut builder: Builder, target: Place, value: &RustRvalue) -> None:
+pub def inherit_borrowed_item(mut builder: Builder, target: Place, value: Borrowed[RustRvalue]) -> None:
     """A list bound out of a snapshot iteration item is part of that snapshot, so it stays unchangeable too."""
     if target.projection != Projection.Whole or not is_list(place_type(builder.locals, target)):
         return
@@ -118,7 +118,7 @@ pub def inherit_borrowed_item(mut builder: Builder, target: Place, value: &RustR
 pub def initialize_text_iterator(
     mut builder: Builder,
     target: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -150,7 +150,7 @@ pub def initialize_text_iterator(
 
 pub def shared_sequence_receiver(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
     text_membership: bool = false,
 ) -> Result[Place, str]:
@@ -241,7 +241,7 @@ def frozen_dictionary_value(
 def frozen_dictionary_key(
     mut builder: Builder,
     storage: PlanType,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[tuple[Operand, PlanType, bool], str]:
     """Use text probes for static text/FrozenStr keys and exact scalar probes for the admitted numeric keys."""
@@ -258,8 +258,8 @@ def frozen_dictionary_key(
 
 pub def frozen_dictionary_contains(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     negated: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -363,7 +363,7 @@ pub def frozen_list_snapshot(
         _ => return Err("unsupported Body IR nonfrozen snapshot")
 
 
-pub def set_constructor_source(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def set_constructor_source(mut builder: Builder, source: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Snapshot frozen source items or consume an owned generator once before constructing the canonical set."""
     value = value_operand(builder, source, span)?
     match operand_type(builder, value)?:
@@ -388,7 +388,7 @@ def initialize_frozen_iterator(mut builder: Builder, iterator: Place, span: Sour
     builder.iterators.append((iterator.local, cursor.local))
 
 
-def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
+def initialize_list_iterator(mut builder: Builder, iterator: Place, source: Borrowed[RustOperand], span: SourceSpan) -> None:
     """Retain cursor storage for Body IR's borrowed builtin iterable materialization, shared or exclusive."""
     match source:
         RustOperand.Place(read) =>
@@ -402,9 +402,9 @@ def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &Rus
 
 pub def list_next(
     mut builder: Builder,
-    destination: &RustPlace,
-    iterator: &RustOperand,
-    protocol: &IterProtocol,
+    destination: Borrowed[RustPlace],
+    iterator: Borrowed[RustOperand],
+    protocol: Borrowed[IterProtocol],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Poll a retained builtin collection cursor, branching to the loop exit on exhaustion."""
@@ -634,7 +634,7 @@ def iteration_root(mut builder: Builder, value: RustPlace, exclusive: bool, span
     return list_root_place(builder, value, span)
 
 
-pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def list_root_place(mut builder: Builder, value: Borrowed[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """
     Borrow whole storage or an exact field, payload or tuple element path.
 

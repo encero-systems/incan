@@ -10,7 +10,7 @@ from program_context import body_at
 from table_views import borrowed_at
 
 
-pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
+pub def direct_view_access(body: Borrowed[RustBody]) -> Option[IncanInputAccess]:
     """The access of a body's direct returned view; a carried view returns an owned carrier and has none."""
     match body.returned_view:
         Some(view) =>
@@ -20,7 +20,7 @@ pub def direct_view_access(body: &RustBody) -> Option[IncanInputAccess]:
     return None
 
 
-pub def validate_source_input_call(module: &BodyIrModule, builder: &Builder, callee: &RustBody) -> Result[None, str]:
+pub def validate_source_input_call(module: Borrowed[BodyIrModule], builder: Borrowed[Builder], callee: Borrowed[RustBody]) -> Result[None, str]:
     """Authenticate source-authored input modes; compiler-inferred shared access needs no source permission."""
     # A returned view obliges its caller to alias the substituted place under a checked profile.
     mut explicit = callee.returned_view.is_some()
@@ -43,7 +43,7 @@ pub def validate_source_input_call(module: &BodyIrModule, builder: &Builder, cal
                         None => return Ok(None)
 
 
-pub def parameter_accesses(parameters: &list[CallableParam], offset: int) -> Result[list[IncanInputAccess], str]:
+pub def parameter_accesses(parameters: Borrowed[list[CallableParam]], offset: int) -> Result[list[IncanInputAccess], str]:
     """Keep declaration-order access slots aligned when a method's separately lowered receiver is omitted."""
     if offset < 0 or offset > len(parameters):
         return Err("invalid Body IR input access parameter offset")
@@ -159,7 +159,7 @@ pub def reference_contract(ty: PlanType) -> Result[tuple[PlanType, bool], str]:
     return Err(f"unsupported Body IR explicit reference carrier {ty:?}")
 
 
-def require_writable_path(locals: &list[Local], source: Place) -> Result[None, str]:
+def require_writable_path(locals: Borrowed[list[Local]], source: Place) -> Result[None, str]:
     """Check each dereferenced layer, including a shared reference stored inside an otherwise writable model."""
     mut current = borrowed_at(locals, source.local).ty
     mut fields: list[FieldProjection] = []

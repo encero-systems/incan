@@ -40,9 +40,9 @@ from tuples import tuple_fields
 
 pub def lower_checked_bridge(
     mut builder: Builder,
-    target: &CheckedBridgeCall,
-    arguments: &list[ArgumentElement],
-    destination: &Option[BodyPlace],
+    target: Borrowed[CheckedBridgeCall],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[BodyPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -81,7 +81,7 @@ pub def lower_checked_bridge(
 
 def argument(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -95,7 +95,7 @@ def argument(
 
 def new_slot(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     initialized: bool,
@@ -129,7 +129,7 @@ def slot_value_type(ty: PlanType) -> Result[PlanType, str]:
 
 def take_slot(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     span: SourceSpan,
@@ -153,7 +153,7 @@ def pointer_place(value: Operand) -> Result[Place, str]:
 
 def make_string(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     span: SourceSpan,
@@ -175,7 +175,7 @@ def make_string(
 
 def string_pointer(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     span: SourceSpan,
@@ -191,7 +191,7 @@ def string_pointer(
     return Ok(None)
 
 
-def buffer_loan(mut builder: Builder, arguments: &list[ArgumentElement], span: SourceSpan) -> Result[Operand, str]:
+def buffer_loan(mut builder: Builder, arguments: Borrowed[list[ArgumentElement]], span: SourceSpan) -> Result[Operand, str]:
     """Borrow the single checked C string buffer through its retained ownership fact."""
     if len(arguments) != 1:
         return Err("invalid checked C string pointer arguments")
@@ -202,7 +202,7 @@ def buffer_loan(mut builder: Builder, arguments: &list[ArgumentElement], span: S
 
 def copy_utf8(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     span: SourceSpan,
@@ -403,7 +403,7 @@ def increment_index(mut builder: Builder, index: Place, span: SourceSpan) -> Non
 
 def make_span(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -420,7 +420,7 @@ def make_span(
 
 def span_pointer(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     mutable: bool,
@@ -444,7 +444,7 @@ def span_pointer(
 
 def span_count(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -458,7 +458,7 @@ def span_count(
 
 def finish_span(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     ty: PlanType,
     span: SourceSpan,
@@ -494,7 +494,7 @@ def finish_span(
     return Ok(None)
 
 
-def require_span_operands(arguments: &list[ArgumentElement], count: int, role: str) -> Result[None, str]:
+def require_span_operands(arguments: Borrowed[list[ArgumentElement]], count: int, role: str) -> Result[None, str]:
     """Refuse a span operation whose checked operand count is not the operation's own."""
     if len(arguments) != count:
         return Err(f"invalid checked C span {role} arguments")
@@ -511,7 +511,7 @@ def pointer_element(ty: PlanType) -> Result[PlanType, str]:
     return Err("invalid checked C span pointer carrier")
 
 
-def span_buffer(mut builder: Builder, arguments: &list[ArgumentElement], span: SourceSpan) -> Result[Place, str]:
+def span_buffer(mut builder: Builder, arguments: Borrowed[list[ArgumentElement]], span: SourceSpan) -> Result[Place, str]:
     """The span local's own element vector, the operation's first operand; a span is only read through its local."""
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) => return scalar_place(builder, read.place, span)

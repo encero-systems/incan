@@ -33,20 +33,20 @@ pub model SelectedMember:
     pub receiver: RustType
 
 
-pub def called_members(body: &Body) -> list[SelectedMember]:
+pub def called_members(body: Borrowed[Body]) -> list[SelectedMember]:
     """Inventory selected member identities in one executable frame without admitting unused protocol defaults."""
     mut selected: list[SelectedMember] = []
     collect_member_block(body, body.block, selected)
     return selected
 
 
-def collect_member_block(body: &Body, block: &Block, mut selected: list[SelectedMember]) -> None:
+def collect_member_block(body: Borrowed[Body], block: Borrowed[Block], mut selected: list[SelectedMember]) -> None:
     """Follow source control flow and match arms, retaining each exact checked call identity once."""
     for position in range(len(block.stmts)):
         collect_member_statement(body, borrowed_at(block.stmts, position).kind, selected)
 
 
-def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: list[SelectedMember]) -> None:
+def collect_member_statement(body: Borrowed[Body], kind: Borrowed[StatementKind], mut selected: list[SelectedMember]) -> None:
     """Read a foreign statement through its declared enum type before following checked member calls."""
     match kind:
         StatementKind.Call(destination=_destination, callee=callee, args=arguments, may_panic=_panic) =>
@@ -69,7 +69,7 @@ def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: li
         _ => pass
 
 
-def collect_member_value(body: &Body, value: &Rvalue, mut selected: list[SelectedMember]) -> None:
+def collect_member_value(body: Borrowed[Body], value: Borrowed[Rvalue], mut selected: list[SelectedMember]) -> None:
     """Match payload control flow keeps its selected calls within the surrounding executable frame."""
     match value:
         Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
@@ -79,9 +79,9 @@ def collect_member_value(body: &Body, value: &Rvalue, mut selected: list[Selecte
 
 
 def collect_member_target(
-    body: &Body,
-    target: &MethodTarget,
-    argument: &ArgumentElement,
+    body: Borrowed[Body],
+    target: Borrowed[MethodTarget],
+    argument: Borrowed[ArgumentElement],
     mut selected: list[SelectedMember],
 ) -> None:
     """Borrow the retained target identity rather than moving its optional foreign field."""
@@ -99,7 +99,7 @@ def collect_member_target(
         None => pass
 
 
-def collect_member_arm(body: &Body, arm: &MatchArm, mut selected: list[SelectedMember]) -> None:
+def collect_member_arm(body: Borrowed[Body], arm: Borrowed[MatchArm], mut selected: list[SelectedMember]) -> None:
     """Borrow a match arm's statement vectors through their declared foreign owner."""
     for statement in arm.guard_stmts:
         collect_member_statement(body, statement.kind, selected)
@@ -107,14 +107,14 @@ def collect_member_arm(body: &Body, arm: &MatchArm, mut selected: list[SelectedM
         collect_member_statement(body, statement.kind, selected)
 
 
-def selected_receiver_type(body: &Body, argument: &ArgumentElement) -> Option[RustType]:
+def selected_receiver_type(body: Borrowed[Body], argument: Borrowed[ArgumentElement]) -> Option[RustType]:
     """Read a checked local receiver or static type token; projected receivers grant no unproven owner."""
     match argument:
         ArgumentElement.One(value) => return selected_operand_type(body, value)
         _ => return None
 
 
-def selected_operand_type(body: &Body, value: &Operand) -> Option[RustType]:
+def selected_operand_type(body: Borrowed[Body], value: Borrowed[Operand]) -> Option[RustType]:
     """Keep the receiver's exact source frame type without deriving a nominal from its method spelling."""
     match value:
         Operand.Constant(constant) =>
@@ -151,7 +151,7 @@ def scheduled_frames() -> ScheduledFrames:
     return ScheduledFrames(pending=pending, seen=seen)
 
 
-pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
+pub def declaration_storage(module: Borrowed[BodyIrModule]) -> list[RustType]:
     """Read checked return, parameter and local types from retained declarations without copying their bodies."""
     mut types: list[RustType] = []
     for callable_position in range(len(module.loaf_callables)):
@@ -167,7 +167,7 @@ pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
     return types
 
 
-pub def nominal_frames(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result[list[Body], str]:
+pub def nominal_frames(constructors: Borrowed[ConstructorIndex], module: Borrowed[BodyIrModule]) -> Result[list[Body], str]:
     """Collect source, static and closed callable frames for layout discovery without granting execution."""
     mut frames: list[Body] = []
     mut pending = scheduled_frames()
@@ -208,7 +208,7 @@ pub def nominal_frames(constructors: &ConstructorIndex, module: &BodyIrModule) -
     return Ok(frames)
 
 
-def owner_dependent(body: &Body) -> bool:
+def owner_dependent(body: Borrowed[Body]) -> bool:
     """Methods and properties close their owner's placeholders through the receiver; plain functions never do."""
     match body.canonical:
         Some(identity) => return identity.kind != SemanticSourceTargetKind.Function
@@ -220,15 +220,15 @@ def leaves_placeholder_open(error: str) -> bool:
     return error.startswith(UNBOUND_TYPE_PARAMETER)
 
 
-def append_static_frame(mut frames: list[Body], body: &Body) -> None:
+def append_static_frame(mut frames: list[Body], body: Borrowed[Body]) -> None:
     """Append one explicit Body clone through its declared borrow, preserving the boxed initializer's ownership."""
     frames.append(body.clone())
 
 
 def schedule_block(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    block: &Block,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    block: Borrowed[Block],
     names: list[str],
     arguments: list[RustType],
     mut pending: ScheduledFrames,
@@ -249,9 +249,9 @@ def schedule_block(
 
 
 def schedule_statement(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    kind: &StatementKind,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    kind: Borrowed[StatementKind],
     names: list[str],
     arguments: list[RustType],
     mut pending: ScheduledFrames,
@@ -303,9 +303,9 @@ def schedule_statement(
 
 
 def schedule_value(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    value: &Rvalue,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    value: Borrowed[Rvalue],
     names: list[str],
     arguments: list[RustType],
     mut pending: ScheduledFrames,
@@ -321,9 +321,9 @@ def schedule_value(
 
 
 def schedule_arm(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    arm: &MatchArm,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    arm: Borrowed[MatchArm],
     names: list[str],
     arguments: list[RustType],
     mut pending: ScheduledFrames,
@@ -338,8 +338,8 @@ def schedule_arm(
 
 
 def schedule_call(
-    module: &BodyIrModule,
-    canonical: &Option[RustCanonicalSymbolId],
+    module: Borrowed[BodyIrModule],
+    canonical: Borrowed[Option[RustCanonicalSymbolId]],
     type_args: list[RustType],
     names: list[str],
     arguments: list[RustType],
@@ -388,7 +388,7 @@ pub def closed_arguments(arguments: list[RustType]) -> bool:
     return true
 
 
-pub def closed_type(ty: &RustType) -> bool:
+pub def closed_type(ty: Borrowed[RustType]) -> bool:
     """Require every structural component to be closed, including borrowed referents and callable inputs and output."""
     match ty:
         RustType.TypeVar(_name) => return false
@@ -417,7 +417,7 @@ pub def closed_type(ty: &RustType) -> bool:
         _ => return true
 
 
-def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[Option[Body], str]:
+def checked_callable_body(module: Borrowed[BodyIrModule], identity: Borrowed[RustCanonicalSymbolId]) -> Result[Option[Body], str]:
     """Resolve a unique checked body; ambiguous owner-dependent method frames grant no nominal layout."""
     mut selected: Option[Body] = None
     canonical = Some(identity.clone())

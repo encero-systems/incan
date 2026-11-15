@@ -341,7 +341,7 @@ def invocation(
     reservation: int,
     logs: Path,
     position: int,
-    source: &Path,
+    source: Borrowed[Path],
     alone: bool = false,
     workers: list[str] = [],
 ) -> Invocation:
@@ -364,7 +364,7 @@ def reservation_of(source: Path, compiler: str) -> int:
     return PROJECT_RESERVATION_BYTES
 
 
-pub def log_name(position: int, source: &Path) -> str:
+pub def log_name(position: int, source: Borrowed[Path]) -> str:
     """A log name that sorts in invocation order and names the test source."""
     mut number = str(position)
     while len(number) < 3:

@@ -26,7 +26,7 @@ from nominal_instances import nominal_symbol
 from symbols import model_symbol
 
 
-pub def enum_type(declarations: &list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
+pub def enum_type(declarations: Borrowed[list[RustEnumDeclaration]], ty: Borrowed[RustType]) -> Option[PlanType]:
     """Recognize a retained source enum before the model/scalar resolver runs."""
     match ty:
         RustType.Named(name) =>
@@ -50,8 +50,8 @@ pub def enum_type(declarations: &list[RustEnumDeclaration], ty: &RustType) -> Op
 
 
 pub def variant_index(
-    declarations: &list[RustEnumDeclaration],
-    target: &EnumVariantTarget,
+    declarations: Borrowed[list[RustEnumDeclaration]],
+    target: Borrowed[EnumVariantTarget],
     expected: PlanType,
 ) -> Result[tuple[int, int], str]:
     """Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling."""
@@ -74,8 +74,8 @@ pub def variant_index(
 
 
 pub def unit_variant(
-    declarations: &list[RustEnumDeclaration],
-    target: &FieldlessEnumVariantTarget,
+    declarations: Borrowed[list[RustEnumDeclaration]],
+    target: Borrowed[FieldlessEnumVariantTarget],
 ) -> Result[tuple[int, int], str]:
     """Resolve the older fieldless constructor vocabulary against the same canonical layout."""
     for owner in range(len(declarations)):
@@ -98,7 +98,7 @@ pub def unit_variant(
     return Err("unsupported Body IR unretained fieldless enum variant")
 
 
-pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
+pub def pattern_variant(declaration: Borrowed[RustEnumDeclaration], pattern: Borrowed[RustPattern]) -> Result[int, str]:
     """Resolve exact variant identities while allowing checked owner aliases; payload layout and ownership stay explicit."""
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
@@ -131,7 +131,7 @@ pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern
     return Err("unsupported Body IR enum pattern")
 
 
-pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, str]:
+pub def validate_payload_patterns(patterns: Borrowed[list[RustPattern]]) -> Result[None, str]:
     """
     Admit payload patterns whose tests and bindings are represented: bindings with a known ownership, literals,
     nested carrier and tuple patterns, and alternations of those; anything else stays refused by name.
@@ -141,7 +141,7 @@ pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, 
     return Ok(None)
 
 
-def validate_payload_pattern(pattern: &RustPattern) -> Result[None, str]:
+def validate_payload_pattern(pattern: Borrowed[RustPattern]) -> Result[None, str]:
     """Admit one payload pattern, recursing into the payloads a nested pattern names."""
     match pattern:
         RustPattern.Wildcard => pass
@@ -184,10 +184,10 @@ pub def validate_binding(binding: ArgumentBinding, count: int) -> Result[None, s
 
 
 pub def native_source_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[RustNominalDeclaration],
-    declarations: &list[RustEnumDeclaration],
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[RustNominalDeclaration]],
+    declarations: Borrowed[list[RustEnumDeclaration]],
+    ty: Borrowed[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
@@ -203,8 +203,8 @@ pub def native_source_type(
 
 
 pub def lower_enum_declarations(
-    constructors: &ConstructorIndex,
-    module: &RustBodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[RustBodyIrModule],
     file: str,
     mut intrinsics: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
@@ -217,8 +217,8 @@ pub def lower_enum_declarations(
     """
     reached = serde_propagation(module)?
     unions: list[RustType] = []
-    nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
-    layouts: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+    nominals: Borrowed[list[RustNominalDeclaration]] = borrowed_table(module.nominal_declarations)
+    layouts: Borrowed[list[RustEnumDeclaration]] = borrowed_table(module.enum_declarations)
     mut declarations: list[EnumDeclaration] = []
     mut view_lifetimes = ViewLifetimeLayout.start(module.nominal_declarations, module.enum_declarations)
     for enum_position in range(len(module.enum_declarations)):
@@ -272,8 +272,8 @@ pub def lower_enum_declarations(
 
 
 def value_enum_raw_values(
-    module: &RustBodyIrModule,
-    declaration: &RustEnumDeclaration,
+    module: Borrowed[RustBodyIrModule],
+    declaration: Borrowed[RustEnumDeclaration],
 ) -> Result[tuple[str, list[str]], str]:
     """A source value enum's backing and raw values in variant order; an SDK enum keeps its serialization in its crate."""
     if library_enum_item(declaration) != "":
@@ -302,7 +302,7 @@ pub def enum_owner(ty: PlanType) -> Result[int, str]:
 
 
 pub def validate_unit_comparison(
-    declarations: &list[RustEnumDeclaration],
+    declarations: Borrowed[list[RustEnumDeclaration]],
     left: PlanType,
     right: PlanType,
 ) -> Result[None, str]:
@@ -324,7 +324,7 @@ pub def validate_unit_comparison(
     return Ok(None)
 
 
-pub def validate_unit_ordering(declarations: &list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
+pub def validate_unit_ordering(declarations: Borrowed[list[RustEnumDeclaration]], ty: PlanType) -> Result[None, str]:
     """
     Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
 

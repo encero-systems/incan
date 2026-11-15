@@ -12,7 +12,7 @@ from rust::std::sync import Arc
 
 pub def owned_string_frame(
     constructors: Arc[ConstructorIndex],
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     name: str,
     result: PlanType,
     mut intrinsics: list[EnumDeclaration],

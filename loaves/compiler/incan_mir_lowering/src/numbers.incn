@@ -14,14 +14,14 @@ from native_type_identity import ConstructorIndex
 
 
 pub def float_operand(
-    constructors: &ConstructorIndex,
-    declarations: &list[NominalDeclaration],
-    locals: &list[Local],
-    value: &RustOperand,
+    constructors: Borrowed[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
+    locals: Borrowed[list[Local]],
+    value: Borrowed[RustOperand],
     span: SourceSpan,
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[bool, str]:
     """Borrow layout tables to require a retained float representation; integer true-division coercions remain outside this slice."""
     match value:

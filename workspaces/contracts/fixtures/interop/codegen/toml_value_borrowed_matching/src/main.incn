@@ -8,7 +8,7 @@
 from rust::toml import Value as RawValue
 
 
-pub def inspect(value: &RawValue) -> bool:
+pub def inspect(value: Borrowed[RawValue]) -> bool:
     match value:
         RawValue.String(text) =>
             println(text)
@@ -18,7 +18,7 @@ pub def inspect(value: &RawValue) -> bool:
         _ => return false
 
 
-pub def inspect_mut(value: &mut RawValue) -> bool:
+pub def inspect_mut(mut value: BorrowedMut[RawValue]) -> bool:
     match value:
         RawValue.String(text) =>
             println(text)

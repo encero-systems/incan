@@ -22,7 +22,7 @@ from symbols import symbol_component
 from table_views import borrowed_at
 
 
-pub def validate_conversion_placement(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:
+pub def validate_conversion_placement(modules: Borrowed[list[BodyIrModule]], entry: int) -> Result[None, str]:
     """Only this invocation's entry can supply a fresh import union; package and dependency fragments supply none."""
     for index in range(len(modules)):
         if index == entry:
@@ -33,7 +33,7 @@ pub def validate_conversion_placement(modules: &list[BodyIrModule], entry: int) 
     return Ok(None)
 
 
-pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
+pub def conversion_trait(module: Borrowed[BodyIrModule]) -> Result[str, str]:
     """Absent and inactive states grant no conversion; a selected source trait keeps its encoded canonical identity."""
     match module.string_conversion_contract:
         StringConversionContract.Unselected => return Ok("")
@@ -80,7 +80,7 @@ def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId)
     return method.declaration_span.start >= owner.declaration_span.start and method.declaration_span.end <= owner.declaration_span.end
 
 
-pub def conversion_name(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[str, str]:
+pub def conversion_name(module: Borrowed[BodyIrModule], declaration: Borrowed[NominalDeclaration]) -> Result[str, str]:
     """A producer-attested automatic candidate becomes executable only under the selected invocation contract."""
     if conversion_trait(module)? == "":
         return Ok("")
@@ -95,8 +95,8 @@ pub def conversion_name(module: &BodyIrModule, declaration: &NominalDeclaration)
 
 
 pub def conversion_chain(
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
     ancestors: list[str],
 ) -> Result[None, str]:
     """Check each exact named underlying edge before scheduling roots; an unselected inner cannot be overwritten."""
@@ -160,7 +160,7 @@ def conversion_owner_name(declaration: NominalDeclaration) -> bool:
                 Some(identity) => return identity == declaration.canonical.clone()
 
 
-def raw_conversion_layout(declaration: &NominalDeclaration) -> bool:
+def raw_conversion_layout(declaration: Borrowed[NominalDeclaration]) -> bool:
     """Require one public raw field with its exact owner identity, no binders, and no declared defaults."""
     if len(declaration.type_parameters) != 0 or declaration.type_parameter_count != 0:
         return false
@@ -175,7 +175,7 @@ def raw_conversion_layout(declaration: &NominalDeclaration) -> bool:
     ) == 0
 
 
-def raw_conversion_owner(declaration: &NominalDeclaration) -> Result[None, str]:
+def raw_conversion_owner(declaration: Borrowed[NominalDeclaration]) -> Result[None, str]:
     """Validate the canonical layout before or after project assembly gives it its exact retained carrier name."""
     owner = declaration.canonical
     if (

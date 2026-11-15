@@ -9,7 +9,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import AttributeArgument, AttributeValue, NativeAttribute
 
 
-pub def native_attributes(body: &Body) -> list[NativeAttribute]:
+pub def native_attributes(body: Borrowed[Body]) -> list[NativeAttribute]:
     """Copy each application's macro path and written arguments; rustc, not the plan, interprets them."""
     mut result: list[NativeAttribute] = []
     for attribute in body.native_attributes.iter():
@@ -17,7 +17,7 @@ pub def native_attributes(body: &Body) -> list[NativeAttribute]:
     return result
 
 
-def native_attribute(attribute: &RustNativeAttribute) -> NativeAttribute:
+def native_attribute(attribute: Borrowed[RustNativeAttribute]) -> NativeAttribute:
     """One application: the macro's canonical path and its arguments in written order."""
     mut arguments: list[AttributeArgument] = []
     for argument in attribute.arguments.iter():

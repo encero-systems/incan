@@ -51,7 +51,7 @@ pub def enum_pattern_place(mut builder: Builder, source: Place, span: SourceSpan
 pub def pattern_tests(
     mut builder: Builder,
     source: Place,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     selected: int,
     rejected: int,
     span: SourceSpan,
@@ -107,7 +107,7 @@ pub def pattern_tests(
     return Ok(None)
 
 
-pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
+pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: Borrowed[RustPattern]) -> Result[int, str]:
     """Select the variant a source enum, union, `Option` or `Result` pattern names; a wildcard names none (-1)."""
     if owner < len(builder.enums):
         return pattern_variant(builder.enums[owner], pattern)
@@ -144,7 +144,7 @@ pub def carrier_payload_types(mut builder: Builder, owner: int, slot: int) -> Re
     return Ok(builder.intrinsics[carrier_position(owner)].variants[slot].fields)
 
 
-pub def has_refutable_payload(pattern: &RustPattern) -> bool:
+pub def has_refutable_payload(pattern: Borrowed[RustPattern]) -> bool:
     """Report whether a carrier pattern tests more than its variant: a literal or a nested pattern in a payload, or an alternation."""
     match pattern:
         RustPattern.Or(_alternatives) => return true
@@ -155,7 +155,7 @@ pub def has_refutable_payload(pattern: &RustPattern) -> bool:
         _ => return false
 
 
-def any_refutable(fields: &list[RustPattern]) -> bool:
+def any_refutable(fields: Borrowed[list[RustPattern]]) -> bool:
     """Report whether any payload pattern can reject a value of its type."""
     for field in fields:
         match field:
@@ -168,7 +168,7 @@ def any_refutable(fields: &list[RustPattern]) -> bool:
 def carrier_tests(
     mut builder: Builder,
     source: Place,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     selected: int,
     rejected: int,
     span: SourceSpan,
@@ -221,17 +221,17 @@ def payload_tests(
     return Ok(None)
 
 
-pub def pattern_binds(pattern: &RustPattern) -> bool:
+pub def pattern_binds(pattern: Borrowed[RustPattern]) -> bool:
     """Report whether any position of a pattern binds a name."""
     return len(bound_in_place(pattern)) != 0
 
 
-pub def binds_in_place(pattern: &RustPattern) -> bool:
+pub def binds_in_place(pattern: Borrowed[RustPattern]) -> bool:
     """Report whether a pattern binds a name its arm changes in place, as an exclusive borrow of the scrutinee."""
     return true in bound_in_place(pattern)
 
 
-def bound_in_place(pattern: &RustPattern) -> list[bool]:
+def bound_in_place(pattern: Borrowed[RustPattern]) -> list[bool]:
     """For every name a pattern binds, in source order, whether the name borrows its part of the scrutinee exclusively."""
     mut bound: list[bool] = []
     match pattern:
@@ -252,7 +252,7 @@ def bound_in_place(pattern: &RustPattern) -> list[bool]:
     return bound
 
 
-def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
+def all_bound_in_place(patterns: Borrowed[list[RustPattern]]) -> list[bool]:
     """Collect `bound_in_place` across several patterns, in order."""
     mut bound: list[bool] = []
     for pattern in patterns:
@@ -295,7 +295,7 @@ pub def nominal_field(
         _ => return Err("invalid Body IR nominal pattern carrier")
 
 
-def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span: SourceSpan) -> Result[Place, str]:
+def literal_test(mut builder: Builder, source: Place, value: Borrowed[RustConstant], span: SourceSpan) -> Result[Place, str]:
     """Compare an exact primitive literal carrier, borrowing strings through the existing equality runtime."""
     ty = place_type(builder.locals, source)
     match value:

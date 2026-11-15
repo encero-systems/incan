@@ -30,7 +30,7 @@ model Holder:
     position: SeekFrom
 
 
-def show_fields(value: &Holder) -> None:
+def show_fields(value: Borrowed[Holder]) -> None:
     """Format each field twice while retaining the shared enclosing owner."""
     println(f"{value.note:?}")
     println(f"{value.note:?}")
@@ -38,13 +38,13 @@ def show_fields(value: &Holder) -> None:
     println(f"{value.position:?}")
 
 
-def show_note(value: &Note) -> None:
+def show_note(value: Borrowed[Note]) -> None:
     """Read either variant repeatedly without cloning or consuming its payload."""
     println(f"{value:?}")
     println(f"{value:?}")
 
 
-def show_indexed(values: &list[Holder]) -> None:
+def show_indexed(values: Borrowed[list[Holder]]) -> None:
     """Format materialized source and native enum elements through their retained Debug implementations."""
     println(f"{values[0].note:?}")
     println(f"{values[-1].position:?}")

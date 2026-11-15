@@ -34,7 +34,7 @@ pub enum CompiledBodyOutput:
     Fallback(CompiledBodyFallback)
 
 
-pub def encode_compiled_body_outputs(outputs: &CompiledBodyOutputs) -> Result[list[bytes], CodecFault]:
+pub def encode_compiled_body_outputs(outputs: Borrowed[CompiledBodyOutputs]) -> Result[list[bytes], CodecFault]:
     """
     Encode a successful compilation as independently bounded binary owner frames.
 

@@ -92,10 +92,10 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
 
 
 pub def checked_aggregate(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    kind: &RustAggregateKind,
-    elements: &list[RustArgumentElement],
+    kind: Borrowed[RustAggregateKind],
+    elements: Borrowed[list[RustArgumentElement]],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
@@ -206,7 +206,7 @@ def owned_text(mut builder: Builder, operand: Operand, owns_text: bool, span: So
 
 def range_value(
     mut builder: Builder,
-    elements: &list[RustArgumentElement],
+    elements: Borrowed[list[RustArgumentElement]],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
@@ -226,7 +226,7 @@ def range_value(
 def model_field_operands(
     mut builder: Builder,
     index: int,
-    elements: &list[RustArgumentElement],
+    elements: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Materialize canonical fields with their checked concrete types, preserving string and model ownership facts."""
@@ -242,7 +242,7 @@ pub def model_field_operand(
     mut builder: Builder,
     index: int,
     slot: int,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Materialize one checked source operand into its exact canonical model field slot."""
@@ -278,8 +278,8 @@ pub def model_field_operand(
 
 def model_field_boundary(
     mut builder: Builder,
-    value: &RustOperand,
-    declaration: &RustNominalDeclaration,
+    value: Borrowed[RustOperand],
+    declaration: Borrowed[RustNominalDeclaration],
     slot: int,
     field_type: PlanType,
     span: SourceSpan,
@@ -307,7 +307,7 @@ def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span
 pub def lower_string_field_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Replace a projected string after evaluating its new value, retaining the containing owner or borrowed slot."""

@@ -397,7 +397,7 @@ def canonical_demand(demand: LocalDemand) -> LocalDemand:
     )
 
 
-def borrowed_selection(selections: &list[FacetSelection], position: int) -> &FacetSelection:
+def borrowed_selection(selections: Borrowed[list[FacetSelection]], position: int) -> Borrowed[FacetSelection] from selections:
     """Borrow a row whose nonnegative index was issued by this session's append-only activation registry."""
     slot: usize = position.wrapping_resize()
     return Index.index(selections, slot)

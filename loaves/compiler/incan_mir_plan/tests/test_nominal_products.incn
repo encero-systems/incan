@@ -71,7 +71,7 @@ pub def test_product_refuses_a_nominal_without_an_identity() -> Result[None, str
     return Ok(None)
 
 
-def keyed_product(function: Function, runtime: list[ExternalFunction], unit: &UnitNominals) -> Result[str, str]:
+def keyed_product(function: Function, runtime: list[ExternalFunction], unit: Borrowed[UnitNominals]) -> Result[str, str]:
     """Capture a product the way lowering does: name every referenced position, then encode."""
     references = product_nominals(function, runtime)?
     return encode_product(function, runtime, describe_nominals(references, unit)?)

@@ -38,9 +38,9 @@ from list_methods import call_destination
 
 
 pub def lower_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    statement: &RustStatement,
+    statement: Borrowed[RustStatement],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Normalize checked primitive adapters before the existing dispatcher consumes the complete call record."""
@@ -50,9 +50,9 @@ pub def lower_call(
 
 
 def lower_checked_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    statement: &RustStatement,
+    statement: Borrowed[RustStatement],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch by the retained callee kind, preserving the call's operand and result facts."""
@@ -82,11 +82,11 @@ def lower_checked_call(
 
 
 pub def lower_loaf_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -131,12 +131,12 @@ pub def lower_loaf_call(
 
 
 def lower_delegated_call(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    target: &RustNamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    delegation: Borrowed[RustLoafCallable],
+    target: Borrowed[RustNamedCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -249,7 +249,7 @@ pub def native_delegation(delegation: RustLoafCallable) -> bool:
 
 def library_function_arguments(
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
+    target: Borrowed[RustNamedCallableTarget],
     names: list[str],
 ) -> Result[list[RustType], str]:
     """Close SDK associated Self and nominal owner arguments through the enclosing checked frame's binders."""
@@ -281,11 +281,11 @@ def library_function_arguments(
 
 
 pub def library_call_operands(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    binding: &RustArgumentBinding,
-    arguments: &list[RustArgumentElement],
+    delegation: Borrowed[RustLoafCallable],
+    binding: Borrowed[RustArgumentBinding],
+    arguments: Borrowed[list[RustArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     offset: int,
@@ -332,11 +332,11 @@ pub def instantiated_external_call(
 
 
 pub def ordered_arguments(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    binding: &RustArgumentBinding,
-    elements: &list[RustArgumentElement],
-    body: &RustBody,
+    binding: Borrowed[RustArgumentBinding],
+    elements: Borrowed[list[RustArgumentElement]],
+    body: Borrowed[RustBody],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Use the body's parameter types when materializing arguments in source order."""

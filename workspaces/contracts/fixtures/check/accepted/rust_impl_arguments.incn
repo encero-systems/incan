@@ -12,7 +12,7 @@ from std.rust import Static
 const ENTRIES: FrozenDict[int, int] = {1: 7}
 
 
-def require_components[K, V](_key: &K, _value: &V) -> None:
+def require_components[K, V](_key: Borrowed[K], _value: Borrowed[V]) -> None:
     """Require both tuple components without copying either generic value."""
     pass
 

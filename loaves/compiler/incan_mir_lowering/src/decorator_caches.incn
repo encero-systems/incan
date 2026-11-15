@@ -77,7 +77,7 @@ pub def validate_instance_binding(binding: DecoratedBinding) -> Result[None, str
     return Ok(None)
 
 
-pub def frame_signature(function: &Function) -> list[PlanType]:
+pub def frame_signature(function: Borrowed[Function]) -> list[PlanType]:
     """The reified pointer signature of a planned frame: its parameter types, then its result."""
     mut signature: list[PlanType] = []
     for parameter in function.parameters:
@@ -86,7 +86,7 @@ pub def frame_signature(function: &Function) -> list[PlanType]:
     return signature
 
 
-pub def builder_signature(builder: &Builder) -> list[PlanType]:
+pub def builder_signature(builder: Borrowed[Builder]) -> list[PlanType]:
     """The pointer signature of the frame being built, read from its parameter slots and then its return slot."""
     mut signature: list[PlanType] = []
     for index in range(1, builder.parameter_count + 1):
@@ -95,7 +95,7 @@ pub def builder_signature(builder: &Builder) -> list[PlanType]:
     return signature
 
 
-pub def callable_name_profile(module: &BodyIrModule, owner: str) -> Result[bool, str]:
+pub def callable_name_profile(module: Borrowed[BodyIrModule], owner: str) -> Result[bool, str]:
     """Bound dynamic name lookup to its registration module independently of signature and cache lifetime policy."""
     for binding in module.decorated_bindings:
         match binding.initializer:
@@ -129,7 +129,7 @@ pub def validate_binding_policy(binding: DecoratedBinding) -> Result[None, str]:
 
 pub def cached_binding_frames(
     program: ProgramContext,
-    binding: &DecoratedBinding,
+    binding: Borrowed[DecoratedBinding],
     base: str,
     original: str,
     initializer: str,

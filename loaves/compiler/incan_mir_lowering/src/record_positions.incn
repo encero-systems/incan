@@ -101,7 +101,7 @@ def shift_positions(value: JsonValue, old_file: str, old_line: int, file: str, l
     return Ok(JsonValue.object(fields))
 
 
-pub def index_positions(text: str, positions: &list[tuple[int, int]]) -> Result[str, str]:
+pub def index_positions(text: str, positions: Borrowed[list[tuple[int, int]]]) -> Result[str, str]:
     """
     Replace each owner-relative product span that locates a Body IR node by that node's ordinal.
 
@@ -118,7 +118,7 @@ pub def index_positions(text: str, positions: &list[tuple[int, int]]) -> Result[
     return map_product_spans(text, PositionMapping(indexing=true, ordinals=ordinals, positions=list(positions)))
 
 
-pub def place_positions(text: str, positions: &list[tuple[int, int]]) -> Result[str, str]:
+pub def place_positions(text: str, positions: Borrowed[list[tuple[int, int]]]) -> Result[str, str]:
     """Restore each node ordinal in a product to that node's current owner-relative line and column."""
     ordinals: Dict[str, int] = {}
     return map_product_spans(text, PositionMapping(indexing=false, ordinals=ordinals, positions=list(positions)))
@@ -132,7 +132,7 @@ model PositionMapping:
     positions: list[tuple[int, int]]
 
 
-def map_product_spans(text: str, mapping: &PositionMapping) -> Result[str, str]:
+def map_product_spans(text: str, mapping: Borrowed[PositionMapping]) -> Result[str, str]:
     """Translate the spans of a product's function and runtime requirements, leaving every other field intact."""
     mut product = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
     function = parse(product["function"].expect_str().map_err((error) => error.message())?).map_err(
@@ -150,7 +150,7 @@ def map_product_spans(text: str, mapping: &PositionMapping) -> Result[str, str]:
     return JsonValue.object(product).to_json().map_err((error) => error.message())
 
 
-def map_spans(value: JsonValue, mapping: &PositionMapping) -> Result[JsonValue, str]:
+def map_spans(value: JsonValue, mapping: Borrowed[PositionMapping]) -> Result[JsonValue, str]:
     """Visit the codec's source-span objects; no other field is interpreted."""
     if value.is_array():
         mut moved: list[JsonValue] = []

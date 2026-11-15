@@ -183,8 +183,8 @@ model StoredProduct:
 
 
 pub def product_nominals(
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     frames: list[Function] = [],
 ) -> Result[list[NominalReference], str]:
     """Name the unit positions a product of this function would retain, in the product's first-seen ordinal order."""
@@ -194,8 +194,8 @@ pub def product_nominals(
 
 
 pub def encode_product(
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     nominals: list[ProductNominal] = [],
     frames: list[Function] = [],
 ) -> Result[str, str]:
@@ -296,7 +296,7 @@ pub def decode_product(
     return Ok((function, restored))
 
 
-pub def encode_runtime(runtime: &list[ExternalFunction]) -> Result[list[str], str]:
+pub def encode_runtime(runtime: Borrowed[list[ExternalFunction]]) -> Result[list[str], str]:
     """Encode a unit's resolved runtime inventory, loss-checked; its positions index the unit's own tables."""
     mut remap = preserving_remap()
     mut encoded: list[str] = []
@@ -316,7 +316,7 @@ pub def decode_runtime(encoded: list[str]) -> Result[list[ExternalFunction], str
     return Ok(runtime)
 
 
-pub def encode_scalar(function: &Function) -> Result[str, str]:
+pub def encode_scalar(function: Borrowed[Function]) -> Result[str, str]:
     """Retain one complete function that names no model or enum; the enclosing product retains its requirements."""
     mut remap = capture_remap()
     text = encode_function(function, remap)?
@@ -337,8 +337,8 @@ pub def decode_scalar(text: str) -> Result[Function, str]:
 
 
 def stored_product(
-    function: &Function,
-    runtime: &list[ExternalFunction],
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
     frames: list[Function],
     mut remap: NominalRemap,
 ) -> Result[StoredProduct, str]:
@@ -354,7 +354,7 @@ def stored_product(
     return Ok(StoredProduct(schema=6, function=encoded, runtime=externals, nominals=nominals, frames=stored_frames))
 
 
-def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str, str]:
+def encode_function(function: Borrowed[Function], mut remap: NominalRemap) -> Result[str, str]:
     """
     Encode one complete function's native storage, control flow and source locations.
 
@@ -448,7 +448,7 @@ def restore_parameter(value: StoredParameter, mut remap: NominalRemap) -> Result
     return Ok(Parameter(name=value.name, ty=restore_type(value.slot.ty, remap)?, span=restore_span(value.slot.span)))
 
 
-def same_function(left: &Function, right: &Function) -> bool:
+def same_function(left: Borrowed[Function], right: Borrowed[Function]) -> bool:
     """Compare borrowed complete native functions without copying either plan."""
     return left == right
 
@@ -468,7 +468,7 @@ def decode_external_record(text: str) -> Result[StoredExternal, JsonError]:
     return from_str(text)
 
 
-def same_runtime(left: &list[ExternalFunction], right: &list[ExternalFunction]) -> bool:
+def same_runtime(left: Borrowed[list[ExternalFunction]], right: Borrowed[list[ExternalFunction]]) -> bool:
     """Compare borrowed dependency records individually; collection equality currently loses its shared read."""
     if len(left) != len(right):
         return false
@@ -478,7 +478,7 @@ def same_runtime(left: &list[ExternalFunction], right: &list[ExternalFunction]) 
     return true
 
 
-def same_external(left: &ExternalFunction, right: &ExternalFunction) -> bool:
+def same_external(left: Borrowed[ExternalFunction], right: Borrowed[ExternalFunction]) -> bool:
     """Compare every field through the plan owner's structural equality without copying either record."""
     return left == right
 

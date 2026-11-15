@@ -150,12 +150,12 @@ pub model Writer:
             ),
         )
 
-    pub def record(self, span: &EngineSpan) -> Result[None, TraceError]:
+    pub def record(self, span: Borrowed[EngineSpan]) -> Result[None, TraceError]:
         """Encode into the retained fixed slice; only a complete, bounded record reaches the file buffer."""
         row = wire_record(span)?
         return self.write_record(row)
 
-    pub def write_record(self, row: &TraceRecord) -> Result[None, TraceError]:
+    pub def write_record(self, row: Borrowed[TraceRecord]) -> Result[None, TraceError]:
         """Encode an admitted typed record into fixed scratch before publishing any of its bytes."""
         mut scratch = self.scratch.lock().map_err((_) => TraceError.Channel)?
         used = fill(scratch.deref_mut(), row)?
@@ -163,7 +163,7 @@ pub model Writer:
         output.write_all(scratch.as_slice().split_at(used).0).map_err((_) => TraceError.Channel)?
         return Ok(None)
 
-    pub def append(self, text: &str) -> Result[None, TraceError]:
+    pub def append(self, text: Borrowed[str]) -> Result[None, TraceError]:
         """Queue one bounded record; the native buffer drains with back-pressure at its size bound."""
         payload = RustString.from(text).into_bytes()
         return self.write_bytes(payload)
@@ -188,11 +188,11 @@ model Channels:
 
     writers: Dict[str, Writer] = {}
 
-    def append(mut self, destination: str, text: &str) -> Result[None, TraceError]:
+    def append(mut self, destination: str, text: Borrowed[str]) -> Result[None, TraceError]:
         """Open each channel once, reporting failed opens instead of silently dropping records."""
         return self.writer(destination)?.append(text)
 
-    def record(mut self, destination: str, span: &EngineSpan) -> Result[None, TraceError]:
+    def record(mut self, destination: str, span: Borrowed[EngineSpan]) -> Result[None, TraceError]:
         """Encode into native bytes and send them directly to the retained writer."""
         return self.writer(destination)?.record(span)
 
@@ -330,7 +330,7 @@ model TraceRecord:
     cpu_ns: Option[int]
 
 
-pub def encode(span: &EngineSpan) -> Result[str, TraceError]:
+pub def encode(span: Borrowed[EngineSpan]) -> Result[str, TraceError]:
     """Expose the same bounded native wire encoding as text for schema readers and compatibility tools."""
     mut scratch = encoding_buffer()
     used = fill(scratch, wire_record(span)?)?
@@ -338,7 +338,7 @@ pub def encode(span: &EngineSpan) -> Result[str, TraceError]:
     return Ok(str(RustString.from_utf8_lossy(scratch.as_slice().split_at(used).0)))
 
 
-def wire_record(span: &EngineSpan) -> Result[TraceRecord, TraceError]:
+def wire_record(span: Borrowed[EngineSpan]) -> Result[TraceRecord, TraceError]:
     """
     Validate a completed span and project its fields into the flat wire schema.
 
@@ -392,7 +392,7 @@ def encoding_buffer() -> Vec[u8]:
     return buffer
 
 
-def fill(mut buffer: &mut Vec[u8], row: &TraceRecord) -> Result[usize, TraceError]:
+def fill(mut buffer: BorrowedMut[Vec[u8]], row: Borrowed[TraceRecord]) -> Result[usize, TraceError]:
     """Lend fixed storage to native serde; the cursor refuses overflow without growing or publishing a prefix."""
     mut cursor = Cursor.new(buffer.as_mut_slice())
     to_writer(Write.by_ref(cursor), row).map_err(encoding_error)?
@@ -409,7 +409,7 @@ def encoding_error(error: JsonError) -> TraceError:
     return TraceError.InvalidSpan
 
 
-def fields_bounded(span: &EngineSpan) -> bool:
+def fields_bounded(span: Borrowed[EngineSpan]) -> bool:
     """Check borrowed fields without allocating an inventory of copied strings for each event."""
     return (
         bounded(span.run)
@@ -425,12 +425,12 @@ def fields_bounded(span: &EngineSpan) -> bool:
     )
 
 
-def bounded(value: &str) -> bool:
+def bounded(value: Borrowed[str]) -> bool:
     """Whether a source string fits its UTF-8 wire bound before native JSON escaping."""
     return int(value.len()) <= MAX_TEXT
 
 
-pub def record(destination: str, span: &EngineSpan) -> Result[None, TraceError]:
+pub def record(destination: str, span: Borrowed[EngineSpan]) -> Result[None, TraceError]:
     """Append one complete schema record to a file; no schema output can select a console stream."""
     if destination == "":
         return Ok(None)
@@ -439,7 +439,7 @@ pub def record(destination: str, span: &EngineSpan) -> Result[None, TraceError]:
     return CHANNELS.record(destination, span)
 
 
-pub def append(destination: str, text: &str) -> Result[None, TraceError]:
+pub def append(destination: str, text: Borrowed[str]) -> Result[None, TraceError]:
     """Queue one bounded record on a retained channel; callers flush at their process lifecycle boundary."""
     if destination == "" or destination == "-":
         return Err(TraceError.Channel)

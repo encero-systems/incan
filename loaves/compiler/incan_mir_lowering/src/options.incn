@@ -139,7 +139,7 @@ pub def propagate_result(
     return Ok(None)
 
 
-pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
+pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: Borrowed[RustPattern]) -> Result[int, str]:
     """Match intrinsic Result facts; ordinary source constructor spellings never authorize a standard carrier."""
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
@@ -171,8 +171,8 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 
 pub def intrinsic_declarations(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     file: str,
     retained: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
@@ -221,10 +221,10 @@ pub def intrinsic_declarations(
 
 
 pub def retain_body_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    body: &Body,
+    body: Borrowed[Body],
     file: str,
 ) -> Result[None, str]:
     """Append closed frame and poll carriers without renumbering layouts; refusal names its declaring frame position."""
@@ -250,11 +250,11 @@ pub def retain_body_carriers(
 
 
 def retain_iteration_poll_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    body: &Body,
-    block: &RustBlock,
+    body: Borrowed[Body],
+    block: Borrowed[RustBlock],
     taking: list[int],
     file: str,
 ) -> Result[None, str]:
@@ -266,11 +266,11 @@ def retain_iteration_poll_carriers(
 
 
 def retain_iteration_poll_statement(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    body: &Body,
-    kind: &RustStatementKind,
+    body: Borrowed[Body],
+    kind: Borrowed[RustStatementKind],
     taking: list[int],
     file: str,
 ) -> Result[None, str]:
@@ -345,11 +345,11 @@ def retain_iteration_poll_statement(
 
 
 def retain_poll_value(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    body: &Body,
-    value: &RustRvalue,
+    body: Borrowed[Body],
+    value: Borrowed[RustRvalue],
     taking: list[int],
     file: str,
 ) -> Result[None, str]:
@@ -363,11 +363,11 @@ def retain_poll_value(
 
 
 def retain_poll_arm(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    body: &Body,
-    arm: &RustMatchArm,
+    body: Borrowed[Body],
+    arm: Borrowed[RustMatchArm],
     taking: list[int],
     file: str,
 ) -> Result[None, str]:
@@ -380,10 +380,10 @@ def retain_poll_arm(
 
 
 def retain_call_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    target: &NamedCallableTarget,
+    target: Borrowed[NamedCallableTarget],
     file: str,
 ) -> Result[None, str]:
     """Retain closed source and published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
@@ -435,11 +435,11 @@ def retain_call_carriers(
 
 
 def retain_closed_signature(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
     parameters: list[RustType],
-    result: &RustType,
+    result: Borrowed[RustType],
     names: list[str],
     arguments: list[RustType],
     file: str,
@@ -454,10 +454,10 @@ def retain_closed_signature(
 
 
 pub def retain_carrier(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
-    ty: &RustType,
+    ty: Borrowed[RustType],
     file: str,
 ) -> Result[None, str]:
     """Retain one concrete standard layout once; nested carriers precede their containing carrier."""

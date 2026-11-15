@@ -7,7 +7,7 @@ from frame import Builder, temporary, read_place
 from builtins import list_call
 
 
-pub def bytes_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Place, str]:
+pub def bytes_literal(mut builder: Builder, value: Borrowed[RustConstant], span: SourceSpan) -> Result[Place, str]:
     """Build an owned byte vector with exact unsigned constants, including empty and non-ASCII literals."""
     ty = PlanType.List(ListLeaf.U8, 1)
     output = temporary(builder, ty, span)

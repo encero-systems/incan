@@ -45,10 +45,10 @@ pub def is_derived_default(target: NamedCallableTarget) -> bool:
 
 
 pub def lower_derived_default(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &NamedCallableTarget,
-    destination: &Option[RustPlace],
+    target: Borrowed[NamedCallableTarget],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Build the receiver model's derived default into the call's destination, replacing any value held there."""
@@ -77,8 +77,8 @@ pub def lower_derived_default(
 
 def receiver_type(
     mut builder: Builder,
-    target: &NamedCallableTarget,
-    destination: &Option[RustPlace],
+    target: Borrowed[NamedCallableTarget],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[PlanType, str]:
     """Close a checked receiver; an associated generic owner takes arguments only from its exact canonical result layout."""
@@ -114,7 +114,7 @@ def receiver_type(
         None => return Err("unsupported Body IR derived Default without a receiver type")
 
 
-def default_value(module: &BodyIrModule, mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+def default_value(module: Borrowed[BodyIrModule], mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
     """Build a model that derives Default from its fields; the result is a new owner the caller moves."""
     match ty:
         PlanType.Model(owner, _name) =>
@@ -131,7 +131,7 @@ def default_value(module: &BodyIrModule, mut builder: Builder, ty: PlanType, spa
 
 
 def default_fields(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     owner: int,
     span: SourceSpan,
@@ -160,7 +160,7 @@ def default_fields(
     return Ok(operands)
 
 
-def type_default(module: &BodyIrModule, mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+def type_default(module: Borrowed[BodyIrModule], mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
     """The value a field type's own Default gives: zero, empty text or collection, None, or a nested derived default."""
     if numeric_carrier(ty):
         return Ok(literal(numeric_zero(ty)?, span))

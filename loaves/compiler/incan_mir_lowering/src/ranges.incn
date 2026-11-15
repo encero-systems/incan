@@ -10,7 +10,7 @@ from pub::incan_mir_plan import Constant, FieldProjection, Operand, PlanType, Rv
 from frame import literal
 
 
-pub def range_value_local(ty: &RustType, origin: &LocalOrigin) -> bool:
+pub def range_value_local(ty: Borrowed[RustType], origin: Borrowed[LocalOrigin]) -> bool:
     """Admit an integer range only in a source binding or temporary, never at a signature or capture boundary."""
     # Parameters, returns, captures and fields carry no proven four-field layout, so they keep their named refusal.
     match origin:
@@ -20,7 +20,7 @@ pub def range_value_local(ty: &RustType, origin: &LocalOrigin) -> bool:
     return integer_range(ty)
 
 
-def integer_range(ty: &RustType) -> bool:
+def integer_range(ty: Borrowed[RustType]) -> bool:
     """Recognize the checker's `Range[int]` value type."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
@@ -35,7 +35,7 @@ def integer_range(ty: &RustType) -> bool:
         _ => return false
 
 
-pub def range_field(projection: &RustPlaceElem) -> Result[FieldProjection, str]:
+pub def range_field(projection: Borrowed[RustPlaceElem]) -> Result[FieldProjection, str]:
     """Project one structural range field through Body IR's declared field order."""
     match projection:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>

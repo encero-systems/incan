@@ -192,7 +192,7 @@ def open_release_trace_state(
     )
 
 
-def trace_begin(mut state: &mut ReleaseTraceState, name: str, parent: str) -> Result[ReleaseSpan, str]:
+def trace_begin(mut state: BorrowedMut[ReleaseTraceState], name: str, parent: str) -> Result[ReleaseSpan, str]:
     """Allocate and publish one begin record with an optional release-phase parent."""
     identifier = f"release:{state.process}:{state.next_id}"
     state.next_id += 1
@@ -210,12 +210,12 @@ def trace_begin(mut state: &mut ReleaseTraceState, name: str, parent: str) -> Re
     return Ok(ReleaseSpan(id=identifier))
 
 
-def trace_write_end(state: &mut ReleaseTraceState, identifier: str) -> Result[None, str]:
+def trace_write_end(mut state: BorrowedMut[ReleaseTraceState], identifier: str) -> Result[None, str]:
     """Publish one end record for an existing release span identity."""
     return trace_write(state, JsonValue.object({"kind": JsonValue.string("end"), "id": JsonValue.string(identifier)}))
 
 
-def trace_write(state: &mut ReleaseTraceState, value: JsonValue) -> Result[None, str]:
+def trace_write(mut state: BorrowedMut[ReleaseTraceState], value: JsonValue) -> Result[None, str]:
     """Append one invocation record with this process's shared monotonic clock."""
     mut record = value.expect_object().map_err((error) => error.message())?
     record["pid"] = JsonValue.int(state.process)
@@ -412,7 +412,7 @@ pub def baseline_summary(report: BaselineReport) -> str:
     )
 
 
-pub def require_candidate_census(reference: &BaselineReport, candidate: &BaselineReport) -> Result[None, str]:
+pub def require_candidate_census(reference: Borrowed[BaselineReport], candidate: Borrowed[BaselineReport]) -> Result[None, str]:
     """Require one installed candidate census to retain the seed inventory and every seed PASS outcome."""
     if reference.result_keys != candidate.result_keys:
         return Err("candidate case keys differ from the integration census")

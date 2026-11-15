@@ -16,7 +16,7 @@ pub model ContinuationInputs:
     pub entry: int
 
 
-pub def refresh_entry_context(mut context: &mut BodyIrModule, entry: &BodyIrModule) -> None:
+pub def refresh_entry_context(mut context: BorrowedMut[BodyIrModule], entry: Borrowed[BodyIrModule]) -> None:
     """Refresh the compact entry-owned facts the frontend can extend while resolving runtime declarations."""
     context.runtime_callable_bindings = list(entry.runtime_callable_bindings)
     context.loaf_callables = list(entry.loaf_callables)
@@ -28,12 +28,12 @@ pub def refresh_entry_context(mut context: &mut BodyIrModule, entry: &BodyIrModu
 
 
 pub def continuation_inputs(
-    source_context: &BodyIrModule,
-    context: &BodyIrModule,
+    source_context: Borrowed[BodyIrModule],
+    context: Borrowed[BodyIrModule],
     owners: list[str],
-    modules: &list[BodyIrModule],
-    sources: &list[str],
-    files: &list[str],
+    modules: Borrowed[list[BodyIrModule]],
+    sources: Borrowed[list[str]],
+    files: Borrowed[list[str]],
     entry: int,
 ) -> Result[ContinuationInputs, str]:
     """Select changed modules and their entry, preserving the entry's invocation-only contracts in the reduced slice."""
@@ -75,19 +75,19 @@ pub def continuation_inputs(
 
 
 pub def extend_continuation_context(
-    mut source_context: &mut BodyIrModule,
-    mut context: &mut BodyIrModule,
-    mut template_constructors: &mut ConstructorIndex,
+    mut source_context: BorrowedMut[BodyIrModule],
+    mut context: BorrowedMut[BodyIrModule],
+    mut template_constructors: BorrowedMut[ConstructorIndex],
     mut owners: list[str],
     mut retained_sources: list[str],
     mut retained_files: list[str],
     mut template_references: list[str],
     mut retained_nominals: list[NominalInstance],
-    additions: &ContinuationInputs,
-    added_source_context: &BodyIrModule,
-    added_context: &BodyIrModule,
-    added_template_references: &list[str],
-    added_nominals: &list[NominalInstance],
+    additions: Borrowed[ContinuationInputs],
+    added_source_context: Borrowed[BodyIrModule],
+    added_context: Borrowed[BodyIrModule],
+    added_template_references: Borrowed[list[str]],
+    added_nominals: Borrowed[list[NominalInstance]],
 ) -> Result[None, str]:
     """
     Extend the retained source and execution contexts from the refreshed module graph.
@@ -110,14 +110,14 @@ pub def extend_continuation_context(
     return Ok(None)
 
 
-def extend_template_references(mut retained: list[str], additions: &list[str]) -> None:
+def extend_template_references(mut retained: list[str], additions: Borrowed[list[str]]) -> None:
     """Append newly referenced template heads without disturbing the first-selection order."""
     for reference in additions:
         if reference not in retained:
             retained.append(reference)
 
 
-def extend_source_declarations(mut source: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+def extend_source_declarations(mut source: BorrowedMut[BodyIrModule], module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """Append raw nominal and enum template authority for later instance and publication work."""
     for position in range(len(module.nominal_declarations)):
         mut declaration = borrowed_at(module.nominal_declarations, position).clone()
@@ -135,7 +135,7 @@ def extend_source_declarations(mut source: &mut BodyIrModule, module: &BodyIrMod
     return Ok(None)
 
 
-def extend_execution_context(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+def extend_execution_context(mut context: BorrowedMut[BodyIrModule], module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """Append specialized executable facts while leaving every position from the prior attempt stable."""
     prior_body_count = len(context.bodies)
     for body in module.bodies:
@@ -159,7 +159,7 @@ def extend_execution_context(mut context: &mut BodyIrModule, module: &BodyIrModu
     return Ok(None)
 
 
-def extend_nominal_instances(mut retained: list[NominalInstance], additions: &list[NominalInstance]) -> None:
+def extend_nominal_instances(mut retained: list[NominalInstance], additions: Borrowed[list[NominalInstance]]) -> None:
     """Append each newly specialized nominal key once while preserving the prior attempt's layout order."""
     for addition in additions:
         mut found = false
@@ -174,7 +174,7 @@ def extend_nominal_instances(mut retained: list[NominalInstance], additions: &li
             retained.append(addition.clone())
 
 
-def adds_checked_facts(source: &BodyIrModule, context: &BodyIrModule, module: &BodyIrModule) -> bool:
+def adds_checked_facts(source: Borrowed[BodyIrModule], context: Borrowed[BodyIrModule], module: Borrowed[BodyIrModule]) -> bool:
     """Detect a refreshed module whose declarations, bodies, or runtime storage are absent from retained context."""
     for declaration in module.nominal_declarations:
         if not has_nominal(source.nominal_declarations, declaration):
@@ -212,7 +212,7 @@ def adds_checked_facts(source: &BodyIrModule, context: &BodyIrModule, module: &B
     return false
 
 
-def has_nominal(declarations: &list[NominalDeclaration], candidate: &NominalDeclaration) -> bool:
+def has_nominal(declarations: Borrowed[list[NominalDeclaration]], candidate: Borrowed[NominalDeclaration]) -> bool:
     """Whether source authority already retains this canonical nominal declaration."""
     for declaration in declarations:
         if declaration.canonical == candidate.canonical:
@@ -220,7 +220,7 @@ def has_nominal(declarations: &list[NominalDeclaration], candidate: &NominalDecl
     return false
 
 
-def has_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> bool:
+def has_enum(declarations: Borrowed[list[EnumDeclaration]], candidate: Borrowed[EnumDeclaration]) -> bool:
     """Whether source authority already retains this canonical enum declaration."""
     for declaration in declarations:
         if declaration.canonical == candidate.canonical:
@@ -228,12 +228,12 @@ def has_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) 
     return false
 
 
-def has_body(context: &BodyIrModule, candidate: &Body) -> bool:
+def has_body(context: Borrowed[BodyIrModule], candidate: Borrowed[Body]) -> bool:
     """Whether a specialized body with the refreshed body's canonical identity already occupies the context."""
     return has_body_prefix(context, candidate, len(context.bodies))
 
 
-def has_body_prefix(context: &BodyIrModule, candidate: &Body, count: int) -> bool:
+def has_body_prefix(context: Borrowed[BodyIrModule], candidate: Borrowed[Body], count: int) -> bool:
     """Whether the context prefix predating one merge already represents the candidate's canonical body."""
     match candidate.canonical:
         Some(identity) =>
@@ -249,7 +249,7 @@ def has_body_prefix(context: &BodyIrModule, candidate: &Body, count: int) -> boo
     return false
 
 
-def has_body_specialization(context: &BodyIrModule, candidate: &Body) -> bool:
+def has_body_specialization(context: Borrowed[BodyIrModule], candidate: Borrowed[Body]) -> bool:
     """Whether a body with the same canonical identity and closed frame signature entered during this merge."""
     for retained in context.bodies:
         if retained.canonical != candidate.canonical:
@@ -261,7 +261,7 @@ def has_body_specialization(context: &BodyIrModule, candidate: &Body) -> bool:
     return false
 
 
-def append_concrete_nominals(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+def append_concrete_nominals(mut context: BorrowedMut[BodyIrModule], module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """Append only physical nominal layouts; open templates stay in the retained source context."""
     for position in range(len(module.nominal_declarations)):
         mut declaration = borrowed_at(module.nominal_declarations, position).clone()
@@ -273,7 +273,7 @@ def append_concrete_nominals(mut context: &mut BodyIrModule, module: &BodyIrModu
     return Ok(None)
 
 
-def append_concrete_enums(mut context: &mut BodyIrModule, module: &BodyIrModule) -> Result[None, str]:
+def append_concrete_enums(mut context: BorrowedMut[BodyIrModule], module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """Append only physical enum layouts; open templates stay in the retained source context."""
     for position in range(len(module.enum_declarations)):
         mut declaration = borrowed_at(module.enum_declarations, position).clone()
@@ -285,7 +285,7 @@ def append_concrete_enums(mut context: &mut BodyIrModule, module: &BodyIrModule)
     return Ok(None)
 
 
-def append_runtime_storage(mut context: &mut BodyIrModule, module: &BodyIrModule) -> None:
+def append_runtime_storage(mut context: BorrowedMut[BodyIrModule], module: Borrowed[BodyIrModule]) -> None:
     """Append new static, decorator, callable, and union records in refreshed module order."""
     for declaration in module.static_declarations:
         if not context.static_declarations.contains(declaration):
@@ -302,8 +302,8 @@ def append_runtime_storage(mut context: &mut BodyIrModule, module: &BodyIrModule
 
 
 def retains_source_nominal(
-    declarations: &list[NominalDeclaration],
-    candidate: &NominalDeclaration,
+    declarations: Borrowed[list[NominalDeclaration]],
+    candidate: Borrowed[NominalDeclaration],
 ) -> Result[bool, str]:
     """Reuse an exact source template and refuse one canonical declaration with conflicting facts."""
     for declaration in declarations:
@@ -315,7 +315,7 @@ def retains_source_nominal(
     return Ok(false)
 
 
-def retains_source_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> Result[bool, str]:
+def retains_source_enum(declarations: Borrowed[list[EnumDeclaration]], candidate: Borrowed[EnumDeclaration]) -> Result[bool, str]:
     """Reuse an exact source enum template and refuse one canonical declaration with conflicting facts."""
     for declaration in declarations:
         if declaration.canonical != candidate.canonical:
@@ -327,8 +327,8 @@ def retains_source_enum(declarations: &list[EnumDeclaration], candidate: &EnumDe
 
 
 def retains_concrete_nominal(
-    declarations: &list[NominalDeclaration],
-    candidate: &NominalDeclaration,
+    declarations: Borrowed[list[NominalDeclaration]],
+    candidate: Borrowed[NominalDeclaration],
 ) -> Result[bool, str]:
     """Reuse one exact concrete nominal specialization without conflating sibling argument lists."""
     for declaration in declarations:
@@ -343,7 +343,7 @@ def retains_concrete_nominal(
     return Ok(false)
 
 
-def retains_concrete_enum(declarations: &list[EnumDeclaration], candidate: &EnumDeclaration) -> Result[bool, str]:
+def retains_concrete_enum(declarations: Borrowed[list[EnumDeclaration]], candidate: Borrowed[EnumDeclaration]) -> Result[bool, str]:
     """Reuse one exact concrete enum specialization without conflating sibling argument lists."""
     for declaration in declarations:
         if (

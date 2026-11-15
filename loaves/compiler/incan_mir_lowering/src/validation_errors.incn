@@ -12,8 +12,8 @@ from callable_calls import lower_callable_result
 
 pub def lower_validation_error(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     coded: bool,
     span: SourceSpan,
 ) -> Result[None, str]:

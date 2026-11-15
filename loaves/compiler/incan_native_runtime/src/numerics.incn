@@ -220,7 +220,7 @@ pub def negate_i128(value: i128) -> i128:
     return value.neg()
 
 
-pub def parse_int(value: &str) -> int:
+pub def parse_int(value: Borrowed[str]) -> int:
     """Parse an integer: 1. Use canonical numeric grammar. 2. Raise the language ValueError on refusal."""
     # 1. Parse through the kernel's single numeric-string policy.
     match parse_int_string(value):
@@ -231,7 +231,7 @@ pub def parse_int(value: &str) -> int:
     raise_value_error(f"cannot convert '{value}' to int")
 
 
-pub def parse_float(value: &str) -> float:
+pub def parse_float(value: Borrowed[str]) -> float:
     """Parse a float: 1. Use canonical numeric grammar. 2. Raise the language ValueError on refusal."""
     # 1. Parse through the kernel's single numeric-string policy.
     match parse_float_string(value):

@@ -66,8 +66,8 @@ pub def constructor_index(declarations: list[NominalDeclaration]) -> Constructor
 
 pub def constructor_index_with_packages(
     declarations: list[NominalDeclaration],
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
 ) -> ConstructorIndex:
     """Index retained constructors and copy authenticated module files and package selections once for Plan facts."""
     mut constructors = constructor_index(declarations)
@@ -77,8 +77,8 @@ pub def constructor_index_with_packages(
 
 
 pub def extend_constructor_index(
-    mut constructors: &mut ConstructorIndex,
-    declarations: &list[NominalDeclaration],
+    mut constructors: BorrowedMut[ConstructorIndex],
+    declarations: Borrowed[list[NominalDeclaration]],
 ) -> None:
     """
     Index the positions appended since the last generation. The indexed rows must be an unchanged prefix of
@@ -102,8 +102,8 @@ pub def extend_constructor_index(
 
 
 pub def extend_generic_constructor_arities(
-    mut constructors: &mut ConstructorIndex,
-    templates: &ConstructorIndex,
+    mut constructors: BorrowedMut[ConstructorIndex],
+    templates: Borrowed[ConstructorIndex],
 ) -> None:
     """Retain source-template arities beside specialized layout positions without copying invalid template indices."""
     for base in templates.generic_arities:
@@ -115,7 +115,7 @@ pub def extend_generic_constructor_arities(
 
 pub def with_generic_constructor_arities(
     mut constructors: ConstructorIndex,
-    templates: &ConstructorIndex,
+    templates: Borrowed[ConstructorIndex],
 ) -> ConstructorIndex:
     """Return layout constructors carrying compact source-template arities without copying template positions."""
     for base in templates.generic_arities:
@@ -127,9 +127,9 @@ pub def with_generic_constructor_arities(
 
 
 pub def extend_constructor_authority(
-    mut constructors: &mut ConstructorIndex,
-    source_files: &BTreeMap[str, str],
-    package_versions: &BTreeMap[str, str],
+    mut constructors: BorrowedMut[ConstructorIndex],
+    source_files: Borrowed[BTreeMap[str, str]],
+    package_versions: Borrowed[BTreeMap[str, str]],
 ) -> None:
     """Add authenticated module provenance and package selections discovered with resolved runtime declarations."""
     for module, file in source_files:
@@ -138,7 +138,7 @@ pub def extend_constructor_authority(
         constructors.package_versions.insert(package, version)
 
 
-pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]:
+pub def named_positions(constructors: Borrowed[ConstructorIndex], name: str) -> list[int]:
     """Every indexed position whose declaration has this name, in table order."""
     mut positions: list[int] = []
     match constructors.named.get(name):
@@ -157,9 +157,9 @@ pub def native_owner(declaration: NominalDeclaration) -> bool:
 
 
 pub def representation_arguments(
-    declarations: &list[NominalDeclaration],
-    constructors: &ConstructorIndex,
-    arguments: &list[RustType],
+    declarations: Borrowed[list[NominalDeclaration]],
+    constructors: Borrowed[ConstructorIndex],
+    arguments: Borrowed[list[RustType]],
 ) -> list[RustType]:
     """
     Close authenticated native arguments by erasing metadata absent from native callable storage.
@@ -175,9 +175,9 @@ pub def representation_arguments(
 
 
 def representation_types(
-    declarations: &list[NominalDeclaration],
-    constructors: &ConstructorIndex,
-    types: &list[RustType],
+    declarations: Borrowed[list[NominalDeclaration]],
+    constructors: Borrowed[ConstructorIndex],
+    types: Borrowed[list[RustType]],
 ) -> list[RustType]:
     """Normalize an ordered native argument sequence without changing its arity or ownership markers."""
     mut retained: list[RustType] = []
@@ -187,9 +187,9 @@ def representation_types(
 
 
 def representation_type(
-    declarations: &list[NominalDeclaration],
-    constructors: &ConstructorIndex,
-    ty: &RustType,
+    declarations: Borrowed[list[NominalDeclaration]],
+    constructors: Borrowed[ConstructorIndex],
+    ty: Borrowed[RustType],
 ) -> RustType:
     """Erase callable binding metadata recursively while retaining distinct authored nominal instantiations."""
     match ty:
@@ -229,8 +229,8 @@ def representation_type(
 
 
 def retains_source_arguments(
-    declarations: &list[NominalDeclaration],
-    constructors: &ConstructorIndex,
+    declarations: Borrowed[list[NominalDeclaration]],
+    constructors: Borrowed[ConstructorIndex],
     base: str,
 ) -> bool:
     """Normalize only authenticated native or registry constructors; unknown source enum carriers stay exact."""

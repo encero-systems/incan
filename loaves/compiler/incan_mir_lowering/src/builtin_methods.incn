@@ -71,9 +71,9 @@ from sequence_builtins import argument_type, text_argument
 
 pub def lower_builtin_method(
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch retained builtin registry members to text, numeric resize, or collection boundaries."""
@@ -88,9 +88,9 @@ pub def lower_builtin_method(
 
 def lower_typed_builtin_method(
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch one checker-selected builtin operation without reclassifying its canonical name."""
@@ -185,11 +185,11 @@ def lower_typed_builtin_method(
 
 def lower_string_method(
     mut builder: Builder,
-    target: &MethodTarget,
+    target: Borrowed[MethodTarget],
     method: RustStringMethodId,
     frozen: bool,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower one checker-selected runtime or frozen string operation."""
@@ -208,7 +208,7 @@ def lower_string_method(
 def refuse_unsupported_frozen_collection_method(
     mut builder: Builder,
     member: str,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the existing non-list refusal for an unsupported frozen-collection member."""
@@ -221,11 +221,11 @@ def refuse_unsupported_frozen_collection_method(
 
 def lower_integer_helper(
     mut builder: Builder,
-    target: &MethodTarget,
+    target: Borrowed[MethodTarget],
     family: RustIntegerHelperFamily,
     operation: RustIntegerHelperOperation,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower wrapping arithmetic directly and call native checked and saturating u8 methods at their exact widths."""
@@ -272,8 +272,8 @@ def lower_wrapping_integer(
     mut builder: Builder,
     method: RustIntegerHelperOperation,
     receiver: PlanType,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Emit the checked integer member as native modular arithmetic without invoking a runtime wrapper recursively."""
@@ -319,8 +319,8 @@ def integer_helper_name(
 
 def lower_string_slice(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Consume the checked primitive slice member with its borrowed receiver and two signed int endpoints."""
@@ -355,8 +355,8 @@ def lower_text_codec_method(
     mut builder: Builder,
     frozen: bool,
     decoding: bool,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call the exact borrowed UTF-8 runtime boundary after the frontend fills all checked codec slots."""
@@ -547,10 +547,10 @@ def lower_primitive_decode(
 
 def lower_selected_float(
     mut builder: Builder,
-    target: &MethodTarget,
+    target: Borrowed[MethodTarget],
     method: RustFloatMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower one checker-selected float operation without reclassifying its canonical name."""
@@ -565,7 +565,7 @@ def lower_selected_float(
         None => return refuse_remaining_builtin_method(target)
 
 
-def refuse_remaining_builtin_method(target: &MethodTarget) -> Result[None, str]:
+def refuse_remaining_builtin_method(target: Borrowed[MethodTarget]) -> Result[None, str]:
     """Preserve the established lowering refusal after typed dispatch identifies an unsupported operation."""
     match target.builtin_label():
         Some(member) => return Err(f"unsupported Body IR remaining builtin Method {member}")
@@ -575,8 +575,8 @@ def refuse_remaining_builtin_method(target: &MethodTarget) -> Result[None, str]:
 def lower_float_square_root(
     mut builder: Builder,
     receiver: PlanType,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call native square root at the checker's float result type, widening an f32 receiver before evaluation."""
@@ -616,8 +616,8 @@ def lower_float_method(
     name: str,
     parameters: list[PlanType],
     result: PlanType,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call the native float member with the copied receiver and each argument at its checked carrier."""
@@ -634,7 +634,7 @@ def lower_float_method(
 
 def numeric_receiver(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Read a canonical numeric method's shared receiver without consuming its Copy storage."""
@@ -653,8 +653,8 @@ def numeric_receiver(
 pub def lower_generator_member(
     mut builder: Builder,
     method: RustIteratorMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     receiver_ty: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:

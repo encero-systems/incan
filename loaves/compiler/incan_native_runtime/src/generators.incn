@@ -30,7 +30,7 @@ from rust::std::panic import panic_any
 from native_copying import clone_native
 
 
-pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output: list[T]) -> bool:
+pub def poll_generator[T with Clone](mut values: BorrowedMut[NativeGenerator[T]], mut output: list[T]) -> bool:
     """Poll once: 1. Advance the borrowed generator. 2. Append an item on success, preserving output on exhaustion."""
     # 1. Advance the borrowed generator.
     mut iterator = values
@@ -213,7 +213,7 @@ def prefix_stream(cursor: SharedPrefixCursor, poll: (SharedPrefixCursor) -> Opti
     return NativeGenerator.new(items)
 
 
-def prefix_has_value(value: &Option[int]) -> bool:
+def prefix_has_value(value: Borrowed[Option[int]]) -> bool:
     """Terminate the native adapter exactly when the prefix poll returns no item."""
     match value:
         Some(_item) => return true
@@ -229,7 +229,7 @@ def prefix_value(value: Option[int]) -> int:
 
 def take_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
     """Fuse the prefix after either source exhaustion or its first rejected item."""
-    cursor: &PrefixFields = cell.as_ref()
+    cursor: Borrowed[PrefixFields] = cell.as_ref()
     if cursor[2].get():
         return None
     match next_prefix_item(cursor):
@@ -244,7 +244,7 @@ def take_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
 
 def skip_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
     """Test only the initial prefix; retain the source's ordinary behavior after the first rejection."""
-    cursor: &PrefixFields = cell.as_ref()
+    cursor: Borrowed[PrefixFields] = cell.as_ref()
     while not cursor[2].get():
         match next_prefix_item(cursor):
             Some(value) =>
@@ -256,10 +256,10 @@ def skip_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
     return next_prefix_item(cursor)
 
 
-def next_prefix_item(cursor: &PrefixFields) -> Option[int]:
+def next_prefix_item(cursor: Borrowed[PrefixFields]) -> Option[int]:
     """Keep the native mutable iterator loan inside one poll; no loan escapes with its owned integer result."""
     mut loan: RefMut[NativeGenerator[int]] = cursor[0].borrow_mut()
-    mut iterator: &mut NativeGenerator[int] = loan.deref_mut()
+    mut iterator: BorrowedMut[NativeGenerator[int]] = loan.deref_mut()
     return iterator.poll()
 
 

@@ -22,7 +22,7 @@ pub model CallerWatch:
     pub socket: SocketFile
 
 
-pub def abandon(watch: &CallerWatch) -> None:
+pub def abandon(watch: Borrowed[CallerWatch]) -> None:
     """
     End the worker whose caller left during an activation: withdraw its socket, so no later request dials it, and
     exit with the status a panicked command reports, as the short-lived command would have ended with its caller.

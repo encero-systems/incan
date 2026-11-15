@@ -56,7 +56,7 @@ pub def element_place_type(mut builder: Builder, source: RustPlace) -> Result[Pl
     return element_prefix_type(builder, source, len(source.projection))
 
 
-pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
+pub def element_prefix_type(mut builder: Builder, source: Borrowed[RustPlace], count: int) -> Result[PlanType, str]:
     """Resolve a checked element prefix once, without reading or borrowing its storage."""
     if count < 0 or count > len(source.projection):
         return Err("invalid Body IR element type prefix length")
@@ -78,7 +78,7 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
             return Ok(ty)
 
 
-def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
+def projected_type(mut builder: Builder, ty: PlanType, projection: Borrowed[PlaceElem]) -> Result[PlanType, str]:
     """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
     mut source = ty
     match source:

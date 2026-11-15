@@ -28,7 +28,7 @@ pub def symbol_component(value: str) -> str:
     return component
 
 
-pub def type_component(ty: &RustType) -> str:
+pub def type_component(ty: Borrowed[RustType]) -> str:
     """Encode every semantic type variant and field; diagnostic Display never establishes instance identity."""
     match ty:
         RustType.Never => return symbol_component("!")
@@ -59,7 +59,7 @@ pub def type_component(ty: &RustType) -> str:
         RustType.NativeCChar => return symbol_component("c.c_char")
 
 
-def type_sequence(prefix: str, types: &list[RustType]) -> str:
+def type_sequence(prefix: str, types: Borrowed[list[RustType]]) -> str:
     """Append a known count of recursively self-delimiting type components in declaration order."""
     mut encoded = prefix
     for ty in types:
@@ -67,7 +67,7 @@ def type_sequence(prefix: str, types: &list[RustType]) -> str:
     return encoded
 
 
-def primitive_component(primitive: &Primitive) -> str:
+def primitive_component(primitive: Borrowed[Primitive]) -> str:
     """Keep established scalar names while distinguishing numeric Bool from the ordinary Bool variant."""
     match primitive:
         Primitive.Int => return symbol_component("int")
@@ -90,7 +90,7 @@ def builtin_component(builtin: RuntimeBuiltinType) -> str:
         RuntimeBuiltinType.ValidationError => return symbol_component("runtime::ValidationError")
 
 
-def function_component(parameters: &list[IncanCallableParam], result: &RustType) -> str:
+def function_component(parameters: Borrowed[list[IncanCallableParam]], result: Borrowed[RustType]) -> str:
     """Retain callable arity, parameter metadata and output; unequal checked signatures cannot share a symbol."""
     mut encoded = f"_function_{len(parameters)}"
     for parameter in parameters:
@@ -98,7 +98,7 @@ def function_component(parameters: &list[IncanCallableParam], result: &RustType)
     return encoded + "_returns" + type_component(result)
 
 
-def parameter_component(parameter: &IncanCallableParam) -> str:
+def parameter_component(parameter: Borrowed[IncanCallableParam]) -> str:
     """Encode all equality-bearing parameter fields, including the collection ownership and partial-preset facts."""
     mut encoded = "_param" + type_component(parameter.ty) + parameter_kind_component(parameter.kind)
     match parameter.name:

@@ -52,7 +52,7 @@ pub def static_owner(declaration: StaticDeclaration) -> str:
         None => return ""
 
 
-pub def module_static_key(statics: &list[StaticDeclaration], owner: str) -> int:
+pub def module_static_key(statics: Borrowed[list[StaticDeclaration]], owner: str) -> int:
     """The first computed static slot module `owner` declares, which keys its initialization, or -1 for none."""
     mut slot = 0
     for declaration in statics:
@@ -98,7 +98,7 @@ pub def module_initialization_externals(span: SourceSpan) -> list[ExternalFuncti
     )]
 
 
-pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: SourceSpan) -> Function:
+pub def module_initializer(statics: Borrowed[list[StaticDeclaration]], key: int, span: SourceSpan) -> Function:
     """
     Build the initializer of the module keyed `key` without changing its declaration order or reentrancy behavior.
 
@@ -177,7 +177,7 @@ pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: So
     )
 
 
-pub def enters_module_initialization(body: &Body) -> bool:
+pub def enters_module_initialization(body: Borrowed[Body]) -> bool:
     """
     Report whether a body initializes its module's statics on entry: every function and method does, as in legacy,
     but a computed static's or constant's own initializer does not, because the module's initialization is what runs

@@ -6,7 +6,7 @@ from symbols import type_component
 from trace_channel import emit
 
 
-pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list[IncanType], file: str) -> None:
+pub def record_lowering(enabled: bool, body: Borrowed[Body], frame: str, arguments: Borrowed[list[IncanType]], file: str) -> None:
     """
     Record an actual lowering request, including repeated concrete instantiations.
 

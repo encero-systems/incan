@@ -40,13 +40,13 @@ pub def pair_generator_type(ty: PlanType) -> PlanType:
         _ => return ty
 
 
-def collect_pairs(body: RustBody, block: &RustBlock, mut pairs: list[int]) -> None:
+def collect_pairs(body: RustBody, block: Borrowed[RustBlock], mut pairs: list[int]) -> None:
     """Visit the statements in order, so a loop iterator follows the pair slot its source call filled before it."""
     for position in range(len(block.stmts)):
         visit_statement(body, borrowed_at(block.stmts, position).kind, pairs)
 
 
-def visit_statement(body: RustBody, kind: &RustStatementKind, mut pairs: list[int]) -> None:
+def visit_statement(body: RustBody, kind: Borrowed[RustStatementKind], mut pairs: list[int]) -> None:
     """Record a pair-producing call's destination or a loop iterator reading a pair slot, and visit nested blocks."""
     match kind:
         RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_may_panic) =>
@@ -57,7 +57,7 @@ def visit_statement(body: RustBody, kind: &RustStatementKind, mut pairs: list[in
         RustStatementKind.Assign(place=place, rvalue=value) =>
             if reads_pair_slot(value, pairs):
                 add_slot(place, pairs)
-            matched_value: &RustRvalue = value
+            matched_value: Borrowed[RustRvalue] = value
             match matched_value:
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
                     for arm in arms:
@@ -77,7 +77,7 @@ def visit_statement(body: RustBody, kind: &RustStatementKind, mut pairs: list[in
         _ => pass
 
 
-def produces_pairs(body: &RustBody, callee: &RustCallee, arguments: &list[RustArgumentElement]) -> bool:
+def produces_pairs(body: Borrowed[RustBody], callee: Borrowed[RustCallee], arguments: Borrowed[list[RustArgumentElement]]) -> bool:
     """Recognize a pair adapter by its builtin identity, or builtin `zip` by its two iterator operands."""
     match callee:
         RustCallee.Method(target) => return is_pair_adapter(target)
@@ -94,7 +94,7 @@ def produces_pairs(body: &RustBody, callee: &RustCallee, arguments: &list[RustAr
     return false
 
 
-def is_pair_adapter(target: &MethodTarget) -> bool:
+def is_pair_adapter(target: Borrowed[MethodTarget]) -> bool:
     """Match checker-selected `enumerate` and `zip` operations on generators and iterator values."""
     match target.builtin_iterator():
         Some(RustIteratorMethodId.Enumerate) => return true
@@ -107,7 +107,7 @@ def is_pair_adapter(target: &MethodTarget) -> bool:
         _ => return false
 
 
-def zips_iterators(body: &RustBody, arguments: &list[RustArgumentElement]) -> bool:
+def zips_iterators(body: Borrowed[RustBody], arguments: Borrowed[list[RustArgumentElement]]) -> bool:
     """Require exactly two whole-local operands whose checked types are iterators or generators."""
     if len(arguments) != 2:
         return false
@@ -120,7 +120,7 @@ def zips_iterators(body: &RustBody, arguments: &list[RustArgumentElement]) -> bo
     return true
 
 
-def iterator_local(body: &RustBody, place: RustPlace) -> bool:
+def iterator_local(body: Borrowed[RustBody], place: RustPlace) -> bool:
     """Read a whole local's checked type; a projection or a global is not an iterator slot."""
     if len(place.projection) != 0:
         return false
@@ -129,7 +129,7 @@ def iterator_local(body: &RustBody, place: RustPlace) -> bool:
         None => return false
 
 
-def is_iterator_type(ty: &RustType) -> bool:
+def is_iterator_type(ty: Borrowed[RustType]) -> bool:
     """Recognize a checked `Iterator[T]` or `Generator[T]` type."""
     match ty:
         RustType.Generic(base=base, args=_arguments) => return base == "Iterator" or base == "Generator"

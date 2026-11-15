@@ -433,7 +433,7 @@ pub def next_activation(mut host: WorkerHost) -> Option[WorkerActivation]:
     return host.next()
 
 
-pub def complete(mut host: WorkerHost, outcome: &ActivationOutcome, footprint: int, live: int = -1) -> None:
+pub def complete(mut host: WorkerHost, outcome: Borrowed[ActivationOutcome], footprint: int, live: int = -1) -> None:
     """
     Answer the open activation with the compiler entry's outcome, given the process's physical footprint and live heap
     after it (each negative when unknown), and apply the lifecycle.

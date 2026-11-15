@@ -29,18 +29,18 @@ from symbols import symbol_component, type_component
 pub from type_parameters import indexed_static_type_arguments, static_type_arguments
 
 
-pub def parameter_local_index(body: &Body, index: int) -> int:
+pub def parameter_local_index(body: Borrowed[Body], index: int) -> int:
     """Read a parameter's retained local identity after materializing its native Copy field (#2256 bootstrap)."""
     parameter = body.params[index]
     return int(parameter.local.index())
 
 
 pub def frame_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    local: &RustLocal,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    local: Borrowed[RustLocal],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     source_file: str = "",
 ) -> Result[PlanType, str]:
     """
@@ -71,7 +71,7 @@ pub def frame_type(
         None => return Ok(ty)
 
 
-pub def function_name(module: &BodyIrModule, body: &Body) -> str:
+pub def function_name(module: Borrowed[BodyIrModule], body: Borrowed[Body]) -> str:
     """Keep entry symbols and encode dependency module identities so equal spellings and spans remain distinct."""
     match body.canonical:
         Some(identity) =>
@@ -100,7 +100,7 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
     return f"__incan_body_{body_span_symbol(body)}"
 
 
-def body_span_symbol(body: &Body) -> str:
+def body_span_symbol(body: Borrowed[Body]) -> str:
     """Retain authored symbols while distinguishing generated frames by their complete checked declaration identity."""
     mut symbol = str(body.span.start)
     if body.span.is_generated():
@@ -108,7 +108,7 @@ def body_span_symbol(body: &Body) -> str:
     return symbol
 
 
-pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
+pub def is_program_entry(module: Borrowed[BodyIrModule], body: Borrowed[Body]) -> bool:
     """Read explicit checked entry identities; an ordinary imported main keeps ordinary function semantics."""
     if str(body.name) != "main":
         return false
@@ -123,7 +123,7 @@ pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
     return false
 
 
-def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &CanonicalSymbolId) -> bool:
+def has_overloaded_name(module: Borrowed[BodyIrModule], body: Borrowed[Body], identity: Borrowed[CanonicalSymbolId]) -> bool:
     """Report whether another function of the same module declares this body's source name, as overloads do."""
     owner = canonical_module_identity(identity)
     for body_position in range(len(module.bodies)):
@@ -139,7 +139,7 @@ def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &Canonical
     return false
 
 
-pub def body_module_identity(body: &Body) -> Result[str, str]:
+pub def body_module_identity(body: Borrowed[Body]) -> Result[str, str]:
     """Read the validated body's declaring module independently of the project entry module."""
     match body.canonical:
         Some(identity) =>
@@ -150,8 +150,8 @@ pub def body_module_identity(body: &Body) -> Result[str, str]:
 
 
 pub def body_type_bindings(
-    module: &BodyIrModule,
-    body: &Body,
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[Body],
     arguments: list[RustType],
 ) -> Result[tuple[list[str], list[RustType]], str]:
     """Retain the scheduled method's checked class bindings alongside its own ordered call arguments."""
@@ -195,7 +195,7 @@ pub def body_type_bindings(
     return Ok((names, arguments))
 
 
-def module_function_symbol(module: &BodyIrModule, owner: str, body: &Body) -> str:
+def module_function_symbol(module: Borrowed[BodyIrModule], owner: str, body: Borrowed[Body]) -> str:
     """
     Name a dependency module's frame by its owner module and declaration, using identifier-safe bytes.
 
@@ -218,7 +218,7 @@ def module_function_symbol(module: &BodyIrModule, owner: str, body: &Body) -> st
     return f"{symbol}_{body_span_symbol(body)}_{body.span.end}"
 
 
-def declaration_named_frame(module: &BodyIrModule, body: &Body) -> bool:
+def declaration_named_frame(module: Borrowed[BodyIrModule], body: Borrowed[Body]) -> bool:
     """Whether a frame's owner module and source name alone identify it among the unit's frames."""
     if body.span.is_generated() or len(body.type_parameters) != 0:
         return false
@@ -237,14 +237,14 @@ def declaration_named_frame(module: &BodyIrModule, body: &Body) -> bool:
 
 
 pub def method_receiver(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    locals: &list[Local],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    locals: Borrowed[list[Local]],
     local_offset: int,
     index: int,
-    argument: &RustArgumentElement,
+    argument: Borrowed[RustArgumentElement],
     span: SourceSpan,
-    unions: &list[RustType],
+    unions: Borrowed[list[RustType]],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """
@@ -259,14 +259,14 @@ pub def method_receiver(
 
 
 def receiver_borrow(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    locals: &list[Local],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    locals: Borrowed[list[Local]],
     local_offset: int,
     index: int,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     span: SourceSpan,
-    unions: &list[RustType],
+    unions: Borrowed[list[RustType]],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""

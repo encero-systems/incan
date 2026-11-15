@@ -33,8 +33,8 @@ pub def standard_comparison_slot(identity: CanonicalSymbolId, name: str) -> bool
 
 
 pub def comparison_functions(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[list[str]], str]:
     """Retain one borrowed equality body, and all four owned ordering bodies when a checked source Ord slot is supplied."""
@@ -55,7 +55,7 @@ pub def comparison_functions(
     return Ok(owners)
 
 
-def source_slot(module: &BodyIrModule, owner: int, name: str) -> bool:
+def source_slot(module: Borrowed[BodyIrModule], owner: int, name: str) -> bool:
     """A retained source body filling this owner's canonical standard slot authorizes a bridge."""
     identity = borrowed_at(module.nominal_declarations, owner).canonical
     for implementation_position in range(len(module.trait_implementations)):
@@ -66,8 +66,8 @@ def source_slot(module: &BodyIrModule, owner: int, name: str) -> bool:
 
 
 def comparison_body(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     owner: int,
     name: str,
     borrowed: bool,
@@ -110,9 +110,9 @@ def comparison_body(
 
 
 def validate_comparison_body(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &Body,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[Body],
     owner: int,
     borrowed: bool,
     mut intrinsics: list[EnumDeclaration],
@@ -142,7 +142,7 @@ def validate_comparison_body(
     return Ok(None)
 
 
-pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body: &Body) -> Option[PlanType]:
+pub def source_equality_value(module: Borrowed[BodyIrModule], target: Borrowed[MethodTarget], body: Borrowed[Body]) -> Option[PlanType]:
     """Keep owned source operands for exact own equality calls or a checked enum slot dispatching to that body."""
     if body.canonical == None:
         return None
@@ -168,8 +168,8 @@ pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body
 
 
 pub def enum_comparison_functions(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[list[str]], str]:
     """Select enum bridges from checked standard slots and their retained borrowed equality ABI, never variant order."""
@@ -204,8 +204,8 @@ pub def enum_comparison_functions(
 
 
 pub def attach_enum_comparisons(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut declarations: list[EnumDeclaration],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
@@ -223,8 +223,8 @@ pub def attach_enum_comparisons(
 
 
 def enum_comparison_body(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     owner: int,
     name: str,
     borrowed: bool,

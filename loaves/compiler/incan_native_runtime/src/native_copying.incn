@@ -3,7 +3,7 @@
 from rust::std::clone import Clone
 
 
-pub def clone_native[T with Clone](value: &T) -> T:
+pub def clone_native[T with Clone](value: Borrowed[T]) -> T:
     """Return an independent native value: 1. Clone the borrowed referent through its declared bound."""
     # 1. Clone the borrowed referent through its declared bound.
     return Clone.clone(value)

@@ -42,9 +42,9 @@ pub model NativeFactory:
 
 
 pub def fallible_factory(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    target: &MethodTarget,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    target: Borrowed[MethodTarget],
     result: PlanType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[NativeFactory], str]:
@@ -96,7 +96,7 @@ pub def fallible_factory(
                 _ => return Ok(None)
 
 
-def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+def published_factory(module: Borrowed[BodyIrModule], slot: Borrowed[CanonicalSymbolId]) -> bool:
     """A spelling grants no factory: the actual standard trait must enclose the checked member identity."""
     if slot.kind != SemanticSourceTargetKind.Method or slot.namespace != SymbolNamespace.Member:
         return false
@@ -107,7 +107,7 @@ def published_factory(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
     return false
 
 
-def concrete_return(module: &BodyIrModule, slot: &CanonicalSymbolId, declaration: &NominalDeclaration) -> bool:
+def concrete_return(module: Borrowed[BodyIrModule], slot: Borrowed[CanonicalSymbolId], declaration: Borrowed[NominalDeclaration]) -> bool:
     """Require the exact published body and its return binding's canonical owner before substituting a runtime ABI."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
@@ -151,7 +151,7 @@ model FactoryCallableStorage:
 
 
 pub def retain_factory_callable_storage(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut functions: list[Function],
     mut models: list[ModelDeclaration],
     mut externals: list[ExternalFunction],
@@ -234,7 +234,7 @@ pub def retain_factory_callable_storage(
 
 
 def retain_shared_factory_poll(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     models: list[ModelDeclaration],
     owner: int,
     mut functions: list[Function],

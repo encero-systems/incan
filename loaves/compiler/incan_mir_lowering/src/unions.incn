@@ -40,7 +40,7 @@ from compiler_record_adapters import authored_plan_checked_type, semantic_key_ma
 from pub::incan_mir_plan import source_span as plan_span
 
 
-pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
+pub def collect_unions(module: Borrowed[BodyIrModule]) -> list[RustType]:
     """Read checked tables through shared entries and retain each union shape once without copying their bodies."""
     mut unions: list[RustType] = []
     mut added: BTreeSet[RustType] = BTreeSet.new()
@@ -78,7 +78,7 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     return unions
 
 
-pub def extend_unions(mut unions: list[RustType], module: &BodyIrModule) -> None:
+pub def extend_unions(mut unions: list[RustType], module: Borrowed[BodyIrModule]) -> None:
     """Append union shapes introduced by resolved runtime facts while preserving every existing native slot."""
     mut retained: BTreeSet[RustType] = BTreeSet.new()
     for ty in unions:
@@ -97,7 +97,7 @@ pub def union_index(unions: list[RustType]) -> Arc[BTreeSet[RustType]]:
     return Arc.new(retained)
 
 
-pub def retain_body_unions(mut unions: list[RustType], retained: &BTreeSet[RustType], body: &Body) -> None:
+pub def retain_body_unions(mut unions: list[RustType], retained: Borrowed[BTreeSet[RustType]], body: Borrowed[Body]) -> None:
     """Append only closed instance shapes absent from the shared program index, preserving every existing owner slot."""
     mut added: BTreeSet[RustType] = BTreeSet.new()
     retain_body_union_types(unions, retained, added, body)
@@ -105,9 +105,9 @@ pub def retain_body_unions(mut unions: list[RustType], retained: &BTreeSet[RustT
 
 def retain_body_union_types(
     mut unions: list[RustType],
-    retained: &BTreeSet[RustType],
+    retained: Borrowed[BTreeSet[RustType]],
     mut added: BTreeSet[RustType],
-    body: &Body,
+    body: Borrowed[Body],
 ) -> None:
     """Visit a body's types against the caller's accumulated index, including computed statics during collection."""
     retain_union(unions, retained, added, body.return_type)
@@ -117,9 +117,9 @@ def retain_body_union_types(
 
 def retain_union(
     mut unions: list[RustType],
-    retained: &BTreeSet[RustType],
+    retained: Borrowed[BTreeSet[RustType]],
     mut added: BTreeSet[RustType],
-    ty: &RustType,
+    ty: Borrowed[RustType],
 ) -> None:
     """
     Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index.
@@ -145,11 +145,11 @@ def retain_union(
 
 
 pub def union_members(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    ty: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    ty: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[PlanType], str]:
     """Normalize by legacy Rust payload spelling, retaining only scalar and previously admitted nominal members."""
     mut members: list[PlanType] = []
@@ -226,9 +226,9 @@ def union_name(members: list[PlanType]) -> Result[str, str]:
 
 
 pub def publish_unions(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     mut published: list[NativeUnionDeclaration],
 ) -> Result[None, str]:
     """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
@@ -289,8 +289,8 @@ pub def publish_unions(
 
 
 pub def require_native_union_signature(
-    ty: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    ty: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     source_carriers: bool = false,
 ) -> Result[None, str]:
     """Require retained union carriers: checked Rust generics admit source carriers; linked Loaves need their owner."""
@@ -318,11 +318,11 @@ pub def require_native_union_signature(
 
 
 pub def lower_union_declaration(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    ty: &RustType,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    ty: Borrowed[RustType],
     file: str,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[EnumDeclaration, str]:
     """
     Construct a normalized union only after its nested payload layouts have been retained.
@@ -395,10 +395,10 @@ pub def lower_union_declaration(
 
 
 def published_union_members(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NativeUnionDeclaration,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NativeUnionDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[PlanType], str]:
     """Validate published payloads against checked semantic members without sorting them or hashing a local name."""
     mut ordered: list[PlanType] = []
@@ -416,11 +416,11 @@ def published_union_members(
 
 
 def native_union_payload(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    declaration: &NativeUnionDeclaration,
-    member: &RustType,
-    intrinsics: &list[EnumDeclaration],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NativeUnionDeclaration],
+    member: Borrowed[RustType],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[PlanType, str]:
     """Read checked payload ownership once; the explicit enum Clone keeps the #2256 bootstrap compatible."""
     unions: list[RustType] = []
@@ -440,10 +440,10 @@ def native_union_payload(
 
 
 def retained_union(
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     owner: int,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[RustType, str]:
     """Resolve a union by its exact retained layout slot, independently of neighboring Option and Result layouts."""
     index = carrier_position(owner)
@@ -457,12 +457,12 @@ def retained_union(
 
 
 pub def union_slot(
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     owner: int,
     member: PlanType,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[int, str]:
     """Find one exact normalized member; widening and unrepresented narrowing stay refused."""
     slot = union_test_slot(nominals, enums, unions, owner, member, intrinsics)?
@@ -472,13 +472,13 @@ pub def union_slot(
 
 
 pub def union_pattern_slot(
-    constructors: &ConstructorIndex,
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     owner: int,
-    pattern: &RustPattern,
-    intrinsics: &list[EnumDeclaration],
+    pattern: Borrowed[RustPattern],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[int, str]:
     """Dispatch checker-retained member patterns; subset, literal and binding fallback refinements stay refused."""
     match pattern:
@@ -493,12 +493,12 @@ pub def union_pattern_slot(
 
 
 pub def union_test_slot(
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     owner: int,
     member: PlanType,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[int, str]:
     """A primitive target absent from the union is always false; source enum tests remain refused."""
     _ = retained_union(enums, unions, owner, intrinsics)?
@@ -515,13 +515,13 @@ pub def union_test_slot(
 
 
 pub def carrier_injection(
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     operand: Operand,
     source: PlanType,
     target: PlanType,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[RvalueKind, str]:
     """Inject an exact checked Option payload or union member at the shared assignment, argument and return boundary."""
     match target:
@@ -543,12 +543,12 @@ pub def carrier_injection(
 
 
 pub def union_test_slots(
-    nominals: &list[NominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    unions: &list[RustType],
+    nominals: Borrowed[list[NominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    unions: Borrowed[list[RustType]],
     owner: int,
     member: PlanType,
-    intrinsics: &list[EnumDeclaration],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[int], str]:
     """Match either string identity against both carriers while preserving exact construction and narrowing slots."""
     _ = retained_union(enums, unions, owner, intrinsics)?
@@ -586,7 +586,7 @@ pub def test_union_tag(mut builder: Builder, tag: Place, slots: list[int], span:
     return RvalueKind.Use(read_place(output, false, span))
 
 
-pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+pub def union_projection(mut builder: Builder, value: Borrowed[RustPlace], span: SourceSpan) -> Result[Option[Place], str]:
     """Borrow the frame to map a checker-selected union member; ordinary locals never copy declaration tables or frame locals just to decline this projection."""
     if len(value.projection) != 1:
         return Ok(None)
@@ -611,7 +611,7 @@ pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSp
         None => return Ok(None)
 
 
-def projected_member(projection: &RustPlaceElem) -> Option[RustType]:
+def projected_member(projection: Borrowed[RustPlaceElem]) -> Option[RustType]:
     """Read the checker-selected payload type from one explicit union projection."""
     # The typed boundary also retains the pattern-only Rust import (the compiler gap tracked by #459).
     match projection:

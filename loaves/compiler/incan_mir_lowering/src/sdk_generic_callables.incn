@@ -16,9 +16,9 @@ from table_views import borrowed_at
 
 pub def sdk_owned_callable_bindings(
     mut builder: Builder,
-    delegation: &LoafCallable,
-    binding: &RustBinding,
-    arguments: &list[RustArgument],
+    delegation: Borrowed[LoafCallable],
+    binding: Borrowed[RustBinding],
+    arguments: Borrowed[list[RustArgument]],
     types: list[PlanType],
 ) -> Result[list[tuple[str, PlanType]], str]:
     """Keep an SDK generic value binder's evaluated environment ABI, checking its declared callable signature first."""
@@ -98,7 +98,7 @@ def require_plain_sdk_callable(mut builder: Builder, argument: RustArgument) -> 
 
 pub def sdk_callable_type(
     mut builder: Builder,
-    original: &RustType,
+    original: Borrowed[RustType],
     names: list[str],
     closed: list[RustType],
     owned: list[tuple[str, PlanType]],

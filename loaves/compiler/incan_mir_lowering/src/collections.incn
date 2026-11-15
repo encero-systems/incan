@@ -29,7 +29,7 @@ from table_views import borrowed_at
 from text_plan import clone_text_reference
 
 
-pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
+pub def primitive_leaf(ty: Borrowed[RustType], hashed: bool) -> Result[ListLeaf, str]:
     """Admit primitive leaves, owned byte buffers and flat scalar tuple keys; floating point keys lack Eq and Hash."""
     match runtime_storage_marker(ty):
         Some(PlanType.Decimal) => return Ok(ListLeaf.Decimal)
@@ -62,7 +62,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
     return Err(f"unsupported Body IR collection leaf {ty}")
 
 
-def native_byte_buffer(ty: &RustType) -> bool:
+def native_byte_buffer(ty: Borrowed[RustType]) -> bool:
     """Recognize the byte buffer's native storage after a governed argument preserves Vec[u8] rather than bytes."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
@@ -318,7 +318,7 @@ pub def dictionary_method_signature(
         _ => return Err(f"unsupported Body IR dictionary Method {method:?} on non-dictionary")
 
 
-pub def require_mutable_receiver(arguments: &list[RustArgumentElement]) -> Result[None, str]:
+pub def require_mutable_receiver(arguments: Borrowed[list[RustArgumentElement]]) -> Result[None, str]:
     """Require the frontend's exclusive-access decision before mutating a method receiver."""
     if len(arguments) == 0:
         return Err("unsupported Body IR collection method without receiver")

@@ -49,7 +49,7 @@ pub def encode_entry_binding(entry: str, inputs: list[str]) -> Result[str, str]:
     return to_string(StoredEntry(schema="incan.plan-entry/1", entry=entry, inputs=inputs)).map_err((error) => str(error))
 
 
-pub def encode_record_plan(plan: &Plan) -> Result[str, str]:
+pub def encode_record_plan(plan: Borrowed[Plan]) -> Result[str, str]:
     """
     Encode one complete plan or explicitly refuse a field the codec cannot preserve.
 
@@ -66,7 +66,7 @@ pub def encode_record_plan(plan: &Plan) -> Result[str, str]:
 
 
 pub def encode_record_plan_products(
-    plan: &Plan,
+    plan: Borrowed[Plan],
     functions: list[str],
     references: list[list[NominalReference]] = [],
 ) -> Result[str, str]:
@@ -137,7 +137,7 @@ pub def record_plan_products(encoded: str) -> Result[list[str], str]:
     return Ok(read_plan(encoded).map_err((error) => str(error))?.functions)
 
 
-def interface_nominals(plan: &Plan, references: list[NominalReference]) -> Result[list[ProductNominal], str]:
+def interface_nominals(plan: Borrowed[Plan], references: list[NominalReference]) -> Result[list[ProductNominal], str]:
     """Name each referenced interface declaration by its native declaration name."""
     mut nominals: list[ProductNominal] = []
     for reference in references:

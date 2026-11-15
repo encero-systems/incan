@@ -16,7 +16,7 @@ from table_views import borrowed_at
 
 pub def mutable_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     reference: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -43,7 +43,7 @@ pub def exclusive_referent(reference: PlanType) -> Result[PlanType, str]:
         _ => return Err("invalid Body IR mutable parameter reference")
 
 
-def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, span: SourceSpan) -> Result[Place, str]:
+def argument_source(mut builder: Builder, value: Borrowed[RustOperand], ty: PlanType, span: SourceSpan) -> Result[Place, str]:
     """Select the value to borrow: the argument itself when the caller hands it over, otherwise an owned copy."""
     match value:
         RustOperand.Place(read) =>

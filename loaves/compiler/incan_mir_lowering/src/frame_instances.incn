@@ -45,9 +45,9 @@ from nominal_records import product_nominal_table, sync_carriers
 
 
 def retain_generic_decorator_frames(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     program: ProgramContext,
-    body: &RustBody,
+    body: Borrowed[RustBody],
     arguments: list[RustType],
     owned_callable_slots: list[int],
     unions: list[RustType],
@@ -135,9 +135,9 @@ def retain_generic_decorator_frames(
 
 
 pub def lower_instances(
-    template_constructors: &ConstructorIndex,
-    mut context: &mut BodyIrModule,
-    templates: &BodyIrModule,
+    template_constructors: Borrowed[ConstructorIndex],
+    mut context: BorrowedMut[BodyIrModule],
+    templates: Borrowed[BodyIrModule],
     mut program: ProgramContext,
     mut instances: list[Instance],
     unions: list[RustType],
@@ -261,22 +261,22 @@ pub def lower_instances(
 
 
 def lower_instance_frame(
-    context: &BodyIrModule,
+    context: Borrowed[BodyIrModule],
     program: ProgramContext,
-    request: &Instance,
-    body: &RustBody,
+    request: Borrowed[Instance],
+    body: Borrowed[RustBody],
     role: DecoratorFrame,
     storage_arguments: list[RustType],
     lifetimes: list[list[str]],
     unions: list[RustType],
-    runtime_unions: &list[RustType],
+    runtime_unions: Borrowed[list[RustType]],
     source: str,
     file: str,
     mut intrinsics: list[EnumDeclaration],
     mut functions: list[Function],
     mut names: FunctionNames,
     mut externals: list[ExternalFunction],
-    products: &Option[InstanceProducts],
+    products: Borrowed[Option[InstanceProducts]],
     mut nominals: UnitNominals,
 ) -> Result[list[Instance], str]:
     """
@@ -320,11 +320,11 @@ def lower_instance_frame(
 
 
 def instance_loans(
-    program: &ProgramContext,
-    context: &BodyIrModule,
-    request: &Instance,
-    unions: &list[RustType],
-    intrinsics: &list[EnumDeclaration],
+    program: Borrowed[ProgramContext],
+    context: Borrowed[BodyIrModule],
+    request: Borrowed[Instance],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[EnumDeclaration]],
 ) -> Result[list[GenericLoan], str]:
     """Retain the same canonical argument storage used by native instantiation for signature-loan verification."""
     constructors = program.constructors.as_ref()
@@ -343,7 +343,7 @@ def instance_loans(
     return Ok(generic_loans(request.body, retained))
 
 
-def governed_runtime_module(owners: &list[str]) -> bool:
+def governed_runtime_module(owners: Borrowed[list[str]]) -> bool:
     """Retain the existing runtime-module selection before scheduling its governed source bodies."""
     for owner in owners:
         if owner.startswith("pub::incan_native_runtime::"):
@@ -386,7 +386,7 @@ pub def function_names() -> FunctionNames:
     return FunctionNames(positions=positions, indexed=0)
 
 
-pub def named_functions(mut names: FunctionNames, functions: &list[Function], name: str) -> list[int]:
+pub def named_functions(mut names: FunctionNames, functions: Borrowed[list[Function]], name: str) -> list[int]:
     """Index the rows appended since the last lookup, then return this symbol's positions in list order."""
     while names.indexed < len(functions):
         names.positions.entry(str(borrowed_at(functions, names.indexed).name)).or_insert([]).push(names.indexed)
@@ -483,7 +483,7 @@ pub def merge_indexed(
     return Ok(None)
 
 
-def conflicting_external_signatures(retained: &ExternalFunction, external: &ExternalFunction) -> str:
+def conflicting_external_signatures(retained: Borrowed[ExternalFunction], external: Borrowed[ExternalFunction]) -> str:
     """Keep each conflicting checked signature and source location in the native merge refusal."""
     target = f"unsupported Body IR conflicting native call signatures for {external.path}"
     arguments = f" with {external.type_arguments:?}:"
@@ -494,7 +494,7 @@ def conflicting_external_signatures(retained: &ExternalFunction, external: &Exte
     return target + arguments + prior + prior_location + current + current_location
 
 
-pub def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[EnumDeclaration]) -> bool:
+pub def entry_result(module: Borrowed[BodyIrModule], ty: PlanType, mut intrinsics: list[EnumDeclaration]) -> bool:
     """
     Report whether a native main's result is a `Result` with a unit success, which Rust's entry point reports itself.
 
@@ -517,7 +517,7 @@ pub def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[E
         _ => return false
 
 
-def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
+def entry_error(module: Borrowed[BodyIrModule], ty: PlanType) -> bool:
     """Report whether an entry result's error is text or an SDK crate's model or enum."""
     match ty:
         PlanType.String => return true

@@ -48,7 +48,7 @@ pub model ProgramContext:
     pub observe_work: bool = false
 
 
-pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
+pub def synthetic_program_context(module: Borrowed[BodyIrModule], constructors: Arc[ConstructorIndex]) -> ProgramContext:
     """Keep module storage but no dispatch mappings for external-only synthetic frames."""
     functions: list[DisplayFunction] = []
     comparisons: list[list[str]] = []
@@ -69,17 +69,17 @@ pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[Const
     )
 
 
-pub def body_at(bodies: &list[RustBody], index: int) -> &RustBody:
+pub def body_at(bodies: Borrowed[list[RustBody]], index: int) -> Borrowed[RustBody] from bodies:
     """Close Arc.as_ref's element type at the checked body-index boundary, then borrow its selected entry."""
     return borrowed_at(bodies, index)
 
 
-pub def nominal_at(declarations: &list[NominalDeclaration], index: int) -> &NominalDeclaration:
+pub def nominal_at(declarations: Borrowed[list[NominalDeclaration]], index: int) -> Borrowed[NominalDeclaration] from declarations:
     """Borrow one nominal declaration without copying its fields, methods or default frames; `index` is in range."""
     return borrowed_at(declarations, index)
 
 
-pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule) -> Result[None, str]:
+pub def retain_nominal_tables(mut program: ProgramContext, module: Borrowed[BodyIrModule]) -> Result[None, str]:
     """
     Publish each appended nominal-table generation before its closed frames borrow the new layouts.
 
@@ -100,9 +100,9 @@ pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule
 
 pub def extend_program_context(
     mut program: ProgramContext,
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     constructors: Arc[ConstructorIndex],
-    unions: &list[RustType],
+    unions: Borrowed[list[RustType]],
 ) -> Result[None, str]:
     """Extend retained program lookup/storage generations after runtime resolution without rebuilding dispatch roots."""
     if (

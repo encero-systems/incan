@@ -144,7 +144,7 @@ from rust::std::borrow import Borrow
 from rust::std::path import PathBuf
 
 
-pub def borrowed(value: &PathBuf) -> &PathBuf:
+pub def borrowed(value: Borrowed[PathBuf]) -> Borrowed[PathBuf] from value:
     return value.borrow()
 ```
 
@@ -155,7 +155,7 @@ To disambiguate two imported traits with the same method name, call `Trait.metho
 When a Rust API requires a callback with a borrowed slice parameter, give a named Incan callback the matching borrowed list annotation:
 
 ```incan
-def write_silence(data: &mut list[f32], info: &OutputCallbackInfo) -> None:
+def write_silence(mut data: BorrowedMut[list[f32]], info: Borrowed[OutputCallbackInfo]) -> None:
     pass
 ```
 

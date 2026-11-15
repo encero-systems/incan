@@ -75,9 +75,9 @@ from redo_counts import record_lowering
 
 
 pub def lower_function(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     program: ProgramContext,
-    body: &RustBody,
+    body: Borrowed[RustBody],
     unions: list[RustType],
     source: str,
     file: str,
@@ -94,8 +94,8 @@ pub def lower_function(
     """
     # 1. Validate the source role and declared ABI before creating executable storage.
     constructors = program.constructors.as_ref()
-    nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
-    enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+    nominals: Borrowed[list[RustNominalDeclaration]] = borrowed_table(module.nominal_declarations)
+    enums: Borrowed[list[RustEnumDeclaration]] = borrowed_table(module.enum_declarations)
     span = location(body.span, source, file)
     selected_name = frame_name(evaluator_name(module, body), role)
     record_lowering(program.observe_work, body, selected_name, type_arguments, file)
@@ -190,7 +190,7 @@ pub def lower_function(
     return Ok((function, builder.externals, builder.instances, builder.synthesized))
 
 
-def retained_result_source(body: &RustBody) -> int:
+def retained_result_source(body: Borrowed[RustBody]) -> int:
     """Retain the checked parameter slot for an owned or aggregate result whose native storage carries its loan."""
     match body.returned_view:
         Some(source) =>
@@ -201,8 +201,8 @@ def retained_result_source(body: &RustBody) -> int:
 
 
 def frame_decorator_role(
-    module: &BodyIrModule,
-    body: &RustBody,
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     role: DecoratorFrame,
 ) -> Result[tuple[int, Option[RustCanonicalSymbolId]], str]:
     """Validate matching decorator bindings and select the cached wrapper or initializer for this source role."""
@@ -224,15 +224,15 @@ def frame_decorator_role(
 
 
 def body_builder(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     program: ProgramContext,
-    body: &RustBody,
+    body: Borrowed[RustBody],
     unions: list[RustType],
     source: str,
     file: str,
     mut intrinsics: list[EnumDeclaration],
     type_arguments: list[RustType],
-    parameters: &list[Parameter],
+    parameters: Borrowed[list[Parameter]],
     return_type: PlanType,
     selected_name: str,
     cached_decorator: int,
@@ -310,10 +310,10 @@ def body_builder(
 
 
 def initialize_body_frame(
-    module: &BodyIrModule,
-    body: &RustBody,
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     mut builder: Builder,
-    parameters: &list[Parameter],
+    parameters: Borrowed[list[Parameter]],
     declared_type: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -352,14 +352,14 @@ def initialize_body_frame(
     return Ok(None)
 
 
-def lower_entrypoint_effects(module: &BodyIrModule, mut builder: Builder) -> Result[None, str]:
+def lower_entrypoint_effects(module: Borrowed[BodyIrModule], mut builder: Builder) -> Result[None, str]:
     """Print the entry module's retained setup before its body; project assembly does not merge dependency effects."""
     for effect in module.entrypoint_effects:
         lower_entrypoint_effect(effect, builder)?
     return Ok(None)
 
 
-def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder) -> Result[None, str]:
+def lower_entrypoint_effect(effect: Borrowed[RustEntrypointEffect], mut builder: Builder) -> Result[None, str]:
     """Lower one retained effect; its explicit interop type also preserves the enum import in legacy bake emission."""
     match effect:
         RustEntrypointEffect.PrintText(text=text, span=source_span) =>
@@ -379,9 +379,9 @@ def lower_entrypoint_effect(effect: &RustEntrypointEffect, mut builder: Builder)
 
 
 def producer_return_type(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &RustBody,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     declared: PlanType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
@@ -405,7 +405,7 @@ def producer_return_type(
     return Ok(PlanType.Unit)
 
 
-def reference_value_storage(body: &RustBody, names: list[str], arguments: list[RustType]) -> Result[list[int], str]:
+def reference_value_storage(body: Borrowed[RustBody], names: list[str], arguments: list[RustType]) -> Result[list[int], str]:
     """
     Retain the checked reference-value slots after ordinary type substitution. Receiver origins and borrowed
     parameter representations do not change a source value's logical type and therefore add no slot here.
@@ -424,7 +424,7 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
     return Ok(slots)
 
 
-def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+def frame_scopes(body: Borrowed[RustBody]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
     mut scoped_locals: list[tuple[int, int]] = []
     for local_position in range(len(body.locals)):
@@ -442,9 +442,9 @@ def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int
 
 
 def frame_locals(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &RustBody,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     unions: list[RustType],
     return_type: PlanType,
     span: SourceSpan,
@@ -512,11 +512,11 @@ def frame_locals(
 
 
 def body_frame_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[RustNominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    body: &RustBody,
-    local: &RustLocalDecl,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[RustNominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    body: Borrowed[RustBody],
+    local: Borrowed[RustLocalDecl],
     mut intrinsics: list[EnumDeclaration],
     file: str,
 ) -> Result[PlanType, str]:
@@ -532,11 +532,11 @@ def body_frame_type(
 
 
 pub def frame_parameter_type(
-    constructors: &ConstructorIndex,
-    nominals: &list[RustNominalDeclaration],
-    enums: &list[RustEnumDeclaration],
-    body: &RustBody,
-    parameter: &RustCallableParam,
+    constructors: Borrowed[ConstructorIndex],
+    nominals: Borrowed[list[RustNominalDeclaration]],
+    enums: Borrowed[list[RustEnumDeclaration]],
+    body: Borrowed[RustBody],
+    parameter: Borrowed[RustCallableParam],
     mut intrinsics: list[EnumDeclaration],
     file: str,
 ) -> Result[PlanType, str]:
@@ -555,9 +555,9 @@ pub def frame_parameter_type(
 
 
 pub def frame_parameters(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &RustBody,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[RustBody],
     source: str,
     file: str,
     mut intrinsics: list[EnumDeclaration],

@@ -8,7 +8,7 @@ from rust::std::any import type_name_of_val
 from rust::std::cmp import PartialEq, PartialOrd
 
 
-pub def debug_model[T with Debug](value: &T) -> str:
+pub def debug_model[T with Debug](value: Borrowed[T]) -> str:
     """Render the actual derived Debug implementation, including field order and string escaping."""
     return f"{value:?}"
 
@@ -28,48 +28,48 @@ pub def display_type_parameter[T with Display](value: T) -> str:
     return display_value(value)
 
 
-pub def equal_model[T with PartialEq[T]](left: &T, right: &T) -> bool:
+pub def equal_model[T with PartialEq[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Compare without consuming either model: 1. Borrow both values for derived PartialEq equality."""
     # 1. Borrow both values for derived equality.
     return PartialEq.eq(left, right)
 
 
-pub def unequal_model[T with PartialEq[T]](left: &T, right: &T) -> bool:
+pub def unequal_model[T with PartialEq[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Preserve derived inequality: 1. Borrow both values for PartialEq inequality."""
     # 1. Borrow both values for derived inequality.
     return PartialEq.ne(left, right)
 
 
-pub def less_model[T with PartialOrd[T]](left: &T, right: &T) -> bool:
+pub def less_model[T with PartialOrd[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Preserve derived partial ordering: 1. Borrow both values for a less-than comparison."""
     # 1. Borrow both values for a less-than comparison.
     return PartialOrd.lt(left, right)
 
 
-pub def less_equal_model[T with PartialOrd[T]](left: &T, right: &T) -> bool:
+pub def less_equal_model[T with PartialOrd[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Preserve unordered field results: 1. Borrow both values for a less-than-or-equal comparison."""
     # 1. Borrow both values for a less-than-or-equal comparison.
     return PartialOrd.le(left, right)
 
 
-pub def greater_model[T with PartialOrd[T]](left: &T, right: &T) -> bool:
+pub def greater_model[T with PartialOrd[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Preserve derived greater-than behavior: 1. Borrow both values for comparison."""
     # 1. Borrow both values for comparison.
     return PartialOrd.gt(left, right)
 
 
-pub def greater_equal_model[T with PartialOrd[T]](left: &T, right: &T) -> bool:
+pub def greater_equal_model[T with PartialOrd[T]](left: Borrowed[T], right: Borrowed[T]) -> bool:
     """Preserve derived greater-than-or-equal behavior: 1. Borrow both values for comparison."""
     # 1. Borrow both values for comparison.
     return PartialOrd.ge(left, right)
 
 
-pub def serialize_model[T with Serialize](value: &T) -> str:
+pub def serialize_model[T with Serialize](value: Borrowed[T]) -> str:
     """Use the same serde stringify and structured error boundary as the legacy JSON protocol default."""
     return stringify_or_raise(value, type_name_of_val(value))
 
 
-pub def deserialize_model[T with DeserializeOwned](text: &str) -> Result[T, str]:
+pub def deserialize_model[T with DeserializeOwned](text: Borrowed[str]) -> Result[T, str]:
     """Parse through the same serde decoding and error text as legacy's derived `from_json`."""
     return parse_or_error(text)
 
@@ -92,7 +92,7 @@ pub def serialize_bool(value: bool) -> str:
     return stringify_or_raise(value, type_name_of_val(value))
 
 
-pub def serialize_string(value: &str) -> str:
+pub def serialize_string(value: Borrowed[str]) -> str:
     """Serialize borrowed text: 1. Use serde's escaping while retaining its source owner."""
     # 1. Borrow the original owner through the native serializer.
     return stringify_or_raise(value, type_name_of_val(value))

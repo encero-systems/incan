@@ -664,7 +664,7 @@ def write_page(writer: PageWriter, page: Page) -> Result[str, IndexError]:
     return Ok(writer.place(data))
 
 
-def placed_page(data: bytes, mut state: &mut PackState) -> str:
+def placed_page(data: bytes, mut state: BorrowedMut[PackState]) -> str:
     """Append a page to the pack unless equal bytes already lie in it; returns its reference inside the pack."""
     digest = hexlify(sha256.digest(data))
     if digest in state.placed:
@@ -700,7 +700,7 @@ pub def install_pack(root: Path, writer: PageWriter, staged: Path) -> Result[str
     return Ok(name)
 
 
-def pack_bytes(state: &PackState) -> bytes:
+def pack_bytes(state: Borrowed[PackState]) -> bytes:
     """The pages of a pack, in the order they were placed."""
     mut data: list[u8] = []
     for page in state.pages:

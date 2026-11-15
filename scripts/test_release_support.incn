@@ -592,7 +592,7 @@ def refused_baseline(baseline: str, log: str) -> str:
         Err(message) => return message
 
 
-def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) -> str:
+def candidate_refusal(reference: Borrowed[BaselineReport], candidate: Borrowed[BaselineReport]) -> str:
     """Return one candidate-census refusal for concise assertions."""
     match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"

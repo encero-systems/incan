@@ -24,7 +24,7 @@ from rust::incan_std_primitives::strings import (
 from lists import optional_index
 
 
-pub def slice_text(value: &str, has_start: bool, start: int, has_end: bool, end: int, has_step: bool, step: int) -> str:
+pub def slice_text(value: Borrowed[str], has_start: bool, start: int, has_end: bool, end: int, has_step: bool, step: int) -> str:
     """Copy a Unicode slice through legacy's core helper, preserving omitted bounds, steps, and errors."""
     return runtime_slice(
         value,
@@ -34,98 +34,98 @@ pub def slice_text(value: &str, has_start: bool, start: int, has_end: bool, end:
     )
 
 
-pub def slice_text_bounds(value: &str, start: int, end: int) -> str:
+pub def slice_text_bounds(value: Borrowed[str], start: int, end: int) -> str:
     """Copy a Unicode-scalar slice through legacy's core function, preserving both signed endpoints."""
     return runtime_slice(value, Some(start), Some(end), None)
 
 
-pub def starts_text(value: &str, prefix: &str) -> bool:
+pub def starts_text(value: Borrowed[str], prefix: Borrowed[str]) -> bool:
     """Match a borrowed prefix through the same core function as legacy string methods."""
     return runtime_starts(value, prefix)
 
 
-pub def ends_text(value: &str, suffix: &str) -> bool:
+pub def ends_text(value: Borrowed[str], suffix: Borrowed[str]) -> bool:
     """Match a borrowed suffix through the same core function as legacy string methods."""
     return runtime_ends(value, suffix)
 
 
-pub def concat_text(left: &str, right: &str) -> str:
+pub def concat_text(left: Borrowed[str], right: Borrowed[str]) -> str:
     """Concatenate shared text with the same helper selected by legacy emission."""
     return runtime_concat(left, right)
 
 
-pub def equal_text(left: &str, right: &str) -> bool:
+pub def equal_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text for equality through the canonical string runtime."""
     return runtime_equal(left, right)
 
 
-pub def unequal_text(left: &str, right: &str) -> bool:
+pub def unequal_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text for inequality through the canonical string runtime."""
     return runtime_unequal(left, right)
 
 
-pub def less_text(left: &str, right: &str) -> bool:
+pub def less_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text in lexical order through the canonical string runtime."""
     return runtime_less(left, right)
 
 
-pub def less_equal_text(left: &str, right: &str) -> bool:
+pub def less_equal_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text in inclusive lexical order through the canonical string runtime."""
     return runtime_less_equal(left, right)
 
 
-pub def greater_text(left: &str, right: &str) -> bool:
+pub def greater_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text in reverse lexical order through the canonical string runtime."""
     return runtime_greater(left, right)
 
 
-pub def greater_equal_text(left: &str, right: &str) -> bool:
+pub def greater_equal_text(left: Borrowed[str], right: Borrowed[str]) -> bool:
     """Compare shared text in inclusive reverse lexical order through the canonical string runtime."""
     return runtime_greater_equal(left, right)
 
 
-pub def length_text(value: &str) -> int:
+pub def length_text(value: Borrowed[str]) -> int:
     """Retain the canonical str_len runtime contract on shared text."""
     return runtime_length_text(value)
 
 
-pub def upper_text(value: &str) -> str:
+pub def upper_text(value: Borrowed[str]) -> str:
     """Retain the canonical str_upper runtime contract on shared text."""
     return runtime_upper_text(value)
 
 
-pub def lower_text(value: &str) -> str:
+pub def lower_text(value: Borrowed[str]) -> str:
     """Retain the canonical str_lower runtime contract on shared text."""
     return runtime_lower_text(value)
 
 
-pub def strip_text(value: &str) -> str:
+pub def strip_text(value: Borrowed[str]) -> str:
     """Retain the canonical str_strip runtime contract on shared text."""
     return runtime_strip_text(value)
 
 
-pub def replace_text(value: &str, old: &str, replacement: &str) -> str:
+pub def replace_text(value: Borrowed[str], old: Borrowed[str], replacement: Borrowed[str]) -> str:
     """Retain the canonical str_replace runtime contract on shared text."""
     return runtime_replace_text(value, old, replacement)
 
 
-pub def contains_text(value: &str, needle: &str) -> bool:
+pub def contains_text(value: Borrowed[str], needle: Borrowed[str]) -> bool:
     """Retain the canonical str_contains runtime contract on shared text."""
     return runtime_contains_text(value, needle)
 
 
-pub def split_text(value: &str, separator: &str) -> list[str]:
+pub def split_text(value: Borrowed[str], separator: Borrowed[str]) -> list[str]:
     """Use legacy splitting, including empty separators and retained empty pieces."""
     return runtime_split(value, Some(separator))
 
 
-pub def split_default_text(value: &str) -> list[str]:
+pub def split_default_text(value: Borrowed[str]) -> list[str]:
     """An omitted separator retains the entire input as one piece in legacy."""
     separator: Option[str] = None
     return runtime_split(value, separator)
 
 
-pub def split_whitespace_text(value: &str) -> list[str]:
+pub def split_whitespace_text(value: Borrowed[str]) -> list[str]:
     """Materialize Rust's Unicode whitespace iterator as owned strings, without empty pieces."""
     mut pieces: list[str] = []
     for piece in RustStr.split_whitespace(value):
@@ -133,11 +133,11 @@ pub def split_whitespace_text(value: &str) -> list[str]:
     return pieces
 
 
-pub def join_text(separator: &str, values: &list[str]) -> str:
+pub def join_text(separator: Borrowed[str], values: Borrowed[list[str]]) -> str:
     """Join borrowed strings with the legacy separator contract."""
     return runtime_join(separator, values)
 
 
-pub def not_contains_text(value: &str, needle: &str) -> bool:
+pub def not_contains_text(value: Borrowed[str], needle: Borrowed[str]) -> bool:
     """Preserve the canonical negated substring containment contract."""
     return not runtime_contains_text(value, needle)

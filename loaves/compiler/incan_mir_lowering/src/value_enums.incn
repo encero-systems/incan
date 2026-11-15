@@ -18,9 +18,9 @@ from models import model_place, place_type
 
 
 pub def value_variant(
-    layouts: &list[EnumDeclaration],
-    declarations: &list[ValueEnumDeclaration],
-    target: &ValueEnumVariantTarget,
+    layouts: Borrowed[list[EnumDeclaration]],
+    declarations: Borrowed[list[ValueEnumDeclaration]],
+    target: Borrowed[ValueEnumVariantTarget],
 ) -> Result[tuple[int, int], str]:
     """Require both the canonical raw-value member and its identical native unit layout."""
     for declaration_position in range(len(declarations)):
@@ -49,7 +49,7 @@ pub def value_variant(
     return Err("unsupported Body IR unretained value enum variant")
 
 
-pub def validate_layout(layout: &EnumDeclaration, declaration: &ValueEnumDeclaration) -> Result[None, str]:
+pub def validate_layout(layout: Borrowed[EnumDeclaration], declaration: Borrowed[ValueEnumDeclaration]) -> Result[None, str]:
     """Cross-check source order and unit carriers before using native tags to select raw values."""
     if (
         layout.canonical != declaration.canonical
@@ -72,15 +72,15 @@ pub def validate_layout(layout: &EnumDeclaration, declaration: &ValueEnumDeclara
 
 
 pub def value_method_owner(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    target: &MethodTarget,
-    locals: &list[Local],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    target: Borrowed[MethodTarget],
+    locals: Borrowed[list[Local]],
     offset: int,
-    argument: &ArgumentElement,
+    argument: Borrowed[ArgumentElement],
     span: SourceSpan,
-    unions: &list[RustType],
-    intrinsics: &list[NativeEnumDeclaration],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[NativeEnumDeclaration]],
 ) -> Result[Option[int], str]:
     """Admit the getter under its owner's span; declared methods and authenticated SDK trait calls retain their own paths."""
     if target.loaf_trait != None:
@@ -103,7 +103,7 @@ pub def value_method_owner(
     return Ok(None)
 
 
-pub def value_enum_from_value_owner(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[Option[int], str]:
+pub def value_enum_from_value_owner(module: Borrowed[BodyIrModule], target: Borrowed[NamedCallableTarget]) -> Result[Option[int], str]:
     """Admit the checker-generated `from_value()` member only for its exact value enum owner."""
     match target.canonical:
         Some(identity) =>
@@ -128,15 +128,15 @@ pub def value_enum_from_value_owner(module: &BodyIrModule, target: &NamedCallabl
 
 
 pub def enum_message_layout(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    target: &MethodTarget,
-    locals: &list[Local],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    target: Borrowed[MethodTarget],
+    locals: Borrowed[list[Local]],
     offset: int,
-    argument: &ArgumentElement,
+    argument: Borrowed[ArgumentElement],
     span: SourceSpan,
-    unions: &list[RustType],
-    intrinsics: &list[NativeEnumDeclaration],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[NativeEnumDeclaration]],
 ) -> Result[Option[int], str]:
     """
     Admit the checker-generated `message()` member only for its exact source enum owner, value enums included.
@@ -169,14 +169,14 @@ pub def enum_message_layout(
 
 
 def receiver_layout(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    locals: &list[Local],
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    locals: Borrowed[list[Local]],
     offset: int,
-    argument: &ArgumentElement,
+    argument: Borrowed[ArgumentElement],
     span: SourceSpan,
-    unions: &list[RustType],
-    intrinsics: &list[NativeEnumDeclaration],
+    unions: Borrowed[list[RustType]],
+    intrinsics: Borrowed[list[NativeEnumDeclaration]],
 ) -> Result[int, str]:
     """
     Read the enum carrier from the receiver place; other carriers keep their ordinary method path.

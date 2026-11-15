@@ -12,8 +12,8 @@ from calls import instantiated_external_call
 
 pub def lower_newtype_hook_result(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     aggregate_field: bool,
     span: SourceSpan,
 ) -> Result[None, str]:

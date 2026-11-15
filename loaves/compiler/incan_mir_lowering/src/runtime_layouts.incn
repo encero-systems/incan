@@ -13,8 +13,8 @@ from table_views import borrowed_at, borrowed_table
 
 
 pub def runtime_zip_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[ZipCarrier], str]:
     """Select zip storage: 1. Read its published result identity. 2. Retain that declaration's closed carriers."""
@@ -27,7 +27,7 @@ pub def runtime_zip_carriers(
             return closed_zip_carriers(constructors, module, owner, intrinsics)
 
 
-def zip_result_identity(result: &RustType, body: &Body) -> Result[CanonicalSymbolId, str]:
+def zip_result_identity(result: Borrowed[RustType], body: Borrowed[Body]) -> Result[CanonicalSymbolId, str]:
     """Require the zip declaration's checked nominal result and its exact published owner binding."""
     match result:
         RustType.Generic(base=base, args=arguments) =>
@@ -40,9 +40,9 @@ def zip_result_identity(result: &RustType, body: &Body) -> Result[CanonicalSymbo
 
 
 def closed_zip_carriers(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    owner: &CanonicalSymbolId,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    owner: Borrowed[CanonicalSymbolId],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[ZipCarrier], str]:
     """Associate builtin element layouts only with closed instances of the source result's canonical declaration."""
@@ -52,7 +52,7 @@ def closed_zip_carriers(
     enums = borrowed_table(module.enum_declarations)
     for index in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, index)
-        candidate: &CanonicalSymbolId = declaration.canonical
+        candidate: Borrowed[CanonicalSymbolId] = declaration.canonical
         if candidate != owner or len(declaration.native_type_arguments) != 2:
             continue
         left = declaration.native_type_arguments[0]

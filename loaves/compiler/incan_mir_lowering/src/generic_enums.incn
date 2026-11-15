@@ -17,9 +17,9 @@ from symbols import model_symbol
 
 
 pub def generic_enums(
-    constructors: &ConstructorIndex,
-    source: &BodyIrModule,
-    closed: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    source: Borrowed[BodyIrModule],
+    closed: Borrowed[BodyIrModule],
     mut layouts: list[EnumDeclaration],
     intrinsics: list[EnumDeclaration],
     file: str,
@@ -63,15 +63,15 @@ def published(declaration: RustEnumDeclaration, closed: BodyIrModule, referenced
     return len(closed_instances(declaration, closed)) > 0
 
 
-def closed_instances(declaration: RustEnumDeclaration, closed: &BodyIrModule) -> list[RustEnumDeclaration]:
+def closed_instances(declaration: RustEnumDeclaration, closed: Borrowed[BodyIrModule]) -> list[RustEnumDeclaration]:
     """The closed instances of `declaration` the library lowered, such as `Pair[int]` for `Pair[T]`."""
     return [instance for instance in closed.enum_declarations if instance.canonical == declaration.canonical]
 
 
 def template_variants(
-    constructors: &ConstructorIndex,
-    source: &BodyIrModule,
-    declaration: &RustEnumDeclaration,
+    constructors: Borrowed[ConstructorIndex],
+    source: Borrowed[BodyIrModule],
+    declaration: Borrowed[RustEnumDeclaration],
 ) -> Result[list[GenericEnumVariant], str]:
     """Each variant of `declaration`, its fields typed over the declaration's own type parameters."""
     mut variants: list[GenericEnumVariant] = []
@@ -84,9 +84,9 @@ def template_variants(
 
 
 def alias_instances(
-    constructors: &ConstructorIndex,
-    declaration: &RustEnumDeclaration,
-    closed: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    declaration: Borrowed[RustEnumDeclaration],
+    closed: Borrowed[BodyIrModule],
     mut layouts: list[EnumDeclaration],
     intrinsics: list[EnumDeclaration],
 ) -> Result[list[str], str]:
@@ -117,9 +117,9 @@ def alias_instances(
 
 
 def instance_arguments(
-    constructors: &ConstructorIndex,
-    closed: &BodyIrModule,
-    instance: &RustEnumDeclaration,
+    constructors: Borrowed[ConstructorIndex],
+    closed: Borrowed[BodyIrModule],
+    instance: Borrowed[RustEnumDeclaration],
     intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """The exact native type arguments of one closed instance, which its alias applies to the template."""

@@ -64,8 +64,8 @@ def value_enum_receiver_place(
 pub def lower_value_enum_method(
     mut builder: Builder,
     owner: int,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Select the retained raw value by native tag, preserving repeated reads and text ownership."""
@@ -105,11 +105,11 @@ pub def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
 
 
 pub def lower_value_enum_ordinal_encoding(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &RustNamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[RustNamedCallableTarget],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Retain the declaring module and ordered raw-value schema for an authenticated source OrdinalKey slot."""
@@ -260,8 +260,8 @@ def tag_branches(mut builder: Builder, source: Place, count: int, span: SourceSp
 pub def lower_value_enum_from_value(
     mut builder: Builder,
     owner: int,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -356,8 +356,8 @@ def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, spa
 pub def lower_enum_message(
     mut builder: Builder,
     index: int,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Spell the name of the variant a source enum holds, as the generated `message()` does."""

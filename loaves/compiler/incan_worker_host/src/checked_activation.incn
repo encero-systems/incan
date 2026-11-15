@@ -42,7 +42,7 @@ pub def stage_checking_result(
     home: str,
     snapshot: str,
     value: bytes,
-    receipt: &ReadReceipt,
+    receipt: Borrowed[ReadReceipt],
     semantic: str,
 ) -> Result[Produced, str]:
     """Stage one checking-family value and its canonical evidence pages, then return only their content roots."""

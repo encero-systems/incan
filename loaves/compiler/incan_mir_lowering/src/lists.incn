@@ -37,7 +37,7 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
     return leaf_type(leaf)
 
 
-pub def list_iterator_locals(block: &RustBlock) -> list[int]:
+pub def list_iterator_locals(block: Borrowed[RustBlock]) -> list[int]:
     """Select all builtin cursor storage; the checked initializer separately chooses borrowed or consuming storage."""
     mut result: list[int] = []
     # Borrow each statement: a copied statement would copy every block nested inside it.
@@ -46,7 +46,7 @@ pub def list_iterator_locals(block: &RustBlock) -> list[int]:
     return result
 
 
-pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
+pub def statement_iterator_locals(kind: Borrowed[RustStatementKind]) -> list[int]:
     """Inspect the typed canonical statement enum, including nested checked control-flow blocks."""
     mut result: list[int] = []
     match kind:
@@ -59,7 +59,7 @@ pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
                             None => pass
                     _ => pass
         RustStatementKind.Assign(place=_place, rvalue=value) =>
-            matched_value: &RustRvalue = value
+            matched_value: Borrowed[RustRvalue] = value
             match matched_value:
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
                     for arm in arms:
@@ -178,7 +178,7 @@ pub def taking_iterator_locals(block: RustBlock) -> list[int]:
     return taking_block_locals(block, list_iterator_locals(block))
 
 
-def taking_block_locals(block: &RustBlock, iterators: list[int]) -> list[int]:
+def taking_block_locals(block: Borrowed[RustBlock], iterators: list[int]) -> list[int]:
     """Keep the enclosing frame's poll set when an initializer and its poll occupy different nested blocks."""
     mut result: list[int] = []
     for position in range(len(block.stmts)):
@@ -186,12 +186,12 @@ def taking_block_locals(block: &RustBlock, iterators: list[int]) -> list[int]:
     return result
 
 
-def taking_statement_locals(kind: &RustStatementKind, iterators: list[int]) -> list[int]:
+def taking_statement_locals(kind: Borrowed[RustStatementKind], iterators: list[int]) -> list[int]:
     """Visit same-frame statements without crossing a closure or generator's separate local arena."""
     mut result: list[int] = []
     match kind:
         RustStatementKind.Assign(place=destination, rvalue=value) =>
-            matched_value: &RustRvalue = value
+            matched_value: Borrowed[RustRvalue] = value
             match matched_value:
                 RustRvalue.Use(RustOperand.Place(read)) =>
                     if read.fact == OwnershipFact.Move:

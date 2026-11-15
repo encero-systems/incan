@@ -350,7 +350,7 @@ pub def unit_nominals(
     )
 
 
-pub def resolve_nominals(stored: &list[ProductNominal], unit: &UnitNominals) -> Option[list[NominalReference]]:
+pub def resolve_nominals(stored: Borrowed[list[ProductNominal]], unit: Borrowed[UnitNominals]) -> Option[list[NominalReference]]:
     """
     Find the current position and native name of each declaration a product names.
 
@@ -379,7 +379,7 @@ pub def resolve_nominals(stored: &list[ProductNominal], unit: &UnitNominals) -> 
     return Some(references)
 
 
-pub def describe_nominals(references: &list[NominalReference], unit: &UnitNominals) -> Result[list[ProductNominal], str]:
+pub def describe_nominals(references: Borrowed[list[NominalReference]], unit: Borrowed[UnitNominals]) -> Result[list[ProductNominal], str]:
     """
     Name each referenced unit position by its declaration.
 

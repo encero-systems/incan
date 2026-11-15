@@ -347,7 +347,7 @@ pub def println_text(value: str) -> None:
         Err(error) => panic_any(f"failed printing to stdout: {error}")
 
 
-pub def clone_text(value: &str) -> str:
+pub def clone_text(value: Borrowed[str]) -> str:
     """Create the owned display text for an already formatted borrowed string."""
     return RustString.from(value)
 
@@ -391,6 +391,6 @@ pub def debug_unit(value: None) -> str:
     return f"{value:?}"
 
 
-pub def debug_text(value: &str) -> str:
+pub def debug_text(value: Borrowed[str]) -> str:
     """Quote and escape text with the legacy tuple debug formatter."""
     return f"{value:?}"

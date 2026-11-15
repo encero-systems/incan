@@ -106,7 +106,7 @@ pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: Sou
 
 pub def checked_list_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -159,7 +159,7 @@ pub def checked_list_argument(
         _ => return Err("unsupported Body IR constant list argument")
 
 
-def has_slice_projection(source: &RustPlace) -> bool:
+def has_slice_projection(source: Borrowed[RustPlace]) -> bool:
     """Recognize a projection that materializes a fresh sequence owner instead of naming stored element storage."""
     for projection in source.projection:
         match projection:
@@ -186,7 +186,7 @@ pub def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Re
     return Ok(output)
 
 
-pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def value_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Materialize owned list and string values using each checked read's fact."""
     match value:
         RustOperand.Constant(constant) =>
@@ -311,7 +311,7 @@ pub def indexed_read(mut builder: Builder, source: RustPlace, span: SourceSpan) 
 
 pub def projected_element_read(
     mut builder: Builder,
-    source: &RustPlace,
+    source: Borrowed[RustPlace],
     container: Place,
     start: int,
     span: SourceSpan,
@@ -461,7 +461,7 @@ pub def read_list_element(
     return Ok(output)
 
 
-def sequence_slice_bounds(mut builder: Builder, projection: &PlaceElem, span: SourceSpan) -> Result[list[Operand], str]:
+def sequence_slice_bounds(mut builder: Builder, projection: Borrowed[PlaceElem], span: SourceSpan) -> Result[list[Operand], str]:
     """Read each retained slice bound once, retaining the distinction between omitted and written zero."""
     mut bounds: list[Operand] = []
     # Each component travels with its presence, so an omitted bound or step keeps the slice default.
@@ -538,7 +538,7 @@ def read_list_slice(mut builder: Builder, place: Place, projection: PlaceElem, s
 def read_element_field(
     mut builder: Builder,
     place: Place,
-    projection: &PlaceElem,
+    projection: Borrowed[PlaceElem],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Read a list element field, copying shared references and scalar values while cloning owned values."""
@@ -617,7 +617,7 @@ def element_field_is_owned(builder: Builder, field: Place) -> bool:
     return ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
 
 
-def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
+def slice_bound(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[list[Operand], str]:
     """Pass a written slice bound or step as a present int component, presence flag first as `slice_list` takes it."""
     operand = scalar_operand(builder, value, span)?
     if operand_type(builder, operand)? != PlanType.Int:
@@ -630,7 +630,7 @@ def absent_slice_bound(span: SourceSpan) -> list[Operand]:
     return [literal(Constant.Bool(false), span), literal(Constant.Int(0), span)]
 
 
-pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def list_base_place(mut builder: Builder, source: Borrowed[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """Map one collection root, materializing immutable frozen wrappers into the owned list used by every read path."""
     match source.global():
         Some(global) =>
@@ -789,7 +789,7 @@ pub def frozen_list_assignment(
 def splice_list_spread(
     mut builder: Builder,
     output: Place,
-    item: &RustArgumentElement,
+    item: Borrowed[RustArgumentElement],
     leaf: ListLeaf,
     depth: int,
     span: SourceSpan,
@@ -829,7 +829,7 @@ def splice_list_spread(
         _ => return Err("unsupported Body IR named list element")
 
 
-def tuple_spread_place(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+def tuple_spread_place(mut builder: Builder, source: Borrowed[RustOperand], span: SourceSpan) -> Result[Option[Place], str]:
     """Select a spread source that is a whole tuple local; every other source splices as a list."""
     match source:
         RustOperand.Place(read) =>

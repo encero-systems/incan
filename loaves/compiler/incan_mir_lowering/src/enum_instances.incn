@@ -16,7 +16,7 @@ model EnumInstance:
     ancestors: list[str]
 
 
-pub def specialized_enum_layouts(module: &BodyIrModule) -> Result[list[EnumDeclaration], str]:
+pub def specialized_enum_layouts(module: Borrowed[BodyIrModule]) -> Result[list[EnumDeclaration], str]:
     """
     Close the enum payload layouts a module's checked types use; open templates never become physical declarations.
 
@@ -63,15 +63,15 @@ pub def specialized_enum_layouts(module: &BodyIrModule) -> Result[list[EnumDecla
     return Ok(layouts)
 
 
-pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
+pub def specialize_enums(mut module: BorrowedMut[BodyIrModule]) -> Result[None, str]:
     """Replace generic enum templates in place with every closed layout selected from the joined context."""
     module.enum_declarations = specialized_enum_layouts(module)?
     return Ok(None)
 
 
 def collect_type(
-    module: &BodyIrModule,
-    ty: &RustType,
+    module: Borrowed[BodyIrModule],
+    ty: Borrowed[RustType],
     mut instances: list[EnumInstance],
     ancestors: list[str],
 ) -> Result[None, str]:

@@ -119,7 +119,7 @@ pub def cloned_collection(mut builder: Builder, place: Place, span: SourceSpan) 
 pub def collection_assignment(
     mut builder: Builder,
     destination: Place,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Read checked literal operands before the collection module constructs their exact layout."""
@@ -192,8 +192,8 @@ pub def collection_length(
 pub def collection_contains(
     mut builder: Builder,
     negated: bool,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve haystack-first membership, copying an indexed collection receiver before its shared read."""
@@ -325,8 +325,8 @@ pub def dictionary_entry_assignment(
 pub def set_method(
     mut builder: Builder,
     method: RustSetMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower one checker-selected set operation without interpreting canonical text."""
@@ -338,8 +338,8 @@ pub def set_method(
 pub def dictionary_method(
     mut builder: Builder,
     method: RustDictMethodId,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Lower one checker-selected dictionary operation without interpreting canonical text."""
@@ -367,8 +367,8 @@ pub def dictionary_method(
 def collection_insert_method(
     mut builder: Builder,
     member: str,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -402,8 +402,8 @@ def collection_insert_method(
 def optional_dictionary_get(
     mut builder: Builder,
     receiver: Place,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Copy a present value into the checked Option destination, replacing that destination's earlier value."""

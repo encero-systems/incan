@@ -46,14 +46,14 @@ def source_iterator(body: RustGeneratorBody) -> Result[int, str]:
         _ => return Err("unsupported Body IR generator expression source protocol")
 
 
-def reads_local(value: &RustRvalue, local: int) -> bool:
+def reads_local(value: Borrowed[RustRvalue], local: int) -> bool:
     """Recognize a plain whole read of one Body IR local."""
     match value:
         RustRvalue.Use(operand) => return operand_reads(operand, local)
         _ => return false
 
 
-def operand_reads(value: &RustOperand, local: int) -> bool:
+def operand_reads(value: Borrowed[RustOperand], local: int) -> bool:
     """Recognize an operand reading one whole Body IR local."""
     match value:
         RustOperand.Place(read) =>

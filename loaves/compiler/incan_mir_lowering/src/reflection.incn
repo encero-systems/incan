@@ -50,9 +50,9 @@ from reflection_carriers import is_field_metadata_carrier
 
 pub def lower_reflection(
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Admit only a retained generated operation and an eligible checked nominal field policy."""
@@ -121,9 +121,9 @@ pub def lower_reflection(
 
 pub def lower_field_metadata(
     mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Use checked generated ownership before substitution and the concrete declaration's retained public metadata."""
@@ -167,9 +167,9 @@ pub def lower_field_metadata(
 
 pub def lower_static_field_metadata(
     mut builder: Builder,
-    target: &NamedCallableTarget,
-    arguments: &list[ArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[NamedCallableTarget],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Use the checked static owner and generated member identity; authored methods have their own independent spans."""
@@ -399,7 +399,7 @@ def reflect_value(
     receiver: Place,
     fields: list[int],
     string: bool,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:

@@ -20,8 +20,8 @@ from table_views import borrowed_at, borrowed_table
 
 
 pub def iterator_methods(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     owner: int,
     native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
@@ -122,11 +122,11 @@ pub def standard_protocol(identity: CanonicalSymbolId) -> bool:
 
 
 def poll_abi(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-    body: &Body,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
+    body: Borrowed[Body],
     owner: int,
-    item: &RustType,
+    item: Borrowed[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[bool, str]:
     """Require the unique concrete mutable receiver, exact Option[item] result, and a fully retained poll body."""

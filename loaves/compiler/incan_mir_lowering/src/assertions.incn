@@ -58,9 +58,9 @@ pub def lower_assertion(
 
 def lower_raises_assertion(
     mut builder: Builder,
-    call: &RustOperand,
+    call: Borrowed[RustOperand],
     expected: ErrorKind,
-    message: &Option[RustOperand],
+    message: Borrowed[Option[RustOperand]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Reify a checked zero-argument unit function and retain only effect-free literal messages."""
@@ -105,7 +105,7 @@ def lower_raises_assertion(
     return Ok(None)
 
 
-def lower_failure(mut builder: Builder, message: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
+def lower_failure(mut builder: Builder, message: Borrowed[Option[RustOperand]], span: SourceSpan) -> Result[None, str]:
     """Transfer the failure payload to the unwinding runtime and close the unreachable normal continuation."""
     mut text = temporary(builder, PlanType.String, span)
     match message:
@@ -129,9 +129,9 @@ def lower_failure(mut builder: Builder, message: &Option[RustOperand], span: Sou
 
 def lower_pattern_assertion(
     mut builder: Builder,
-    scrutinee: &RustOperand,
-    pattern: &RustPattern,
-    message: &Option[RustOperand],
+    scrutinee: Borrowed[RustOperand],
+    pattern: Borrowed[RustPattern],
+    message: Borrowed[Option[RustOperand]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """

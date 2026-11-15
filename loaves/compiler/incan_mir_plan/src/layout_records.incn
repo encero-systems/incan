@@ -564,7 +564,7 @@ def restore_optional_checked_type(value: Option[StoredLayoutCheckedType]) -> Res
         Some(item) => return Ok(Some(restore_checked_type(item)?))
 
 
-pub def encode_models(values: &list[ModelDeclaration]) -> Result[list[str], str]:
+pub def encode_models(values: Borrowed[list[ModelDeclaration]]) -> Result[list[str], str]:
     """Encode complete models inventories in their native order."""
     mut encoded: list[str] = []
     for value in values:
@@ -585,7 +585,7 @@ def read_model_declaration(value: str) -> Result[StoredLayoutModelDeclaration, J
     return from_str(value)
 
 
-pub def encode_enums(values: &list[EnumDeclaration]) -> Result[list[str], str]:
+pub def encode_enums(values: Borrowed[list[EnumDeclaration]]) -> Result[list[str], str]:
     """Encode complete enums inventories in their native order."""
     mut encoded: list[str] = []
     for value in values:
@@ -606,7 +606,7 @@ def read_enum_declaration(value: str) -> Result[StoredLayoutEnumDeclaration, Jso
     return from_str(value)
 
 
-pub def encode_zip_carriers(values: &list[ZipCarrier]) -> Result[list[str], str]:
+pub def encode_zip_carriers(values: Borrowed[list[ZipCarrier]]) -> Result[list[str], str]:
     """Encode complete zip_carriers inventories in their native order."""
     mut encoded: list[str] = []
     for value in values:

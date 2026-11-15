@@ -18,7 +18,7 @@ from record_positions import place_positions, relocate_product
 from scalar_store import event_positions, event_references, finalize_scalar, report_scalar_refusal
 
 
-pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
+pub def publish_plan_records(plan: Borrowed[Plan], products: str, report: str) -> Result[None, str]:
     """Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation."""
     report_path = Path(report)
     events = scalar_events(report_path)?
@@ -92,10 +92,10 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
 
 
 def keyed_plan_products(
-    plan: &Plan,
+    plan: Borrowed[Plan],
     products: str,
     report: Path,
-    events: &list[JsonValue],
+    events: Borrowed[list[JsonValue]],
     mut references: list[list[NominalReference]],
     mut carried: list[str],
 ) -> Result[list[str], str]:
@@ -133,7 +133,7 @@ def keyed_plan_products(
     return Ok(keyed)
 
 
-def witnessed(events: &list[JsonValue], function: str) -> bool:
+def witnessed(events: Borrowed[list[JsonValue]], function: str) -> bool:
     """Whether a producer event names this plan function."""
     for event in events:
         if text(event, "function").unwrap_or("") == function:
@@ -158,7 +158,7 @@ def has_scalar_refusal(report: Path) -> Result[bool, str]:
     return Ok(false)
 
 
-def ordinary_entry(plan: &Plan) -> Result[str, str]:
+def ordinary_entry(plan: Borrowed[Plan]) -> Result[str, str]:
     """Select the same standalone synchronous unit main admitted by existing lowering; other entry roles refuse."""
     if len(plan.programs) != 0 and plan.programs != ["main"]:
         return Err("plan-function(entry) refuses a non-standalone program selection")
@@ -193,7 +193,7 @@ def write(path: Path, value: JsonValue) -> Result[None, str]:
     return path.write_text(encoded, "utf-8", "strict", None).map_err((error) => error.message())
 
 
-def carried_frames(plan: &Plan, record: str, mut carried: list[str]) -> Result[list[Function], str]:
+def carried_frames(plan: Borrowed[Plan], record: str, mut carried: list[str]) -> Result[list[Function], str]:
     """Select, in a product's order, the whole-plan helper frames it carries, and record their names."""
     payload = text(parse(record).map_err((error) => error.message())?, "function")?
     mut frames: list[Function] = []
@@ -210,7 +210,7 @@ def carried_frames(plan: &Plan, record: str, mut carried: list[str]) -> Result[l
     return Ok(frames)
 
 
-def plan_positions(plan: &Plan, references: list[NominalReference]) -> Result[list[NominalReference], str]:
+def plan_positions(plan: Borrowed[Plan], references: list[NominalReference]) -> Result[list[NominalReference], str]:
     """
     Name each carrier a product reported at its lowering position by its place in the published plan.
 

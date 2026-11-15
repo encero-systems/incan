@@ -86,7 +86,7 @@ from carrier_operands import element_operand
 
 
 pub def lower_computed_statics(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     program: ProgramContext,
     unions: list[RustType],
     sources: list[str],
@@ -220,7 +220,7 @@ def static_source_position(owners: list[str], owner: str, missing: str) -> Resul
 
 
 def lower_literal_static(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     program: ProgramContext,
     slot: int,
     unions: list[RustType],
@@ -285,7 +285,7 @@ def lower_literal_static(
 
 pub def read_static(
     mut builder: Builder,
-    value: &RustPlace,
+    value: Borrowed[RustPlace],
     global: RustGlobalPlace,
     fact: OwnershipFact,
     span: SourceSpan,
@@ -381,7 +381,7 @@ def read_computed_static(
 
 def read_guarded_static_field(
     mut builder: Builder,
-    value: &RustPlace,
+    value: Borrowed[RustPlace],
     slot: int,
     owner: PlanType,
     span: SourceSpan,
@@ -477,7 +477,7 @@ def static_field_reader(
 
 def read_guarded_dictionary_entry(
     mut builder: Builder,
-    value: &RustPlace,
+    value: Borrowed[RustPlace],
     slot: int,
     owner: PlanType,
     span: SourceSpan,
@@ -581,7 +581,7 @@ pub def snapshot_owns(ty: PlanType) -> bool:
     return not callable_copy_type(ty)
 
 
-pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+pub def computed_static_root(mut builder: Builder, value: Borrowed[RustPlace], span: SourceSpan) -> Result[Option[Place], str]:
     """
     Select a native guarded static's projection, or return None for other storage.
 
@@ -622,7 +622,7 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
         None => return Ok(None)
 
 
-pub def computed_static_type(mut builder: Builder, value: &RustPlace, global: RustGlobalPlace) -> Result[PlanType, str]:
+pub def computed_static_type(mut builder: Builder, value: Borrowed[RustPlace], global: RustGlobalPlace) -> Result[PlanType, str]:
     """The checked carrier a static place selects, without reading the static."""
     mut ty = native_source_type(
         builder.constructors,
@@ -693,7 +693,7 @@ def snapshot_projection(
 
 def static_initial_operand(
     mut builder: Builder,
-    initial: &RustStaticInitializer,
+    initial: Borrowed[RustStaticInitializer],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -755,11 +755,11 @@ def static_literal_element(value: RustConstant) -> RustArgumentElement:
 
 
 pub def write_static(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &RustPlace,
-    global: &RustGlobalPlace,
-    value: &RustRvalue,
+    destination: Borrowed[RustPlace],
+    global: Borrowed[RustGlobalPlace],
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Evaluate a write before committing it to a checker-authorized persistent cell."""
@@ -794,11 +794,11 @@ pub def write_static(
 
 
 def write_guarded_static_field(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    destination: &RustPlace,
-    global: &RustGlobalPlace,
-    value: &RustRvalue,
+    destination: Borrowed[RustPlace],
+    global: Borrowed[RustGlobalPlace],
+    value: Borrowed[RustRvalue],
     owner: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -884,7 +884,7 @@ def write_static_entry(
     mut builder: Builder,
     destination: RustPlace,
     global: RustGlobalPlace,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     span: SourceSpan,
 ) -> Result[None, str]:
     """

@@ -6,7 +6,7 @@ from nominal_frames import closed_arguments
 from table_views import borrowed_at
 
 
-pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
+pub def has_open_trait_arguments(implementation: Borrowed[TraitImplementation]) -> bool:
     """Identify a generic owner's open slot or inherited default arguments before validating concrete records."""
     return (
         not closed_arguments(implementation.slot_arguments)
@@ -15,10 +15,10 @@ pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
 
 
 pub def validate_project_implementation(
-    module: &BodyIrModule,
-    implementation: &TraitImplementation,
-    modules: &list[BodyIrModule],
-    retained: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
+    implementation: Borrowed[TraitImplementation],
+    modules: Borrowed[list[BodyIrModule]],
+    retained: Borrowed[BodyIrModule],
 ) -> Result[None, str]:
     """
     Validate one trait implementation record against the current module slice and retained joined project authority.
@@ -65,7 +65,7 @@ pub def validate_project_implementation(
     return Ok(None)
 
 
-def is_imported_slot(slot: &CanonicalSymbolId) -> bool:
+def is_imported_slot(slot: Borrowed[CanonicalSymbolId]) -> bool:
     """
     Whether a slot belongs to a standard module or an authenticated package, by its checked provider identity.
 
@@ -79,7 +79,7 @@ def is_imported_slot(slot: &CanonicalSymbolId) -> bool:
         _ => return false
 
 
-def fills_its_slot(implementation: &TraitImplementation) -> bool:
+def fills_its_slot(implementation: Borrowed[TraitImplementation]) -> bool:
     """Require a method slot filled by its default or checked own method, or a property filled by its own getter."""
     slot = implementation.method
     filled = implementation.implementation
@@ -97,7 +97,7 @@ def fills_its_slot(implementation: &TraitImplementation) -> bool:
     return filled.origin == implementation.owner.origin and contains(implementation.owner, filled)
 
 
-def adopted_rust_slot(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+def adopted_rust_slot(module: Borrowed[BodyIrModule], implementation: Borrowed[TraitImplementation]) -> bool:
     """Whether the adopter's own Rust trait adoption lists this slot; rustc checks the implementation itself."""
     match implementation.method.origin:
         SymbolOrigin.RustCrate(_path) => pass
@@ -118,7 +118,7 @@ def adopted_rust_slot(module: &BodyIrModule, implementation: &TraitImplementatio
     return false
 
 
-def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
+def retains_owner(module: Borrowed[BodyIrModule], owner: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether this module retains the adopter's well-formed model, class or enum layout."""
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
@@ -131,7 +131,7 @@ def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
     return false
 
 
-def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> bool:
+def declares_slot(modules: Borrowed[list[BodyIrModule]], slot: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether the module that declares the slot's trait retains that trait around the slot."""
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
@@ -140,7 +140,7 @@ def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> boo
     return false
 
 
-def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+def module_declares_slot(module: Borrowed[BodyIrModule], slot: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether one module declares, as its own trait, the trait whose span encloses the slot."""
     for protocol_position in range(len(module.trait_declarations)):
         declaration = borrowed_at(module.trait_declarations, protocol_position)
@@ -156,7 +156,7 @@ def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> boo
     return false
 
 
-def retained_declares_slot(retained: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+def retained_declares_slot(retained: Borrowed[BodyIrModule], slot: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether the already validated joined context retains the trait identity enclosing this slot."""
     for protocol_position in range(len(retained.trait_declarations)):
         declaration = borrowed_at(retained.trait_declarations, protocol_position)
@@ -165,7 +165,7 @@ def retained_declares_slot(retained: &BodyIrModule, slot: &CanonicalSymbolId) ->
     return false
 
 
-def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> bool:
+def retains_body(modules: Borrowed[list[BodyIrModule]], identity: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether some module retains the filling body under its canonical direct-call identity."""
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
@@ -174,7 +174,7 @@ def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> 
     return false
 
 
-def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+def module_retains_body(module: Borrowed[BodyIrModule], identity: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether one module retains a checked body or the exact compiled Loaf declaration that implements the slot."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
@@ -200,7 +200,7 @@ def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> 
     return false
 
 
-def retained_body(retained: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+def retained_body(retained: Borrowed[BodyIrModule], identity: Borrowed[CanonicalSymbolId]) -> bool:
     """Whether the already validated joined context retains this canonical body or linked declaration."""
     for body_position in range(len(retained.bodies)):
         body = borrowed_at(retained.bodies, body_position)

@@ -54,14 +54,14 @@ from list_methods import call_destination
 
 
 pub def lower_static_sdk_method(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    delegation: &RustLoafCallable,
-    target: &MethodTarget,
-    read: &RustPlaceOperand,
-    global: &RustGlobalPlace,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    delegation: Borrowed[RustLoafCallable],
+    target: Borrowed[MethodTarget],
+    read: Borrowed[RustPlaceOperand],
+    global: Borrowed[RustGlobalPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a checked SDK method under the actual static guard after evaluating its bound ordinary arguments."""
@@ -167,7 +167,7 @@ pub def lower_static_sdk_method(
 
 def static_sdk_parameter_types(
     mut builder: Builder,
-    delegation: &RustLoafCallable,
+    delegation: Borrowed[RustLoafCallable],
     receiver: PlanType,
     names: list[str],
     closed: list[RustType],
@@ -195,7 +195,7 @@ def static_sdk_parameter_types(
 
 def static_sdk_receiver(
     mut builder: Builder,
-    declared: &RustType,
+    declared: Borrowed[RustType],
     names: list[str],
     arguments: list[RustType],
     owner: PlanType,
@@ -262,13 +262,13 @@ def static_sdk_forwarder(
 
 
 pub def lower_static_method_body(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    target: &MethodTarget,
-    read: &RustPlaceOperand,
-    global: &RustGlobalPlace,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    target: Borrowed[MethodTarget],
+    read: Borrowed[RustPlaceOperand],
+    global: Borrowed[RustGlobalPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Validate canonical storage, selected receiver passing and a nonescaping result before calling under its guard."""

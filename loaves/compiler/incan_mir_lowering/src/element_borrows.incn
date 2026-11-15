@@ -67,7 +67,7 @@ pub def shared_element_place(mut builder: Builder, source: RustPlace, span: Sour
     return Ok(Some(place))
 
 
-def is_shared_list_path(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
+def is_shared_list_path(mut builder: Builder, source: Borrowed[RustPlace]) -> Result[bool, str]:
     """Admit only list indices and structural fields, without evaluating a partial path that might be retried."""
     mut indexed = false
     for position in range(len(source.projection)):
@@ -103,7 +103,7 @@ pub def shared_list_element(mut builder: Builder, container: Place, index: Opera
     return Ok(Place(local=output.local, projection=Projection.Deref(element), span=span))
 
 
-pub def element_method_owner(mut builder: Builder, argument: &RustArgumentElement) -> Result[Option[PlanType], str]:
+pub def element_method_owner(mut builder: Builder, argument: Borrowed[RustArgumentElement]) -> Result[Option[PlanType], str]:
     """The model or source enum owner of a list or dictionary element receiver; `None` when a native place names it."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -120,10 +120,10 @@ pub def element_method_owner(mut builder: Builder, argument: &RustArgumentElemen
 
 
 pub def element_method_receiver(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
     index: int,
-    argument: &RustArgumentElement,
+    argument: Borrowed[RustArgumentElement],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Borrow a list or dictionary element as the selected method's receiver: in place when `mut self` changes it."""
@@ -186,7 +186,7 @@ pub def mutable_element_place(mut builder: Builder, source: RustPlace, span: Sou
 
 pub def mutable_element_prefix(
     mut builder: Builder,
-    source: &RustPlace,
+    source: Borrowed[RustPlace],
     count: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
@@ -281,7 +281,7 @@ def local_root(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Res
         None => return Err("unsupported Body IR mutable borrow of a static element")
 
 
-def borrow_element(mut builder: Builder, container: Place, index: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def borrow_element(mut builder: Builder, container: Place, index: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Evaluate the index or key first, then reborrow the selected list element or dictionary value."""
     if is_collection(place_type(builder.locals, container)):
         return borrow_dictionary_value(builder, container, index, span)
@@ -292,7 +292,7 @@ def borrow_element(mut builder: Builder, container: Place, index: &RustOperand, 
 def borrow_dictionary_value(
     mut builder: Builder,
     container: Place,
-    index: &RustOperand,
+    index: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Place, str]:
     """

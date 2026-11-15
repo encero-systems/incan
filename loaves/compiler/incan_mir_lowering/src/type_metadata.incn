@@ -16,7 +16,7 @@ from reflection import emit_field_metadata
 pub def lower_type_metadata(
     mut builder: Builder,
     target: TypeMetadataTarget,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Resolve only a frontend-approved pure metadata operation; missing layouts or reflection policies refuse."""

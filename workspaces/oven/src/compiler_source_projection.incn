@@ -183,7 +183,7 @@ pub def signature_key(origin: str, path: str, facet: str) -> RecordKey:
 
 
 pub def compiled_owner_source(
-    projection: &SourceProjection,
+    projection: Borrowed[SourceProjection],
     module: str,
     name: str,
     identity: str = "",
@@ -266,7 +266,7 @@ pub def import_declaration_indexes(
     return Ok(indexes)
 
 
-pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
+pub def signature_record(owner: Borrowed[SourceProjectionRecord]) -> SourceProjectionRecord:
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
     mut key = owner.key
     key.family = "declaration-signature"

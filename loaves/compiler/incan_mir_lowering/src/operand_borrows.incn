@@ -52,7 +52,7 @@ from static_storage import read_static
 from list_values import checked_list_argument, list_borrow, value_operand
 
 
-pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+pub def lower_discarded_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[None, str]:
     """Evaluate discarded text through retained ownership facts and drop its materialized owner."""
     mut is_text = false
     match value:
@@ -75,7 +75,7 @@ pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span:
 
 pub def borrow_slice_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     elements: list[PlanType],
     mutable: bool,
     span: SourceSpan,
@@ -171,7 +171,7 @@ def lends_shared_referent(actual: PlanType, referent: PlanType) -> bool:
 
 pub def borrow_scalar_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     elements: list[PlanType],
     mutable: bool,
     span: SourceSpan,
@@ -263,7 +263,7 @@ def borrow_as_trait_object(
 
 def scalar_borrow_owner(
     mut builder: Builder,
-    read: &RustPlaceOperand,
+    read: Borrowed[RustPlaceOperand],
     referent: PlanType,
     mutable: bool,
     span: SourceSpan,
@@ -281,7 +281,7 @@ def scalar_borrow_owner(
     return scalar_place(builder, read.place, span)
 
 
-pub def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def borrow_str_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Pass literal slice text directly or borrow owned text through String's own as_str method."""
     match value:
         RustOperand.Constant(RustConstant.Str(text)) => return Ok(text_literal(str(text), span))
@@ -304,7 +304,7 @@ pub def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: Sour
     return Ok(read_place(output, false, span))
 
 
-pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def borrow_text_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Borrow owned text or reuse a checked shared String reference without transferring its owner or adding a reference layer."""
     match value:
         RustOperand.Place(read) =>
@@ -361,8 +361,8 @@ def unsupported_text_operand(mut builder: Builder, ty: PlanType, span: SourceSpa
 
 def borrow_element_text(
     mut builder: Builder,
-    value: &RustOperand,
-    fact: &OwnershipFact,
+    value: Borrowed[RustOperand],
+    fact: Borrowed[OwnershipFact],
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow indexed text in place for a shared read; owned reads retain their independent materialization."""
@@ -404,8 +404,8 @@ pub def lower_text_helper(
     mut builder: Builder,
     name: str,
     result: PlanType,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind the retained string-helper identity to shared operands and transfer its owned text or list result."""
@@ -438,8 +438,8 @@ pub def lower_text_helper(
 
 pub def lower_str_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Materialize str() using the same scalar display conversions as legacy formatting."""
@@ -458,7 +458,7 @@ pub def lower_str_builtin(
 pub def assign_text_result(
     mut builder: Builder,
     text: Place,
-    destination: &Option[RustPlace],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Move an owned text temporary into the call's destination, replacing what it held, or drop a discarded one."""
@@ -475,8 +475,8 @@ pub def assign_text_result(
 
 pub def lower_display_str(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -494,7 +494,7 @@ pub def lower_display_str(
         None => return Err("unsupported Body IR Display __str__ spread receiver")
 
 
-def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def display_receiver(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Select the display rendering for one borrowed receiver."""
     match value:
         RustOperand.Place(read) =>

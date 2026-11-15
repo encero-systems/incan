@@ -99,7 +99,7 @@ static CACHES: CacheRegistry = CacheRegistry(entries=[])
 static NAMES: NameRegistry = NameRegistry(entries=[])
 
 
-def borrowed_cache_key(value: &RustString) -> &RustString:
+def borrowed_cache_key(value: Borrowed[RustString]) -> Borrowed[RustString] from value:
     """Retain an explicit borrowed Rust key across the generic method boundary tracked by issue #508."""
     return value
 
@@ -136,7 +136,7 @@ pub def initialize_binding(
             resume_unwind(payload)
 
 
-def claim_binding(cell: &BindingCache, key: &RustString) -> bool:
+def claim_binding(cell: Borrowed[BindingCache], key: Borrowed[RustString]) -> bool:
     """Wait for an existing owner or claim an absent instance, returning whether this caller must publish it."""
     owner = current().id()
     while true:
@@ -149,7 +149,7 @@ def claim_binding(cell: &BindingCache, key: &RustString) -> bool:
                 raise_value_error(f"poisoned decorator cache while another thread initializes '{key}'")
 
 
-def claim_once(cell: &BindingCache, key: &RustString, owner: ThreadId) -> ClaimDecision:
+def claim_once(cell: Borrowed[BindingCache], key: Borrowed[RustString], owner: ThreadId) -> ClaimDecision:
     """Inspect under one guard, waiting atomically for another owner and dropping the guard before returning."""
     mut guard = match cell.values.lock():
         Ok(value) => value
@@ -173,8 +173,8 @@ def claim_once(cell: &BindingCache, key: &RustString, owner: ThreadId) -> ClaimD
 
 
 def inspect_claim(
-    mut guard: &mut MutexGuard[HashMap[str, CacheBinding]],
-    key: &RustString,
+    mut guard: BorrowedMut[MutexGuard[HashMap[str, CacheBinding]]],
+    key: Borrowed[RustString],
     owner: ThreadId,
 ) -> ClaimDecision:
     """Inspect or claim while borrowing the caller's guard; another thread's claim requires an atomic wait."""
@@ -193,7 +193,7 @@ def inspect_claim(
             return ClaimDecision.Acquired
 
 
-def finish_binding(cell: &BindingCache, key: RustString, published: bool) -> None:
+def finish_binding(cell: Borrowed[BindingCache], key: RustString, published: bool) -> None:
     """Record one published binding or clear its failed claim, then wake callers to recheck the state."""
     mut guard = match cell.values.lock():
         Ok(value) => value

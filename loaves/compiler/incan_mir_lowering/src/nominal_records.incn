@@ -33,8 +33,8 @@ from table_views import borrowed_at
 
 
 pub def product_nominal_table(
-    program: &ProgramContext,
-    intrinsics: &list[EnumDeclaration],
+    program: Borrowed[ProgramContext],
+    intrinsics: Borrowed[list[EnumDeclaration]],
     products: Option[str],
 ) -> UnitNominals:
     """Describe the unit's tables only for a request that reads or retains plan products."""
@@ -46,7 +46,7 @@ pub def product_nominal_table(
     return unit_product_nominals(program, intrinsics)
 
 
-pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDeclaration]) -> UnitNominals:
+pub def unit_product_nominals(program: Borrowed[ProgramContext], intrinsics: Borrowed[list[EnumDeclaration]]) -> UnitNominals:
     """
     Describe every model and enum position of the program's tables, then each intrinsic carrier at its carrier position.
 
@@ -74,7 +74,7 @@ pub def unit_product_nominals(program: &ProgramContext, intrinsics: &list[EnumDe
     return unit
 
 
-pub def sync_carriers(mut unit: UnitNominals, program: &ProgramContext, intrinsics: &list[EnumDeclaration]) -> None:
+pub def sync_carriers(mut unit: UnitNominals, program: Borrowed[ProgramContext], intrinsics: Borrowed[list[EnumDeclaration]]) -> None:
     """Describe intrinsic carriers lowering admitted since the table was described, each at its carrier position."""
     while len(unit.carriers) < len(intrinsics):
         declaration = borrowed_at(intrinsics, len(unit.carriers))
@@ -84,9 +84,9 @@ pub def sync_carriers(mut unit: UnitNominals, program: &ProgramContext, intrinsi
 pub def retain_named_scalar(
     directory: str,
     inputs: list[str],
-    function: &Function,
-    runtime: &list[ExternalFunction],
-    unit: &UnitNominals,
+    function: Borrowed[Function],
+    runtime: Borrowed[list[ExternalFunction]],
+    unit: Borrowed[UnitNominals],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
     requests: list[str] = [],
@@ -101,7 +101,7 @@ pub def retain_named_scalar(
     return Ok(references)
 
 
-def source_nominal(kind: NominalKind, canonical: &CanonicalSymbolId, carrier: str, encoded: Result[str, str]) -> ProductNominal:
+def source_nominal(kind: NominalKind, canonical: Borrowed[CanonicalSymbolId], carrier: str, encoded: Result[str, str]) -> ProductNominal:
     """Name one checked source declaration; an unprojectable identity or unreadable meaning stays unnamed."""
     unnamed = ProductNominal(kind=kind, identity="", digest="")
     match StableDeclarationId.from_canonical(canonical, None, None):
@@ -120,7 +120,7 @@ def source_nominal(kind: NominalKind, canonical: &CanonicalSymbolId, carrier: st
                                 Err(_) => return unnamed
 
 
-pub def carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal:
+pub def carrier_nominal(declaration: Borrowed[EnumDeclaration]) -> ProductNominal:
     """
     Name a standard carrier by the checked type it lays out; its variants and derives are its checked meaning.
 
@@ -140,7 +140,7 @@ pub def carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal:
                 Err(_) => return ProductNominal(kind=NominalKind.Enum, identity="", digest="")
 
 
-def carrier_type_text(declaration: &EnumDeclaration) -> Result[str, str]:
+def carrier_type_text(declaration: Borrowed[EnumDeclaration]) -> Result[str, str]:
     """Encode the exact checked type a carrier lays out; its nominal names carry no source span."""
     match declaration.semantic_key:
         None => return Err("carrier has no checked type")
@@ -169,7 +169,7 @@ def declaration_meaning(text: str) -> Result[tuple[str, list[tuple[str, str]]], 
     return Ok((bound_text(normalized, keys), keys))
 
 
-def bound_text(text: str, keys: &list[tuple[str, str]]) -> str:
+def bound_text(text: str, keys: Borrowed[list[tuple[str, str]]]) -> str:
     """Replace each bound carrier key, longest first, by its span-free identity text."""
     mut bound = text
     mut replaced: list[bool] = [false for _ in keys]

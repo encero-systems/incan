@@ -131,7 +131,7 @@ def bit_operation(
     return Ok(RvalueKind.Binary(binary_operator(operator)?, left, right))
 
 
-pub def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def scalar_operator_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Operand, str]:
     """Materialize indexed scalar operands and refuse collection operators before native validation."""
     operand = value_operand(builder, value, span)?
     if is_list(operand_type(builder, operand)?) or is_collection(operand_type(builder, operand)?):
@@ -142,7 +142,7 @@ pub def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span:
 def external_enum_comparison_kind(
     mut builder: Builder,
     owner: int,
-    operator: &BinOp,
+    operator: Borrowed[BinOp],
 ) -> Result[Option[bool], str]:
     """Select structural comparison for payload enums and exact native carriers; true preserves Rust's own ne."""
     if owner < 0:
@@ -180,7 +180,7 @@ def external_enum_comparison_kind(
 
 def native_enum_comparison(
     mut builder: Builder,
-    operator: &BinOp,
+    operator: Borrowed[BinOp],
     left: Place,
     right: Place,
     span: SourceSpan,
@@ -242,9 +242,9 @@ def native_enum_comparison(
 
 def unit_enum_comparison(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """
@@ -279,9 +279,9 @@ def unit_enum_comparison(
 
 def optional_none_comparison(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[RvalueKind], str]:
     """Compare a checked Option against None by its tag without copying or equating its payload."""
@@ -309,14 +309,14 @@ def optional_none_comparison(
     return Ok(Some(RvalueKind.Binary(comparison, read_place(tag, false, span), literal(Constant.Int(0), span))))
 
 
-def none_constant(value: &RustOperand) -> bool:
+def none_constant(value: Borrowed[RustOperand]) -> bool:
     """Recognize only the retained None constant; ordinary unit values cannot authorize an Option tag comparison."""
     match value:
         RustOperand.Constant(RustConstant.None) => return true
         _ => return false
 
 
-def enum_comparison_place(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def enum_comparison_place(mut builder: Builder, operand: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """Retain an indexed checked value for a shared discriminant read; structural values keep their place."""
     match operand:
         RustOperand.Place(read) =>
@@ -341,7 +341,7 @@ def enum_comparison_tag(mut builder: Builder, source: Place, span: SourceSpan) -
 
 def owner_borrow(
     mut builder: Builder,
-    operand: &RustOperand,
+    operand: Borrowed[RustOperand],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
@@ -370,9 +370,9 @@ def owner_borrow(
 
 
 pub def scalar_rvalue(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut builder: Builder,
-    value: &RustRvalue,
+    value: Borrowed[RustRvalue],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
@@ -494,7 +494,7 @@ pub def scalar_rvalue(
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
 
 
-def comparison_collection_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def comparison_collection_place(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """
     Borrow checked collection storage, materializing a byte literal or an indexed or sliced operand once before its
     shared read. Callers classify both operands first, so only owners, projections and byte literals arrive here.
@@ -517,7 +517,7 @@ def comparison_collection_place(mut builder: Builder, value: &RustOperand, span:
         _ => return Err("invalid Body IR collection comparison operand")
 
 
-def comparison_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
+def comparison_operand_type(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[PlanType, str]:
     """Read a comparison operand's carrier without evaluating it; a byte literal is an owned unsigned byte list."""
     match value:
         RustOperand.Constant(_constant) => return Ok(PlanType.List(ListLeaf.U8, 1))
@@ -526,9 +526,9 @@ def comparison_operand_type(mut builder: Builder, value: &RustOperand, span: Sou
 
 def collection_equality(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Classify both checked layouts before evaluating either operand, then compare their shared collection views."""
@@ -557,9 +557,9 @@ def collection_equality(
 
 def tuple_comparison(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """
@@ -625,7 +625,7 @@ def tuple_comparison_layout(ty: PlanType) -> Option[tuple[PlanType, PlanType]]:
     return Some((PlanType.Tuple(fields), PlanType.TupleRef(fields)))
 
 
-def local_comparison_operand(value: &RustOperand) -> bool:
+def local_comparison_operand(value: Borrowed[RustOperand]) -> bool:
     """Recognize checked local and byte-literal comparison operands without collecting borrowed values into owned storage."""
     match value:
         RustOperand.Place(read) => return read.place.local_id() != None
@@ -635,9 +635,9 @@ def local_comparison_operand(value: &RustOperand) -> bool:
 
 def newtype_equality(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Compare a source or linked newtype through its retained PartialEq selection, which native metadata verifies."""
@@ -691,7 +691,7 @@ def newtype_equality(
 
 def newtype_comparison_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     reference: PlanType,
     span: SourceSpan,
@@ -710,7 +710,7 @@ def newtype_comparison_operand(
     return Ok(read_place(borrowed, false, span))
 
 
-def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+def text_comparison_operand(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[bool, str]:
     """Classify text from retained storage, including indexed elements, before materializing either comparison value."""
     ty = source_operand_type(builder, value, span)?
     return Ok(ty in [PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr])
@@ -718,9 +718,9 @@ def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: Sou
 
 def text_comparison(
     mut builder: Builder,
-    operator: &BinOp,
-    left: &RustOperand,
-    right: &RustOperand,
+    operator: Borrowed[BinOp],
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Bind a checked comparison in a closed text instance to the same borrowed runtime operation as concrete text."""

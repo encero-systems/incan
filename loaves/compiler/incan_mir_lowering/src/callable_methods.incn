@@ -19,8 +19,8 @@ from trait_links import contains
 
 
 pub def callable_methods(
-    constructors: &ConstructorIndex,
-    module: &BodyIrModule,
+    constructors: Borrowed[ConstructorIndex],
+    module: Borrowed[BodyIrModule],
     owner: int,
     native_names: list[str],
     mut intrinsics: list[EnumDeclaration],
@@ -136,7 +136,7 @@ def standard_callable_origin(origin: SymbolOrigin) -> bool:
         _ => return false
 
 
-def owned_type(ty: &RustType) -> bool:
+def owned_type(ty: Borrowed[RustType]) -> bool:
     """Borrowed or open callback arguments need a separately represented lifetime contract and remain refused."""
     match ty:
         RustType.Ref(_inner) => return false

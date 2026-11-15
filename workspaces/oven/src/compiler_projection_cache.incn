@@ -57,7 +57,7 @@ pub def editable_dependency_projection_key(package: str, module: str) -> str:
 
 
 pub def cached_editable_dependency_signature_record(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     package: str,
     module: str,
     name: str,
@@ -82,7 +82,7 @@ def editable_dependency_projection(root: str, package: str, module: str) -> Resu
 
 
 pub def cached_project_signature_record(
-    projections: &Dict[str, SourceProjection],
+    projections: Borrowed[Dict[str, SourceProjection]],
     unit: UnitDescription,
     module: str,
     name: str,

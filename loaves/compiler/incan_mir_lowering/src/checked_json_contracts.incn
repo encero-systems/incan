@@ -22,7 +22,7 @@ from type_parameters import instantiate
 from table_views import borrowed_at
 
 
-pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str, str]:
+pub def checked_deserialize_name(declaration: Borrowed[NominalDeclaration]) -> Result[str, str]:
     """Name a root only for an explicit checked string reconstruction; absent selection never becomes ordinary serde."""
     deserialize = "serde::Deserialize" in declaration.derives
     match declaration.newtype_deserialize:
@@ -45,8 +45,8 @@ pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str
 
 
 pub def checked_owner_arguments(
-    declaration: &NominalDeclaration,
-    instances: &list[NominalInstance],
+    declaration: Borrowed[NominalDeclaration],
+    instances: Borrowed[list[NominalInstance]],
 ) -> Result[list[RustType], str]:
     """Borrow the exact discovery registry and retain only the selected owner's arguments for scheduling."""
     if len(declaration.type_parameters) == 0:
@@ -63,8 +63,8 @@ pub def checked_owner_arguments(
 
 
 pub def selected_deserialize_hook(
-    module: &BodyIrModule,
-    declaration: &NominalDeclaration,
+    module: Borrowed[BodyIrModule],
+    declaration: Borrowed[NominalDeclaration],
     arguments: list[RustType],
 ) -> Result[tuple[Body, Body], str]:
     """Validate one exact source hook before closing its existing frame; never choose a body by conventional name."""
@@ -100,7 +100,7 @@ pub def selected_deserialize_hook(
         _ => return Err("unsupported Body IR checked Deserialize without selected hook")
 
 
-def hook_declaration_agrees(body: &Body, hook: &CanonicalSymbolId, declaration: &NominalDeclaration) -> bool:
+def hook_declaration_agrees(body: Borrowed[Body], hook: Borrowed[CanonicalSymbolId], declaration: Borrowed[NominalDeclaration]) -> bool:
     """Require the retained hook's full checked span and declaring type parameters to agree with its frame."""
     return (
         body.name == hook.declaration_name
@@ -109,7 +109,7 @@ def hook_declaration_agrees(body: &Body, hook: &CanonicalSymbolId, declaration: 
     )
 
 
-def require_closed_hook(body: &Body) -> Result[None, str]:
+def require_closed_hook(body: Borrowed[Body]) -> Result[None, str]:
     """Require an owned String input and the canonical builtin error before constructing an executable serde root."""
     if body.is_async or body.is_generator() or len(body.params) != 1 or len(body.locals) == 0:
         return Err("unsupported Body IR checked Deserialize hook frame")

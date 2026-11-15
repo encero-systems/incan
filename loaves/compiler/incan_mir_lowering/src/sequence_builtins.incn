@@ -42,9 +42,9 @@ from list_iteration import shared_sequence_receiver
 
 pub def lower_sequence_builtin(
     mut builder: Builder,
-    builtin: &RustBuiltin,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    builtin: Borrowed[RustBuiltin],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Classify homogeneous list sorting and integer summation without projecting an indexed input as storage."""
@@ -133,8 +133,8 @@ def require_sort_order(mut builder: Builder, element: PlanType) -> Result[None, 
 
 pub def lower_list_repeat(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -172,8 +172,8 @@ pub def lower_list_repeat(
 
 pub def lower_list_concat(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Classify both input carriers without reading them, then borrow each value once for concatenation."""
@@ -206,8 +206,8 @@ pub def lower_list_concat(
 
 pub def lower_truth_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve builtin truthiness for admitted scalars, lists, and hashed collections."""
@@ -289,8 +289,8 @@ pub def lower_truth_builtin(
 pub def lower_power_operator(
     mut builder: Builder,
     destination: Place,
-    left: &RustOperand,
-    right: &RustOperand,
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind exponentiation to the checked result carrier, as legacy's `powf` and `pow` do."""
@@ -338,7 +338,7 @@ def lower_exact_integer_power(
 
 pub def text_argument(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -352,8 +352,8 @@ pub def text_argument(
 
 pub def lower_split_helper(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Select explicit and omitted separators without admitting general Option lowering."""
@@ -380,8 +380,8 @@ pub def lower_split_helper(
 
 pub def lower_join_helper(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Join an admitted flat string list, materializing a projected element or slice once before borrowing it."""
@@ -407,7 +407,7 @@ pub def lower_join_helper(
 
 pub def argument_type(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     index: int,
     span: SourceSpan,
 ) -> Result[PlanType, str]:
@@ -419,7 +419,7 @@ pub def argument_type(
         None => return Err("unsupported Body IR argument type spread")
 
 
-pub def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
+pub def source_operand_type(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[PlanType, str]:
     """
     Read a retained carrier without materializing its value.
 

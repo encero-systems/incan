@@ -26,7 +26,7 @@ from list_values import list_borrow
 from table_views import borrowed_at
 
 
-pub def default_flags(parameters: &list[RustCallableParam]) -> list[bool]:
+pub def default_flags(parameters: Borrowed[list[RustCallableParam]]) -> list[bool]:
     """One flag per declared parameter, set when the parameter carries a preset or a declaration default."""
     mut flags: list[bool] = []
     for parameter in parameters:
@@ -70,8 +70,8 @@ pub def record_partial(mut builder: Builder, local: int, flags: list[bool]) -> N
 
 pub def partial_call_operands(
     mut builder: Builder,
-    binding: &RustArgumentBinding,
-    elements: &list[RustArgumentElement],
+    binding: Borrowed[RustArgumentBinding],
+    elements: Borrowed[list[RustArgumentElement]],
     signature: list[PlanType],
     flags: list[bool],
     span: SourceSpan,
@@ -163,9 +163,9 @@ def empty_list(mut builder: Builder, output: Place, leaf: ListLeaf, depth: int, 
 
 
 pub def bind_defaulted_parameter(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut lifted: Builder,
-    parameter: &RustCallableParam,
+    parameter: Borrowed[RustCallableParam],
     destination: int,
     flag_slot: int,
     ty: PlanType,
@@ -256,9 +256,9 @@ def hold_default_list(
 
 
 def default_value(
-    module: &BodyIrModule,
+    module: Borrowed[BodyIrModule],
     mut lifted: Builder,
-    parameter: &RustCallableParam,
+    parameter: Borrowed[RustCallableParam],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:

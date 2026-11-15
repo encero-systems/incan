@@ -30,7 +30,7 @@ pub def frozen_collection_literal(mut builder: Builder, value: RustConstant, spa
         _ => return Err("unsupported Body IR nonstatic frozen collection")
 
 
-def frozen_elements(mut builder: Builder, elements: &list[RustConstant]) -> Result[list[FrozenValue], str]:
+def frozen_elements(mut builder: Builder, elements: Borrowed[list[RustConstant]]) -> Result[list[FrozenValue], str]:
     """Translate retained literal trees without evaluating expressions or reading syntax."""
     mut values: list[FrozenValue] = []
     for element in elements:
@@ -61,7 +61,7 @@ pub def frozen_literal(mut builder: Builder, value: RustConstant, span: SourceSp
         None => return Err("unsupported Body IR nonstatic FrozenStr literal")
 
 
-pub def literal_text(value: &RustConstant) -> Option[str]:
+pub def literal_text(value: Borrowed[RustConstant]) -> Option[str]:
     """Read literal bytes for text observation without discarding the constant's retained storage identity."""
     match value:
         RustConstant.Str(text) => return Some(str(text))
@@ -77,7 +77,7 @@ pub def frozen_bytes_literal(mut builder: Builder, value: RustConstant, span: So
     return Ok(read_place(output, false, span))
 
 
-def frozen_byte_data(value: &RustConstant) -> Result[list[int], str]:
+def frozen_byte_data(value: Borrowed[RustConstant]) -> Result[list[int], str]:
     """Read byte data at one explicitly typed foreign boundary, so nested enum patterns do not lose scalar item types."""
     match value:
         RustConstant.Bytes(bytes) =>

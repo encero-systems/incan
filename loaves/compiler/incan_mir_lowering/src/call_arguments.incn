@@ -76,7 +76,7 @@ pub def call_parameter_type(
     return stored_parameter_type(body, parameter, ty)
 
 
-pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
+pub def stored_parameter_type(body: RustBody, parameter: Borrowed[RustCallableParam], ty: PlanType) -> Result[PlanType, str]:
     """
     A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
@@ -115,8 +115,8 @@ pub def has_defaulted_slots(binding: RustArgumentBinding) -> bool:
 
 pub def ordered_slot_operands(
     mut builder: Builder,
-    binding: &RustArgumentBinding,
-    elements: &list[RustArgumentElement],
+    binding: Borrowed[RustArgumentBinding],
+    elements: Borrowed[list[RustArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     offset: int = 0,
@@ -185,9 +185,9 @@ pub def ordered_slot_operands(
 
 def resolved_slot_operands(
     mut builder: Builder,
-    bindings: &list[RustBoundArgument],
+    bindings: Borrowed[list[RustBoundArgument]],
     default_count: int,
-    elements: &list[RustArgumentElement],
+    elements: Borrowed[list[RustArgumentElement]],
     types: list[PlanType],
     span: SourceSpan,
     offset: int,
@@ -217,7 +217,7 @@ def resolved_slot_operands(
 
 pub def call_argument_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     span: SourceSpan,
     owned: bool = false,
@@ -296,7 +296,7 @@ pub def call_argument_operand(
 
 def explicit_argument_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     span: SourceSpan,
     access: IncanInputAccess,
@@ -326,7 +326,7 @@ def explicit_argument_operand(
 
 def inferred_shared_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -366,7 +366,7 @@ def inferred_shared_argument(
 
 def exact_shared_storage(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     referent: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
@@ -398,7 +398,7 @@ def exact_shared_storage(
 
 def stored_element_list(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
@@ -442,7 +442,7 @@ def has_ordinary_lending_route(ty: PlanType) -> bool:
 
 def materialized_shared_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     expected: PlanType,
     referent: PlanType,
     span: SourceSpan,
@@ -473,7 +473,7 @@ def materialized_shared_argument(
 
 def explicit_constant_argument(
     mut builder: Builder,
-    constant: &RustConstant,
+    constant: Borrowed[RustConstant],
     expected: PlanType,
     access: IncanInputAccess,
     span: SourceSpan,
@@ -498,7 +498,7 @@ def explicit_constant_argument(
 
 pub def shared_nominal_argument(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -551,7 +551,7 @@ pub def owned_collection(ty: PlanType) -> bool:
         _ => return false
 
 
-def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+def loop_variable_copy(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Option[Place], str]:
     """
     Copy a list loop variable, or a list field of one, that a function's `mut` parameter receives.
 
@@ -600,7 +600,7 @@ pub def function_argument(mut builder: Builder, ty: PlanType, value: Operand, sp
 
 pub def fixed_arguments(
     mut builder: Builder,
-    elements: &list[RustArgumentElement],
+    elements: Borrowed[list[RustArgumentElement]],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Read already ordered positional elements, refusing spreading by name."""

@@ -61,7 +61,7 @@ from frozen_plan import frozen_bytes_literal
 
 pub def boundary_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     target: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -83,7 +83,7 @@ pub def boundary_operand(
 
 pub def element_operand(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     element: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -360,9 +360,9 @@ def option_payload_operand(
 
 pub def lower_union_isinstance(
     mut builder: Builder,
-    value: &RustOperand,
-    ty: &RustType,
-    target: &RustType,
+    value: Borrowed[RustOperand],
+    ty: Borrowed[RustType],
+    target: Borrowed[RustType],
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """Inspect carrier tags or a statically known nominal identity without consuming storage; distinct class tests remain refused."""
@@ -408,8 +408,8 @@ pub def lower_union_isinstance(
 
 def isinstance_source_type(
     mut builder: Builder,
-    value: &RustOperand,
-    checked: &RustType,
+    value: Borrowed[RustOperand],
+    checked: Borrowed[RustType],
     span: SourceSpan,
 ) -> Result[PlanType, str]:
     """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
@@ -429,7 +429,7 @@ def isinstance_source_type(
     )
 
 
-def isinstance_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def isinstance_place(mut builder: Builder, value: Borrowed[RustOperand], span: SourceSpan) -> Result[Place, str]:
     """The storage whose tag `isinstance` reads in place."""
     match value:
         RustOperand.Place(read) => return scalar_place(builder, read.place, span)
@@ -552,7 +552,7 @@ def bind_nested_payload(
     source: Place,
     variant: int,
     slot: int,
-    pattern: &RustPattern,
+    pattern: Borrowed[RustPattern],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind the names a nested carrier or tuple payload pattern names, from the payload its tests already matched."""

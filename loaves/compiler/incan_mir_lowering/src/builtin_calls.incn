@@ -89,8 +89,8 @@ from sequence_builtins import (
 pub def lower_boolean_operator(
     mut builder: Builder,
     destination: Place,
-    left: &RustOperand,
-    right: &RustOperand,
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     name: str,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -102,8 +102,8 @@ pub def lower_boolean_operator(
 pub def lower_numeric_helper(
     mut builder: Builder,
     destination: Place,
-    left: &RustOperand,
-    right: &RustOperand,
+    left: Borrowed[RustOperand],
+    right: Borrowed[RustOperand],
     operation: str,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -137,9 +137,9 @@ pub def lower_numeric_helper(
 
 pub def lower_runtime_helper(
     mut builder: Builder,
-    helper: &RustHelper,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    helper: Borrowed[RustHelper],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch retained runtime helper identities and name unsupported variants without taking their value."""
@@ -233,9 +233,9 @@ pub def lower_runtime_helper(
 
 pub def lower_builtin(
     mut builder: Builder,
-    builtin: &RustBuiltin,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    builtin: Borrowed[RustBuiltin],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch checked builtin identities rather than matching source spellings."""
@@ -271,9 +271,9 @@ pub def lower_builtin(
 
 def lower_file_builtin(
     mut builder: Builder,
-    builtin: &RustBuiltin,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    builtin: Borrowed[RustBuiltin],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Use checked Result storage for file IO, borrowing text inputs and preserving the string error payload."""
@@ -313,9 +313,9 @@ def lower_file_builtin(
 
 def lower_extrema_builtin(
     mut builder: Builder,
-    builtin: &RustBuiltin,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    builtin: Borrowed[RustBuiltin],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Classify a homogeneous scalar list before borrowing its value for the minimum or maximum implementation."""
@@ -360,8 +360,8 @@ def lower_extrema_builtin(
 
 def lower_range_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -397,8 +397,8 @@ def lower_range_builtin(
 
 def lower_zip_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Construct lazy zip only from canonical identity and two checked primitive-list arguments."""
@@ -449,8 +449,8 @@ def lower_zip_builtin(
 
 def lower_enumerate_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Materialize the checked builtin's zero-based tuple list from admitted list or text inputs."""
@@ -520,7 +520,7 @@ def lower_enumerate_builtin(
 
 def enumerated_byte_argument(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
@@ -534,8 +534,8 @@ def enumerated_byte_argument(
 
 pub def lower_model_json_builtin(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Serialize exactly one checked operand through the same implementation as the JSON protocol default."""
@@ -554,7 +554,7 @@ pub def lower_model_json_builtin(
 
 def serialize_scalar_json(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     result: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -594,7 +594,7 @@ def serialize_scalar_json(
 
 def serialize_json_list(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     ty: PlanType,
     result: Place,
     span: SourceSpan,
@@ -620,7 +620,7 @@ def serialize_json_list(
 
 def serialize_json_text(
     mut builder: Builder,
-    value: &RustOperand,
+    value: Borrowed[RustOperand],
     result: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -643,8 +643,8 @@ def serialize_json_text(
 
 def lower_print(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """Print space-separated arguments and initialize the checked Unit result when the call is an expression."""
@@ -671,8 +671,8 @@ def lower_print(
 
 def lower_scalar_conversion(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
+    arguments: Borrowed[list[RustArgumentElement]],
+    destination: Borrowed[Option[RustPlace]],
     integer: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
@@ -724,7 +724,7 @@ pub def validate_exact_float(mut builder: Builder, target: Place, span: SourceSp
 
 def lower_text_scalar_conversion(
     mut builder: Builder,
-    arguments: &list[RustArgumentElement],
+    arguments: Borrowed[list[RustArgumentElement]],
     output: Place,
     integer: bool,
     span: SourceSpan,

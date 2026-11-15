@@ -12,9 +12,9 @@ from builtin_calls import coerce_numeric_operand
 
 pub def lower_foreign_call(
     mut builder: Builder,
-    target: &CheckedForeignCall,
-    arguments: &list[ArgumentElement],
-    destination: &Option[BodyPlace],
+    target: Borrowed[CheckedForeignCall],
+    arguments: Borrowed[list[ArgumentElement]],
+    destination: Borrowed[Option[BodyPlace]],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -67,7 +67,7 @@ pub def lower_foreign_call(
 
 def foreign_arguments(
     mut builder: Builder,
-    arguments: &list[ArgumentElement],
+    arguments: Borrowed[list[ArgumentElement]],
     parameters: list[PlanType],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
