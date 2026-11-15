@@ -602,6 +602,7 @@ mod trait_partials;
 mod async_;
 
 mod literals;
+mod liveness;
 mod nominal_carriers;
 
 mod calls;
