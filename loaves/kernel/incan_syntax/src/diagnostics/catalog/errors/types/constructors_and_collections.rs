@@ -468,3 +468,13 @@ pub fn collection_annotation_requires_type_arguments(spelling: &str, span: Span)
         "Write the type arguments, for example '{spelling}[{arguments}]'"
     ))
 }
+
+/// `.clone()` on a builtin value whose contents cannot all be cloned, such as a tuple or dict holding a handle.
+pub fn value_clone_requires_clone(value_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("'{value_type}' cannot be cloned: it holds a value that is not Clone"),
+        span,
+    )
+    .with_note("clone() gives an independent value, so every value inside must be cloneable")
+    .with_hint("Add @derive(Clone) to the contained type, or keep using the original value")
+}

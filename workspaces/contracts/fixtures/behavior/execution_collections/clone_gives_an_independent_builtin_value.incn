@@ -1,0 +1,68 @@
+# behavior: `.clone()` on every builtin value type gives an independent value of the same type: text, bool, bytes, dict, set, tuple, Result and the frozen forms, beside the numbers, list and Option that already had it; changing the clone or the original afterward never reaches the other (RFC 129's copy spelling, #1846).
+# expect-stdout:
+#   a a!
+#   true false
+#   2 1
+#   1 2
+#   1 2
+#   (1, "a") (1, "a")
+#   Ok(1) Ok(2)
+#   Err("no") Err("no")
+#   ["x", "y"] 2
+#   1 1
+#   frozen 2
+#   3 2.5 [1] [1, 2] Some("a")
+
+const NAMES: FrozenList[str] = ["x", "y"]
+const SIZES: FrozenDict[str, int] = {"a": 1}
+const IDS: FrozenSet[int] = {7}
+const LABEL: FrozenStr = "frozen"
+const RAW: FrozenBytes = b"xy"
+
+
+def main() -> None:
+    label = "a"
+    mut text = label.clone()
+    text = f"{text}!"
+    println(f"{label} {text}")
+    flag = True
+    mut on = flag.clone()
+    on = not on
+    println(f"{flag} {on}")
+    raw: bytes = b"xy"
+    mut data = raw.clone()
+    data = b"z"
+    println(f"{len(raw)} {len(data)}")
+    table: dict[str, int] = {"a": 1}
+    mut entries = table.clone()
+    entries["b"] = 2
+    println(f"{len(table)} {len(entries)}")
+    seen: set[int] = {1}
+    mut ids = seen.clone()
+    ids.add(2)
+    println(f"{len(seen)} {len(ids)}")
+    pair = (1, "a")
+    other = pair.clone()
+    println(f"{pair} {other}")
+    good: Result[int, str] = Ok(1)
+    mut next: Result[int, str] = good.clone()
+    next = Ok(2)
+    println(f"{good} {next}")
+    bad: Result[int, str] = Err("no")
+    same = bad.clone()
+    println(f"{bad} {same}")
+    names = NAMES.clone()
+    println(f"{names} {len(names)}")
+    sizes = SIZES.clone()
+    ids_frozen = IDS.clone()
+    println(f"{len(sizes)} {len(ids_frozen)}")
+    frozen_label = LABEL.clone()
+    frozen_raw = RAW.clone()
+    println(f"{frozen_label} {len(frozen_raw)}")
+    count = 3
+    ratio = 2.5
+    items = [1]
+    mut more = items.clone()
+    more.append(2)
+    maybe: Option[str] = Some("a")
+    println(f"{count.clone()} {ratio.clone()} {items} {more} {maybe.clone()}")
