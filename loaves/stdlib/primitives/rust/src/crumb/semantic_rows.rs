@@ -7,6 +7,8 @@
 
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
+use std::fmt;
+use std::sync::{Arc, Mutex};
 
 use super::columns::{self, Budget, Cursor, Refused};
 use super::hash::{self, Node, Projection, Value};
@@ -14,7 +16,7 @@ use super::row_cells::read_root;
 use super::row_cursor::{Place, Positioned, Refusal, Span, at, bounded_count, read_text};
 
 /// One complete D metadata tree.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) enum Meta {
     Null,
     Boolean(bool),
@@ -59,6 +61,36 @@ pub(super) struct Stored {
     pub(super) variants: Vec<StoredVariant>,
     /// For a reference entry, the position of the supplied description it resolved to.
     pub(super) supplied: Option<usize>,
+}
+
+#[derive(Clone)]
+struct CachedAdmission {
+    metadata: Meta,
+    kinds: Vec<(String, bool)>,
+    stored: Stored,
+    bytes: u64,
+    elements: u64,
+    depth: usize,
+}
+
+/// One registry-owned exact core-description admission retained across native row writes.
+#[derive(Clone)]
+pub struct RowAdmissionCache {
+    state: Arc<Mutex<Option<CachedAdmission>>>,
+}
+
+impl RowAdmissionCache {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl fmt::Debug for RowAdmissionCache {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("RowAdmissionCache").finish_non_exhaustive()
+    }
 }
 
 /// One decoded record: its description slot and logical value.
@@ -396,13 +428,14 @@ fn settle_dictionary(entries: &[Stored], kinds: &[(String, bool)], budget: &mut 
 pub(super) fn admit_written(
     sources: Vec<(Meta, bool)>,
     kinds: &[(String, bool)],
+    cache: Option<&RowAdmissionCache>,
     budget: &mut Budget,
 ) -> Result<Vec<Stored>, Refused> {
     let mut entries = Vec::with_capacity(sources.len());
     for (metadata, inline) in sources {
         budget.elements(1)?;
         budget.bytes(16)?;
-        let entry = admit(metadata, inline, kinds, budget)?;
+        let entry = admit_written_description(metadata, inline, kinds, cache, budget)?;
         budget.elements(1)?;
         budget.bytes(2 * entry.key.len() as u64)?;
         if entries.iter().any(|known: &Stored| known.key == entry.key) {
@@ -416,6 +449,72 @@ pub(super) fn admit_written(
     }
     check_dictionary(&entries, budget)?;
     Ok(entries)
+}
+
+fn admit_written_description(
+    metadata: Meta,
+    inline: bool,
+    kinds: &[(String, bool)],
+    cache: Option<&RowAdmissionCache>,
+    budget: &mut Budget,
+) -> Result<Stored, Refused> {
+    if let Some(carrier) = cache {
+        let current = carrier
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(cached) = current {
+            if cached.metadata == metadata && cached.kinds == kinds {
+                budget.bytes(cached.bytes)?;
+                budget.elements(cached.elements)?;
+                for _ in 0..cached.depth {
+                    budget.enter()?;
+                }
+                for _ in 0..cached.depth {
+                    budget.leave();
+                }
+                let mut stored = cached.stored;
+                stored.inline = inline;
+                return Ok(stored);
+            }
+        }
+    }
+    let before = budget.left();
+    let stored = admit(metadata.clone(), inline, kinds, budget)?;
+    if is_core_description(&metadata) {
+        if let Some(carrier) = cache {
+            let after = budget.left();
+            let cached = CachedAdmission {
+                metadata,
+                kinds: kinds.to_vec(),
+                stored: stored.clone(),
+                bytes: before.0 - after.0,
+                elements: before.1 - after.1,
+                depth: metadata_depth(&stored.metadata),
+            };
+            *carrier.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cached);
+        }
+    }
+    Ok(stored)
+}
+
+fn is_core_description(metadata: &Meta) -> bool {
+    matches!(get(metadata, "kind"), Some(Meta::Text(kind)) if kind == "Record" || kind == "Enum")
+}
+
+fn metadata_depth(metadata: &Meta) -> usize {
+    match metadata {
+        Meta::List(items) => 1 + items.iter().map(metadata_depth).max().unwrap_or(0),
+        Meta::Map(entries) => {
+            1 + entries
+                .iter()
+                .map(|(_, value)| metadata_depth(value))
+                .max()
+                .unwrap_or(0)
+        }
+        _ => 1,
+    }
 }
 
 /// Every K and field selector must name descriptions the dictionary holds, with the same record or enum kind.

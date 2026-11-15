@@ -2,6 +2,7 @@
 
 from rust::std::cell import RefCell
 from rust::std::rc import Rc
+from rust::incan_std_primitives::crumb import RowAdmissionCache
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.types import FieldShape, NominalKind, TypeNode
@@ -77,6 +78,7 @@ pub class KindRegistry:
 
     entries: dict[str, KindRegistration]
     admission: Rc[RefCell[Option[CachedAdmission]]]
+    native_admission: RowAdmissionCache
 
     @staticmethod
     pub def create(registrations: list[KindRegistration], mut budget: Budget) -> Result[Self, CrumbError]:
@@ -98,7 +100,17 @@ pub class KindRegistry:
                 groups.add(group.name)
                 check_order(group.order)?
             entries[registration.kind] = registration
-        return Ok(KindRegistry(entries=entries, admission=Rc.new(RefCell.new(None))))
+        return Ok(
+            KindRegistry(
+                entries=entries,
+                admission=Rc.new(RefCell.new(None)),
+                native_admission=RowAdmissionCache.new(),
+            ),
+        )
+
+    pub def native_row_admission(self) -> RowAdmissionCache:
+        """Share the registry-owned native admission carrier without granting profile authority."""
+        return self.native_admission
 
     pub def registered(self) -> list[KindRegistration]:
         """The explicitly registered profile kinds, for a native codec that resolves kinds itself."""

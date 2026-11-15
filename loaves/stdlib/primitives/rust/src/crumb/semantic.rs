@@ -39,6 +39,7 @@ mod scan;
 pub use row_entry::{RowAdmission, RowRequest};
 pub use row_request::{RowWrite, RowWriteRequest};
 pub use row_set::RowRead;
+pub use rows::RowAdmissionCache;
 
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {

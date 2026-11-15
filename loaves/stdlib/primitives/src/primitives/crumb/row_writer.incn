@@ -39,6 +39,7 @@ pub def write_rows(
         )
     for registration in registry.registered():
         request.register(registration.kind, registration.shape == NominalKind.Record)
+    request.admission_cache(registry.native_row_admission())
     for record in records:
         request.record(record.key)
         request = append_value(request, record.value)

@@ -12,7 +12,8 @@ mod semantic;
 pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
 pub use scalar_records::{ScalarRecordBatch, encode_scalar_records};
 pub use semantic::{
-    RowAdmission, RowRead, RowRequest, RowWrite, RowWriteRequest, SemanticCase, evaluate_semantic_case,
+    RowAdmission, RowAdmissionCache, RowRead, RowRequest, RowWrite, RowWriteRequest, SemanticCase,
+    evaluate_semantic_case,
 };
 /// How many envelopes the retained Incan twin's row reader has admitted in this process.
 static TWIN_ROW_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

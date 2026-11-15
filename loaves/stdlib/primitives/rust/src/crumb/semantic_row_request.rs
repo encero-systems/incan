@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use super::columns::Budget;
 use super::hash::{self, Field, Node, Value};
 use super::row_write;
-use super::rows::{self, Stored};
+use super::rows::{self, RowAdmissionCache, Stored};
 
 /// One completed write, or a typed refusal, with the caller-owned allowance it consumed.
 #[derive(Clone, Debug)]
@@ -51,6 +51,7 @@ struct RowWriteState {
     kinds: Vec<(String, bool)>,
     sealed: bool,
     allowance: (u64, u64, u64),
+    cache: Option<RowAdmissionCache>,
 }
 
 impl RowWriteRequest {
@@ -63,6 +64,7 @@ impl RowWriteRequest {
                 kinds: Vec::new(),
                 sealed,
                 allowance: (0, 0, 0),
+                cache: None,
             })),
         }
     }
@@ -121,6 +123,11 @@ impl RowWriteRequest {
         self.locked().allowance = (amount(bytes), amount(elements), amount(depth));
     }
 
+    /// Reuse one registry-owned exact description admission across requests.
+    pub fn admission_cache(&mut self, cache: RowAdmissionCache) {
+        self.locked().cache = Some(cache);
+    }
+
     /// Admit, validate and encode the complete request without exposing a partial prefix.
     pub fn write(&self) -> RowWrite {
         let state = self.locked();
@@ -160,7 +167,7 @@ impl RowWriteState {
             .map(|(encoded, inline)| rows::read_description(encoded).map(|metadata| (metadata, *inline)))
             .collect::<Option<Vec<_>>>()
             .ok_or("invalid_description")?;
-        let dictionary = rows::admit_written(sources, &self.kinds, budget)?;
+        let dictionary = rows::admit_written(sources, &self.kinds, self.cache.as_ref(), budget)?;
         let values = parse_records(&self.nodes, self.records.len())?;
         let entries = dictionary
             .iter()
@@ -415,6 +422,18 @@ mod tests {
             (refused.category.as_str(), refused.cause.as_str()),
             ("limit_exceeded", "elements")
         );
+
+        let cache = RowAdmissionCache::new();
+        let mut cold = request(false);
+        cold.admission_cache(cache.clone());
+        let admitted = cold.write();
+        let mut warm = request(false);
+        warm.admission_cache(cache);
+        let repeated = warm.write();
+        assert_eq!(repeated.category, "");
+        assert_eq!(repeated.data, admitted.data);
+        assert_eq!(repeated.bytes_charged, admitted.bytes_charged);
+        assert_eq!(repeated.elements_charged, admitted.elements_charged);
     }
 
     #[test]
