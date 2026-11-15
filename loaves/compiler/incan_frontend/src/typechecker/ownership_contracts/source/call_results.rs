@@ -44,7 +44,7 @@ impl Builder<'_> {
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
 /// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic
 /// results await their checked dependency representation.
-pub(super) fn plain_result(ty: &ResolvedType) -> bool {
+pub(in crate::typechecker::ownership_contracts) fn plain_result(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::Unit
         | ResolvedType::Int

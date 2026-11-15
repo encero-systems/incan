@@ -125,8 +125,22 @@ pub(super) fn builtin_place_method_writes(facts: &TypeCheckInfo, span: Span) -> 
         operation @ BuiltinMethodId::Option(OptionMethodId::IsSome | OptionMethodId::IsNone) => {
             Some(operation.changes_receiver())
         }
-        _ => None,
+        _ => builtin_value_method_writes(facts, span),
     }
+}
+
+/// Return whether a builtin method writes its receiver, for any other builtin method whose result is closed plain
+/// data: it reads its receiver, or writes it when the operation changes it, and its result holds no borrow of either.
+/// Lazy iterator members and a call with its own selected contract keep their own rules.
+pub(super) fn builtin_value_method_writes(facts: &TypeCheckInfo, span: Span) -> Option<bool> {
+    let operation = facts.resolved_builtin_method_call(span)?;
+    if retained_iterator_method(facts, span).is_some() || facts.protocols.explicit_input_calls.contains_key(&span) {
+        return None;
+    }
+    facts
+        .expr_type(span)
+        .is_some_and(super::source::call_results::plain_result)
+        .then(|| operation.changes_receiver())
 }
 
 /// Return the receiver of the compiler-selected `bytes.as_slice()` view. The retained Body IR result fact proves this
