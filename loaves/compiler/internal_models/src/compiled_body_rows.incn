@@ -92,7 +92,7 @@ pub def decode_compiled_body_row(encoded: bytes) -> Result[CompiledBodyOutput, C
     return Err(CodecFault.Malformed)
 
 
-def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
+pub def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
     """Encode one complete namespace Crumb row without interpreting compiler-owned payloads or witnesses."""
     if (value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.dependencies) > MAX_FIELDS or len(
         value.lowering_inputs,
@@ -134,7 +134,7 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
     return encoded_row(namespace_description(), row)
 
 
-def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
+pub def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
     """Encode one authenticated producer triple as a Crumb row with opaque checker and Body IR fields."""
     if value.module == "" or value.name == "" or value.identity == "":
         return Err(CodecFault.Malformed)
@@ -186,7 +186,7 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
     return encoded_row(value_description(), row)
 
 
-def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
+pub def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
     """Encode one explicit full-source decision as a Crumb row independently of eligible owner payloads."""
     if fallback.module == "" or fallback.name == "" or fallback.reason == "":
         return Err(CodecFault.Malformed)

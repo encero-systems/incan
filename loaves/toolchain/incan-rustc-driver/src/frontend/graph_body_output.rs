@@ -298,54 +298,7 @@ impl GraphBodyOutput {
             "restored": restored,
         }))
         .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
-        let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
-        let values: Vec<internal_models::CompiledBodyValue> = self
-            .values
-            .into_iter()
-            .map(|value| internal_models::CompiledBodyValue {
-                module: value.module,
-                name: value.name,
-                identity: value.identity,
-                declaration: value.declaration,
-                local: value.local,
-                r#final: value.final_value,
-                body_ir: value.body_ir,
-                dependency_reads: value.dependency_reads,
-            })
-            .collect();
-        let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
-            .fallbacks
-            .into_iter()
-            .map(|fallback| internal_models::CompiledBodyFallback {
-                module: fallback.module,
-                name: fallback.name,
-                identity: fallback.identity,
-                reason: fallback.reason,
-            })
-            .collect();
-        let namespaces: Vec<internal_models::CompiledNamespaceValue> = self
-            .namespaces
-            .into_iter()
-            .map(|value| internal_models::CompiledNamespaceValue {
-                module: value.module,
-                interface: value.interface,
-                body_ir: value.body_ir,
-                dependencies: value.dependencies,
-                lowering_inputs: value.lowering_inputs,
-            })
-            .collect();
-        let body_count = values.len();
-        let outputs = internal_models::CompiledBodyOutputs {
-            namespaces,
-            values,
-            fallbacks,
-        };
-        let rows = internal_models::encode_compiled_body_rows(outputs).map_err(|error| {
-            format!(
-                "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
-            )
-        })?;
-        publish_rows(&path, rows)?;
+        publish_rows(&path, self.namespaces, self.values, self.fallbacks)?;
         publish(&checker_report_path(&path), vec![report])
     }
 }
@@ -472,21 +425,131 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
         .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
 }
 
-/// Replace one compiler sidecar with a directory holding one independently bounded Crumb row per file.
-fn publish_rows(path: &Path, rows: Vec<Vec<u8>>) -> Result<(), String> {
-    let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
-    let temporary = path.with_extension(format!("pending-{}", std::process::id()));
-    std::fs::create_dir(&temporary)
-        .map_err(|error| format!("cannot create compiled graph output {}: {error}", temporary.display()))?;
-    for (index, row) in rows.into_iter().enumerate() {
-        let page = temporary.join(format!("{index:08}.crumb"));
-        std::fs::write(&page, row)
-            .map_err(|error| format!("cannot write compiled graph output {}: {error}", page.display()))?;
+/// The most rows one compiled output may hold, which is also the most Oven's reader admits.
+const MAX_OUTPUT_ROWS: usize = 4096;
+
+/// A compiler sidecar written as a directory holding one independently bounded Crumb row per file. It is built
+/// beside its final path and renamed into place, so a reader sees all of its rows or none.
+struct RowDirectory {
+    temporary: PathBuf,
+    rows: usize,
+}
+
+impl RowDirectory {
+    /// Create the pending directory beside `path`.
+    fn create(path: &Path) -> Result<Self, String> {
+        let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
+        let temporary = path.with_extension(format!("pending-{}", std::process::id()));
+        std::fs::create_dir(&temporary)
+            .map_err(|error| format!("cannot create compiled graph output {}: {error}", temporary.display()))?;
+        Ok(Self { temporary, rows: 0 })
     }
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
+
+    /// Write the next row as its own file; the caller keeps no copy of it.
+    fn write(&mut self, row: &[u8]) -> Result<(), String> {
+        let page = self.temporary.join(format!("{:08}.crumb", self.rows));
+        self.rows += 1;
+        std::fs::write(&page, row)
+            .map_err(|error| format!("cannot write compiled graph output {}: {error}", page.display()))
+    }
+
+    /// Put the complete directory at `path`.
+    fn publish(self, path: &Path) -> Result<(), String> {
+        std::fs::rename(&self.temporary, path)
+            .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
+    }
+}
+
+/// Encode and write a successful compilation's rows one at a time, in canonical namespace, value, then fallback
+/// order. Each output is moved into its row and dropped once the row is written, so publication holds one encoded row
+/// beside the outputs still waiting instead of every output twice. The Incan codec owns each row's validation and
+/// bytes; the order between rows, which Oven's reader checks again, is kept here.
+fn publish_rows(
+    path: &Path,
+    namespaces: Vec<PendingNamespaceValue>,
+    values: Vec<PendingBodyValue>,
+    fallbacks: Vec<PendingBodyFallback>,
+) -> Result<(), String> {
+    let body_count = values.len();
+    let body_ir_bytes: usize = values.iter().map(|value| value.body_ir.len()).sum();
+    let refused = |fault: String| {
+        format!("compiled graph output refused: {fault} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)")
+    };
+    let output_count = namespaces.len() + values.len() + fallbacks.len();
+    if output_count > MAX_OUTPUT_ROWS {
+        return Err(refused(format!(
+            "LimitExceeded(\"compiled-output-row-count\", {output_count}, {MAX_OUTPUT_ROWS})"
+        )));
+    }
+    let owners: std::collections::BTreeSet<(String, String)> = values
+        .iter()
+        .map(|value| (value.module.clone(), value.identity.clone()))
+        .collect();
+    let mut directory = RowDirectory::create(path)?;
+    let written = (|| {
+        let mut previous = String::new();
+        for value in namespaces {
+            if value.module.is_empty() || value.module <= previous {
+                return Err(refused("Malformed".to_owned()));
+            }
+            previous.clone_from(&value.module);
+            let row = internal_models::encode_compiled_namespace_value(internal_models::CompiledNamespaceValue {
+                module: value.module,
+                interface: value.interface,
+                body_ir: value.body_ir,
+                dependencies: value.dependencies,
+                lowering_inputs: value.lowering_inputs,
+            })
+            .map_err(|error| refused(format!("{error:?}")))?;
+            directory.write(&row)?;
+        }
+        previous.clear();
+        for value in values {
+            let order = format!("{}\n{}", value.module, value.identity);
+            if value.module.is_empty() || value.name.is_empty() || value.identity.is_empty() || order <= previous {
+                return Err(refused("Malformed".to_owned()));
+            }
+            previous = order;
+            let row = internal_models::encode_compiled_body_value(internal_models::CompiledBodyValue {
+                module: value.module,
+                name: value.name,
+                identity: value.identity,
+                declaration: value.declaration,
+                local: value.local,
+                r#final: value.final_value,
+                body_ir: value.body_ir,
+                dependency_reads: value.dependency_reads,
+            })
+            .map_err(|error| refused(format!("{error:?}")))?;
+            directory.write(&row)?;
+        }
+        previous.clear();
+        for fallback in fallbacks {
+            let identity = fallback.identity.clone().unwrap_or_default();
+            let order = format!("{}\n{}\n{identity}", fallback.module, fallback.name);
+            let owned = !identity.is_empty() && owners.contains(&(fallback.module.clone(), identity));
+            if order <= previous || owned {
+                return Err(refused("Malformed".to_owned()));
+            }
+            previous = order;
+            let row = internal_models::encode_compiled_body_fallback(internal_models::CompiledBodyFallback {
+                module: fallback.module,
+                name: fallback.name,
+                identity: fallback.identity,
+                reason: fallback.reason,
+            })
+            .map_err(|error| refused(format!("{error:?}")))?;
+            directory.write(&row)?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = written {
+        let _ = std::fs::remove_dir_all(&directory.temporary);
+        return Err(error);
+    }
+    directory.publish(path)
 }
 
 #[cfg(all(test, unix))]
