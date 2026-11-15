@@ -86,3 +86,12 @@ fn caller_visible_mut_slots_take_their_argument_exclusively() -> Result<(), Box<
     );
     Ok(())
 }
+
+/// A builtin method whose result is closed plain data reads its receiver and returns a fresh value: a clone, a
+/// transformed copy and a length of a shared input. A fresh result taken with `?` passes into a builtin collection.
+#[test]
+fn builtin_methods_with_plain_results_read_their_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def parse(text: str) -> Result[str, str]:\n    return Ok(text)\n\ndef shout(text: Borrowed[str]) -> str:\n    return text.upper() + text.clone()\n\ndef collect(mut items: BorrowedMut[list[str]], text: str) -> Result[int, str]:\n    items.append(parse(text)?)\n    return Ok(len(items))\n";
+    assert_proved(source, "shout")?;
+    assert_proved(source, "collect")
+}
