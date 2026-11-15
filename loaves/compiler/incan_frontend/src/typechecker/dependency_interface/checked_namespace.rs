@@ -196,6 +196,7 @@ impl CheckedNamespaceInterface {
             declaration_nominal_scopes: Arc::default(),
             retained_nominal_carriers: Arc::default(),
             declaration_callables: Arc::new(callables),
+            input_contracts: Arc::default(),
             member_reexports: Arc::new(reexports),
             body_ir_pub_reexports: Arc::default(),
             direct_member_partial_projections: Arc::default(),
