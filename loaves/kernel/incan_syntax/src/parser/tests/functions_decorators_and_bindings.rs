@@ -609,3 +609,20 @@ fn test_result_source_rejects_dynamic_forms() {
         assert!(parse_str(&program).is_err(), "accepted dynamic result source: {source}");
     }
 }
+
+#[test]
+fn test_property_result_source_field_path() -> Result<(), Vec<CompileError>> {
+    let source = "model Frame:\n    nominals: list[int]\n\n    property nominals_view -> Borrowed[list[int]] from self.nominals:\n        return self.nominals\n";
+    let program = parse_str(source)?;
+    let Declaration::Model(model) = &program.declarations[0].node else {
+        return Err(vec![CompileError::new("expected model".to_string(), Span::default())]);
+    };
+    let result_source = model.properties[0]
+        .node
+        .result_source
+        .as_ref()
+        .ok_or_else(|| vec![CompileError::new("expected result source".to_string(), Span::default())])?;
+    assert_eq!(result_source.node.binding.node, "self");
+    assert_eq!(result_source.node.fields[0].node, "nominals");
+    Ok(())
+}
