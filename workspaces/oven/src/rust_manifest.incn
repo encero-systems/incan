@@ -4,6 +4,7 @@ from std.toml import TomlValue
 from std.fs import Path
 from json_fields import field
 from intake import library_source, read_project, ManifestReader
+from rust_link_facts import LinkFact, link_arguments, link_owners, read_links
 from rust_target import compiler_version, host_triple
 from observation import file_digest
 from toml_fields import optional_flag, optional_string, optional_strings, required_string
@@ -33,7 +34,9 @@ pub model RustBuildFact:
     # The committed generated files the crate reads from `OUT_DIR`.
     pub out: list[RustFactOut] = []
     pub environment: Dict[str, str] = {}
-    # Declared publisher-side work (`link`, `tool`) the record carries; this Oven does not run it yet.
+    # The C libraries the build script compiled, which the compile builds again from their records.
+    pub links: list[LinkFact] = []
+    # Declared publisher-side work this Oven does not run (`tool`).
     pub work: list[str] = []
 
 
@@ -58,6 +61,8 @@ pub model RustFacet:
     # Whether the crate has a build script, whose effect only a recorded build fact may carry.
     pub build_script: bool = false
     pub facts: list[RustBuildFact] = []
+    # The Loaf directory the manifest was read from.
+    pub project: str = ""
 
 
 model RustBinaries:
@@ -118,6 +123,7 @@ pub def rust_facet(
             sysroot=binaries.sysroot,
             build_script=optional_flag(document, "rust.build-script", false)?,
             facts=read_facts(document)?,
+            project=project,
         ),
     )
 
@@ -132,7 +138,7 @@ pub def build_fact(
     """
     The build fact recorded for exactly this binding: toolchain, target, profile and the complete feature set. A near
     record is never taken. A crate with no build script needs no record; one with a build script and no exact record
-    is refused, naming the unit and the binding. Declared `link` or `tool` work is refused until this Oven runs it.
+    is refused, naming the unit and the binding. Declared `tool` work is refused until this Oven runs it.
     """
     wanted = sorted(features)
     unit = f"{declared.package} {declared.version}"
@@ -207,11 +213,17 @@ pub def unit_fact_arguments(
     rustc: str,
     profile: str,
     features: list[str],
+    owners: list[str],
 ) -> Result[list[str], str]:
-    """The compiler arguments a unit's build fact adds, none when the unit has no fact for its binding."""
+    """
+    The compiler arguments a unit's build fact adds, none when the unit has no fact for its binding: its `--cfg` flags,
+    and for each link record the static library it builds under one of the link `owners`.
+    """
     match unit_build_fact(declared, rustc, profile, features)?:
         None => return Ok([])
-        Some(fact) => return Ok(fact_arguments(fact))
+        Some(fact) =>
+            unit = f"{declared.package} {declared.version}"
+            return Ok(fact_arguments(fact) + link_arguments(unit, declared.project, fact.links, owners)?)
 
 
 pub def unit_environment(
@@ -253,7 +265,7 @@ def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
         for name in sorted([name for name in values.keys()]):
             environment[name] = required_string(record, f"environment.{name}")?
     mut work: list[str] = []
-    for kind in ["link", "tool"]:
+    for kind in ["tool"]:
         if kind in table:
             work.append(kind)
     return Ok(
@@ -265,6 +277,7 @@ def read_fact(record: TomlValue) -> Result[RustBuildFact, str]:
             cfg=optional_strings(record, "cfg")?.unwrap_or([]),
             out=fact_outputs(table)?,
             environment=environment,
+            links=read_links(table)?,
             work=work,
         ),
     )
