@@ -28,7 +28,7 @@ use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChec
 use crate::ast::{Program, Span};
 
 use incan_semantics_core::stable_identity::StableDeclarationContext;
-use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::stable_identity::{StableDeclarationId, StableDeclarationLocation};
 use incan_semantics_core::{CanonicalSymbolId, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace};
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
 
@@ -495,7 +495,7 @@ impl Positions {
             let canonical = CanonicalSymbolId {
                 namespace: SymbolNamespace::OrdinaryLexical,
                 origin: checker.symbols.declaration_origin(),
-                declaration_name: row[3].clone(),
+                declaration_name: persisted_local_name(positions.nodes.owner(), &row[3])?,
                 kind: SemanticSourceTargetKind::Local,
                 scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
                 declaration_span: span,
@@ -574,6 +574,42 @@ impl Positions {
     fn owner_path(&self) -> Result<String, NodeBindingError> {
         Ok(self.nodes.anchor(self.owner)?.path)
     }
+}
+
+/// The source spelling of a body-local declaration that a record names by its persisted identity, the one
+/// [`SemanticNodeBindings::binding_identities`] renders inside `owner`. A restored local is then named as a fresh check
+/// names it, so Body IR built from restored facts equals a fresh check's. The spelling is verified by rendering the
+/// identity again, so a malformed or foreign identity is refused instead of misread.
+fn persisted_local_name(owner: &StableDeclarationId, identity: &str) -> Result<String, NodeBindingError> {
+    let refused = || NodeBindingError::InvalidField("nested declaration identity".into());
+    let template = StableDeclarationId {
+        namespace: SymbolNamespace::OrdinaryLexical,
+        origin: owner.origin.clone(),
+        declaration_name: String::new(),
+        kind: SemanticSourceTargetKind::Local,
+        location: StableDeclarationLocation::ModuleLevel,
+        signature: None,
+    };
+    let (name, ordinal) = identity
+        .strip_prefix(&template.render_compact())
+        .and_then(|rest| rest.split_once(&format!("#in({})[", owner.render_compact())))
+        .ok_or_else(refused)?;
+    let binding_ordinal = ordinal
+        .strip_suffix(']')
+        .and_then(|ordinal| ordinal.parse::<u32>().ok())
+        .ok_or_else(refused)?;
+    let rendered = StableDeclarationId {
+        declaration_name: name.to_owned(),
+        location: StableDeclarationLocation::Nested {
+            owner: Box::new(owner.clone()),
+            binding_ordinal,
+        },
+        ..template
+    };
+    if rendered.render_compact() != identity {
+        return Err(refused());
+    }
+    Ok(rendered.declaration_name)
 }
 
 /// Rebuild a selected owner solely from canonical fields and current position/identity bindings. The independently
