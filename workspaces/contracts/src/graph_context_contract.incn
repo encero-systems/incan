@@ -23,8 +23,10 @@ pub def check_context(incan: str, project: Path) -> Result[None, str]:
         "incan.context/1 snapshot:" not in first.stdout
         or "helper" not in first.stdout
         or " -calls-> " not in first.stdout
+        or " authored_text=quoted_evidence" not in first.stdout.split("\n")[0]
+        or " author=workspace] " not in first.stdout
     ):
-        return Err("context omitted the declaration, source snapshot or proved call neighborhood")
+        return Err("context omitted the declaration, source snapshot, proved call neighborhood or an author")
     # 2. Task matching and budget refusals preserve their public behavior.
     natural = invoke(incan, [
         "inspect", "codegraph", ".", "--task", "adjust helper call", "--budget", "4096", "--format", "compact",
@@ -62,12 +64,40 @@ def check_context_formats(incan: str, project: Path) -> Result[None, str]:
     if expected != actual:
         return Err("JSON and JSONL context records disagree")
     mut exports = false
+    mut workspace = false
     for record in lines:
+        # Every node and edge names who wrote its text; the header says how that text is to be read.
+        if text_of(record, "record") == "context":
+            if text_of(record, "authored_text") != "quoted_evidence":
+                return Err("the context header does not state that authored text is quoted evidence")
+            continue
+        match record.get("author"):
+            Some(author) =>
+                kind = text_of(author, "kind")
+                if kind not in ["toolchain", "workspace", "dependency"]:
+                    return Err("a context record names no author")
+                if kind == "dependency" and text_of(author, "identity") == "":
+                    return Err("a dependency-authored context record does not name the dependency")
+                workspace = workspace or kind == "workspace"
+            None => return Err("a context record carries no author")
         match record.get("kind"):
             Some(kind) =>
                 if kind.as_str() == Some("exports"):
                     exports = true
             None => pass
+    if not workspace:
+        return Err("no context record is authored by the workspace that declares the task's helper")
     if not exports and project.joinpath("src").joinpath("provider.incn").is_file():
         return Err("context omitted recorded export edges between selected modules and declarations")
     return Ok(None)
+
+
+def text_of(value: JsonValue, key: str) -> str:
+    """An optional string member, empty when absent."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(found) => return found
+                None => pass
+        None => pass
+    return ""
