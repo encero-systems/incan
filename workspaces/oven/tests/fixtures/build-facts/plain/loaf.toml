@@ -1,0 +1,6 @@
+[project]
+name = "crates-io/plain"
+version = "1.0.0"
+
+[rust]
+type = "lib"

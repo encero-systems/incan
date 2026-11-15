@@ -1,0 +1,52 @@
+"""A Loaf's recorded build facts (RFC 119 `[[rust.facts]]`) stand in for its build script, for the exact binding only."""
+
+from std.fs import Path
+from std.testing import fail
+from intake import ManifestReader, read_project
+from rust_manifest import build_fact, fact_arguments, fact_environment, rust_facet
+
+const TOOLCHAIN: str = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+const TARGET: str = "aarch64-apple-darwin"
+
+
+def fixture(name: str) -> Result[str, str]:
+    """The absolute directory of one build-facts fixture Loaf."""
+    return Ok(Path(f"tests/fixtures/build-facts/{name}").resolve().map_err((error) => error.message())?.0)
+
+
+pub def test_a_build_script_crate_takes_the_fact_recorded_for_its_exact_binding() -> Result[None, str]:
+    """
+    A crate whose build script a recorded fact replaces is admitted. The fact for the exact toolchain, target, profile
+    and feature set gives its `--cfg` flags, its `OUT_DIR` and its environment. A near record is never taken: a binding
+    with no exact record refuses the unit by name and binding. A crate with no build script needs no record, and a
+    build script with no record at all is still refused when its Loaf is read.
+    """
+    scripted = fixture("scripted")?
+    declared = rust_facet(scripted, false)?
+    assert len(declared.facts) == 2
+    match build_fact(declared, TOOLCHAIN, TARGET, "release", ["std", "default"])?:
+        None => fail("the exact release binding found no build fact")
+        Some(found) =>
+            assert fact_arguments(found) == ["--cfg", "fast_arithmetic=\"64\"", "--cfg", "has_neon"]
+            environment = fact_environment(scripted, found)
+            assert environment["OUT_DIR"] == Path(scripted).joinpath("out").0
+            assert environment["SCRIPTED_TABLE"] == "crc32"
+    near: list[Tuple[str, str, list[str]]] = [
+        (TOOLCHAIN, "release", ["std"]),
+        (TOOLCHAIN, "bench", ["default", "std"]),
+        ("rustc 1.97.0 (00000000 2026-07-01)", "release", ["default", "std"]),
+    ]
+    for toolchain, profile, features in near:
+        match build_fact(declared, toolchain, TARGET, profile, features):
+            Ok(_) => fail(f"a near build fact was taken for {toolchain} {profile} {features}")
+            Err(reason) =>
+                assert "crates-io/scripted 1.0.0" in reason, reason
+                assert "requires a recorded build fact for this exact binding" in reason, reason
+                assert profile in reason and toolchain in reason, reason
+    plain = rust_facet(fixture("plain")?, false)?
+    assert build_fact(plain, TOOLCHAIN, TARGET, "release", [])? is None
+    match read_project(Path(fixture("unrecorded")?), ManifestReader()):
+        Ok(_) => fail("a build script with no recorded build fact was admitted")
+        Err(error) =>
+            assert "requires a recorded build fact" in error.message(), error.message()
+    return Ok(None)
