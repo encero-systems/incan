@@ -8647,6 +8647,7 @@
       "limits": {
         "bytes": 59893
       },
+      "supplied_descriptions": [],
       "expected": {
         "status": "refused",
         "kind": "limit_exceeded"
@@ -8658,6 +8659,7 @@
       "limits": {
         "elements": 4205
       },
+      "supplied_descriptions": [],
       "expected": {
         "status": "refused",
         "kind": "limit_exceeded"
@@ -8669,6 +8671,7 @@
       "limits": {
         "depth": 6
       },
+      "supplied_descriptions": [],
       "expected": {
         "status": "refused",
         "kind": "limit_exceeded"
