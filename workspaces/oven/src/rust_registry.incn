@@ -242,10 +242,19 @@ def registry_text(item: JsonValue, key: str) -> Result[str, str]:
 
 
 def registry_revision(item: JsonValue) -> Result[int, str]:
-    """The index revision of the unit's Loaf manifest; a closure that records none has revision 0."""
-    match item.get("revision"):
-        None => return Ok(0)
-        Some(value) => return value.expect_int().map_err((error) => f"registry unit revision: {error.message()}")
+    """
+    The index revision of the unit's Loaf manifest; a closure that records none has revision 0. A closure records it as
+    a decimal string, because installed records carry no numbers.
+    """
+    text = registry_text(item, "revision")?
+    if text == "":
+        return Ok(0)
+    if len(text) > 9:
+        return Err(f"registry unit revision `{text}` is not a decimal revision")
+    for character in text:
+        if character not in "0123456789":
+            return Err(f"registry unit revision `{text}` is not a decimal revision")
+    return Ok(int(text))
 
 
 def registry_dependencies(item: JsonValue) -> Result[list[str], str]:

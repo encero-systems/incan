@@ -160,7 +160,8 @@ pub def pinned_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonValue,
                     return Err(f"{unit_name} records {recorded}; {REGISTRY_PINS} pins {checksum}")
                 mut unit = item.expect_object().map_err((error) => error.message())?
                 unit["registry"] = JsonValue.string(text(found, "registry")?)
-                unit["revision"] = JsonValue.int(integer(found, "revision")?)
+                # Installed records carry no numbers, so the closure records the revision as a decimal string.
+                unit["revision"] = JsonValue.string(str(integer(found, "revision")?))
                 unit["checksum"] = JsonValue.string(checksum)
                 units.append(JsonValue.object(unit))
     if len(unpinned) > 0:
