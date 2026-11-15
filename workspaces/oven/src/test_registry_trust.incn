@@ -1,13 +1,15 @@
 """RFC 125 registry roots, delegated signing keys and signed statements."""
 
 from std.encoding.hex import unhexlify
-from registry_trust import Key, KeyKind, Signature, StatementKind, delegate, pin, verify_statement
+from registry_checkpoint import Checkpoint, verify_checkpoint
+from registry_trust import Key, KeyKind, Signature, StatementKind, Trust, delegate, pin, verify_statement
 
 const REGISTRY: str = "0073f8c44b82ef7f3f0fd95558bfe9261e8500a2de9e214bc1983cad43c57a67"
 const ROOT_KEY: str = "c84248d610c216a70ac930c7cbf36b3a3c8c84f8aa9472ca522344f5360d5b85"
 const DELEGATED_KEY: str = "cd62abd5b7a3f6364e2e2693485f589b77da3fef5b2a1b6a0d6e0f969865a23b"
 const DELEGATION_SIGNATURE: str = "17f7acc196e7e1e35c1330d66297b78ab31de54c6a56b841f1c7ca5e615a1a47d64605f0d88b1e1527563f20b1a9afa35fefcc3c3019f912567fcb3810792f07"
 const STATEMENT_SIGNATURE: str = "2961d41c64c5efba3893c948551347968816c96e8698f9af43854464959fa00b920705dc0a26abd2e74df605b80186ebafcb30984152a4f8b85667f1a7bd7808"
+const CHECKPOINT_SIGNATURE: str = "365659fdfdcc4112a663232595df04b7c7b3c4448ab8bcae7a9524dbca97e8b097afe2f8781082ed5eafb033d54a2f62a89ddd1957940e1fa82e930b39fb860a"
 
 
 def octets(text: str) -> Result[bytes, str]:
@@ -33,6 +35,20 @@ def changed(value: bytes) -> bytes:
     last = len(result) - 1
     result[last] = result[last] ^ 1
     return result
+
+
+def trusted() -> Result[Trust, str]:
+    """Build the fixture's root-delegated registry authority."""
+    return delegate(pin(REGISTRY, key(ROOT_KEY)?)?, key(DELEGATED_KEY)?, signature(DELEGATION_SIGNATURE)?)
+
+
+def checkpoint() -> Checkpoint:
+    """The signed fixture checkpoint."""
+    return Checkpoint(
+        head="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        length=12,
+        timestamp=1794657900,
+    )
 
 
 pub def test_a_pinned_root_delegates_the_key_that_signs_registry_statements() -> Result[None, str]:
@@ -69,4 +85,60 @@ pub def test_registry_identity_delegation_and_statement_tampering_are_refused() 
         Err(reason) => assert reason == "the registry statement signature does not verify"
     changed_signature = Signature(raw=changed(octets(STATEMENT_SIGNATURE)?), r=b"", s=b"")
     assert verify_statement(trust, StatementKind.Index, 7, b"catalog entry", changed_signature).is_err()
+    return Ok(None)
+
+
+pub def test_a_signed_checkpoint_is_fresh_online_and_unbounded_offline() -> Result[None, str]:
+    """The default seven-day online bound is inclusive; offline use has no age bound but still verifies the signature."""
+    signed = signature(CHECKPOINT_SIGNATURE)?
+    current = checkpoint()
+    week = 7 * 24 * 60 * 60
+    accepted = verify_checkpoint(trusted()?, current, signed, None, current.timestamp + week, week, true)?
+    assert accepted.length == 12
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, None, current.timestamp + week + 1, week, true):
+        Ok(_) => return Err("an expired online registry checkpoint was admitted")
+        Err(reason) => assert reason == "the registry checkpoint is older than the configured freshness bound"
+    assert verify_checkpoint(
+        trusted()?,
+        current,
+        signature(CHECKPOINT_SIGNATURE)?,
+        None,
+        current.timestamp + 10 * week,
+        week,
+        false,
+    ).is_ok()
+    return Ok(None)
+
+
+pub def test_a_signed_checkpoint_cannot_roll_back_fork_or_precede_observed_time() -> Result[None, str]:
+    """A valid signature cannot move behind the length, head or time Oven already observed."""
+    current = checkpoint()
+    later = Checkpoint(head=current.head, length=13, timestamp=current.timestamp + 100)
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, Some(later), current.timestamp, 604800, true):
+        Ok(_) => return Err("a registry checkpoint rolled back its log length")
+        Err(reason) => assert reason == "the registry checkpoint rolls back the observed log length"
+    fork = Checkpoint(
+        head="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        length=current.length,
+        timestamp=current.timestamp,
+    )
+    match verify_checkpoint(trusted()?, current, signature(CHECKPOINT_SIGNATURE)?, Some(fork), current.timestamp, 604800, true):
+        Ok(_) => return Err("a registry checkpoint forked an observed log head")
+        Err(reason) => assert reason == "the registry checkpoint conflicts with the observed log head"
+    observed_time = Checkpoint(head=current.head, length=11, timestamp=current.timestamp + 1)
+    assert verify_checkpoint(
+        trusted()?,
+        current,
+        signature(CHECKPOINT_SIGNATURE)?,
+        Some(observed_time),
+        current.timestamp + 1,
+        604800,
+        true,
+    ).is_err()
+    changed_head = Checkpoint(
+        head="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        length=current.length,
+        timestamp=current.timestamp,
+    )
+    assert verify_checkpoint(trusted()?, changed_head, signature(CHECKPOINT_SIGNATURE)?, None, current.timestamp, 604800, true).is_err()
     return Ok(None)
