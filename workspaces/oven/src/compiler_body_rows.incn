@@ -1,6 +1,7 @@
 """Read compiler-produced checker and Body IR values from independently bounded Crumb row files."""
 
-from std.fs import Path
+from std.fs import File, Path
+from rust::std::fs import metadata
 from pub::internal_models import (
     CompiledBodyFallback,
     CompiledBodyOutput,
@@ -12,21 +13,70 @@ from pub::internal_models import (
 
 const MAX_COMPILED_BODY_ROWS: int = 4096
 const MAX_COMPILED_BODY_ROW_BYTES: int = 67108864
+const FRAME_PREFIX_BYTES: int = 8
+
+
+model CollectedOutputs:
+    """Canonical compiler outputs accumulated from either supported transport without retaining encoded peers."""
+
+    values: list[CompiledBodyValue] = []
+    fallbacks: list[CompiledBodyFallback] = []
+    namespaces: list[CompiledNamespaceValue] = []
+    previous_namespace: str = ""
+    previous_value: str = ""
+    previous_fallback: str = ""
+    owner_phase: bool = false
+    fallback_phase: bool = false
+
+    def append(mut self, output: CompiledBodyOutput) -> Result[None, str]:
+        """Retain one decoded row only after checking its place in the canonical output order."""
+        match output:
+            CompiledBodyOutput.Namespace(value) =>
+                if self.owner_phase or value.module <= self.previous_namespace:
+                    return Err("compiled namespace rows are not in canonical order")
+                self.previous_namespace = value.module
+                self.namespaces.append(value)
+            CompiledBodyOutput.Value(value) =>
+                self.owner_phase = true
+                if self.fallback_phase:
+                    return Err("compiled body value follows a fallback row")
+                order = value.module + "\n" + value.identity
+                if order <= self.previous_value:
+                    return Err("compiled body value rows are not in canonical order")
+                self.previous_value = order
+                self.values.append(value)
+            CompiledBodyOutput.Fallback(fallback) =>
+                self.owner_phase = true
+                self.fallback_phase = true
+                identity = match fallback.identity:
+                    Some(value) => value
+                    None => ""
+                order = fallback.module + "\n" + fallback.name + "\n" + identity
+                if order <= self.previous_fallback:
+                    return Err("compiled body fallback rows are not in canonical order")
+                if identity != "":
+                    for value in self.values:
+                        if value.module == fallback.module and value.identity == identity:
+                            return Err("compiled body fallback duplicates an eligible owner")
+                self.previous_fallback = order
+                self.fallbacks.append(fallback)
+        return Ok(None)
+
+    def finish(self) -> CompiledBodyOutputs:
+        """Return only decoded semantic values after the transport has reached its exact boundary."""
+        return CompiledBodyOutputs(namespaces=self.namespaces, values=self.values, fallbacks=self.fallbacks)
 
 
 pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
-    """Read one bounded Crumb row per sidecar file while retaining only decoded semantic values."""
+    """Read current row directories and the preceding release's bounded length-framed file transport."""
+    if path.is_file():
+        return read_framed_outputs(path)
     if not path.is_dir():
         return Err("compiled body output is not a row directory")
     entries = sorted([entry.0 for entry in path.iterdir().map_err((error) => error.message())?])
     if len(entries) > MAX_COMPILED_BODY_ROWS:
         return Err("compiled body output contains too many rows")
-    mut values: list[CompiledBodyValue] = []
-    mut fallbacks: list[CompiledBodyFallback] = []
-    mut namespaces: list[CompiledNamespaceValue] = []
-    mut previous_namespace = ""
-    mut previous_value = ""
-    mut previous_fallback = ""
+    mut collected = CollectedOutputs()
     for entry in entries:
         row = Path(entry)
         if not row.is_file() or not row.name().endswith(".crumb"):
@@ -36,32 +86,50 @@ pub def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, st
             return Err("compiled body output row exceeds its bound")
         encoded = row.read_bytes().map_err((error) => f"cannot read compiled body row: {error.message()}")?
         output = decode_compiled_body_row(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
-        match output:
-            CompiledBodyOutput.Namespace(value) =>
-                if len(values) > 0 or len(fallbacks) > 0 or value.module <= previous_namespace:
-                    return Err("compiled namespace rows are not in canonical order")
-                previous_namespace = value.module
-                namespaces.append(value)
-            CompiledBodyOutput.Value(value) =>
-                if len(fallbacks) > 0:
-                    return Err("compiled body value follows a fallback row")
-                order = value.module + "\n" + value.identity
-                if order <= previous_value:
-                    return Err("compiled body value rows are not in canonical order")
-                previous_value = order
-                values.append(value)
-            CompiledBodyOutput.Fallback(fallback) =>
-                identity = match fallback.identity:
-                    Some(value) => value
-                    None => ""
+        collected.append(output)?
+    return Ok(collected.finish())
 
-                order = fallback.module + "\n" + fallback.name + "\n" + identity
-                if order <= previous_fallback:
-                    return Err("compiled body fallback rows are not in canonical order")
-                if identity != "":
-                    for value in values:
-                        if value.module == fallback.module and value.identity == identity:
-                            return Err("compiled body fallback duplicates an eligible owner")
-                previous_fallback = order
-                fallbacks.append(fallback)
-    return Ok(CompiledBodyOutputs(namespaces=namespaces, values=values, fallbacks=fallbacks))
+
+def read_framed_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
+    """Decode the preceding release's file one bounded Crumb payload at a time, never buffering its envelope."""
+    mut file = path.open("rb").map_err((error) => f"cannot open compiled body output: {error.message()}")?
+    mut remaining = metadata(path.0).map_err((error) => f"cannot inspect compiled body output: {error}")?.len()
+    mut count = 0
+    mut collected = CollectedOutputs()
+    while remaining > 0u64:
+        if remaining < 8u64:
+            return Err("compiled body output ends inside a frame prefix")
+        prefix = file.read_exact(FRAME_PREFIX_BYTES).map_err(
+            (error) => f"compiled body frame prefix: cannot {error.message()}",
+        )?
+        size = frame_size(prefix)?
+        frame_bytes: u64 = size.wrapping_resize()
+        if frame_bytes + 8u64 > remaining:
+            return Err("compiled body output ends inside an owner frame")
+        payload = file.read_exact(size).map_err(
+            (error) => f"compiled body owner frame: cannot {error.message()}",
+        )?
+        remaining -= frame_bytes + 8u64
+        count += 1
+        if count > MAX_COMPILED_BODY_ROWS:
+            return Err("compiled body output contains too many owner frames")
+        output = decode_compiled_body_row(payload).map_err((error) => f"compiled body output refused: {error:?}")?
+        collected.append(output)?
+    return Ok(collected.finish())
+
+
+def frame_size(prefix: bytes) -> Result[int, str]:
+    """Decode one fixed-width little-endian length and refuse it before allocating the owner payload."""
+    if len(prefix) != FRAME_PREFIX_BYTES:
+        return Err("compiled body output has a malformed frame prefix")
+    mut value: u64 = 0
+    for index in range(FRAME_PREFIX_BYTES - 1, -1, -1):
+        byte: u64 = prefix[index].wrapping_resize()
+        value = (value << 8) | byte
+    converted: Option[int] = value.try_resize()
+    match converted:
+        None => return Err("compiled body frame length exceeds the host range")
+        Some(size) =>
+            if size <= 0 or size > MAX_COMPILED_BODY_ROW_BYTES:
+                return Err("compiled body output frame exceeds its bound")
+            return Ok(size)
