@@ -56,7 +56,7 @@ pub def test_authored_text_carries_its_author_into_a_context_item() -> Result[No
     graph = Path("/work/app/target/app.incngraph")
     # 1. Who wrote what, as the project under /work/app sees it.
     standard = GraphUnit(path=graph, root=Path("@std/json"), package="json").author("/work/app")
-    assert standard.kind == AuthorKind.Toolchain and standard.identity == ""
+    assert standard.kind == AuthorKind.Shipped and standard.identity == ""
     member = GraphUnit(path=graph, root=Path("/work/app/members/core"), package="core").author("/work/app")
     assert member.kind == AuthorKind.Workspace and member.identity == ""
     registry = GraphUnit(path=graph, root=Path("@acme/words")).author("/work/app")

@@ -27,7 +27,9 @@ const HEX_DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8"
 pub enum AuthorKind(str):
     """Who wrote a piece of authored text: the toolchain, the requesting workspace, or one of its dependencies."""
 
-    Toolchain = "toolchain"
+    # The text the toolchain ships. Oven builds with the released seed, which resolves a variant named `Toolchain`
+    # here in place of the `Toolchain` model.
+    Shipped = "toolchain"
     Workspace = "workspace"
     Dependency = "dependency"
 
@@ -67,7 +69,7 @@ pub model GraphUnit:
         """
         # 1. The toolchain ships the standard packages.
         if self.root.0.startswith("@std/"):
-            return Author(kind=AuthorKind.Toolchain)
+            return Author(kind=AuthorKind.Shipped)
         # 2. A virtual root other than the standard one is a registry Loaf's.
         if self.root.0.startswith("@"):
             return Author(kind=AuthorKind.Dependency, identity=self.root.0[1:])
