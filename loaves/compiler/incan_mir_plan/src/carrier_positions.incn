@@ -63,17 +63,11 @@ pub def fold_carrier_positions(plan: Plan, sources: int) -> Result[Plan, str]:
     Every other position, and every source enum position, is kept.
     """
     mut remap = folding_remap(sources)
-    mut folded = plan.clone()
-    folded.enums = [fold_enum(declaration, remap)? for declaration in plan.enums]
-    folded.models = [fold_model(declaration, remap)? for declaration in plan.models]
-    folded.functions = [fold_function(function, remap)? for function in plan.functions]
-    folded.externals = [fold_external(external, remap)? for external in plan.externals]
     mut statics: list[StaticCell] = []
     for cell in plan.statics:
         mut kept = cell.clone()
         kept.ty = remap_type(cell.ty, remap)?
         statics.append(kept)
-    folded.statics = statics
     mut zips: list[ZipCarrier] = []
     for carrier in plan.zip_carriers:
         mut kept = carrier.clone()
@@ -81,10 +75,22 @@ pub def fold_carrier_positions(plan: Plan, sources: int) -> Result[Plan, str]:
         kept.right = remap_element(carrier.right, remap)?
         kept.target = remap_type(carrier.target, remap)?
         zips.append(kept)
-    folded.zip_carriers = zips
-    folded.generic_models = [fold_generic_model(declaration, remap)? for declaration in plan.generic_models]
-    folded.generic_enums = [fold_generic_enum(declaration, remap)? for declaration in plan.generic_enums]
-    return Ok(folded)
+    return Ok(
+        Plan(
+            enums=[fold_enum(declaration, remap)? for declaration in plan.enums],
+            models=[fold_model(declaration, remap)? for declaration in plan.models],
+            functions=[fold_function(function, remap)? for function in plan.functions],
+            externals=[fold_external(external, remap)? for external in plan.externals],
+            span=plan.span,
+            statics=statics,
+            exports=plan.exports,
+            tests=plan.tests,
+            zip_carriers=zips,
+            programs=plan.programs,
+            generic_models=[fold_generic_model(declaration, remap)? for declaration in plan.generic_models],
+            generic_enums=[fold_generic_enum(declaration, remap)? for declaration in plan.generic_enums],
+        ),
+    )
 
 
 pub def fold_inventories(
