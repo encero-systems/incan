@@ -11,19 +11,17 @@ from home_paths import bakery
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from observation import Observation, SETTLE_SECONDS, now_seconds, observe
-from registry_codec import Catalog, decode, encode
+from registry_codec import Catalog, PAGE_VERSION, decode, encode
 from registry_units import RegistryUnit, sole_library
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
 from pub::incan_platform.store import begin, commit, get, lease, put
 from store_path_conversion import snapshot
 from frozen_inputs import admit_observations
 
-const PROFILE: str = "incan.registry-page/2"
-
 
 pub def question(path: Path, observed: Observation, compiler: str) -> Result[str, str]:
     """Name an observed closure and compiler generation; locators are observations, never native unit identity."""
-    return page_fingerprint([PROFILE, path.0, observed.stamp, compiler])
+    return page_fingerprint([PAGE_VERSION, path.0, observed.stamp, compiler])
 
 
 def page_fingerprint(inputs: list[str]) -> Result[str, str]:
@@ -152,9 +150,9 @@ def specification(key: str, digest: str) -> SetSpec:
     """The exact adapter-owned schema and revision contract used for local production and mapped reads."""
     record = Record(key=key, revision=digest, payloads=[], references=[])
     return SetSpec(
-        profile=Profile(identity=PROFILE, schema=PROFILE, codec="little-endian/1"),
+        profile=Profile(identity=PAGE_VERSION, schema=PAGE_VERSION, codec="little-endian/1"),
         origin="oven.registry",
-        producer=PROFILE,
+        producer=PAGE_VERSION,
         receipt=key,
         records=[record],
         namespaces=[],
