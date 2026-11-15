@@ -228,7 +228,12 @@ def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) ->
     return Ok(ready)
 
 
-def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+def body_reading(
+    store: Path,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+) -> Result[BodyReading, str]:
     """
     Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
     shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
@@ -257,10 +262,7 @@ def select_bodies(
     origin = source_origin(ready)
     mut invalid = reading.invalid
     if listing_refusals:
-        invalid = [
-            record.identity
-            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
-        ]
+        invalid = [record.identity for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?]
     retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid)?
     return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
 
@@ -363,7 +365,7 @@ pub def obtain(
         plan_counts = plan_record_counts(ready, compiled_key)?
         record_work(
             Operation.EngineSidecarAuthentication,
-            plan_record_report_path(ready, compiled_key).0,
+            plan_record_report_path(ready, compiled_key)?.0,
             reading_plan_sidecars,
         )
     if produced.code != 0:
@@ -405,14 +407,14 @@ pub def obtain(
         checker_counts = checker_record_counts(ready, compiled_key)?
         record_work(
             Operation.EngineSidecarAuthentication,
-            graph_body_output_path(ready, compiled_key).0 + ".checker-report.json",
+            graph_body_output_path(ready, compiled_key)?.0 + ".checker-report.json",
             reading_checker_sidecar,
         )
         bodies = prepare_compiled_bodies(
             request_transaction,
             ready,
-            graph_body_output_path(ready, compiled_key),
-            Some(plan_record_report_path(ready, compiled_key)),
+            graph_body_output_path(ready, compiled_key)?,
+            Some(plan_record_report_path(ready, compiled_key)?),
             Some(graph),
             retained_bodies,
             checker_counts.restored,

@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from scratch import scratch_directory
-from unit_compiler import unit_sidecar_directory
+from unit_sidecars import unit_sidecar_directory
 
 
 pub def test_two_engines_keep_interleaved_unit_sidecars_apart() -> Result[None, str]:
