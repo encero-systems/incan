@@ -22,6 +22,7 @@ pub(super) mod projection;
 mod report;
 mod source;
 mod trait_inputs;
+mod view_arguments;
 
 pub(super) use admission::{direct_function_boundary, method_input_header};
 pub(crate) use builtins::carried_view_binding;
