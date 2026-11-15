@@ -15,6 +15,7 @@
 #   mcp --help
 #   toolchain pack --help
 #   toolchain install --help
+#   toolchain verify --help
 #   --version --help
 #   run -h
 #   check -h
@@ -29,6 +30,7 @@
 #   mcp -h
 #   toolchain pack -h
 #   toolchain install -h
+#   toolchain verify -h
 #   --version -h
 #   run missing.incn --help
 #   check missing.incn --format json --help
@@ -40,6 +42,7 @@
 #   mcp missing.incn --help
 #   toolchain pack missing.tar.zst --help
 #   toolchain install missing.tar.zst --help
+#   toolchain verify missing.tar.zst --help
 #   oven run --help
 #   oven check -h
 #   oven test --help

@@ -2,6 +2,13 @@
 //!
 //! This updates only the keyword-related regex lines inside `workspaces/ide/vscode/incan.tmLanguage.json`. The grammar
 //! file remains a checked-in artifact, but its keyword buckets are derived from stable `KeywordId`-based helpers.
+//!
+//! ## Examples
+//! Run from the workspace root:
+//! ```bash
+//! incan build loaves/kernel/incan_lang
+//! loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_vscode_grammar_keywords
+//! ```
 
 use std::fs;
 use std::io;

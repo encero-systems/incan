@@ -1,0 +1,21 @@
+"""Tests that use the fixtures their `conftest.incn` shares."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture
+def overridden() -> str:
+    return "from the test file"
+
+
+def test_uses_a_shared_fixture(shared_name: str) -> None:
+    assert_eq(shared_name, "from conftest")
+
+
+def test_prefers_its_own_fixture(overridden: str) -> None:
+    assert_eq(overridden, "from the test file")
+
+
+def test_combines_shared_and_own_fixtures(greeting: str, overridden: str) -> None:
+    assert_eq(greeting, "hello from conftest")
+    assert_eq(overridden, "from the test file")

@@ -1,0 +1,83 @@
+"""A documentation edit in a dependency rekeys none of its consumers, whether they compile against it or link it."""
+
+from std.fs import Path
+from std.json import JsonValue
+from scratch import scratch_directory
+from files import json_text
+from observation import file_digest
+from unit import UnitDescription
+from unit_publication import LOAF_FACTS_SCHEMA, facts_path, record_payload
+from unit_freshness import fingerprint
+from freshness_fixtures import fixture, unit_key, write
+
+
+pub def test_a_documentation_edit_in_a_dependency_keeps_its_consumers_identities() -> Result[None, str]:
+    """
+    A dependency republished with the same semantic facts and the same native bytes rekeys none of its consumers.
+
+    1. Publish the dependency's manifest with its compiler's semantic facts.
+    2. Republish it with a new producer identity and the same facts: what a docstring edit does.
+    3. A library consumer and the program keep their unit identities.
+    4. Republished with other facts, both are rekeyed.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    manifest = Path(setup.unit.loaves[0].dir).joinpath("dep.incnlib")
+    library = library_consumer(setup.unit)
+    # 1. The first publication.
+    publish(manifest, "{\"fixture\":\"dependency\"}", "dependency", "facts one")?
+    first_library = unit_key(library, setup.toolchain)?.digest
+    first_program = unit_key(setup.unit, setup.toolchain)?.digest
+    # 2. and 3. A docstring edit: new manifest bytes and producer identity, the same semantic facts.
+    publish(manifest, "{\"fixture\":\"dependency, redocumented\"}", "redocumented dependency", "facts one")?
+    assert unit_key(library, setup.toolchain)?.digest == first_library, "a library consumer is not rekeyed"
+    assert unit_key(setup.unit, setup.toolchain)?.digest == first_program, "the program is not rekeyed"
+    # 4. A change to what consumers compile against.
+    publish(manifest, "{\"fixture\":\"dependency, new signature\"}", "changed dependency", "facts two")?
+    assert unit_key(library, setup.toolchain)?.digest != first_library, "a facts change rekeys a library consumer"
+    return Ok(None)
+
+
+def library_consumer(program: UnitDescription) -> UnitDescription:
+    """The same unit compiled as a library: it compiles against its Loaves and links none of them."""
+    mut library = program
+    library.kind = "library"
+    return library
+
+
+def publish(manifest: Path, text: str, producer: str, facts: str) -> Result[None, str]:
+    """Write a manifest and the compiler's semantic facts for its exact bytes, then record its publication."""
+    write(manifest, text)?
+    schema = JsonValue.string(LOAF_FACTS_SCHEMA)
+    digest = JsonValue.string(file_digest(manifest)?)
+    semantic = JsonValue.string(fingerprint([facts])?)
+    document = JsonValue.object({"schema": schema, "manifest_digest": digest, "semantic_facts": semantic})
+    write(facts_path(manifest), json_text(document)?)?
+    return record_payload(manifest, fingerprint([producer])?)
+
+
+pub def test_a_rebuilt_native_dependency_with_the_same_bytes_keeps_its_consumers_identities() -> Result[None, str]:
+    """
+    A linked rlib republished under a new producer identity rekeys its consumers only when its bytes change.
+
+    1. Key the program and a library consumer of the fixture's linked runtime rlib.
+    2. Republish the rlib with the same bytes and a new producer identity: a rebuild that changed nothing it compiles.
+    3. Neither consumer is rekeyed.
+    4. New bytes rekey both.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    runtime = scratch.path().joinpath("toolchain").joinpath("libruntime.rlib")
+    library = library_consumer(setup.unit)
+    first_program = unit_key(setup.unit, setup.toolchain)?.digest
+    first_library = unit_key(library, setup.toolchain)?.digest
+    # 2. and 3. The same bytes from another producer.
+    record_payload(runtime, fingerprint(["runtime rebuilt"])?)?
+    assert unit_key(setup.unit, setup.toolchain)?.digest == first_program, "the program is not rekeyed"
+    assert unit_key(library, setup.toolchain)?.digest == first_library, "a library consumer is not rekeyed"
+    # 4. Different native bytes.
+    write(runtime, "runtime two")?
+    record_payload(runtime, fingerprint(["runtime two"])?)?
+    assert unit_key(setup.unit, setup.toolchain)?.digest != first_program, "new native bytes rekey the program"
+    assert unit_key(library, setup.toolchain)?.digest != first_library, "new native bytes rekey a library consumer"
+    return Ok(None)

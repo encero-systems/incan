@@ -50,8 +50,7 @@ Do not write to the canonical `.agents/state/review-report.md`.
 
 ## Slice report shape
 
-Keep slice reports findings-first. Only list clean surfaces when that clean call is non-obvious or useful for the
-orchestrator.
+Keep slice reports findings-first. Only list clean surfaces when that clean call is non-obvious or useful for the orchestrator.
 
 ```md
 # Review Slice Report

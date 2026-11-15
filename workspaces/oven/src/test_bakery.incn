@@ -1,6 +1,6 @@
 """Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
 
-from rust::std::fs import Permissions, remove_dir_all, set_permissions
+from rust::std::fs import Permissions, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
@@ -22,8 +22,9 @@ from bakery import (
     repair_derived,
 )
 from bakery_records import Fact, claim_file, staging_root
-from bakery_roots import collect, register_root
-from pub::incan_platform.store import begin, commit, delete, get, keys, put
+from bakery_roots import collect, lease_unit, leased_units, register_root
+from pub::incan_platform.process_lease import ProcessLease
+from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
 from incan_units import compile_executable, obtain_executable
@@ -88,7 +89,7 @@ def counted_toolchain(scratch: Path) -> Result[Toolchain, str]:
     """A compiler that cannot start a worker, counts each compilation and writes a fixed executable."""
     driver = scratch.joinpath("toolchain").joinpath("driver")
     attempts = scratch.joinpath("attempts")
-    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\n"
     script += "printf '%s' '{\"schema\":\"incan.native-shared/1\",\"libraries\":[]}' > \"$4.native-shared.json\"\nexit 0\n"
     write(driver, script)?
@@ -238,6 +239,34 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     return Ok(None)
 
 
+def added_segment(before: Snapshot, after: Snapshot) -> Result[str, str]:
+    """The one segment `after` reaches that `before` does not: the segment its commit wrote."""
+    earlier = segments(before).map_err((error) => error.message())?
+    added = [name for name in segments(after).map_err((error) => error.message())? if name not in earlier]
+    if len(added) != 1:
+        return Err(f"a commit reached {len(added)} new segments")
+    return Ok(added[0])
+
+
+pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:
+    """Verification reads segments retained by another live view, not only records selected in the home view."""
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    other = fork(snapshot(store).map_err((error) => error.message())?, "other")
+        .map_err((error) => error.message())?
+    written = commit(put(begin(other), "other-only", b"one damaged frame"))
+        .map_err((error) => error.message())?
+    digest = added_segment(other, written)?
+    segment = store.joinpath("segments").joinpath(f"{digest}.seg")
+    data = segment.read_bytes().map_err((error) => error.message())?
+    segment.chmod(false).map_err((error) => error.message())?
+    segment.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    damaged = verify_all(store)?
+    assert len(damaged) == 1, f"verification reported {len(damaged)} damaged objects"
+    assert segment.0 in damaged[0], damaged[0]
+    return Ok(None)
+
+
 pub def test_collection_preserves_published_units_for_cold_and_warm_readers() -> Result[None, str]:
     """Collection between publication and view selection preserves both cold and warm unit readers and payloads."""
     scratch = scratch_directory()?
@@ -344,6 +373,47 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     return Ok(None)
 
 
+pub def test_a_running_program_keeps_its_leased_unit_through_collection() -> Result[None, str]:
+    """
+    The proving lane's sequence: version 3 of a program is registered and starts; version 4 supersedes it while it
+    runs; collection then keeps version 3, and removes it once the program has exited.
+
+    1. Version 3 is registered, and collection keeps it.
+    2. Its run leases it, and the program it starts holds the lease after the run's own hold ends, as when the run's
+       process became the program or its owner restarted.
+    3. Version 4 supersedes version 3 while the program runs; collection keeps version 3.
+    4. Once the program has exited, collection removes version 3 and keeps version 4.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    third = "sha256:" + digest_of("d3")
+    fourth = "sha256:" + digest_of("d4")
+    project = scratch.path().joinpath("project")
+    make_directory(project)?
+    # 1. The registered unit stays.
+    assert bake(store, third, "version 3", [], "pinned-3")?
+    register_root(store, project.0, "unit\tpinned\tprogram", [third])?
+    assert collect(store, 0)?.removed == 0, "a registered unit expired"
+    # 2. The program inherits the run's lease; the run's own hold ends while the program runs.
+    mut lease: Option[ProcessLease] = Some(lease_unit(store, third)?)
+    mut program = Command.new("/bin/sleep").arg("60").spawn().map_err((error) => str(error))?
+    lease = None
+    # 3. Superseded while it runs, the leased unit is kept.
+    assert bake(store, fourth, "version 4", [], "pinned-4")?
+    register_root(store, project.0, "unit\tpinned\tprogram", [fourth])?
+    during = collect(store, 0)?
+    assert during.removed == 0, f"collection removed {during.removed} units while their program ran"
+    assert found(find(store, third)?), "a running program's unit was collected"
+    # 4. After the program exits, the superseded unit goes, and only it.
+    program.kill().map_err((error) => str(error))?
+    _ = program.wait().map_err((error) => str(error))?
+    after = collect(store, 0)?
+    assert after.removed == 1 and not found(find(store, third)?), "an exited program's superseded unit was kept"
+    assert found(find(store, fourth)?), "the current unit expired"
+    assert len(leased_units(store)?) == 0, "an ended lease is still listed"
+    return Ok(None)
+
+
 pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[None, str]:
     """The name record returns the identity a name was last baked under, across merged deltas."""
     scratch = scratch_directory()?
@@ -353,6 +423,7 @@ pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[N
         assert bake(store, digest_of(f"{index}a"), f"{index}", [], "dep")?
     assert lookup(store, "dep")? == Some(digest_of("19a"))
     verify_frozen_library_bindings(scratch.path())?
+    verify_moved_library_bindings(scratch.path())?
     verify_equal_payload_identity_change(scratch.path())?
     return Ok(None)
 
@@ -398,6 +469,26 @@ def verify_frozen_library_bindings(root: Path) -> Result[None, str]:
     assert read(original.joinpath("payload"))? == "first library"
     assert read(current.joinpath("payload"))? == "repaired library"
     assert original.joinpath("payload").is_symlink()
+    return Ok(None)
+
+
+def verify_moved_library_bindings(root: Path) -> Result[None, str]:
+    """A library's bindings name their payloads relative to the bakery, so they hold after the bakery moves."""
+    store = root.joinpath("moving-bakery")
+    identity = fingerprint(["moved-library-fixture", root.0])?
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "moved library")?
+    fact = seal(store, identity, staged, "library", identity, [], "test")?
+    target = root.joinpath("target/moved-library")
+    view_directory(store, fact, target)?
+    bound = library_directory(store, target)?
+    assert bound.joinpath("payload").is_symlink()
+    moved = root.joinpath("moved-bakery")
+    rename(store.0, moved.0).map_err((error) => f"{store.0}: {error}")?
+    selected = library_directory(moved, target)?
+    canonical = moved.resolve().map_err((error) => error.message())?
+    assert selected.0.startswith(canonical.0 + "/"), "the library was bound outside the moved bakery"
+    assert read(selected.joinpath("payload"))? == "moved library"
     return Ok(None)
 
 

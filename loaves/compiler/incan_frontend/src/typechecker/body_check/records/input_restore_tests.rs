@@ -5,6 +5,106 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
+/// Structural checked types keep their enum shape instead of falling back to a native Debug spelling.
+#[test]
+fn structural_checked_type_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::ResolvedType;
+
+    let values = vec![
+        ResolvedType::Never,
+        ResolvedType::FrozenStr,
+        ResolvedType::FrozenBytes,
+        ResolvedType::FrozenList(Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenSet(Box::new(ResolvedType::Bool)),
+        ResolvedType::TypeToken(Box::new(ResolvedType::Named("Item".into()))),
+        ResolvedType::Tuple(vec![ResolvedType::Int, ResolvedType::Str]),
+        ResolvedType::SelfType,
+        ResolvedType::Ref(Box::new(ResolvedType::Int)),
+        ResolvedType::RefMut(Box::new(ResolvedType::Int)),
+        ResolvedType::CallSiteInfer,
+    ];
+    for expected in values {
+        let mut fields = Vec::new();
+        super::super::type_fields(&expected, &mut fields)?;
+        let mut encoded = fields.iter();
+        assert_eq!(super::super::read_type(&mut encoded)?, expected);
+        assert!(encoded.next().is_none());
+    }
+    Ok(())
+}
+
+/// A checked native result type survives the record boundary without falling back to its source-facing type.
+#[test]
+fn native_call_refinement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def view(value: int) -> int:\n    return value\n";
+    let (program, checker, owner) = fixture(source, "view")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let span = *local
+        .expressions
+        .expr_types
+        .keys()
+        .next()
+        .ok_or("missing checked expression")?;
+    let native = crate::symbols::ResolvedType::Int;
+    local.calls.body_ir_call_result_types.insert(span, native.clone());
+    local.calls.body_ir_native_argument_types.insert(span, native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let rows = fields.iter().filter(|row| row[0] == "native-call").collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    for row in rows {
+        super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    }
+    assert_eq!(restored.calls.body_ir_call_result_types.get(&span), Some(&native));
+    assert_eq!(restored.calls.body_ir_native_argument_types.get(&span), Some(&native));
+    Ok(())
+}
+
+/// A local Rust-derived value retains its exact native carrier independently of its projected source type.
+#[test]
+fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: int) -> int:\n    retained = value\n    return retained\n";
+    let (program, checker, owner) = fixture(source, "keep")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let identity = local
+        .references
+        .resolved_write_identities
+        .iter()
+        .find(|((_, name), _)| name == "retained")
+        .map(|(_, identity)| identity.clone())
+        .ok_or("missing retained local identity")?;
+    let native = crate::symbols::ResolvedType::RustPath("serde_json::Value".into());
+    local.rust.value_native_types.insert(identity.clone(), native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let row = fields
+        .iter()
+        .find(|row| row[0] == "native-value" && row[2] == "type")
+        .ok_or("missing native value type row")?;
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    assert_eq!(restored.rust.value_native_types.get(&identity), Some(&native));
+    Ok(())
+}
+
 /// A graph with an invalid entry restores only as its exact recomputed refusal, never as successful analysis.
 #[test]
 fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
@@ -394,11 +494,18 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
     Ok(())
 }
 
-/// Record types retain nominal versus generic identity, while the current owner profile still refuses generics.
+/// Record types retain nominal versus generic identity.
 #[test]
-fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result<(), Box<dyn std::error::Error>> {
+fn result_requirement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
     use crate::symbols::ResolvedType;
-    use crate::typechecker::canonical_nodes::NodeBindingError;
+    for info in incan_lang::lang::types::numerics::NUMERIC_TYPES {
+        let expected = ResolvedType::Numeric(info.id);
+        let mut fields = Vec::new();
+        super::super::types::type_fields(&expected, &mut fields)?;
+        let mut reader = fields.iter();
+        assert_eq!(super::super::types::read_type(&mut reader)?, expected);
+        assert_eq!(reader.next(), None);
+    }
     for leaf in [ResolvedType::Named("E".into()), ResolvedType::TypeVar("E".into())] {
         let expected = ResolvedType::Generic(
             "Result".into(),
@@ -412,11 +519,22 @@ fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result
         fields.pop();
         assert!(super::super::types::read_type(&mut fields.iter()).is_err());
     }
-    let source = "trait Failure[E]:\n    def fail(self, marker: Borrowed[int]) -> Result[None, E]:\n        pass\ndef forward[E, F with Failure[E]](failure: Borrowed[F], marker: Borrowed[int]) -> Result[None, E]:\n    return failure.fail(marker)\n";
-    let (program, checker, owner) = fixture(source, "forward")?;
-    assert!(matches!(
-        Positions::new(&checker, &program, owner, false),
-        Err(NodeBindingError::Unsupported("modified, generic, or generated owner"))
-    ));
+    Ok(())
+}
+
+/// A generic free function is its own checked record, and so is a caller that instantiates it at two types: each
+/// declaration and final record is position-free and reconstructs natively to its independent cold check.
+#[test]
+fn generic_owners_and_their_callers_are_records() -> Result<(), Box<dyn std::error::Error>> {
+    let pick = "def pick[T](items: list[T]) -> T:\n    return items[2]\n\ndef main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n";
+    let pair = "def second[A, B](left: A, right: B) -> B:\n    return right\n";
+    for (source, name) in [(pick, "pick"), (pick, "main"), (pair, "second")] {
+        for declaration in [true, false] {
+            let fields = super::super::fixture_record(source, name, declaration)?;
+            let moved = format!("# moved owner\n{source}");
+            assert_eq!(fields, super::super::fixture_record(&moved, name, declaration)?);
+            super::super::verify_fixture(&moved, name, fields)?;
+        }
+    }
     Ok(())
 }

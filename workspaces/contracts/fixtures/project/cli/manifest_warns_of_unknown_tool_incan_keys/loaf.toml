@@ -1,0 +1,12 @@
+[project]
+name = "manifest_warns_of_unknown_tool_incan_keys"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[tool.incan]
+newer = true
+
+[tool.incan.future]
+flag = true

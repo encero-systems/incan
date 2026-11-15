@@ -15,6 +15,9 @@ use std::process::{Command, Stdio};
 use incan_frontend::typechecker::{CBindingDescriptor, CBindingEnum, CBindingStruct, CBindingType};
 use incan_lang::lang::c_abi::ScalarTypeId;
 
+use super::c_abi_capabilities::{SelectedCapability, require, selected_android_platform, selected_toolchain};
+use crate::unit::UnitCAbiTarget;
+
 type EnumValueProbeRequest = (String, String, String);
 
 /// A Clang-compatible target supplied by the checked C foundation.
@@ -70,6 +73,31 @@ impl CAbiTarget {
         None
     }
 
+    /// The Clang ABI target of one declared `[[interop.c.targets]]` entry, as 0.5's `--interop-target` verified it.
+    pub fn declared(target: &UnitCAbiTarget) -> Result<Self, String> {
+        match (
+            target.target.as_str(),
+            target.api_level,
+            target.deployment_target.as_deref(),
+        ) {
+            ("x86_64-unknown-linux-gnu", None, None) => Ok(Self::LinuxX86_64),
+            ("aarch64-apple-darwin", None, None) => Ok(Self::MacosArm64),
+            ("aarch64-linux-android", Some(api_level), None) => Ok(Self::AndroidArm64 { api_level }),
+            ("aarch64-apple-ios", None, Some(deployment_target)) => Ok(Self::IosArm64 {
+                deployment_target: deployment_target.to_string(),
+                simulator: false,
+            }),
+            ("aarch64-apple-ios-sim", None, Some(deployment_target)) => Ok(Self::IosArm64 {
+                deployment_target: deployment_target.to_string(),
+                simulator: true,
+            }),
+            _ => Err(format!(
+                "interop target `{}` is not supported by checked C ABI verification; declare one of `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, `aarch64-linux-android` with Android platform facts, or `aarch64-apple-ios`/`aarch64-apple-ios-sim` with iOS platform facts",
+                target.target
+            )),
+        }
+    }
+
     /// Return whether this target needs Android's NDK-owned Clang wrapper rather than a host toolchain.
     fn is_android(&self) -> bool {
         matches!(self, Self::AndroidArm64 { .. })
@@ -97,7 +125,12 @@ impl CAbiTarget {
 pub struct CAbiVerificationPlan {
     target: CAbiTarget,
     definitions: Vec<String>,
+    /// Include roots of the Clove whose public headers a `c.loaf_library` binding names.
+    include: Vec<PathBuf>,
     toolchain_identity: Option<String>,
+    /// The declared `[[interop.c.targets]]` entry this plan verifies against (`--interop-target`); absent for the
+    /// host.
+    declared: Option<UnitCAbiTarget>,
 }
 
 impl CAbiVerificationPlan {
@@ -106,8 +139,34 @@ impl CAbiVerificationPlan {
         CAbiTarget::host().map(|target| Self {
             target,
             definitions: Vec::new(),
+            include: Vec::new(),
             toolchain_identity: None,
+            declared: None,
         })
+    }
+
+    /// Verification against one declared interop target: its ABI, its definitions and its toolchain and SDK
+    /// capability requirements, which the selected compiler and SDK must meet.
+    pub fn declared(target: &UnitCAbiTarget) -> Result<Self, String> {
+        Ok(Self {
+            target: CAbiTarget::declared(target)?,
+            definitions: target.definitions.clone(),
+            include: Vec::new(),
+            toolchain_identity: target
+                .toolchain
+                .as_ref()
+                .map(|requirement| requirement.capability.clone()),
+            declared: Some(target.clone()),
+        })
+    }
+
+    /// The same target verified with one Clove configuration's definitions and the Clove's include roots, as the
+    /// archive the binding links was compiled (RFC 159).
+    pub fn with_clove(&self, definitions: &[String], include: &[PathBuf]) -> Self {
+        let mut plan = self.clone();
+        plan.definitions.extend(definitions.iter().cloned());
+        plan.include.extend(include.iter().cloned());
+        plan
     }
 
     /// Return the exact Clang target selected for this verifier pass.
@@ -130,7 +189,7 @@ impl CAbiVerificationPlan {
 ///
 /// Oven passes a toolchain's own Clang (`INCAN_C_ABI_CLANG`) when the toolchain carries one, as Linux toolchains do;
 /// it reads the machine's headers, those of the system libraries a binding links. Otherwise the platform's
-/// Clang-compatible toolchain is used: Xcode's on macOS.
+/// Clang-compatible toolchain is used: Xcode's on macOS, with the target's SDK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClangToolchain {
     executable: PathBuf,
@@ -138,13 +197,24 @@ pub struct ClangToolchain {
 }
 
 impl ClangToolchain {
-    /// Select the current platform's Clang-compatible compiler without consulting binding names or headers.
+    /// Select the verification's compiler and SDK without consulting binding names or headers, then hold them to a
+    /// declared target's toolchain and SDK capability requirements.
     pub fn discover(plan: &CAbiVerificationPlan) -> Result<Self, CAbiVerificationError> {
+        let (toolchain, sdk) = Self::select(plan)?;
+        if let Some(declared) = &plan.declared {
+            toolchain.require_capabilities(declared, sdk.as_deref())?;
+        }
+        Ok(toolchain)
+    }
+
+    /// The verification's compiler and, when the platform's tool selects one for the target, the SDK's name.
+    fn select(plan: &CAbiVerificationPlan) -> Result<(Self, Option<String>), CAbiVerificationError> {
         if let Some(executable) = env::var_os("INCAN_C_ABI_CLANG").filter(|value| !value.is_empty()) {
-            return Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from(executable),
                 arguments: Vec::new(),
-            });
+            };
+            return Ok((toolchain, None));
         }
         if plan.target().is_android() {
             return Err(CAbiVerificationError::toolchain(android_toolchain_message(plan)));
@@ -168,18 +238,50 @@ impl ClangToolchain {
             };
             let sysroot = xcrun_value(Some(sdk), &["--show-sdk-path"], sysroot_description)?;
             let arguments = vec![OsString::from("-isysroot"), OsString::from(sysroot)];
-            Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from(executable),
                 arguments,
-            })
+            };
+            Ok((toolchain, Some(sdk.to_string())))
         }
         #[cfg(not(target_os = "macos"))]
         {
-            Ok(Self {
+            let toolchain = Self {
                 executable: PathBuf::from("clang"),
                 arguments: Vec::new(),
-            })
+            };
+            Ok((toolchain, None))
         }
+    }
+
+    /// Refuse, by name, a declared toolchain or SDK capability this selection does not provide. The toolchain is the
+    /// selected compiler; the SDK is the one the platform's tool selected for the target or, for an NDK Clang, the
+    /// newest Android platform its NDK carries.
+    fn require_capabilities(&self, declared: &UnitCAbiTarget, sdk: Option<&str>) -> Result<(), CAbiVerificationError> {
+        if let Some(requirement) = &declared.toolchain {
+            let selected = selected_toolchain(&self.executable);
+            let unknown = format!(
+                "the selected C toolchain `{}` reports no Clang version",
+                self.executable.display()
+            );
+            require(&declared.target, "toolchain", requirement, selected.as_ref(), &unknown)
+                .map_err(CAbiVerificationError::toolchain)?;
+        }
+        if let Some(requirement) = &declared.sdk {
+            let selected = match sdk {
+                Some(name) => selected_platform_sdk(name),
+                None => selected_android_platform(&self.executable),
+            };
+            require(
+                &declared.target,
+                "SDK",
+                requirement,
+                selected.as_ref(),
+                "the selected C toolchain selects no SDK",
+            )
+            .map_err(CAbiVerificationError::toolchain)?;
+        }
+        Ok(())
     }
 
     /// Construct a test-only toolchain with an explicit executable path.
@@ -213,6 +315,22 @@ fn xcrun_value(sdk: Option<&str>, arguments: &[&str], description: &str) -> Resu
         "could not select {description}: {}",
         String::from_utf8_lossy(&output.stderr).trim()
     )))
+}
+
+/// The SDK Xcode selected for the target, by its name and the version the SDK reports.
+#[cfg(target_os = "macos")]
+fn selected_platform_sdk(name: &str) -> Option<SelectedCapability> {
+    let version = xcrun_value(Some(name), &["--show-sdk-version"], "SDK version").ok()?;
+    Some(SelectedCapability {
+        capability: name.to_string(),
+        version,
+    })
+}
+
+/// Only Xcode selects a platform SDK for a target.
+#[cfg(not(target_os = "macos"))]
+fn selected_platform_sdk(_name: &str) -> Option<SelectedCapability> {
+    None
 }
 
 /// Explain the current explicit Android toolchain boundary without inventing an ambient NDK discovery policy.
@@ -349,6 +467,9 @@ fn verifier_command(toolchain: &ClangToolchain, plan: &CAbiVerificationPlan) -> 
     for definition in plan.definitions() {
         command.arg(format!("-D{definition}"));
     }
+    for include in &plan.include {
+        command.arg(format!("-I{}", include.display()));
+    }
     command.args(["-std=gnu11", "-Werror", "-x", "c", "-target"]);
     command.arg(plan.target().triple());
     command
@@ -432,8 +553,8 @@ fn render_enum_value_probe(
     binding: &CBindingDescriptor,
 ) -> Result<(String, Vec<EnumValueProbeRequest>), CAbiVerificationError> {
     let mut probe = format!(
-        "/* Generated by the Incan checked C ABI verifier. */\n#include \"{}\"\n\n",
-        escape_c_include(&binding.header)
+        "/* Generated by the Incan checked C ABI verifier. */\n{}\n\n",
+        include_directive(binding)?
     );
     let mut requested = Vec::new();
     for enumeration in &binding.enums {
@@ -487,8 +608,8 @@ fn ast_constant_value(value: &serde_json::Value) -> Option<&str> {
 /// Render a deterministic, non-executable C probe from one checked descriptor.
 fn render_verification_probe(binding: &CBindingDescriptor) -> Result<String, CAbiVerificationError> {
     let mut probe = format!(
-        "/* Generated by the Incan checked C ABI verifier. */\n#include \"{}\"\n\n",
-        escape_c_include(&binding.header)
+        "/* Generated by the Incan checked C ABI verifier. */\n{}\n\n",
+        include_directive(binding)?
     );
     for symbol in &binding.symbols {
         let native = checked_c_identifier(binding, &symbol.native, "native symbol")?;
@@ -682,6 +803,25 @@ fn checked_c_type_name(
 /// Escape an explicit header path for one generated C include directive.
 fn escape_c_include(header: &str) -> String {
     header.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The probe's include directive for a binding's header.
+///
+/// Oven resolves every header a package declares, and every public header of a Clove, to an absolute path, which is
+/// included by that path. Any other header is a system header: it is searched only on the target's system include
+/// path, never relative to the working directory, so an undeclared project file is neither read nor an unrecorded
+/// input of the unit.
+fn include_directive(binding: &CBindingDescriptor) -> Result<String, CAbiVerificationError> {
+    if std::path::Path::new(&binding.header).is_absolute() {
+        return Ok(format!("#include \"{}\"", escape_c_include(&binding.header)));
+    }
+    if binding.header.contains(['>', '\n', '\r']) {
+        return Err(CAbiVerificationError::binding(
+            binding,
+            format!("header `{}` is not a header name", binding.header),
+        ));
+    }
+    Ok(format!("#include <{}>", binding.header))
 }
 
 /// Convert source names into a private generated C identifier component.

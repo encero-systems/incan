@@ -9,7 +9,7 @@ from std.tempfile import TemporaryDirectory
 from compare import compare
 from fixture import Fixture, fixture_files, materialize_files
 from header import Header
-from run import Outcome, clear_trace, invoke, trace_file, unit_notes
+from run import Outcome, clear_trace, invoke, trace_file, traced_setting, unit_notes
 
 const REPLAYED: str = " check: replayed"
 const CHECKED: str = " check: checked"
@@ -56,9 +56,9 @@ pub def compare_check_edits(
 
 
 def traced(incan: str, command: list[str], project: Path, environment: list[str] = []) -> Result[Traced, str]:
-    """Run the check with a fresh trace, so its notes are this invocation's alone."""
+    """Run the check traced into a fresh channel, so its notes are this invocation's alone."""
     clear_trace(project)?
-    outcome = invoke(incan, command, project, environment)?
+    outcome = invoke(incan, command, project, traced_setting(project)? + environment)?
     return Ok(Traced(outcome=outcome, notes=unit_notes(trace_file(project))))
 
 

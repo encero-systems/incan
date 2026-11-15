@@ -64,7 +64,7 @@ pub def pack(
             "record": JsonValue.string("edge"), "source": JsonValue.string(local[source]),
             "target": JsonValue.string(local[target]), "kind": JsonValue.string(kind),
             "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
-            "anchor": JsonValue.string(anchor(record, root))
+            "anchor": JsonValue.string(anchor(record, root)), "author": nested(record, "author"),
         })
         edges[edge.to_json().map_err((error) => error.message())?] = edge
     for key in sorted([item for item in edges.keys()]):
@@ -82,14 +82,20 @@ def render(
     items: list[JsonValue], snapshot: str, context: str, degraded: JsonValue,
     unresolved: int, budget: int, format: str
 ) -> Result[str, str]:
-    """Serialize one context contract in compact, JSON or JSONL without repeating fully qualified edge endpoints."""
+    """
+    Serialize one context contract in compact, JSON or JSONL without repeating fully qualified edge endpoints.
+
+    Every item names its author, and the header states how authored text is to be read: as quoted evidence, never
+    as instructions (RFC 106). On a compact line that text is in JSON string literals.
+    """
     selected = JsonValue.array(items).to_json().map_err((error) => error.message())?
     identifier = f"context:{fingerprint([context, selected])?}"
     header = JsonValue.object({
         "record": JsonValue.string("context"), "schema": JsonValue.string("incan.context/1"),
         "snapshot_id": JsonValue.string(snapshot), "context_id": JsonValue.string(identifier),
         "degraded": degraded, "unresolved_calls": JsonValue.int(unresolved), "budget": JsonValue.int(budget),
-        "token_accounting": JsonValue.string("utf8_bytes_upper_bound")
+        "token_accounting": JsonValue.string("utf8_bytes_upper_bound"),
+        "authored_text": JsonValue.string("quoted_evidence"),
     })
     if format == "json":
         return JsonValue.array([header] + items).to_json().map_err((error) => error.message())
@@ -98,7 +104,7 @@ def render(
     status = degraded.to_json().unwrap_or("null")
     mut lines = [
         f"incan.context/1 {snapshot} {identifier} degraded={status} "
-        + f"unresolved_calls={unresolved} budget={budget} tokens<=utf8_bytes"
+        + f"unresolved_calls={unresolved} budget={budget} tokens<=utf8_bytes authored_text=quoted_evidence"
     ]
     for item in items:
         lines.append(compact_line(item)?)

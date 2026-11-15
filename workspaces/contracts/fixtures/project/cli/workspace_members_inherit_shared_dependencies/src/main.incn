@@ -1,0 +1,9 @@
+# behavior: a workspace member's `shared = { workspace = true }` takes the root's `[workspace.dependencies]` entry, its `path` rebased from the root onto the member, as hees.ai's members inherit `hees_ai = { path = "." }` on 0.5.1 (#3141).
+# cli-commands:
+#   run app/src/main.incn
+# expect-stdout:
+#   inherited 42
+# expect-exit: 0
+
+def main() -> None:
+    println("the workspace root's own program, which this case does not run")

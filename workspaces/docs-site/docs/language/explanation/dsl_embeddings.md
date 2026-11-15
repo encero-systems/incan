@@ -87,4 +87,3 @@ Diagnostics follow the same split. A construct the submode rejects is reported w
 ## See also
 
 - [Author a vocabulary in Incan](../../contributing/how-to/authoring_vocabularies.md) — register fragments and implement their native hooks
-- [RFC 081](../../RFCs/closed/implemented/081_language_shaped_dsl_embeddings.md) — the specification

@@ -4,11 +4,23 @@
 use super::*;
 
 use incan_driver::diagnostics::CliDiagnostic;
-use incan_driver::modules::collect_document_modules;
+use incan_driver::modules::{collect_document_modules, entry_module_segments};
 use incan_driver::unit::UnitDescription;
-use incan_frontend::module::logical_module_segments_from_file;
 
 impl IncanLanguageServer {
+    /// On the engine route, the signature the editor view answers for the declaration at `position` of the latest
+    /// buffer; `None` leaves hover to the in-process analysis.
+    pub(super) async fn engine_hover(&self, uri: &Url, position: Position) -> Option<String> {
+        if !engine_overlay::selected() {
+            return None;
+        }
+        let path = uri.to_file_path().ok()?;
+        let source = self.pending_sources.read().await.get(uri).cloned()?;
+        let (line, column) = (position.line + 1, position.character + 1);
+        let answered = tokio::task::spawn_blocking(move || engine_overlay::hover(&path, &source, line, column)).await;
+        answered.ok()?.ok()?
+    }
+
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
     pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32, debounce: bool) {
         let ticket = Arc::new(());
@@ -33,6 +45,33 @@ impl IncanLanguageServer {
                 .get(uri)
                 .is_some_and(|current| Arc::ptr_eq(current, &ticket))
             {
+                return;
+            }
+        }
+        // With the engine selected, diagnostics are the overlay request's answer, published as soon as it arrives. The
+        // in-process analysis below still keeps the document state hover and navigation read, but only once typing
+        // pauses: an edit within the pause supersedes it, so it never competes with the next keystroke's request.
+        let overlay = engine_overlay::selected();
+        if overlay && let Ok(path) = uri.to_file_path() {
+            let text = source.to_owned();
+            let answered =
+                tokio::task::spawn_blocking(move || engine_overlay::diagnostics(&path, &text, version)).await;
+            let diagnostics = match answered {
+                Ok(Ok(found)) => found,
+                Ok(Err(reason)) => vec![lsp_root_error_diagnostic(reason)],
+                Err(error) => vec![lsp_root_error_diagnostic(format!("overlay request failed: {error}"))],
+            };
+            let tickets = self.analysis_tickets.read().await;
+            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
+                return;
+            }
+            drop(tickets);
+            self.client
+                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(engine_overlay::ANALYSIS_PAUSE_MS)).await;
+            let tickets = self.analysis_tickets.read().await;
+            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
                 return;
             }
         }
@@ -81,6 +120,9 @@ impl IncanLanguageServer {
             }
         }
         drop(documents);
+        if overlay {
+            return;
+        }
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, Some(version))
             .await;
@@ -209,8 +251,7 @@ fn analyze(
     };
 
     // ---- One collection and one checking pass, as `incan check` runs them ----
-    let segments =
-        logical_module_segments_from_file(&session.source_root, path).unwrap_or_else(|| vec!["main".to_string()]);
+    let segments = entry_module_segments(&session.source_root, path);
     let modules = match collect_document_modules(path.to_path_buf(), &session, segments.clone(), open_sources) {
         Ok(modules) => modules,
         Err(failure) => {
@@ -323,8 +364,11 @@ fn parse_navigation_source(
 
 /// Trace editor analysis boundaries only when explicitly requested, keeping normal protocol diagnostics quiet.
 fn trace_graph(phase: &str) {
-    if std::env::var_os("INCAN_TRACE_GRAPH").is_some() {
-        eprintln!("LSP graph: {phase}");
+    if incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::LspGraph) {
+        incan_frontend::trace_flags::emit(
+            incan_frontend::trace_flags::Category::LspGraph,
+            &format!("LSP graph: {phase}"),
+        );
     }
 }
 

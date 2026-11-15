@@ -14,7 +14,7 @@ pub(super) fn checked_seed(
     let facts = checker.into_type_info();
     let providers = ProviderOperationCatalog::new();
     let context = BodyIrContext {
-        modules: &[],
+        modules: crate::body_ir::ContextModules::default(),
         provider_operations: &providers,
         registry_package: None,
         library_package: None,

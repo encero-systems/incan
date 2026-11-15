@@ -5,25 +5,26 @@
 //! state restored, so the host answers a typed compiler fault and decides what happens next.
 //!
 //! Bootstrap boundary (DD-0013, "Language and platform boundary", adaptation 3): besides the entry itself, the Rust
-//! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) and
-//! returning freed heap needs FFI that Incan refuses as unsafe. Footprint readings live in the platform resource
-//! probe; heap pressure relief remains here until the platform's allocator-control boundary exists. The caller watch
-//! is a thread that observes the caller's socket while the compiler runs:
-//! dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a value without
-//! a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained `Send` evidence.
-//! What a departed caller means is the host's decision (`incan_worker_host::abandon`).
+//! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) needs
+//! FFI that Incan refuses as unsafe. Footprint readings live in the platform resource probe, and returning freed heap
+//! in the platform's `release_free_heap`. The caller watch is a thread that observes the caller's socket while the
+//! compiler runs: dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a
+//! value without a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained
+//! `Send` evidence. What a departed caller means is the host's decision (`incan_worker_host::abandon`).
 
 use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
-use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand};
+use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand, WorkerHost};
+
+use crate::frontend::UnitCompiled;
 
 mod console;
 
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut host = incan_worker_host::start(&arguments.to_vec(), footprint())?;
+    let mut host = incan_worker_host::start(&arguments.to_vec())?;
     let home = incan_worker_host::selected_home(&host);
     while let Some(activation) = incan_worker_host::next_activation(&mut host) {
         match activation {
@@ -31,7 +32,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                 let mut timing = crate::native_timing::Timing::requested();
                 let watch = incan_worker_host::caller_watch(&mut host)
                     .map(|watch| Abandonment::watch(watch, request.retire_after));
-                let outcome = activate(&request);
+                let outcome = activate(&request, &host);
                 timing.mark("worker_compiled");
                 // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
                 drop(watch);
@@ -39,16 +40,16 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     timing.mark("worker_observer_detached");
                 } else {
                     timing.mark("worker_observer_joined");
-                    release_free_memory();
+                    incan_platform::release_free_heap();
                     timing.mark("worker_heap_released");
                 }
-                incan_worker_host::complete(&mut host, outcome, footprint());
+                incan_worker_host::complete(&mut host, outcome, footprint(), live_heap());
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
-                release_free_memory();
-                incan_worker_host::complete_record(&mut host, reply, footprint());
+                incan_platform::release_free_heap();
+                incan_worker_host::complete_record(&mut host, reply, footprint(), live_heap());
             }
         }
     }
@@ -58,7 +59,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
 /// Run one admitted request with its caller's console files and working directory. The reported status is the one
 /// the short-lived command exits with: its own status, or the status of a returned error, which [`crate::report`]
 /// prints as `main` does. A panic is contained and reported as such once the adapter's state is usable again.
-fn activate(request: &CompileRequest) -> ActivationOutcome {
+fn activate(request: &CompileRequest, host: &WorkerHost) -> ActivationOutcome {
     let console = match console::Capture::open(
         Path::new(&request.stdout),
         Path::new(&request.stderr),
@@ -68,10 +69,10 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
         Err(error) => return ActivationOutcome::Unavailable(error.to_string()),
     };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run(&request.command, &request.arguments)
+        run(&request.command, &request.arguments, host)
     }));
     let ended = match outcome {
-        Ok(Ok(code)) => ActivationOutcome::Exited(code.into()),
+        Ok(Ok(ended)) => ended,
         Ok(Err(error)) => ActivationOutcome::Exited(crate::report(error.as_ref()).into()),
         Err(_) => {
             crate::adapter::recover();
@@ -84,47 +85,70 @@ fn activate(request: &CompileRequest) -> ActivationOutcome {
     ended
 }
 
-/// Run one request through the entry point its short-lived command uses, returning that command's status.
-fn run(command: &WorkerCommand, arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
-    match command {
-        WorkerCommand::Unit => crate::frontend::compile_resident(arguments).map(|()| 0),
-        WorkerCommand::Check => crate::check(arguments),
-        WorkerCommand::Format => crate::format(arguments),
-        WorkerCommand::SourceFiles => crate::source_files(arguments),
-    }
+/// Run one request through the entry point its short-lived command uses, returning that command's status. A unit
+/// asks the host after lowering whether this process's footprint hands rustc to the caller; if so, its outcome is the
+/// handoff it wrote.
+fn run(
+    command: &WorkerCommand,
+    arguments: &[String],
+    host: &WorkerHost,
+) -> Result<ActivationOutcome, Box<dyn std::error::Error>> {
+    let status = match command {
+        WorkerCommand::Unit => {
+            let hands_off = || incan_worker_host::hands_rustc_off(host, footprint());
+            return Ok(match crate::frontend::compile_resident(arguments, &hands_off)? {
+                UnitCompiled::InProcess => ActivationOutcome::Exited(0),
+                UnitCompiled::HandedOff(path) => ActivationOutcome::HandedOff(path.to_string_lossy().into_owned()),
+            });
+        }
+        WorkerCommand::Check => crate::check(arguments)?,
+        WorkerCommand::Format => crate::format(arguments)?,
+        WorkerCommand::SourceFiles => crate::source_files(arguments)?,
+        WorkerCommand::RustImports => crate::rust_imports::export(arguments).map(|()| 0)?,
+    };
+    Ok(ActivationOutcome::Exited(status.into()))
 }
 
 /// The process's physical footprint in bytes, or -1 when it cannot be read.
-fn footprint() -> i64 {
+pub(crate) fn footprint() -> i64 {
     incan_platform::current_process_footprint()
         .ok()
         .and_then(|bytes| i64::try_from(bytes).ok())
         .unwrap_or(-1)
 }
 
+/// libmalloc's statistics of the process's zones (`malloc_statistics_t`).
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Default)]
+struct MallocStatistics {
+    blocks_in_use: libc::c_uint,
+    size_in_use: libc::size_t,
+    max_size_in_use: libc::size_t,
+    size_allocated: libc::size_t,
+}
+
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    /// libmalloc: return free pages of `zone` (every zone when null) to the system, up to `goal` bytes (all when zero).
-    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
+    /// libmalloc: sum the statistics of `zone`, or of every zone when null, into `stats`.
+    fn malloc_zone_statistics(zone: *mut libc::c_void, stats: *mut MallocStatistics);
 }
 
-/// Return the heap a request freed to the system, so the footprint the host judges is what the worker retains.
+/// The bytes in live allocations, which the worker host judges retention by: the allocator keeps blocks a compile
+/// freed resident, so the physical footprint overstates what the worker holds. -1 when it cannot be read.
 #[cfg(target_os = "macos")]
-fn release_free_memory() {
-    // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no memory is touched.
-    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+pub(crate) fn live_heap() -> i64 {
+    let mut stats = MallocStatistics::default();
+    // SAFETY: a null zone asks libmalloc to sum every zone into `stats`, a valid exclusive out-parameter.
+    unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
+    i64::try_from(stats.size_in_use).unwrap_or(-1)
 }
 
-/// Return the heap a request freed to the system, so the footprint the host judges is what the worker retains.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn release_free_memory() {
-    // SAFETY: malloc_trim only returns free heap pages to the system.
-    unsafe { libc::malloc_trim(0) };
+/// Other systems judge retention by the physical footprint.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn live_heap() -> i64 {
+    -1
 }
-
-/// No heap release on other systems.
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-fn release_free_memory() {}
 
 /// Observes an activation's caller while the compiler runs and hands a caller that left to the host's `abandon`,
 /// which withdraws the worker's socket and ends the process. Ending the watch closes its wake pipe, which ends the

@@ -186,7 +186,7 @@ mod tests {
                 .map_err(|errors| format!("{errors:?}"))?;
             let operations = Default::default();
             let context = crate::body_ir::BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &operations,
                 registry_package: None,
                 library_package: None,
@@ -254,8 +254,8 @@ mod tests {
         let original = identities(source)?;
         assert_eq!(
             original.len(),
-            6,
-            "two owner-qualified methods, two functions and two overloads"
+            8,
+            "two owner-qualified fields, two owner-qualified methods, two functions and two overloads"
         );
         assert_eq!(original, identities(&format!("# position-only edit\n\n{source}"))?);
         let split = source.find("def read(item:").ok_or("missing function boundary")?;

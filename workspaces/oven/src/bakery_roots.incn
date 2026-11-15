@@ -2,12 +2,15 @@
 
 from rust::std::fs import remove_dir_all
 from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
 from std.fs import Path
 from bakery_records import Fact, claim_file, decode_fact, record_key, staging_root, store_failure
 from files import make_directory, read
 from observation import trace
 from publication import publish
 from sealed_set import payload_references as sealed_payload_references
+from pub::incan_platform.ipc import session_id
+from pub::incan_platform.process_lease import ProcessLease, held, hold
 from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys
 from pub::incan_platform.store.files import StoreError
 from store_path_conversion import collect_records, snapshot
@@ -76,6 +79,33 @@ def registered_lines(path: Path) -> Result[list[str], str]:
     return Ok([line for line in text.split("\n") if line != ""])
 
 
+pub def lease_unit(store: Path, identity: str) -> Result[ProcessLease, str]:
+    """
+    Lease the unit a run starts, under `unit-leases/` in the bakery. The program the run becomes or starts keeps the
+    lease until it and every program it started have exited, whatever happens to the owner that made it; collection
+    keeps a leased unit and what it reaches.
+    """
+    directory = store.joinpath("unit-leases")
+    make_directory(directory)?
+    return hold(directory.0, f"{identity}.{hexlify(session_id()?)}")
+
+
+pub def leased_units(store: Path) -> Result[list[str], str]:
+    """The identities of the units a running program holds a lease on; a lease no process holds is removed."""
+    directory = store.joinpath("unit-leases")
+    mut leased: list[str] = []
+    if not directory.is_dir():
+        return Ok(leased)
+    for entry in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
+        name = entry.name()
+        if name.startswith(".") or not held(entry.0)?:
+            continue
+        identity = name.split(".")[0]
+        if unit_identity_line(identity) and identity not in leased:
+            leased.append(identity)
+    return Ok(leased)
+
+
 pub def collect(store: Path, keep_days: int) -> Result[Collected, str]:
     """
     Reclaim unreachable immutable storage and abandoned unit staging without invalidating readers or producers.
@@ -120,28 +150,40 @@ pub model Expired:
 
 
 model Registrations:
-    """The identities live registrations use, the candidates superseded or orphaned ones used, and orphaned projects."""
+    """
+    The identities live registrations use, the units running programs lease, the candidates superseded or orphaned
+    registrations used, and orphaned projects.
+    """
 
     live: list[str]
     candidates: list[str]
     orphaned: list[Path]
+    leased: list[str] = []
 
 
 def expire_unregistered(store: Path) -> Result[Expired, str]:
     """
     Expire the unit records that only superseded or orphaned registrations used.
 
-    1. Read every project's registrations; a project whose directory is gone is orphaned, and its registrations retire.
-    2. A candidate that a live registration reaches, directly or through the records it reaches, stays. A record no
-       registration ever named, such as one the installed toolchain supplied, is never a candidate.
+    1. Read every project's registrations and the running programs' leases; a project whose directory is gone is
+       orphaned, and its registrations retire.
+    2. A candidate that a live registration or a lease reaches, directly or through the records it reaches, stays. A
+       record no registration ever named, such as one the installed toolchain supplied, is never a candidate.
     3. Remove the expired records, and the name entries that select them, in one transaction; then the orphaned
-       projects' registrations and the superseded log.
+       projects' registrations. The superseded log keeps only the candidates a lease alone kept, for a later collection.
     """
-    # 1. Registrations are read before the snapshot, so a result registered meanwhile can only keep more.
+    # 1. Registrations and leases are read before the snapshot, so a result registered meanwhile can only keep more.
     registrations = read_registrations(store)?
     # 2. Reachability is read from one snapshot, so a record and what it reaches are judged together.
     current = snapshot(store).map_err(store_failure)?
-    expired = expiring(registrations, unit_reaches(current)?)
+    reaches = unit_reaches(current)?
+    expired = expiring(registrations, reaches)
+    registered = reached_from(registrations.live, reaches)
+    held_back = [
+        identity
+        for identity in registrations.candidates
+        if identity in reaches and identity not in expired and identity not in registered
+    ]
     # 3. Records and their name bindings leave together; a later build of the same name bakes again.
     if len(expired) > 0:
         mut transaction = begin(current)
@@ -162,14 +204,25 @@ def expire_unregistered(store: Path) -> Result[Expired, str]:
     for project in registrations.orphaned:
         remove_dir_all(project.0).map_err((error) => str(error))?
     log = store.joinpath("roots").joinpath("superseded")
-    if log.is_file():
-        log.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+    if len(held_back) > 0:
+        publish(log, "".join([line + "\n" for line in unique_lines(held_back)]))?
+    elif log.is_file():
+        log.unlink().map_err((error) => f"cannot {error.message()}")?
     return Ok(Expired(records=len(expired), roots=len(registrations.orphaned)))
 
 
+def unique_lines(lines: list[str]) -> list[str]:
+    """Each line once, in first-seen order."""
+    mut kept: list[str] = []
+    for line in lines:
+        if line not in kept:
+            kept.append(line)
+    return kept
+
+
 def expiring(registrations: Registrations, reaches: dict[str, list[str]]) -> dict[str, bool]:
-    """The candidate records no live registration reaches, directly or through the records it reaches."""
-    live = reached_from(registrations.live, reaches)
+    """The candidate records no live registration or running program's lease reaches, directly or transitively."""
+    live = reached_from(registrations.live + registrations.leased, reaches)
     mut expired: dict[str, bool] = {}
     for identity in registrations.candidates:
         if identity in reaches and identity not in live:
@@ -227,12 +280,20 @@ pub def preview_collection(store: Path) -> Result[Collectable, str]:
 
 
 def read_registrations(store: Path) -> Result[Registrations, str]:
-    """Each project's registrations under `roots/`, split by whether the project's directory still exists."""
+    """
+    Each project's registrations under `roots/`, split by whether the project's directory still exists, and the units
+    running programs lease.
+    """
     roots = store.joinpath("roots")
-    mut registrations = Registrations(live=[], candidates=registered_lines(roots.joinpath("superseded"))?, orphaned=[])
+    mut registrations = Registrations(
+        live=[],
+        candidates=registered_lines(roots.joinpath("superseded"))?,
+        orphaned=[],
+        leased=leased_units(store)?,
+    )
     if not roots.is_dir():
         return Ok(registrations)
-    for project in roots.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for project in roots.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if not project.is_dir():
             continue
         # `project` names the project's directory; every other file is one of its registrations.
@@ -240,7 +301,7 @@ def read_registrations(store: Path) -> Result[Registrations, str]:
         mut orphaned = false
         if owner.is_file():
             orphaned = not Path(read(owner)?).exists()
-        for marker in project.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for marker in project.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if marker.name() == "project":
                 continue
             for identity in registered(marker)?:
@@ -270,7 +331,7 @@ pub def project_roots(store: Path) -> Result[list[ProjectRoots], str]:
     mut projects: list[ProjectRoots] = []
     if not roots.is_dir():
         return Ok(projects)
-    for directory in roots.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for directory in roots.iterdir().map_err((error) => f"cannot {error.message()}")?:
         owner = directory.joinpath("project")
         if not directory.is_dir():
             continue
@@ -280,7 +341,7 @@ pub def project_roots(store: Path) -> Result[list[ProjectRoots], str]:
             project = read(owner)?
             orphaned = not Path(project).exists()
         mut registrations: dict[str, list[str]] = {}
-        for marker in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for marker in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if marker.name() == "project" or marker.name().endswith(".tmp"):
                 continue
             lines = registered_lines(marker)?
@@ -358,9 +419,9 @@ def collect_staging(store: Path) -> Result[int, str]:
     for entry in staging_owners(store)?:
         # Holding the claim during removal keeps a new producer of the same staging name out.
         make_directory(Path(entry.claim).parent())?
-        free = Path(entry.claim).try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")?
+        free = Path(entry.claim).try_lock_exclusive().map_err((error) => f"cannot {error.message()}")?
         if free is not None:
-            entry.path.remove_tree().map_err((error) => f"cannot remove directory tree {error.message()}")?
+            entry.path.remove_tree().map_err((error) => f"cannot {error.message()}")?
             release(store, entry.path.name())
             cleared += 1
     return Ok(cleared)
@@ -394,7 +455,7 @@ def staging_owners(store: Path) -> Result[list[StagingOwner], str]:
     mut recorded: dict[str, str] = {}
     for reservation in read_reservations(store)?:
         recorded[reservation.name] = reservation.claim
-    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for entry in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if not entry.is_dir() or entry.is_symlink():
             continue
         if entry.name() in recorded:
@@ -416,7 +477,7 @@ def claim_free(lock: Path) -> Result[bool, str]:
     """Whether nobody holds the claim `lock` names; a claim whose directory was never made was never held."""
     if not lock.parent().is_dir():
         return Ok(true)
-    free = lock.try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")?
+    free = lock.try_lock_exclusive().map_err((error) => f"cannot {error.message()}")?
     return Ok(free is not None)
 
 

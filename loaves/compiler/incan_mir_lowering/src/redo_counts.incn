@@ -1,12 +1,9 @@
 """Observe real native lowering requests without changing their products or supplying reuse keys."""
 
-from rust::std::env import var
-from rust::std::fs import OpenOptions
-from rust::std::io import Write
-from rust::std::string import String as RustString
 from rust::incan_semantics_core import IncanType
 from rust::incan_semantics_core::body_ir import Body
 from symbols import type_component
+from trace_channel import emit
 
 
 pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list[IncanType], file: str) -> None:
@@ -15,7 +12,7 @@ pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list
 
     1. Keep normal builds unobserved.
     2. Identify the checked frame and its concrete request.
-    3. Write only a diagnostic; a closed stream cannot change compilation.
+    3. Write only a diagnostic, to the tracing channel's `redo` category; a closed stream cannot change compilation.
     """
     # 1. Native timing selects compiler work diagnostics.
     if not enabled:
@@ -24,17 +21,6 @@ pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list
     mut concrete = ""
     for argument in arguments:
         concrete += type_component(argument)
-    text = f"redo-item: lowering\t{body.direct_call_id.path()}\t{frame}\t{concrete}\t{file}\n"
+    text = f"redo-item: lowering\t{body.direct_call_id.path()}\t{frame}\t{concrete}\t{file}"
     # 3. A failed diagnostic never changes a compilation verdict or the program's console streams.
-    match var("OVEN_TRACE"):
-        Ok(destination) =>
-            if destination == "" or destination == "-":
-                return
-            mut options = OpenOptions.new()
-            options.create(true).append(true)
-            match options.open(destination):
-                Ok(file) =>
-                    mut trace = file
-                    _ = trace.write_all(RustString.from(text).into_bytes())
-                Err(_) => pass
-        Err(_) => pass
+    emit("redo", "OVEN_TRACE", text)

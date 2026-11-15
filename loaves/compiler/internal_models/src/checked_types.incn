@@ -1,9 +1,10 @@
 """Incan-owned checked type facts, preserving every semantic type component without display-text reconstruction."""
 
+from rust::serde import Serialize, Deserialize
 from compiler_records import CanonicalSymbolId, valid_canonical_symbol_id
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedNumericType:
     """Every numeric registry identity carried by a checked primitive type."""
 
@@ -24,7 +25,7 @@ pub enum CheckedNumericType:
     Bool
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedPrimitiveType:
     """Primitive and primitive-like checked types with compiler-owned semantics."""
 
@@ -39,7 +40,7 @@ pub enum CheckedPrimitiveType:
     Unit
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedInputAccess:
     """Checked callable input access, separate from binding mutability and native ownership."""
 
@@ -50,7 +51,7 @@ pub enum CheckedInputAccess:
     InferredShared
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedCallableParamKind:
     """The source-level position shape of one semantic callable parameter."""
 
@@ -59,14 +60,14 @@ pub enum CheckedCallableParamKind:
     RestKeyword
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedRuntimeBuiltin:
     """Dependency-owned builtin runtime storage admitted by checked identity proof."""
 
     ValidationError
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model CheckedCallableParam:
     """Every callable-parameter fact retained in a semantic function type."""
 
@@ -80,7 +81,7 @@ pub model CheckedCallableParam:
     pub input_access: CheckedInputAccess
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum CheckedType:
     """
     The complete checked `IncanType` universe at executable representation 53.

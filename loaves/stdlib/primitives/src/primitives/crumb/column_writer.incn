@@ -1,12 +1,12 @@
 """Finite column envelopes sharing the row codec's descriptions, values and logical seal."""
 
+from rust::incan_std_primitives::crumb import column_envelope as native_column_envelope
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_group_write import write_group
 from crate.primitives.crumb.column_types import GroupChoice
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed, offset_width, offset_table_length
 from crate.primitives.crumb.descriptions import Description, encode_entry
 from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
 from crate.primitives.crumb.records import RowRecord
@@ -28,12 +28,11 @@ pub def write_columns(
     This finite writer transposes groups in memory; no streaming sink or minimum-size promise is made.
     """
     dictionary = admit_dictionary(descriptions, registry, budget)?
-    mut body = EncodingBuffer.create()
-    body.count(len(dictionary.entries), budget)?
+    mut entries: list[bytes] = []
     for description in dictionary.entries:
-        body.append(encode_entry(description, budget)?, budget)?
+        entries.append(encode_entry(description, budget)?)
     mut groups: list[bytes] = []
-    mut prefixes: list[int] = [0]
+    mut group_ends: list[i64] = []
     mut start = 0
     while start < len(records):
         budget.charge_elements(1)?
@@ -48,29 +47,28 @@ pub def write_columns(
                 return Err(CrumbError.invalid_input("missing column group choices"))
             choice = Some(choices[len(groups)])
         groups.append(write_group(index, dictionary.entries[index], records, start, end, choice, dictionary, budget)?)
-        prefixes.append(end)
+        group_ends.append(end.saturating_resize[i64]())
         start = end
     if len(choices) != 0 and len(choices) != len(groups):
         return Err(CrumbError.invalid_input("excess column group choices"))
-    body.count(len(records), budget)?
-    body.count(len(groups), budget)?
-    width = offset_width(len(records))?
-    offset_table_length(len(groups), width)?
-    body.octet(width, budget)?
-    for prefix in prefixes:
-        body.offset(prefix, width, budget)?
-    body.append(indexed(groups, budget)?, budget)?
+    mut seal_bytes: bytes = b""
     if sealed:
         mut seal = start_seal(len(records), budget)?
         for record in records:
             append_seal(record.value, seal, budget)?
-        body.count(len(records), budget)?
-        body.append(seal.digest(budget)?, budget)?
-    mut envelope = EncodingBuffer.create()
-    envelope.append(b"CRMB\x02\x01", budget)?
-    if sealed:
-        envelope.octet(1, budget)?
-    else:
-        envelope.octet(0, budget)?
-    envelope.frame(body.finish(budget)?, budget)?
-    return envelope.finish(budget)
+        seal_bytes = seal.digest(budget)?
+    layout = native_column_envelope(
+        entries,
+        len(records).saturating_resize[i64](),
+        group_ends,
+        groups,
+        sealed,
+        seal_bytes,
+    )
+    if layout.kind == 1u8:
+        return Err(CrumbError.invalid_input("column envelope layout"))
+    if layout.kind != 0u8:
+        return Err(CrumbError.limit("column envelope layout"))
+    budget.charge_bytes(layout.byte_charge.saturating_resize[int]())?
+    budget.charge_elements(layout.element_charge.saturating_resize[int]())?
+    return Ok(layout.data)

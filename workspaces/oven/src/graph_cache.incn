@@ -1,15 +1,51 @@
 """Content-addressed inspection projections and source observations owned by the requesting home."""
 
 from rust::incan_loaf_names import artifact_stem
+from rust::std::fs import File
+from rust::std::io import Read, Seek, SeekFrom
 from rust::std::string import String as RustString
 from std.fs import Path
+from std.json import JsonValue, parse
+from bakery import bakery, claim
 from files import make_directory, read
 from home import home
 from driver_command import driver_command
 from toolchain import Toolchain
-from observation import Ledger, SETTLE_SECONDS, load_ledger, skipped_directory, trace
+from observation import Ledger, SETTLE_SECONDS, load_ledger, note_directory, skipped_directory, trace
+from graph_queries import relationship_keys, text
 from publication import publish
-from unit_freshness import fingerprint
+from unit_freshness import artifact_identity, fingerprint
+from frozen_inputs import observation as frozen_observation
+
+
+# The prepared form of a published graph's relationships; a change to its files or keys selects new entries.
+const RELATIONSHIP_DOMAIN: str = "incan.codegraph.relationships/1"
+const HEX_DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+
+
+@derive(Eq)
+pub enum AuthorKind(str):
+    """Who wrote a piece of authored text: the toolchain, the requesting workspace, or one of its dependencies."""
+
+    # The text the toolchain ships. Oven builds with the released seed, which resolves a variant named `Toolchain`
+    # here in place of the `Toolchain` model.
+    Shipped = "toolchain"
+    Workspace = "workspace"
+    Dependency = "dependency"
+
+
+pub model Author:
+    """The author of the text a record carries; a dependency is named by its identity."""
+
+    pub kind: AuthorKind
+    pub identity: str = ""
+
+    pub def json(self) -> JsonValue:
+        """The author as records and context items carry it."""
+        mut fields = {"kind": JsonValue.string(self.kind.value())}
+        if self.identity != "":
+            fields["identity"] = JsonValue.string(self.identity)
+        return JsonValue.object(fields)
 
 
 pub model GraphUnit:
@@ -21,6 +57,31 @@ pub model GraphUnit:
     pub version: str = ""
     # Only source-backed exports observe current authored bytes; published Loaves remain bound to their artifact.
     pub source_root: str = ""
+
+    pub def author(self, workspace: str) -> Author:
+        """
+        Who wrote the text this graph's records carry, as the project under `workspace` sees it (RFC 106).
+
+        1. A standard package's text is the toolchain's.
+        2. A registry Loaf's text is a dependency's, named by the Loaf.
+        3. A local Loaf under the requesting workspace is the workspace's own; any other is a dependency, named by
+           its package and version.
+        """
+        # 1. The toolchain ships the standard packages.
+        if self.root.0.startswith("@std/"):
+            return Author(kind=AuthorKind.Shipped)
+        # 2. A virtual root other than the standard one is a registry Loaf's.
+        if self.root.0.startswith("@"):
+            return Author(kind=AuthorKind.Dependency, identity=self.root.0[1:])
+        # 3. Only what lies in the workspace was written by it.
+        if self.root.0 == workspace or self.root.0.startswith(f"{workspace}/"):
+            return Author(kind=AuthorKind.Workspace)
+        mut identity = self.package
+        if identity == "":
+            identity = self.root.name()
+        if self.version != "":
+            identity = f"{identity}@{self.version}"
+        return Author(kind=AuthorKind.Dependency, identity=identity)
 
 
 pub def unchecked_marker(graph: Path) -> Path:
@@ -128,7 +189,7 @@ pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
     mut base = root
     if root.is_file():
         base = root.parent()
-    canonical_root = base.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    canonical_root = base.resolve().map_err((error) => f"cannot {error.message()}")?
     mut inputs: list[str] = []
     mut portable = true
     for index in range(0, len(observed), 2):
@@ -137,7 +198,7 @@ pub def content_facts(root: Path) -> Result[tuple[list[str], bool], str]:
         if path.startswith(root.0 + "/"):
             name = path[len(root.0) + 1:]
         inputs.extend(["file", name, observed[index + 1]])
-        canonical = Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        canonical = Path(path).resolve().map_err((error) => f"cannot {error.message()}")?
         if not canonical.0.startswith(canonical_root.0 + "/"):
             portable = false
         elif canonical.0 != path:
@@ -151,8 +212,11 @@ pub def interface_inputs(directory: Path, package: str) -> Result[list[str], str
     mut inputs: list[str] = []
     for suffix in ["incnlib", "rustabi"]:
         path = directory.joinpath(f"{artifact_stem(package)}.{suffix}")
-        if path.is_file():
-            inputs.extend([suffix, ledger.digest(path)?])
+        match frozen_observation(path):
+            Some(stamp) => inputs.extend([suffix, stamp])
+            None =>
+                if path.is_file():
+                    inputs.extend([suffix, ledger.digest(path)?])
     save_observations(ledger)
     return Ok(inputs)
 
@@ -175,6 +239,8 @@ def observed_tree(root: Path, mut ledger: Ledger) -> Result[list[str], str]:
     """Preserve tree selection, ordering and read failures while reconciling file digests against observations."""
     if root.is_file():
         return Ok([root.0, ledger.digest(root)?])
+    # A watching request also needs the directory itself: an added or removed entry changes the selection.
+    note_directory(root)?
     mut by_name: Dict[str, Path] = {}
     for entry in root.iterdir().map_err((error) => f"{root.0}: {error.message()}")?:
         name = entry.name()
@@ -193,3 +259,132 @@ pub def cache_file(digest: str) -> Result[Path, str]:
     directory = home()?.joinpath("cache").joinpath("codegraph-projections")
     make_directory(directory)?
     return Ok(directory.joinpath(f"{digest}.incngraph"))
+
+
+pub def published(unit: GraphUnit) -> bool:
+    """Whether the unit is a package's graph under its virtual root: the same records whichever project asks."""
+    return unit.root.0.startswith("@") and unit.path.is_file()
+
+
+def key_mark(key: str) -> Result[str, str]:
+    """The fixed-width mark a relationship key is filed and looked up under."""
+    mark = fingerprint([key])?
+    return Ok(mark[:16])
+
+
+def bucket_file(location: Path, mark: str) -> Path:
+    """The index part that holds every key whose mark starts with this hex digit."""
+    return Path(f"{location.0}.keys-{mark[:1]}")
+
+
+pub def write_relationships(location: Path, document: str) -> Result[None, str]:
+    """
+    Prepare a decoded relationship group for lookups by key, once per published graph.
+
+    1. Keep each relationship's line and note its byte range under every key a query can select it by.
+    2. Publish the lines and the sixteen key parts before the entry that makes them visible.
+    """
+    # 1. One row per key of each relationship: the key's mark, then where the relationship's line is.
+    mut lines: list[str] = []
+    mut parts: Dict[str, list[str]] = {}
+    mut offset = 0
+    for line in document.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => error.message())?
+        if text(record, "record") == "header":
+            continue
+        length = len(line.encode("utf-8"))
+        for key in relationship_keys(record):
+            mark = key_mark(key)?
+            if mark[:1] not in parts:
+                parts[mark[:1]] = []
+            parts[mark[:1]].append(f"{mark}\t{offset}\t{length}")
+        lines.append(line)
+        offset += length + 1
+    # 2. A reader that finds the entry finds everything it names.
+    publish(Path(f"{location.0}.records"), "\n".join(lines) + "\n")?
+    for digit in HEX_DIGITS:
+        publish(bucket_file(location, digit), "\n".join(parts.get(digit).unwrap_or([])) + "\n")?
+    return publish(location, f"{len(lines)}\n")
+
+
+pub def relationship_candidates(location: Path, keys: list[str]) -> Result[list[str], str]:
+    """
+    The prepared relationships filed under any of `keys`, once each, in their decoded order.
+
+    1. Each key's mark names one index part; its rows give the byte ranges of the relationships filed under it.
+    2. Read those ranges in order; no other relationship is read or decoded.
+    """
+    # 1. The ranges filed under each key's mark, read one index part at a time.
+    mut wanted: Dict[str, list[str]] = {}
+    for key in keys:
+        mark = key_mark(key)?
+        if mark[:1] not in wanted:
+            wanted[mark[:1]] = []
+        wanted[mark[:1]].append(mark)
+    mut ranges: Dict[int, int] = {}
+    for digit in sorted([digit for digit in wanted.keys()]):
+        marks = wanted[digit]
+        for row in read(bucket_file(location, digit))?.split("\n"):
+            if row[:16] not in marks:
+                continue
+            fields = row.split("\t")
+            if len(fields) != 3:
+                return Err(f"malformed relationship index row in {location.0}")
+            ranges[whole(fields[1])?] = whole(fields[2])?
+    # 2. Only the selected ranges are read, in the order the graph recorded them.
+    mut lines: list[str] = []
+    if len(ranges) == 0:
+        return Ok(lines)
+    mut file = File.open(f"{location.0}.records").map_err((error) => str(error))?
+    mut position = 0
+    for offset in sorted([offset for offset in ranges.keys()]):
+        length = ranges[offset]
+        match file.seek(SeekFrom.Current(offset - position)):
+            Ok(_) => pass
+            Err(error) => return Err(str(error))
+        mut buffer = filler(length)
+        match file.read_exact(buffer):
+            Ok(_) => pass
+            Err(error) => return Err(str(error))
+        position = offset + length
+        match RustString.from_utf8(buffer):
+            Ok(value) => lines.append(str(value))
+            Err(_) => return Err("prepared relationship is not UTF-8")
+    return Ok(lines)
+
+
+def whole(value: str) -> Result[int, str]:
+    """Require a whole number in a private index row."""
+    return parse(value).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def filler(count: int) -> bytes:
+    """An exact mutable byte buffer for one line range."""
+    mut value = "0"
+    while len(value) < count:
+        value = value + value
+    return value[:count].encode("utf-8")
+
+
+pub def relationships(unit: GraphUnit, toolchain: Toolchain, kind: str, keys: list[str]) -> Result[list[str], str]:
+    """
+    A published graph's references, calls or imports that any of `keys` can select, as their decoded lines.
+
+    1. The graph's artifact, its decoder, its root and the kind select one prepared entry in this home.
+    2. A missing entry is prepared once, after rechecking its claim: this is the only time the whole group is decoded.
+    3. Every later request reads only the relationships filed under its keys.
+    """
+    # 1. A replaced graph, another decoder or another root selects another entry.
+    identity = artifact_identity(unit.path)?
+    name = fingerprint([RELATIONSHIP_DOMAIN, toolchain.driver, unit.root.0, kind, identity])?
+    location = Path(f"{cache_file(name)?.0}.relationships")
+    # 2. Whoever holds the claim prepares the entry; everyone else finds it when the claim is theirs.
+    if not location.is_file():
+        held = claim(bakery()?, fingerprint(["graph-relationships", name])?)?
+        if not location.is_file():
+            write_relationships(location, read_graph(unit, toolchain, kind)?)?
+            trace(f"graph relationships prepared {unit.path.0} {kind}")
+    # 3. Only the relationships the keys can select are read.
+    return relationship_candidates(location, keys)

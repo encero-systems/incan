@@ -1,27 +1,44 @@
 """
-The store's copy-on-write B+tree directory: immutable, content-named index pages from full keys to frame locations.
+The store's copy-on-write B+tree directory: immutable, content-checked index pages from full keys to frame locations.
 
 Part of the storage substrate with `crate.store`; it names no Oven type. A view's index is one root page. A lookup
-reads only the pages on its path from that root to one leaf, and each page is checked against its content name. Pages
-are mapped and read in place: a lookup copies out only the keys it compares and the location it finds. A write copies
-the pages on the paths it changes and leaves every other page shared with older roots and other views.
+reads only the pages on its path from that root to one leaf, and each page is checked against its content digest.
+Pages are mapped and read in place: a lookup copies out only the keys it compares and the location it finds. A write
+copies the pages on the paths it changes and leaves every other page shared with older roots and other views.
+
+Packs: every page one commit writes goes into one pack file, `indexes/<sha256>.pack`, named by its content, so a
+commit installs one index file however many leaves its keys reach. A page reference is `pack:offset:length:digest`;
+inside the pack being written it is `:offset:length:digest`, the pack it lies in. A store written before packs names
+its pages by their digest alone, one `indexes/<digest>.page` file each; those references stay readable.
 
 Page layout (little-endian): magic, level (0 for a leaf), entry count, then per entry the full key's length and bytes,
-then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte, or for an inner page the child page
-name. Entries are sorted by key, and an inner entry's key is the smallest key below its child.
+then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte, or for an inner page the child's
+reference: its length and bytes (a page file's page: the child's 64-character name). Entries are sorted by key, and
+an inner entry's key is the smallest key below its child.
+
+A process checks each page against its content digest once. It keeps each page it has checked, at most
+`CHECKED_PAGE_LIMIT` of them, laid out over its own copy of the checked bytes and kept by that digest, and a later read
+of a page with the same digest uses that layout instead of mapping, hashing and laying out its file again. The digest
+names those bytes wherever the page lies, so a page found in another pack, as after a compaction, reuses them too; a
+read takes its pack from its own reference, as `located_page` names it. Damage to a file after its page was checked
+cannot reach an answer.
 """
 
-from rust::std::process import id
+from rust::std::cell import RefCell
+from rust::std::ops import Deref, DerefMut
+from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
-from std.primitives.views import MappedView
+from std.primitives.views import MappedFile, MappedView
 from crate.store.bytes import append_bytes, append_u64
 from crate.store.path import StorePath as Path
 
 const FANOUT: int = 32
 const NAME_BYTES: int = 64
 const DIGEST_BYTES: int = 32
+# The checked pages one process keeps; a process that meets more starts again from none.
+const CHECKED_PAGE_LIMIT: int = 2048
 
 
 pub model Location:
@@ -72,15 +89,76 @@ model Span:
 
 
 model Layout:
-    """A mapped page checked against its name: its level and where each entry lies, with nothing copied out."""
+    """
+    A mapped page checked against its digest: its level, where each entry lies, its layout version, and the pack it
+    lies in (empty for a page file), with nothing copied out.
+    """
 
     view: MappedView
     level: int
     spans: list[Span]
+    version: int
+    pack: str
+
+
+model PageLocation:
+    """Where a page reference points: a whole page file, or a byte range of an installed pack."""
+
+    file: Path
+    pack: str
+    offset: int
+    length: int
+    digest: str
+
+
+pub model PageWriter:
+    """
+    The pages one commit writes, gathered for one pack: each new page lies at its own offset, and equal pages are placed
+    once. `install_pack` makes the pack one file in the index directory.
+    """
+
+    pub state: Rc[RefCell[PackState]] = Rc.new(RefCell.new(PackState()))
+
+    pub def place(self, data: bytes) -> str:
+        """Place one encoded page and return its reference inside the pack, `:offset:length:digest`."""
+        mut held = self.state.as_ref().borrow_mut()
+        return placed_page(data, held.deref_mut())
+
+
+model PackState:
+    """The pages of a pack being written, its size so far, and each placed page's reference by digest."""
+
+    pages: list[bytes] = []
+    size: int = 0
+    placed: Dict[str, str] = {}
+
+
+model CheckedPages:
+    """
+    Each index page this process has checked against its content digest, laid out over its own copy of the checked
+    bytes, by that digest.
+    """
+
+    pages: Dict[str, Layout] = {}
+
+    def checked(self, digest: str) -> Option[Layout]:
+        """The page whose content digest is `digest`, when this process has checked it."""
+        if digest not in self.pages:
+            return None
+        return Some(self.pages[digest])
+
+    def keep(mut self, digest: str, page: Layout) -> None:
+        """Keep one checked page; past `CHECKED_PAGE_LIMIT` pages the process starts again from none."""
+        if len(self.pages) >= CHECKED_PAGE_LIMIT:
+            self.pages = {}
+        self.pages[digest] = page
 
 
 # Index pages this process has read, and the bytes it copied out of them, for measuring what a lookup touches.
 static pages_read: dict[str, int] = {}
+# The pages this process has checked. A lookup reads them in place through the model's own methods: reading a key of a
+# static dictionary would copy the whole dictionary.
+static CHECKED: CheckedPages = CheckedPages()
 
 
 pub def page_reads() -> int:
@@ -88,14 +166,80 @@ pub def page_reads() -> int:
     return pages_read.get("pages", 0)
 
 
+pub def pages_checked() -> int:
+    """How many index pages this process has mapped and hashed to check them against their content digest."""
+    return pages_read.get("checked", 0)
+
+
 pub def copied_index_bytes() -> int:
     """How many bytes this process copied out of mapped index pages: compared keys and decoded entries."""
     return pages_read.get("copied", 0)
 
 
+pub def pages_written() -> int:
+    """How many index pages this process has placed in packs; equal pages within one pack count once."""
+    return pages_read.get("written", 0)
+
+
+pub def page_directory(root: Path) -> Path:
+    """The directory every installed index pack and page file lives in."""
+    return root.joinpath("indexes")
+
+
 pub def page_path(root: Path, name: str) -> Path:
-    """Where one index page lives."""
-    return root.joinpath("indexes").joinpath(f"{name}.page")
+    """Where one page file of a store written before packs lives."""
+    return page_directory(root).joinpath(f"{name}.page")
+
+
+pub def pack_path(root: Path, name: str) -> Path:
+    """Where one installed pack lives."""
+    return page_directory(root).joinpath(f"{name}.pack")
+
+
+pub def page_file(root: Path, reference: str) -> Result[Path, IndexError]:
+    """The file a page reference reads: its pack, or a store's page file from before packs."""
+    return Ok(located_page(root, reference)?.file)
+
+
+def located_page(root: Path, reference: str) -> Result[PageLocation, IndexError]:
+    """Where `reference` points: a whole page file named by its digest, or one range of an installed pack."""
+    if ":" not in reference:
+        return Ok(PageLocation(file=page_path(root, reference), pack="", offset=0, length=-1, digest=reference))
+    parts = reference.split(":")
+    if len(parts) != 4 or len(parts[0]) != 64 or len(parts[3]) != 64:
+        return Err(IndexError(object=reference, detail="malformed index page reference"))
+    match decimal(parts[1]):
+        None => return Err(IndexError(object=reference, detail="malformed index page offset"))
+        Some(offset) =>
+            match decimal(parts[2]):
+                None => return Err(IndexError(object=reference, detail="malformed index page length"))
+                Some(length) =>
+                    file = pack_path(root, parts[0])
+                    return Ok(PageLocation(file=file, pack=parts[0], offset=offset, length=length, digest=parts[3]))
+
+
+def decimal(text: str) -> Option[int]:
+    """A bounded decimal number, when `text` is one."""
+    if len(text) == 0 or len(text) > 18:
+        return None
+    for character in text:
+        if character not in "0123456789":
+            return None
+    return Some(int(text))
+
+
+def page_digest(reference: str) -> str:
+    """The content digest a page reference names; a page file's name is its digest."""
+    if ":" not in reference:
+        return reference
+    return reference.split(":")[3]
+
+
+pub def installed_reference(reference: str, pack: str) -> str:
+    """A reference made inside a pack being written, named absolutely once that pack is installed as `pack`."""
+    if reference.startswith(":"):
+        return pack + reference
+    return reference
 
 
 # ---- Reads ----
@@ -117,22 +261,21 @@ pub def search(root: Path, top: str, key: str) -> Result[SearchResult, IndexErro
     mut name = top
     mut names: list[str] = []
     loop:
-        names.append(name)
-        path = page_path(root, name)
-        page = mapped_page(path, name)?
+        names.append(page_digest(name))
+        page = mapped_page(root, name)?
         if page.level == 0:
-            match leaf_span(page, key).map_err((detail) => malformed(path, detail))?:
+            match leaf_span(page, key).map_err((detail) => malformed_at(name, detail))?:
                 None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
                 Some(span) =>
-                    found = location_at(page.view, span).map_err((detail) => malformed(path, detail))?
+                    found = location_at(page.view, span).map_err((detail) => malformed_at(name, detail))?
                     return Ok(SearchResult(location=Some(found), path_digest=search_digest(names, key)))
-        match covering_span(page, key).map_err((detail) => malformed(path, detail))?:
+        match covering_span(page, key).map_err((detail) => malformed_at(name, detail))?:
             None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
-            Some(span) => name = child_at(page.view, span).map_err((detail) => malformed(path, detail))?
+            Some(span) => name = child_at(page, span).map_err((detail) => malformed_at(name, detail))?
 
 
 def search_digest(path: list[str], key: str) -> str:
-    """Digest the content-named page path and exact searched key as reusable inclusion or exclusion evidence."""
+    """Digest the page digests of the path and the exact searched key as reusable inclusion or exclusion evidence."""
     return hexlify(sha256.digest(("\n".join(path) + "\n" + key).encode("utf-8")))
 
 
@@ -169,34 +312,117 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
-pub def read_page(root: Path, name: str) -> Result[Page, IndexError]:
-    """One page, checked against its content name and decoded into owned entries."""
-    return decoded_page(page_path(root, name), name)
+pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
+    """
+    The leaf entries whose keys start with `prefix`, sorted by key, reading only the pages whose range can hold one.
+
+    An inner entry's key is the least key below it. A child is skipped when its next sibling starts at or before
+    `prefix`, since every key below it is then less than `prefix`; the walk stops at the first child whose least key
+    is past `prefix` without starting with it, since every key from there on is greater than any key with the prefix.
+    """
+    mut result: list[Entry] = []
+    if top == "":
+        return Ok(result)
+    page = read_page(root, top)?
+    if page.level == 0:
+        for entry in page.entries:
+            if entry.key.startswith(prefix):
+                result.append(entry)
+        return Ok(result)
+    for position in range(len(page.entries)):
+        entry = page.entries[position]
+        if entry.key > prefix and not entry.key.startswith(prefix):
+            break
+        if position + 1 < len(page.entries) and page.entries[position + 1].key <= prefix:
+            continue
+        result.extend(entries_with_prefix(root, entry.child, prefix)?)
+    return Ok(result)
 
 
-def decoded_page(path: Path, name: str) -> Result[Page, IndexError]:
-    """The page mapped at `path`, checked against `name`, with every entry copied out."""
-    page = mapped_page(path, name)?
+pub def entries_for_keys(root: Path, top: str, keys: list[str]) -> Result[list[Entry], IndexError]:
+    """
+    The leaf entries the index rooted at `top` holds for `keys`, sorted by key; each page on the keys' paths is read
+    once, however many of the keys lie below it.
+    """
+    if top == "" or len(keys) == 0:
+        return Ok([])
+    return entries_below(root, read_page(root, top)?, sorted(keys))
+
+
+def entries_below(root: Path, page: Page, keys: list[str]) -> Result[list[Entry], IndexError]:
+    """The leaf entries below `page` whose keys are among the sorted `keys`."""
+    mut result: list[Entry] = []
+    if page.level == 0:
+        mut wanted: set[str] = set()
+        for key in keys:
+            wanted.add(key)
+        for entry in page.entries:
+            if entry.key in wanted:
+                result.append(entry)
+        return Ok(result)
+    mut taken = 0
+    for position in range(len(page.entries)):
+        mut group: list[str] = []
+        while taken < len(keys) and (
+            position + 1 == len(page.entries) or keys[taken] < page.entries[position + 1].key
+        ):
+            if keys[taken] >= page.entries[position].key:
+                group.append(keys[taken])
+            taken += 1
+        if len(group) > 0:
+            result.extend(entries_below(root, read_page(root, page.entries[position].child)?, group)?)
+    return Ok(result)
+
+
+pub def read_page(root: Path, reference: str) -> Result[Page, IndexError]:
+    """One page, checked against its content digest and decoded into owned entries, children named absolutely."""
+    page = mapped_page(root, reference)?
     mut result: list[Entry] = []
     for span in page.spans:
-        result.append(entry_at(page.view, span, page.level).map_err((detail) => malformed(path, detail))?)
+        result.append(entry_at(page, span).map_err((detail) => malformed_at(reference, detail))?)
     return Ok(Page(level=page.level, entries=result))
 
 
-def mapped_page(path: Path, name: str) -> Result[Layout, IndexError]:
+def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
     """
-    The page at `path` mapped and hashed in place, checked against its content name, and laid out.
+    The page `reference` names, checked against its content digest and laid out in the pack `reference` names: mapped
+    and hashed in place on this process's first read of that digest, and kept over a copy of its checked bytes for
+    every later one.
 
-    Index pages are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
+    Packs and page files are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
     """
+    location = located_page(root, reference)?
+    pages_read["pages"] = pages_read.get("pages", 0) + 1
+    if let Some(checked) = CHECKED.checked(location.digest):
+        mut found = checked
+        found.pack = location.pack
+        return Ok(found)
+    path = location.file
     mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
-    match mapped.view(0, mapped.len()):
-        None => return Err(malformed(path, "the mapping has no whole view"))
+    mut length = location.length
+    if length < 0:
+        length = mapped.len()
+    match mapped.view(location.offset, length):
+        None => return Err(malformed(path, "the page lies outside its file"))
         Some(view) =>
-            pages_read["pages"] = pages_read.get("pages", 0) + 1
-            if hexlify(view_digest(view)) != name:
-                return Err(IndexError(object=path.value, detail="index page does not match its name"))
-            return layout(view).map_err((detail) => malformed(path, detail))
+            pages_read["checked"] = pages_read.get("checked", 0) + 1
+            if hexlify(view_digest(view)) != location.digest:
+                return Err(IndexError(object=path.value, detail="index page does not match its digest"))
+            CHECKED.keep(
+                location.digest,
+                layout(checked_copy(path, view)?, location.pack).map_err((detail) => malformed(path, detail))?,
+            )
+            match CHECKED.checked(location.digest):
+                Some(checked) => return Ok(checked)
+                None => return Err(malformed(path, "a checked page was not kept"))
+
+
+def checked_copy(path: Path, view: MappedView) -> Result[MappedView, IndexError]:
+    """A whole view of this process's own copy of a page's checked bytes, which the kept layout reads."""
+    copy = MappedFile.owned(view.to_bytes()).map_err((detail) => malformed(path, detail))?
+    match copy.view(0, copy.len()):
+        None => return Err(malformed(path, "the page copy has no whole view"))
+        Some(whole) => return Ok(whole)
 
 
 pub def view_digest(view: MappedView) -> bytes:
@@ -206,15 +432,20 @@ pub def view_digest(view: MappedView) -> bytes:
     return hasher.finalize_bytes()
 
 
-def layout(view: MappedView) -> Result[Layout, str]:
+def layout(view: MappedView, pack: str) -> Result[Layout, str]:
     """Where each entry of a page lies, refusing any length or field that does not fit; nothing is copied."""
-    if view.len() < 24 or scalar(view, 0)? != u64_at(page_magic(), 0)?:
+    if view.len() < 24:
+        return Err("not an index page")
+    magic = scalar(view, 0)?
+    mut version = 0
+    if magic == u64_at(page_magic(), 0)?:
+        version = 2
+    elif magic == u64_at(page_file_magic(), 0)?:
+        version = 1
+    else:
         return Err("not an index page")
     level = scalar(view, 8)?
     count = scalar(view, 16)?
-    mut width = NAME_BYTES
-    if level == 0:
-        width = NAME_BYTES + 17 + DIGEST_BYTES
     mut offset = 24
     mut spans: list[Span] = []
     for _position in range(count):
@@ -222,21 +453,28 @@ def layout(view: MappedView) -> Result[Layout, str]:
         field = offset + 8 + size
         if field > view.len():
             return Err("key runs past the page")
+        mut width = NAME_BYTES
+        if level == 0:
+            width = NAME_BYTES + 17 + DIGEST_BYTES
+        elif version == 2:
+            if field + 8 > view.len():
+                return Err("entry runs past the page")
+            width = 8 + scalar(view, field)?
         if field + width > view.len():
             return Err("entry runs past the page")
         spans.append(Span(key=offset + 8, size=size, field=field))
         offset = field + width
     if offset != view.len():
         return Err("trailing bytes")
-    return Ok(Layout(view=view, level=level, spans=spans))
+    return Ok(Layout(view=view, level=level, spans=spans, version=version, pack=pack))
 
 
-def entry_at(view: MappedView, span: Span, level: int) -> Result[Entry, str]:
+def entry_at(page: Layout, span: Span) -> Result[Entry, str]:
     """One entry copied out of its page: the key, then the location of a leaf or the child of an inner page."""
-    key = key_at(view, span)?
-    if level == 0:
-        return Ok(Entry(key=key, location=Some(location_at(view, span)?), child=""))
-    return Ok(Entry(key=key, location=None, child=child_at(view, span)?))
+    key = key_at(page.view, span)?
+    if page.level == 0:
+        return Ok(Entry(key=key, location=Some(location_at(page.view, span)?), child=""))
+    return Ok(Entry(key=key, location=None, child=child_at(page, span)?))
 
 
 def key_at(view: MappedView, span: Span) -> Result[str, str]:
@@ -244,9 +482,18 @@ def key_at(view: MappedView, span: Span) -> Result[str, str]:
     return text_of(copied(view, span.key, span.size)?)
 
 
-def child_at(view: MappedView, span: Span) -> Result[str, str]:
-    """An inner entry's child page name, copied out."""
-    return text_of(copied(view, span.field, NAME_BYTES)?)
+def child_at(page: Layout, span: Span) -> Result[str, str]:
+    """
+    An inner entry's child reference, copied out and named absolutely: a reference inside the page's own pack names
+    that pack, and a page file's child is the child's page file name.
+    """
+    if page.version == 1:
+        return text_of(copied(page.view, span.field, NAME_BYTES)?)
+    size = scalar(page.view, span.field)?
+    child = text_of(copied(page.view, span.field + 8, size)?)?
+    if child.startswith(":"):
+        return Ok(page.pack + child)
+    return Ok(child)
 
 
 def location_at(view: MappedView, span: Span) -> Result[Location, str]:
@@ -279,125 +526,103 @@ def scalar(view: MappedView, offset: int) -> Result[int, str]:
 
 
 def malformed(path: Path, detail: str) -> IndexError:
-    """A page whose contents do not decode, named."""
+    """A page whose contents do not decode, named by its file."""
     return IndexError(object=path.value, detail=f"malformed index page: {detail}")
+
+
+def malformed_at(reference: str, detail: str) -> IndexError:
+    """A page whose contents do not decode, named by its reference."""
+    return IndexError(object=reference, detail=f"malformed index page: {detail}")
 
 
 # ---- Writes ----
 
 
-pub def insert(root: Path, top: str, staged: Path, additions: list[Entry]) -> Result[str, IndexError]:
+pub def insert(root: Path, top: str, writer: PageWriter, additions: list[Entry]) -> Result[str, IndexError]:
     """
     The root of the index that holds `top`'s entries with `additions` replacing or adding entries by key.
 
-    Only the pages on changed paths are written, into `staged` for the caller to install; every other page is shared.
+    The additions are merged in one pass: each changed page is read once and placed once in `writer`'s pack, and every
+    other page is shared. Every page placed is reachable from the returned root, a reference inside that pack until
+    `install_pack` names it (`installed_reference`).
     """
     ordered = sorted_entries(additions)
     if top == "":
-        return build(staged, ordered)
-    mut current = top
-    for addition in ordered:
-        current = insert_one(root, current, staged, addition)?
-    return Ok(current)
+        return build(writer, ordered)
+    if len(ordered) == 0:
+        return Ok(top)
+    page = read_page(root, top)?
+    mut parts = merged_into(root, page, ordered, writer)?
+    mut level = page.level + 1
+    while len(parts) > 1:
+        parts = written_chunks(writer, level, parts)?
+        level += 1
+    return Ok(parts[0].child)
 
 
-pub def staged_pages(staged: Path, roots: list[str]) -> Result[list[Path], IndexError]:
-    """
-    New pages reachable from the final roots, excluding intermediate insertion roots and reused installed subtrees.
-
-    A staged page can reference staged or installed children. An installed child is immutable and cannot reach a
-    newly staged page, so this walk stops at it instead of reading the unchanged tree.
-    """
-    mut pending = roots
-    mut seen: set[str] = set()
-    mut result: list[Path] = []
-    mut index = 0
-    while index < len(pending):
-        name = pending[index]
-        index += 1
-        if name == "" or name in seen:
-            continue
-        seen.add(name)
-        path = staged.joinpath(f"{name}.page")
-        if not path.is_file():
-            continue
-        page = decoded_page(path, name)?
-        result.append(path)
-        if page.level > 0:
-            pending.extend([entry.child for entry in page.entries])
-    return Ok(result)
-
-
-def insert_one(root: Path, top: str, staged: Path, addition: Entry) -> Result[str, IndexError]:
-    """Insert one leaf entry and grow a new root when the old one splits."""
-    if top == "":
-        return write_page(staged, Page(level=0, entries=[addition]))
-    parts = insert_into(root, top, staged, addition)?
-    if len(parts) == 1:
-        return Ok(parts[0].child)
-    level = staged_level(root, staged, parts[0].child)? + 1
-    return write_page(staged, Page(level=level, entries=parts))
-
-
-def insert_into(root: Path, name: str, staged: Path, addition: Entry) -> Result[list[Entry], IndexError]:
-    """The pages that replace page `name` after inserting `addition` below it, as inner entries."""
-    page = read_any(root, staged, name)?
-    mut updated: list[Entry] = []
+def merged_into(root: Path, page: Page, additions: list[Entry], writer: PageWriter) -> Result[list[Entry], IndexError]:
+    """The pages that replace `page` once sorted `additions` are merged below it, as inner entries."""
     if page.level == 0:
-        updated = with_leaf(page.entries, addition)
-    else:
-        target = covering_index(page, addition.key)
-        for position in range(len(page.entries)):
-            if position == target:
-                updated.extend(insert_into(root, page.entries[position].child, staged, addition)?)
-            else:
-                updated.append(page.entries[position])
-    return split(staged, page.level, updated)
+        return written_chunks(writer, 0, merged_leaves(page.entries, additions))
+    mut updated: list[Entry] = []
+    mut taken = 0
+    for position in range(len(page.entries)):
+        mut group: list[Entry] = []
+        while taken < len(additions) and (
+            position + 1 == len(page.entries) or additions[taken].key < page.entries[position + 1].key
+        ):
+            group.append(additions[taken])
+            taken += 1
+        if len(group) == 0:
+            updated.append(page.entries[position])
+        else:
+            child = read_page(root, page.entries[position].child)?
+            updated.extend(merged_into(root, child, group, writer)?)
+    return written_chunks(writer, page.level, updated)
 
 
-def with_leaf(entries: list[Entry], addition: Entry) -> list[Entry]:
-    """Leaf entries with `addition` replacing the entry of its key, or added in key order."""
+def merged_leaves(entries: list[Entry], additions: list[Entry]) -> list[Entry]:
+    """Sorted leaf entries with sorted `additions` merged in by key, an addition replacing the entry of its key."""
     mut result: list[Entry] = []
-    mut placed = false
+    mut taken = 0
     for entry in entries:
-        if not placed and addition.key <= entry.key:
-            result.append(addition)
-            placed = true
-            if addition.key == entry.key:
-                continue
-        result.append(entry)
-    if not placed:
-        result.append(addition)
+        while taken < len(additions) and additions[taken].key < entry.key:
+            result.append(additions[taken])
+            taken += 1
+        if taken < len(additions) and additions[taken].key == entry.key:
+            result.append(additions[taken])
+            taken += 1
+        else:
+            result.append(entry)
+    result.extend(additions[taken:])
     return result
 
 
-def covering_index(page: Page, key: str) -> int:
-    """The position of the inner entry whose child covers `key`; a key below every entry goes to the first child."""
-    mut chosen = 0
-    for position in range(len(page.entries)):
-        if page.entries[position].key <= key:
-            chosen = position
-    return chosen
-
-
-def split(staged: Path, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
-    """Write `entries` as one page, or as two halves when they exceed the fan-out; return their inner entries."""
+def written_chunks(writer: PageWriter, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
+    """
+    Write `entries` as one page, or as the fewest pages within the fan-out, sizes even and the larger ones last; return
+    their inner entries.
+    """
+    count = (len(entries) + FANOUT - 1) // FANOUT
     mut parts: list[Entry] = []
-    mut chunks: list[list[Entry]] = [entries]
-    if len(entries) > FANOUT:
-        half = len(entries) // 2
-        chunks = [entries[:half], entries[half:]]
-    for chunk in chunks:
-        name = write_page(staged, Page(level=level, entries=chunk))?
-        parts.append(Entry(key=chunk[0].key, location=None, child=name))
+    mut start = 0
+    for chunk_index in range(count):
+        mut size = len(entries) // count
+        if chunk_index >= count - len(entries) % count:
+            size += 1
+        chunk = entries[start:start + size]
+        reference = write_page(writer, Page(level=level, entries=chunk))?
+        parts.append(Entry(key=chunk[0].key, location=None, child=reference))
+        start += size
     return Ok(parts)
 
 
-pub def build(staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
+pub def build(writer: PageWriter, leaves: list[Entry]) -> Result[str, IndexError]:
     """
-    A canonical index over sorted, distinct leaf entries: full pages from the left, level by level.
+    A canonical index over sorted, distinct leaf entries: full pages from the left, level by level, each placed in
+    `writer`'s pack.
 
-    The pages depend only on the entries, so equal contents always give byte-identical pages and the same root.
+    The pages depend only on the entries, so equal contents always give byte-identical pages, packs and roots.
     """
     if len(leaves) == 0:
         return Ok("")
@@ -408,13 +633,21 @@ pub def build(staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
         mut start = 0
         while start < len(current):
             chunk = current[start:start + FANOUT]
-            name = write_page(staged, Page(level=level, entries=chunk))?
-            parents.append(Entry(key=chunk[0].key, location=None, child=name))
+            reference = write_page(writer, Page(level=level, entries=chunk))?
+            parents.append(Entry(key=chunk[0].key, location=None, child=reference))
             start += FANOUT
         if len(parents) == 1:
             return Ok(parents[0].child)
         current = parents
         level += 1
+
+
+pub def write_index(root: Path, staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
+    """A canonical index over sorted, distinct leaf entries, installed as one pack; returns its root reference."""
+    writer = PageWriter()
+    top = build(writer, leaves)?
+    pack = install_pack(root, writer, staged)?
+    return Ok(installed_reference(top, pack))
 
 
 def sorted_entries(additions: list[Entry]) -> list[Entry]:
@@ -425,37 +658,131 @@ def sorted_entries(additions: list[Entry]) -> list[Entry]:
     return [by_key[key] for key in sorted([key for key in by_key.keys()])]
 
 
-def read_any(root: Path, staged: Path, name: str) -> Result[Page, IndexError]:
-    """A page installed in the store, or written earlier in this transaction's staging."""
-    if staged.joinpath(f"{name}.page").is_file():
-        return decoded_page(staged.joinpath(f"{name}.page"), name)
-    return read_page(root, name)
-
-
-def staged_level(root: Path, staged: Path, name: str) -> Result[int, IndexError]:
-    """The level of a page installed or staged."""
-    return Ok(read_any(root, staged, name)?.level)
-
-
-def write_page(staged: Path, page: Page) -> Result[str, IndexError]:
-    """Write one page into staging under its content name."""
+def write_page(writer: PageWriter, page: Page) -> Result[str, IndexError]:
+    """Place one page in the pack being written; returns its reference inside that pack."""
     data = encode_page(page).map_err((detail) => IndexError(object="index page", detail=detail))?
+    return Ok(writer.place(data))
+
+
+def placed_page(data: bytes, mut state: &mut PackState) -> str:
+    """Append a page to the pack unless equal bytes already lie in it; returns its reference inside the pack."""
+    digest = hexlify(sha256.digest(data))
+    if digest in state.placed:
+        return state.placed[digest]
+    reference = f":{state.size}:{len(data)}:{digest}"
+    state.pages.append(data)
+    state.size += len(data)
+    state.placed[digest] = reference
+    pages_read["written"] = pages_read.get("written", 0) + 1
+    return reference
+
+
+pub def install_pack(root: Path, writer: PageWriter, staged: Path) -> Result[str, IndexError]:
+    """
+    Install the pages `writer` gathered as one pack in the index directory, named by its content digest: written in
+    `staged`, its bytes synchronized before the name appears, so an installed pack always holds its complete content.
+    An installed pack of that name already holds these bytes and is kept. Returns the pack's name, or an empty name
+    when no page was written. The index directory must exist.
+    """
+    held = writer.state.as_ref().borrow()
+    data = pack_bytes(held.deref())
+    if len(data) == 0:
+        return Ok("")
     name = hexlify(sha256.digest(data))
-    target = staged.joinpath(f"{name}.page")
+    target = pack_path(root, name)
     if target.is_file():
         return Ok(name)
     staged.store_mkdir(true, true).map_err((error) => IndexError(object=staged.value, detail=error.message()))?
-    temporary = target.at(f"{target.value}.{id()}.tmp")
-    temporary.store_write_bytes(data).map_err((error) => IndexError(object=temporary.value, detail=error.message()))?
-    temporary.store_replace(target).map_err((error) => IndexError(object=target.value, detail=error.message()))?
+    written = staged.joinpath(f"{name}.pack")
+    written.store_write_bytes(data).map_err((error) => IndexError(object=written.value, detail=error.message()))?
+    written.store_sync_ordered().map_err((error) => IndexError(object=written.value, detail=error.message()))?
+    written.store_replace(target).map_err((error) => IndexError(object=target.value, detail=error.message()))?
     return Ok(name)
+
+
+def pack_bytes(state: &PackState) -> bytes:
+    """The pages of a pack, in the order they were placed."""
+    mut data: list[u8] = []
+    for page in state.pages:
+        append_bytes(data, page)
+    return data
+
+
+# ---- Repacking ----
+
+
+pub def pack_usage(root: Path, tops: list[str]) -> Result[Dict[str, int], IndexError]:
+    """The bytes of the pages reachable from `tops` that each pack holds, every page counted once."""
+    mut usage: Dict[str, int] = {}
+    for reference in tree_order(root, tops)?.order:
+        location = located_page(root, reference)?
+        if location.pack != "":
+            usage[location.pack] = usage.get(location.pack, 0) + location.length
+    return Ok(usage)
+
+
+pub def repacked(root: Path, top: str, writer: PageWriter, moving: set[str]) -> Result[str, IndexError]:
+    """
+    The root of `top`'s index once every page that lies in a `moving` pack is placed again in `writer`'s pack, together
+    with the pages above it, whose child references change. Every other page is shared and every entry is unchanged, so
+    every lookup answers as before. Returns `top` when no page below it moves.
+
+    A page placed again with its bytes unchanged, as every leaf is, keeps its content name in the new pack. A page above
+    a moved one holds new child references, so it is a new page under a new name: no page's bytes change under its name.
+    Pages are placed children first, from the end of the breadth-first order, so a parent meets its moved children's
+    new references.
+    """
+    if top == "":
+        return Ok(top)
+    tree = tree_order(root, [top])?
+    mut moved: Dict[str, str] = {}
+    for back in range(len(tree.order)):
+        reference = tree.order[len(tree.order) - 1 - back]
+        page = tree.pages[reference]
+        mut changes = located_page(root, reference)?.pack in moving
+        mut entries: list[Entry] = []
+        for entry in page.entries:
+            if page.level > 0 and entry.child in moved:
+                changes = true
+                entries.append(Entry(key=entry.key, location=None, child=moved[entry.child]))
+            else:
+                entries.append(entry)
+        if changes:
+            moved[reference] = write_page(writer, Page(level=page.level, entries=entries))?
+    return Ok(moved.get(top, top))
+
+
+model TreeOrder:
+    """The pages reachable from some roots, each once, in breadth-first order, and each page decoded."""
+
+    order: list[str] = []
+    pages: Dict[str, Page] = {}
+
+
+def tree_order(root: Path, tops: list[str]) -> Result[TreeOrder, IndexError]:
+    """Every page reachable from `tops`, each read once, parents before their children."""
+    mut tree = TreeOrder()
+    mut pending = tops
+    mut position = 0
+    while position < len(pending):
+        reference = pending[position]
+        position += 1
+        if reference == "" or reference in tree.pages:
+            continue
+        page = read_page(root, reference)?
+        tree.order.append(reference)
+        if page.level > 0:
+            for entry in page.entries:
+                pending.append(entry.child)
+        tree.pages[reference] = page
+    return Ok(tree)
 
 
 # ---- Encoding ----
 
 
 def encode_page(page: Page) -> Result[bytes, str]:
-    """The canonical bytes of a page."""
+    """The canonical bytes of a page written into a pack."""
     mut buffer: list[u8] = []
     append_bytes(buffer, page_magic())
     append_u64(buffer, page.level, "index")?
@@ -474,12 +801,20 @@ def encode_page(page: Page) -> Result[bytes, str]:
                     append_bytes(buffer, b"\x01")
                 else:
                     append_bytes(buffer, b"\x00")
-            None => append_bytes(buffer, entry.child.encode("utf-8"))
+            None =>
+                child = entry.child.encode("utf-8")
+                append_u64(buffer, len(child), "index")?
+                append_bytes(buffer, child)
     return Ok(buffer)
 
 
 def page_magic() -> bytes:
-    """The header every index page starts with."""
+    """The header every page in a pack starts with: inner entries name their child by a length-prefixed reference."""
+    return b"INCIDX\x00\x02"
+
+
+def page_file_magic() -> bytes:
+    """The header of a page file from a store written before packs: inner entries name a 64-character page file."""
     return b"INCIDX\x00\x01"
 
 

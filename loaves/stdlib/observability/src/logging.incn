@@ -1,7 +1,9 @@
 """Compatibility facade for structured logging owned by `std.primitives`."""
 
 pub from std.primitives import (
+    Attributes,
     ColorPolicy,
+    InstrumentationScope,
     Level,
     LogFormat,
     LogRecord,
@@ -10,6 +12,12 @@ pub from std.primitives import (
     LoggerName,
     LoggingConfig,
     OutputTarget,
+    Resource,
+    SpanId,
+    TelemetryValue,
+    Timestamp,
+    TraceFlags,
+    TraceId,
     basic_config,
     get_logger,
     log,

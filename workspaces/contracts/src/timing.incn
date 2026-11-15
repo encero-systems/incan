@@ -8,8 +8,8 @@ from std.json import JsonValue
 
 
 pub def work_clock() -> Option[Instant]:
-    """Read an audit clock only when INCAN_JEC_TRACE requests work observations."""
-    if get_or("INCAN_JEC_TRACE", "") == "":
+    """Read an audit clock only when the tracing channel (`INCAN_ENGINE_TRACE`) is on."""
+    if get_or("INCAN_ENGINE_TRACE", "") == "":
         return None
     return Some(Instant.now())
 
@@ -20,11 +20,16 @@ pub def work(category: str, input: str, clock: Option[Instant], bytes: int = 0) 
         None => return
         Some(started) =>
             fields = JsonValue.object(
-                {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(int(id())), "category": JsonValue.string(
-                    category,
-                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())), "bytes": JsonValue.int(
-                    bytes,
-                ), "allocations": JsonValue.null()},
+                {
+                    "schema": JsonValue.string("incan.engine.trace/1"),
+                    "kind": JsonValue.string("span"),
+                    "producer": JsonValue.string("contracts"),
+                    "operation": JsonValue.string(category),
+                    "key": JsonValue.string(input),
+                    "process": JsonValue.int(int(id())),
+                    "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())),
+                    "bytes": JsonValue.int(bytes),
+                },
             )
             match fields.to_json():
                 Err(_) => return
@@ -33,10 +38,10 @@ pub def work(category: str, input: str, clock: Option[Instant], bytes: int = 0) 
 
 def append_work(text: str) -> None:
     """Append one runner's rows without mixing them into its program streams or another process's trace."""
-    directory = get_or("INCAN_JEC_TRACE", "")
+    directory = get_or("INCAN_ENGINE_TRACE", "")
     if directory == "":
         return
-    match Path(directory).joinpath(f"contracts-{id()}.jsonl").open("a"):
+    match Path(directory).joinpath(f"engine-contracts-{id()}.jsonl").open("a"):
         Err(_) => pass
         Ok(opened) =>
             mut sink = opened

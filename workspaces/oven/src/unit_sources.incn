@@ -1,0 +1,282 @@
+"""
+The source graph a program or test unit's compilation reads: the files module collection read and the absent paths its
+imports looked for, as the compiler reports them.
+
+Oven keys such a unit by its graph instead of by every file under the source root, so a file nothing imports never
+rebuilds the unit, while a file created where an import looked does. The graph is recorded with the digest of each file
+it read, and is asked of the compiler again only when one of those files changed or one of those absent paths appeared,
+the only edits that can change what collection reads.
+
+A unit is asked for under each scope it is keyed in: its compiler and description, which preparation extends. One
+record per entry keeps the current graph of each scope, at a location the records engine's request capture derives from
+the request alone, so that capture checks the paths the graphs name instead of listing the source root.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from compiler_worker import captured_resident
+from driver_command import driver_command
+from files import json_text, make_directory, parse_json, read_json, write
+from json_fields import required_items, required_text
+from loaf_local_graph import unique
+from observation import Ledger, trace
+from publication import publish
+from rust_target import decoded
+from toolchain import Toolchain
+from unit import UnitDescription, manifest_candidates
+from pub::incan_platform.trace import Operation
+from jec import begin, record
+
+const GRAPH_SCHEMA: str = "incan.oven.source-graph/2"
+# The scopes one record keeps: a unit is asked for under its description before and after preparation.
+const RECORDED_SCOPES: int = 4
+
+
+pub model SourceGraph:
+    """What one unit's module collection read and the absent paths its imports looked for, as absolute paths."""
+
+    pub read: list[str]
+    pub absent: list[str]
+    # The Rust crate requests the same collection found, as `--rust-imports` prints them; `None` when it refused or the
+    # compiler did not report them.
+    pub imports: Option[list[JsonValue]] = None
+
+
+pub def graph_keyed(unit: UnitDescription) -> bool:
+    """
+    Whether a unit is keyed by its source graph: a program or test unit compiled from its own entry alone.
+
+    Additional program entries, vocabulary, contract models and C inputs read sources the entry's collection does not,
+    so those units keep every source under their roots in their identity.
+    """
+    return (
+        unit.kind in ["program", "test"]
+        and len(unit.program_entries) == 0
+        and unit.vocab_entry is None
+        and unit.vocab is None
+        and not unit.vocabulary
+        and len(unit.contract_models) == 0
+        and len(unit.c_headers) == 0
+        and len(unit.cloves) == 0
+    )
+
+
+pub def source_graph(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    scope: str,
+    mut project: Ledger,
+) -> Result[Option[SourceGraph], str]:
+    """
+    The unit's source graph under `scope` (its compiler and description), or `None` when it keeps the listing.
+
+    1. A unit that is not graph-keyed keeps every source under its roots.
+    2. A recorded graph whose read files are unchanged and whose absent paths are still absent is current.
+    3. Otherwise the compiler collects the graph again, and it is recorded with the digests of what it read. A compiler
+       that cannot report a graph leaves the unit on the listing, which covers every file the graph could name.
+    """
+    # 1. Only a plain program or test unit is collected from its entry alone.
+    if not graph_keyed(unit):
+        return Ok(None)
+    location = graph_location(unit.project_root, unit.profile, unit.kind, unit.source)
+    # 2. Unchanged reads and still-absent lookups collect the same graph.
+    if let Some(graph) = recorded_graph(location, scope, project)?:
+        return Ok(Some(graph))
+    # 3. The compiler names what its collection reads.
+    match discovered(unit, toolchain, location)?:
+        None => return Ok(None)
+        Some(graph) =>
+            retain(location, scope, graph, project)?
+            return Ok(Some(graph))
+
+
+pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -> Path:
+    """
+    Where the graphs of one entry's unit are recorded: one record per project, profile, kind and resolved entry, which
+    a request capture derives without the unit's description.
+    """
+    mut resolved = entry
+    match Path(entry).resolve():
+        Ok(found) => resolved = found.0
+        Err(_) => pass
+    name = hexlify(sha256.digest(f"{profile}\n{kind}\n{resolved}".encode("utf-8")))[:24]
+    return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.json")
+
+
+pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
+    """
+    Every file the recorded graphs of the program at `source` read and every absent path they probed, under each
+    scope; `None` without a readable record, which leaves a request capture listing the source root.
+
+    The program's project is the directory of the nearest `loaf.toml`, else the file's own, as its description
+    finds it. A capture checks these paths itself, so their recorded digests are not consulted here.
+    """
+    mut project = source.parent()
+    for candidate in manifest_candidates(source):
+        if candidate.is_file():
+            project = candidate.parent()
+            break
+    mut read: list[str] = []
+    mut absent: list[str] = []
+    for entry in recorded_entries(graph_location(project.0, profile, "program", source.0)):
+        for item in required_items(entry, "read").unwrap_or([]):
+            read.append(required_text(item, "path").unwrap_or(""))
+        for item in required_items(entry, "absent").unwrap_or([]):
+            absent.append(item.as_str().unwrap_or(""))
+    if len(read) == 0 or "" in read or "" in absent:
+        return None
+    return Some(SourceGraph(read=unique(read), absent=unique(absent)))
+
+
+pub def recorded_imports(
+    unit: UnitDescription,
+    scope: str,
+    mut project: Ledger,
+) -> Result[Option[list[JsonValue]], str]:
+    """
+    The Rust crate requests the unit's current graph under `scope` was collected with, or `None`. They are what
+    `--rust-imports` prints for the same files, compiler and description, so the graph question already answered them.
+    """
+    if not graph_keyed(unit):
+        return Ok(None)
+    match recorded_graph(graph_location(unit.project_root, unit.profile, unit.kind, unit.source), scope, project)?:
+        Some(graph) => return Ok(graph.imports)
+        None => return Ok(None)
+
+
+def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Option[SourceGraph], str]:
+    """The recorded graph of `scope` while it is still current; anything else is a miss, never an error."""
+    for entry in recorded_entries(location):
+        if required_text(entry, "scope").unwrap_or("") == scope:
+            return current_graph(entry, project)
+    return Ok(None)
+
+
+def recorded_entries(location: Path) -> list[JsonValue]:
+    """The graphs a record holds, newest first; a missing, malformed or older record holds none."""
+    if not location.is_file():
+        return []
+    match read_json(location):
+        Err(_) => return []
+        Ok(document) =>
+            if required_text(document, "schema").unwrap_or("") != GRAPH_SCHEMA:
+                return []
+            return required_items(document, "graphs").unwrap_or([])
+
+
+def current_graph(entry: JsonValue, mut project: Ledger) -> Result[Option[SourceGraph], str]:
+    """A recorded graph whose read files are unchanged and whose absent paths are still absent, else `None`."""
+    mut read: list[str] = []
+    for item in required_items(entry, "read").unwrap_or([]):
+        path = required_text(item, "path").unwrap_or("")
+        if path == "" or not Path(path).is_file():
+            return Ok(None)
+        if project.digest(Path(path))? != required_text(item, "digest").unwrap_or(""):
+            return Ok(None)
+        read.append(path)
+    mut absent: list[str] = []
+    for item in required_items(entry, "absent").unwrap_or([]):
+        path = item.as_str().unwrap_or("")
+        if path == "" or Path(path).exists():
+            return Ok(None)
+        absent.append(path)
+    if len(read) == 0:
+        return Ok(None)
+    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(entry))))
+
+
+def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
+    """Ask the resident compiler, or one compiler process, which files the unit's collection reads and probes."""
+    make_directory(location.parent())?
+    description = location.parent().joinpath(f"{location.name()}.unit.json")
+    write(description, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    arguments = ["--rust-imports", description.0, "--source-graph"]
+    mut output = b""
+    match captured_resident(toolchain, arguments):
+        Ok(Some(completed)) =>
+            if completed.code != 0:
+                return unavailable(unit)
+            output = completed.output
+        Ok(None) =>
+            match cold_graph(toolchain, arguments, description):
+                Some(stdout) => output = stdout
+                None => return unavailable(unit)
+        Err(_) => return unavailable(unit)
+    # A compiler that answers with anything but a graph report keeps the unit on the listing.
+    mut report = JsonValue.null()
+    match parse_json(decoded(output)):
+        Ok(parsed) => report = parsed
+        Err(_) => return Ok(None)
+    mut read: list[str] = []
+    mut absent: list[str] = []
+    match (required_items(report, "read"), required_items(report, "absent")):
+        (Ok(reads), Ok(probes)) =>
+            read = [item.as_str().unwrap_or("") for item in reads]
+            absent = [item.as_str().unwrap_or("") for item in probes]
+        _ => return Ok(None)
+    if len(read) == 0 or "" in read or "" in absent:
+        return Ok(None)
+    trace(f"unit {unit.package} source graph: collected {len(read)} files, {len(absent)} absent paths")
+    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(report))))
+
+
+def reported_imports(report: JsonValue) -> Option[list[JsonValue]]:
+    """The Rust crate requests a complete collection reported beside its graph; none from an older compiler."""
+    match required_items(report, "imports"):
+        Ok(records) => return Some(records)
+        Err(_) => return None
+
+
+def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) -> Result[None, str]:
+    """
+    Record the graph of `scope` with the digest of each file it read, first, before the other scopes' graphs that are
+    still current; a stale one is dropped. A record that cannot be written only costs a collection.
+    """
+    mut read: list[JsonValue] = []
+    for path in graph.read:
+        read.append(
+            JsonValue.object({"path": JsonValue.string(path), "digest": JsonValue.string(project.digest(Path(path))?)}),
+        )
+    mut fields: Dict[str, JsonValue] = {}
+    fields["scope"] = JsonValue.string(scope)
+    fields["read"] = JsonValue.array(read)
+    fields["absent"] = JsonValue.array([JsonValue.string(path) for path in graph.absent])
+    if let Some(records) = graph.imports:
+        fields["imports"] = JsonValue.array(records)
+    mut graphs = [JsonValue.object(fields)]
+    for entry in recorded_entries(location):
+        if len(graphs) >= RECORDED_SCOPES:
+            break
+        if required_text(entry, "scope").unwrap_or("") == scope:
+            continue
+        if current_graph(entry, project)? is not None:
+            graphs.append(entry)
+    document = JsonValue.object({"schema": JsonValue.string(GRAPH_SCHEMA), "graphs": JsonValue.array(graphs)})
+    _ = publish(location, json_text(document)?)
+    return Ok(None)
+
+
+def cold_graph(toolchain: Toolchain, arguments: list[str], description: Path) -> Option[bytes]:
+    """One compiler process's graph report when no worker serves it; a compiler that cannot report one gives `None`."""
+    match driver_command(toolchain):
+        Err(_) => return None
+        Ok(found) =>
+            mut command = found
+            for argument in arguments:
+                command.arg(argument)
+            clock = begin()
+            match command.output():
+                Err(_) => return None
+                Ok(finished) =>
+                    record(Operation.DriverSpawn, f"--rust-imports {description.0} --source-graph", clock)
+                    if not finished.status.success():
+                        return None
+                    return Some(finished.stdout)
+
+
+def unavailable(unit: UnitDescription) -> Result[Option[SourceGraph], str]:
+    """Keep a unit whose compiler reports no graph on the listing, which covers every file a graph could name."""
+    trace(f"unit {unit.package} source graph: unavailable, keyed by listing")
+    return Ok(None)

@@ -1,9 +1,12 @@
 """Relocated inspections reuse checked facts without mixing entries, diagnostics or observed Rust inputs."""
 
 from std.fs import Path
+from std.json import JsonValue, parse
 from rust::std::os::unix::fs import symlink
+from rust::std::thread import sleep
+from rust::std::time import Duration
 from files import make_directory, read, remove, write
-from run import invoke
+from run import invoke, trace_lines
 
 
 pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
@@ -14,6 +17,7 @@ pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
     2. Different entries and changed contents at the same relative entry never share an answer.
     3. Unchecked diagnostics belong to the requesting project.
     4. Rust observes included files and environment before reusing its checked facts.
+    5. Relocated checked C call and facade records link the inspecting checkout's records (`check_c_binding_relocation`).
     """
     if project.joinpath("src/lib.rs").is_file():
         return check_rust_inputs(incan, project)
@@ -37,6 +41,7 @@ pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
     if "changed_helper" not in changed or "first_helper" in changed:
         return Err("different source at the same relative entry reused an Incan graph answer")
     check_source_aliases(incan, directory, first, second)?
+    check_c_binding_relocation(incan, directory)?
     # 3. A refused export must never replay another producer's absolute diagnostic locations.
     for root in [first, second]:
         write(root.joinpath("src/main.incn"), "def main() -> None:\n    missing_function()\n")?
@@ -57,12 +62,13 @@ def check_query_reuse(incan: str, directory: Path, first: Path, second: Path) ->
         make_directory(root.joinpath(".git"))?
     arguments = ["inspect", "codegraph", "src/main.incn", "--query", "refs", "first_helper"]
     original = invoke(incan, arguments, first)?
-    trace = directory.joinpath("query-reuse.trace")
-    if trace.is_file():
-        remove(trace)?
-    relocated = invoke(incan, arguments, second, [f"OVEN_TRACE={trace.0}"])?
-    work = read(trace)?
-    remove(trace)?
+    trace = directory.joinpath("query-reuse-trace")
+    if trace.is_dir():
+        trace.remove_tree().map_err((error) => error.message())?
+    make_directory(trace)?
+    relocated = invoke(incan, arguments, second, [f"INCAN_ENGINE_TRACE={trace.0}"])?
+    work = "\n".join(trace_lines(trace))
+    trace.remove_tree().map_err((error) => error.message())?
     if original.code != Some(0) or relocated.code != Some(0) or original.stdout != relocated.stdout:
         return Err("a relocated relative query changed its answer")
     if "graph answer lookup:" not in work or "graph answer evaluation:" in work:
@@ -153,4 +159,110 @@ def check_rust_inputs(incan: str, project: Path) -> Result[None, str]:
     inspect(incan, root, ".", "environment_first", initial)?
     inspect(incan, root, ".", "environment_second", ["INCAN_GRAPH_CONTRACT_INPUT=second.rs"])?
     inspect(incan, root, ".", "environment_first", initial)?
+    return check_paged_rust_inputs(incan, root, external, source)
+
+
+def check_paged_rust_inputs(incan: str, root: Path, external: Path, source: str) -> Result[None, str]:
+    """
+    Once a Rust answer is paged, a changed environment variable rustc read, and a settled edit of a file outside the
+    source tree, still change the answer: the same request never answers from the page that went stale.
+    """
+    write(root.joinpath("src/lib.rs"), source)?
+    sleep(Duration.from_secs(3))
+    first = ["INCAN_GRAPH_CONTRACT_INPUT=first.rs"]
+    second = ["INCAN_GRAPH_CONTRACT_INPUT=second.rs"]
+    for attempt in range(2):
+        inspect(incan, root, ".", "environment_first", first)?
+        inspect(incan, root, ".", "external_second", first)?
+    if "environment_first" in definitions(incan, root, "environment_first", second)?:
+        return Err("a paged Rust answer survived a change of an environment variable rustc read")
+    write(external, "pub fn external_third() {}\n")?
+    sleep(Duration.from_secs(3))
+    if "external_second" in definitions(incan, root, "external_second", first)?:
+        return Err("a paged Rust answer survived an edit of a file outside the source tree")
     return Ok(None)
+
+
+def definitions(incan: str, root: Path, term: str, environment: list[str]) -> Result[str, str]:
+    """The definitions of `term` in the project at `root`, under `environment`."""
+    outcome = invoke(incan, ["inspect", "codegraph", ".", "--query", "defs", term], root, environment)?
+    if outcome.code != Some(0):
+        return Err(f"definitions of {term} failed: {outcome.stderr}")
+    return Ok(outcome.stdout)
+
+
+def check_c_binding_relocation(incan: str, directory: Path) -> Result[None, str]:
+    """
+    A relocated export's checked C call and facade records link the inspecting checkout's records, never the paths of
+    the checkout that produced the reused facts.
+
+    1. Two identical projects with a binding, a private bridge and a public facade; the second reuses the first's export.
+    2. The second's export names no path of the first.
+    3. Each call's owner, binding and call links, and each facade's links, name records of the same export.
+    """
+    # 1. Identical sources at two roots share one checked export.
+    mut roots: list[Path] = []
+    for name in ["c-first", "c-second"]:
+        root = directory.joinpath(name)
+        make_directory(root.joinpath("src"))?
+        manifest = '[project]\nname = "graph_c_relocation"\nversion = "0.1.0"\n'
+        write(root.joinpath("loaf.toml"), manifest + '[project.scripts]\nmain = "src/main.incn"\n')?
+        write(root.joinpath("src/main.incn"), c_binding_source())?
+        roots.append(root)
+    for root in roots:
+        outcome = invoke(incan, ["inspect", "codegraph", "src/main.incn", "--format", "jsonl"], root)?
+        if outcome.code != Some(0):
+            return Err(f"C binding codegraph export failed: {outcome.stderr}")
+        # 2. The facts the second root reuses were produced at the first.
+        for other in roots:
+            if other.0 != root.0 and other.0 in outcome.stdout:
+                return Err(f"a relocated C binding record named another checkout's path {other.0}")
+        # 3. Every link of a C call or facade record names a record of this export.
+        c_links_resolve(outcome.stdout)?
+    return Ok(None)
+
+
+def c_links_resolve(export: str) -> Result[None, str]:
+    """Each `c_binding_call` and `c_binding_facade` link names a record id the same export carries."""
+    mut records: list[JsonValue] = []
+    mut ids: list[str] = []
+    for line in export.split("\n"):
+        if line.strip() == "":
+            continue
+        record = parse(line).map_err((error) => f"codegraph record: {error.message()}")?
+        if let Some(id) = record.get("id"):
+            if let Some(text) = id.as_str():
+                ids.append(text)
+        records.append(record)
+    mut checked = 0
+    for record in records:
+        mut kind = ""
+        if let Some(value) = record.get("record"):
+            kind = value.as_str().unwrap_or("")
+        if kind not in ["c_binding_call", "c_binding_facade"]:
+            continue
+        mut links: list[Tuple[str, str]] = []
+        for key in ["binding_id", "call_id", "owner_declaration_id", "facade_declaration_id", "bridge_declaration_id"]:
+            if let Some(value) = record.get(key):
+                if let Some(text) = value.as_str():
+                    links.append((key, text))
+        if let Some(value) = record.get("raw_call_ids"):
+            for item in value.as_array().unwrap_or([]):
+                if let Some(text) = item.as_str():
+                    links.append(("raw_call_ids", text))
+        for key, target in links:
+            if target not in ids:
+                return Err(f"C binding link `{key}` names `{target}`, which is no record of the export")
+            checked += 1
+    if checked < 5:
+        return Err(f"the C binding export carried {checked} links, expected a call's and a facade's")
+    return Ok(None)
+
+
+def c_binding_source() -> str:
+    """A binding, a private bridge that calls it, and a public facade over the bridge."""
+    binding = "from std.interop import c\n\n\nbinding LibC:\n    header = \"stdlib.h\"\n    link = c.system_library(\"c\")\n\n"
+    symbol = "    symbol absolute(value: c.i32) -> c.i32:\n        native = \"abs\"\n\n\n"
+    bridge = "def raw_absolute(value: i32) -> i32:\n    unsafe:\n        return LibC.absolute(value)\n\n\n"
+    facade = "pub def absolute(value: i32) -> i32:\n    return raw_absolute(value)\n\n\n"
+    return binding + symbol + bridge + facade + "def main() -> None:\n    println(absolute(-5))\n"

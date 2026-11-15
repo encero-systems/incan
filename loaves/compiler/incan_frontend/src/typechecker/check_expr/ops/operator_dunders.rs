@@ -412,7 +412,7 @@ impl TypeChecker {
                         })
                     }
                     TypeInfo::Newtype(newtype) => {
-                        let resolved = self.resolve_newtype_method_name(&newtype, method);
+                        let resolved = self.resolve_newtype_method_name(newtype, method);
                         if newtype.methods.contains_key(resolved) || newtype.method_overloads.contains_key(resolved) {
                             return true;
                         }

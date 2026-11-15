@@ -9,7 +9,7 @@ from std.json import JsonValue
 from observation import file_digest, observe
 from publication import publish
 from home_paths import home
-pub from payload_types import PayloadAdmission
+from payload_types import PayloadAdmission
 from frozen_inputs import payload as frozen_payload
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
@@ -25,6 +25,7 @@ pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
             payload=payload,
             observation=required_text(document, "observation")?,
             provenance=source_provenance(document)?,
+            facts=recorded_facts(document)?,
         ),
     )
 
@@ -34,7 +35,7 @@ pub def relocate_payload(path: Path, admission: PayloadAdmission) -> Result[None
     if observe(path)?.stamp != admission.observation:
         return Err(f"{path.0}: payload changed while publishing installation")
     destination = imported_record(path)?
-    destination.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    destination.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     return publish_record(
         destination,
         path,
@@ -110,8 +111,8 @@ pub def published_identity(path: Path) -> Result[str, str]:
     Missing producer records and changed generations refuse; relocation must be admitted before naming the unit. An
     artifact of an installed registry entry is admitted under that entry's identity the first time it is named.
     """
-    if let Some(admission) = frozen_payload(path)?:
-        return Ok(admission.identity)
+    if let Some(identity) = admitted_identity(path)?:
+        return Ok(identity)
     mut record = available_record(path)?
     if not record.is_file():
         if let Some(entry) = registry_entry(path):
@@ -127,6 +128,13 @@ pub def published_identity(path: Path) -> Result[str, str]:
     if observe(path)?.stamp != required_text(document, "observation")?:
         return Err(f"{path.0}: published payload changed; admission is required")
     return required_text(document, "unit")
+
+
+pub def admitted_identity(path: Path) -> Result[Option[str], str]:
+    """Return an installed payload's admitted producer identity without reopening its bytes or record."""
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok(Some(admission.identity))
+    return Ok(registry_entry(path))
 
 
 def registry_entry(path: Path) -> Option[str]:
@@ -179,7 +187,7 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
         return Err(f"{path.0}: imported payload digest disagrees")
     # 3. Locations and file generations belong to the local admission evidence only.
     destination = imported_record(path)?
-    destination.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    destination.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     return publish_record(destination, path, identity, payload, before, origins)
 
 
@@ -253,15 +261,64 @@ def publish_record(
     provenance: list[str] = [],
     refusal: str = "",
 ) -> Result[None, str]:
-    """Publish the same three-way identity record for a local producer or an admitted imported payload."""
-    document = JsonValue.object(
+    """
+    Publish the same three-way identity record for a local producer or an admitted imported payload.
+
+    A library manifest's record also carries the semantic facts its compiler published for exactly these bytes.
+    """
+    mut document = JsonValue.object(
         {"schema": JsonValue.string(PUBLICATION_SCHEMA), "unit": JsonValue.string(identity), "payload": JsonValue.string(
             payload,
         ), "provenance": JsonValue.string(path.0), "observation": JsonValue.string(observation), "source_provenance": JsonValue.array(
             [JsonValue.string(origin) for origin in provenance],
         ), "refusal": JsonValue.string(refusal)},
     )
+    if let Some(facts) = manifest_facts(path, payload)?:
+        mut fields = document.expect_object().map_err((error) => error.message())?
+        fields["facts"] = JsonValue.string(facts)
+        document = JsonValue.object(fields)
     return publish(destination, json_text(document)?)
+
+
+def manifest_facts(path: Path, payload: str) -> Result[Option[str], str]:
+    """The semantic facts published beside a library manifest, only when they name these exact manifest bytes."""
+    if not path.name().endswith(".incnlib"):
+        return Ok(None)
+    published = facts_path(path)
+    if not published.is_file():
+        return Ok(None)
+    document = read_json(published)?
+    if required_text(document, "schema")? != LOAF_FACTS_SCHEMA or required_text(document, "manifest_digest")? != payload:
+        return Ok(None)
+    return Ok(Some(required_text(document, "semantic_facts")?))
+
+
+pub def published_facts(path: Path) -> Result[Option[str], str]:
+    """
+    The semantic facts a library manifest's current publication carries, when it carries them: its producer's record,
+    or the home's admitted import of a transported one, so an installed Loaf keys its consumers as where it was built.
+    """
+    if let Some(admission) = frozen_payload(path)?:
+        if admission.facts == "":
+            return Ok(None)
+        return Ok(Some(admission.facts))
+    record = available_record(path)?
+    if not record.is_file():
+        return Ok(None)
+    document = read_json(record)?
+    if required_text(document, "observation")? != observe(path)?.stamp:
+        return Ok(None)
+    facts = recorded_facts(document)?
+    if facts == "":
+        return Ok(None)
+    return Ok(Some(facts))
+
+
+pub def recorded_facts(document: JsonValue) -> Result[str, str]:
+    """The semantic facts a publication record carries, or empty when it carries none."""
+    match document.get("facts"):
+        None => return Ok("")
+        Some(value) => return value.expect_str().map_err((error) => error.message())
 
 
 def source_provenance(document: JsonValue) -> Result[list[str], str]:
@@ -273,3 +330,12 @@ def source_provenance(document: JsonValue) -> Result[list[str], str]:
             for origin in value.expect_array().map_err((error) => error.message())?:
                 origins.append(origin.expect_str().map_err((error) => error.message())?)
     return Ok(origins)
+
+
+# The schema of the semantic facts a library's compiler publishes beside its manifest (RFC 179).
+pub const LOAF_FACTS_SCHEMA: str = "incan.loaf-facts/1"
+
+
+pub def facts_path(manifest: Path) -> Path:
+    """The semantic facts the compiler publishes beside one `.incnlib` manifest: `<stem>.incnfacts`."""
+    return manifest.parent().joinpath(f"{manifest.stem()}.incnfacts")

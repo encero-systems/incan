@@ -26,6 +26,7 @@ from rust::incan_lang::lang::surface::dict_methods import DictMethodId as RustDi
 from tuples import tuple_type, generic_tuple_type
 from models import runtime_storage_marker
 from table_views import borrowed_at
+from text_plan import clone_text_reference
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
@@ -160,17 +161,38 @@ pub def collection_call(
     kind = undisplayed_key(ty, operation)
     if kind != "":
         return Err(f"unsupported Body IR keyed lookup in a dictionary with {kind} keys")
+    mut admitted: list[Operand] = []
     for index in range(len(operands)):
-        if value_type(builder, operands[index])? != parameters[index]:
-            return Err("unsupported Body IR collection runtime argument coercion")
+        match owned_runtime_operand(builder, operands[index], parameters[index], span)?:
+            Some(operand) => admitted.append(operand)
+            None => return Err("unsupported Body IR collection runtime argument coercion")
     arguments = collection_arguments(ty)
     path = f"incan_native_runtime::{collection_name(ty, operation)?}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, arguments), operands, destination, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, arguments), admitted, destination, span)
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def owned_runtime_operand(
+    mut builder: Builder,
+    operand: Operand,
+    parameter: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """
+    Pass one evaluated value at its runtime carrier, or nothing when the carriers differ. Text an inferred-shared
+    parameter lends reaches an owned runtime slot, such as a dictionary default or a stored entry, as its shared
+    reference; that runtime call is the owned use, so it receives an independent copy.
+    """
+    actual = value_type(builder, operand)?
+    if actual == parameter:
+        return Ok(Some(operand))
+    if actual == PlanType.StringRef and parameter == PlanType.String:
+        return Ok(Some(read_place(clone_text_reference(builder, operand, span)?, true, span)))
     return Ok(None)
 
 
@@ -221,14 +243,16 @@ pub def insert_collection(
     types = collection_arguments(ty)
     if len(values) != len(types):
         return Err("unsupported Body IR collection insert arity")
+    mut admitted: list[Operand] = []
     for index in range(len(values)):
-        if value_type(builder, values[index])? != types[index]:
-            return Err("unsupported Body IR collection element coercion")
+        match owned_runtime_operand(builder, values[index], types[index], span)?:
+            Some(operand) => admitted.append(operand)
+            None => return Err("unsupported Body IR collection element coercion")
     reference = borrow_collection(builder, receiver, true, span)?
     mut parameters = [collection_reference(ty, true)]
     parameters.extend(collection_arguments(ty))
     mut operands = [reference]
-    operands.extend(values)
+    operands.extend(admitted)
     unit = temporary(builder, PlanType.Unit, span)
     return collection_call(builder, ty, "insert", parameters, PlanType.Unit, operands, unit, span)
 

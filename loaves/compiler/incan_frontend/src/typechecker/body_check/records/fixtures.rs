@@ -7,11 +7,12 @@ use super::*;
 pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
     let (_, checker, owner) = fixture(source, name)?;
     if declaration {
-        return checker
-            .produced_declaration_records
-            .get(&owner)
-            .cloned()
-            .ok_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()));
+        return match checker.produced_declaration_records.get(&owner) {
+            Some(fields) => Ok(fields.clone()),
+            None => Err(checker
+                .declaration_record_refusal(owner)
+                .unwrap_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()))),
+        };
     }
     match checker.produced_final_record(owner) {
         Some(fields) => Ok(fields.clone()),
@@ -82,7 +83,7 @@ fn verify_checked_fixture(
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
     drop(checker);
-    let restored = restore(&positions, &program, owner, &fields)?;
+    let restored = restore(&positions, &program, owner, fields)?;
     compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
@@ -435,6 +436,19 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
     project_expressions(positions, local, &mut fields)?;
     project_references(positions, local, &mut fields)?;
     project_calls(positions, local, &mut fields)?;
+    call_artifacts_generated::project(positions, &local.calls, &mut fields)?;
+    rust_artifacts_generated::project(positions, &local.rust, &mut fields)?;
+    protocol_artifacts_generated::project(positions, &local.protocols, &mut fields)?;
+    for (canonical, ty) in &local.rust.value_native_types {
+        let mut row = vec![
+            "native-value".into(),
+            positions.nodes.anchor(span_of(canonical))?.path,
+            "type".into(),
+            positions.identity(canonical)?,
+        ];
+        type_fields(ty, &mut row)?;
+        fields.push(row);
+    }
     inputs::project(positions, local, &mut fields)?;
     for canonical in local.nested.values() {
         fields.push(vec![

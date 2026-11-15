@@ -15,7 +15,9 @@ use incan_frontend::library_manifest::{LibraryManifest, TypeRef};
 use incan_semantics_core::body_ir::loaf_item_path;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
-/// One checked public facade reduced to the native alias the adapter declares at the crate root.
+/// One checked public facade reduced to the native alias the adapter declares at the crate root. It crosses the rustc
+/// handoff, so it serializes.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct LibraryFacade {
     name: String,
     path: String,

@@ -1,33 +1,290 @@
 """Submit program requests to the records engine, retain execution interest and relay only the caller's console."""
 
+from rust::std::io import Write, stdin, stdout
+from rust::std::string import String as RustString
 from std.fs import Path
-from std.environ import get_or
+from std.environ import get_optional, get_or
 from std.json import JsonValue, parse
 from pub::incan_platform.ipc import session_id
 from bakery import bakery
 from core_process import executable
-from compiler_worker import relay_console
+from compiler_worker import collect_console, relay_console
 from engine_channel import Channel, SendOutcome
 from engine_endpoint import connect, owner_uid
 from engine_epochs import record_text, prepare_submit
 from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
+from overlay_request import OverlayRequest, parse_served
+from overlay_hover import overlay_hover
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
 from incan_units import run_program
 from json_fields import required_text
-from observation import observe, file_metadata, trace
-from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
+from observation import file_metadata, trace
+from retained_readings import installed_digest
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, put, view_snapshot
 from store_path_conversion import claim, snapshot
-from toolchain import load_toolchain, toolchain_file
+from toolchain import load_toolchain, toolchain_directory
+from installation_page import admitted_identity
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
 from home_paths import installation_catalog
+from home_views import selected_home_view
+from request_directory import working_directory
+from engine_overlay import (
+    OverlayDiagnostic,
+    editor_view_name,
+    mirror_overlay,
+    overlay_entry,
+    program_root,
+    report_diagnostics,
+)
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+
+# The schema of the document an overlay request answers with.
+const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
+# The schema of the document an overlay hover answers with.
+const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
+# While an overlay request runs, its console is collected here instead of being relayed to the terminal.
+static console_capture: dict[str, str] = {}
+
+
+model CheckAnswer:
+    """One engine check: whether it passed, the compiler's report, its error text and the engine's work counters."""
+
+    passed: bool
+    report: str
+    errors: str
+    work: JsonValue
+
+
+pub def execute_overlay(request: OverlayRequest) -> Result[str, str]:
+    """Answer one overlay request over a connection of its own."""
+    store = bakery()?
+    mut channel = engine_channel(store)?
+    answer = answer_overlay(channel, store, request)
+    _ = channel.transport.close()
+    return answer
+
+
+pub def serve_overlays(profile: str) -> Result[i32, str]:
+    """
+    Answer overlay requests, one JSON line each on standard input, over one engine connection.
+
+    Each answer is one `incan.overlay-diagnostics/1` line. A request that fails is answered with its reason, and the
+    next request gets a new connection, because the old one may be what failed.
+    """
+    store = bakery()?
+    mut channel = engine_channel(store)?
+    input = stdin()
+    while true:
+        mut incoming = RustString.new()
+        match input.read_line(incoming):
+            Ok(count) =>
+                if count == 0:
+                    _ = channel.transport.close()
+                    return Ok(0)
+            Err(error) => return Err(f"cannot read an overlay request: {error}")
+        line = str(incoming)
+        if line.strip() == "":
+            continue
+        mut answer = ""
+        match parse_served(line, profile):
+            Err(reason) => answer = failed_answer(-1, reason)?
+            Ok(request) =>
+                match answer_overlay(channel, store, request):
+                    Ok(document) => answer = document
+                    Err(reason) =>
+                        _ = channel.transport.close()
+                        channel = engine_channel(store)?
+                        answer = failed_answer(request.version, reason)?
+        println(answer)
+        match stdout().flush():
+            Ok(_) => pass
+            Err(error) => return Err(f"cannot flush an overlay answer: {error}")
+    return Ok(0)
+
+
+def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -> Result[str, str]:
+    """
+    Answer one overlay request: the diagnostics of its source with its buffer in place of the file, as an
+    `incan.overlay-diagnostics/1` document carrying the editor's document version.
+
+    1. Name the program's editor view, and mirror the program with the buffer in place into its overlay root.
+    2. Fork the editor view from the store's shared records on its first request.
+    3. Check the program's entry in the editor view, collecting the compiler's JSON report.
+    4. Place each diagnostic on the editor's document path.
+    """
+    # 1. The overlay has the program's logical names, so its unit key is the one a build of these bytes has.
+    absolute = Path(request.source).absolute().map_err((error) => f"cannot {error.message()}")?
+    buffer = Path(request.buffer)
+    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    entry = overlay_entry(absolute, Some(text))?
+    bound = selected_home_view()?
+    project = project_view_name(view_scope(bound)?, entry.0, request.profile, get_optional("OVEN_BODY_REFUSALS"))?
+    editor = editor_view_name(project)?
+    program = program_root(absolute)
+    document = absolute.0[len(program.0) + 1:]
+    if not entry.0.startswith(program.0 + "/"):
+        return Err(f"the program entry {entry.0} lies outside {program.0}")
+    # A hover reads records and the buffer; it needs no mirror and no engine request.
+    if request.hover_line > 0:
+        return hover_answer(store, editor, program, entry, document, text, request)
+    # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
+    overlay = store.parent().joinpath("editor").joinpath(editor)
+    _ = mirror_overlay(program, overlay, document, text)?
+    # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
+    if snapshot(store, editor).map_err((error) => error.message())?.index == "":
+        fork_project_view(store, HOME_VIEW, editor)?
+    # 3. A keystroke's check runs no lowering, planning or native compile. A save builds the overlay instead, so the
+    # project's next build of the same bytes finds its unit.
+    target = overlay.joinpath(entry.0[len(program.0) + 1:])
+    if request.build:
+        return built_overlay(editor, target, request)
+    checked = submit_check(channel, store, editor, target, request.profile, request.report)?
+    # 4. Diagnostics name the editor's documents, never the overlay root.
+    mut entries: list[JsonValue] = []
+    for found in report_diagnostics(checked.report, overlay.0, program.0).map_err(
+        (reason) => f"{reason}: {checked.errors.strip()}",
+    )?:
+        entries.append(diagnostic_json(found))
+    mut fields = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
+        checked.passed,
+    ), "editor_view": JsonValue.string(editor), "diagnostics": JsonValue.array(entries)}
+    if request.report:
+        fields["work"] = checked.work
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def hover_answer(
+    store: Path,
+    editor: str,
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer a hover from the editor view's records, or from the home view's before the editor view's first request."""
+    mut view = editor
+    if snapshot(store, editor).map_err((error) => error.message())?.index == "":
+        view = str(HOME_VIEW)
+    mut hover = JsonValue.null()
+    if let Some(signature) = overlay_hover(
+        store,
+        view,
+        program,
+        entry,
+        document,
+        text,
+        request.hover_line,
+        request.hover_column,
+    )?:
+        hover = JsonValue.string(signature)
+    answer = {"schema": JsonValue.string(OVERLAY_HOVER_SCHEMA), "version": JsonValue.int(request.version), "editor_view": JsonValue.string(
+        editor,
+    ), "hover": hover}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[str, str]:
+    """Build a saved overlay in its editor view, collecting the compiler's console instead of relaying it."""
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    console_capture["errors"] = ""
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    console_capture["capturing"] = ""
+    code = built?
+    none: list[JsonValue] = []
+    answer = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
+        code == 0,
+    ), "editor_view": JsonValue.string(editor), "built": JsonValue.bool(true), "diagnostics": JsonValue.array(none)}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def submit_check(
+    mut channel: Channel,
+    store: Path,
+    view: str,
+    target: Path,
+    profile: str,
+    proofs: bool,
+) -> Result[CheckAnswer, str]:
+    """Submit one check of `target` in `view` and collect the compiler's report from the request's console."""
+    request = session_id()?
+    mut policy = ""
+    if proofs:
+        policy = "proofs"
+    submit = Submit(
+        command="check",
+        view=view,
+        input_selection=profile,
+        requested_roots=target.0,
+        options="json",
+        observation_policy=policy,
+        directory=working_directory().unwrap_or(""),
+    )
+    send(channel, request, Message.Submit(submit))?
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    console_capture["errors"] = ""
+    completed = await_completion(channel, request)
+    report_text = console_capture.get("captured", "")
+    errors = console_capture.get("errors", "")
+    console_capture["capturing"] = ""
+    complete, _ = completed?
+    mut work = JsonValue.null()
+    if complete.observation_handle != "":
+        work = parse(report(store, complete.observation_handle)?).map_err((error) => error.message())?
+    return Ok(
+        CheckAnswer(passed=complete.status == CompletionStatus.Success, report=report_text, errors=errors, work=work),
+    )
+
+
+def engine_channel(store: Path) -> Result[Channel, str]:
+    """Connect to the store's records engine, starting it when none runs; a check may outlive any read deadline."""
+    store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    identity = identity_for(store, installed_compiler()?)?
+    mut channel = connect(store, identity).map_err(detail)?
+    channel.transport.wait_at_most(0)
+    return Ok(channel)
+
+
+def failed_answer(version: int, reason: str) -> Result[str, str]:
+    """The answer line of a request that could not be answered."""
+    answer = JsonValue.object(
+        {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(version), "error": JsonValue.string(
+            reason,
+        )},
+    )
+    return answer.to_json().map_err((error) => error.message())
+
+
+def diagnostic_json(found: OverlayDiagnostic) -> JsonValue:
+    """One diagnostic of an overlay answer."""
+    return JsonValue.object(
+        {"message": JsonValue.string(found.message), "code": JsonValue.string(found.code), "severity": JsonValue.string(
+            found.severity,
+        ), "path": JsonValue.string(found.path), "line": JsonValue.int(found.line), "column": JsonValue.int(found.column), "end_line": JsonValue.int(
+            found.end_line,
+        ), "end_column": JsonValue.int(found.end_column)},
+    )
+
+
+pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:
+    """
+    The records engine's project view of one program in one home: named from the home's view key (`scope`), so it
+    survives moving the home and two homes over one bakery never share it, then from the source and the profile. A
+    selected body-refusal diagnosis is a view of its own.
+    """
+    mut identity = [scope, source, profile]
+    if let Some(mode) = refusals:
+        identity.append("body-refusals:" + mode)
+    return Ok(f"project-{fingerprint(identity)?}")
 
 
 pub def execute(
@@ -36,6 +293,7 @@ pub def execute(
     profile: str,
     arguments: list[str],
     argv0: Option[str],
+    format: str,
     proofs: bool,
 ) -> Result[i32, str]:
     """
@@ -45,24 +303,61 @@ pub def execute(
     2. Wait for accepted capture and caller-specific completion, relaying diagnostic bytes separately.
     3. Hold the selected execution pin until the program exits, then release it.
     """
+    absolute = source.absolute().map_err((error) => f"cannot {error.message()}")?
+    # A check is a view of its own, apart from the program's builds.
+    mut view_profile = profile
+    if command == "check":
+        view_profile = profile + "+check"
+    bound = selected_home_view()?
+    view = project_view_name(view_scope(bound)?, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
+    return execute_in(command, absolute, profile, arguments, argv0, format, proofs, view, bound)
+
+
+def view_scope(bound: Option[str]) -> Result[str, str]:
+    """
+    What a home's project views are named from: its bound view key, or, for an `INCAN_BAKERY` invocation that binds
+    none, the home's path.
+    """
+    if let Some(found) = bound:
+        return Ok(found)
+    return Ok(home()?.0)
+
+
+def execute_in(
+    command: str,
+    absolute: Path,
+    profile: str,
+    arguments: list[str],
+    argv0: Option[str],
+    format: str,
+    proofs: bool,
+    view: str,
+    bound: Option[str],
+) -> Result[i32, str]:
+    """Run one records request in `view`, forking it from the home view `bound` names when it does not exist yet."""
+    source = absolute
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
-    absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
-    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
     mut policy = ""
     if proofs:
         policy = "proofs"
     connecting = begin_work()
     store = bakery()?
-    store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    store.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     compiler = installed_compiler()?
-    if not proofs:
-        if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if selected.index == "":
+        # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
+        if let Some(found) = bound:
+            fork_project_view(store, found, view)?
+    elif not proofs and command != "check":
+        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
     mut channel = connect(store, identity).map_err(detail)?
     record_work(Operation.EngineConnect, source.0, connecting)
-    channel.transport.wait_at_most(600)
+    # A native build may legitimately outlive a fixed read deadline; service ownership still bounds its lifetime.
+    channel.transport.wait_at_most(0)
     submitted = begin_work()
     send(
         channel,
@@ -73,8 +368,9 @@ pub def execute(
                 view=view,
                 input_selection=profile,
                 requested_roots=absolute.0,
-                options="",
+                options=format,
                 observation_policy=policy,
+                directory=working_directory().unwrap_or(""),
             ),
         ),
     )?
@@ -85,18 +381,24 @@ pub def execute(
         println(report(store, complete.observation_handle)?)
     if complete.status != CompletionStatus.Success:
         return Ok(1)
+    if command == "check":
+        _ = channel.transport.close()
+        return Ok(0)
     mut binary = ""
+    mut program = ""
     match read_program(store, complete.result_handles)?:
         None => return Err("engine completed without a native descriptor")
         Some(unit) =>
             if unit.identity != complete.admission_proof:
                 return Err("engine completion and admitted native identity disagree")
             binary = unit.binary
-    # 3. Complete already holds this caller's execution lease; the engine never runs or retries user code.
+            program = unit.identity
+    # 3. Complete already holds this caller's execution lease, and the run leases the unit in the bakery until the
+    # program exits; the engine never runs or retries user code.
     executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
-        code = run_program(Path(binary), arguments, argv0, true)
+        code = run_program(Path(binary), arguments, argv0, true, program)
     record_work(Operation.EngineChild, source.0, executing)
     # Execution has ended. Cleanup cannot replace its outcome, and disconnect releases the lease if delivery fails.
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
@@ -104,20 +406,31 @@ pub def execute(
     return code
 
 
+def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, str]:
+    """
+    Start a program's project view as a fork of the home's view: it shares the home view's index pages and copies none
+    of its records. A request that forked it first leaves it as that request made it.
+    """
+    match fork(snapshot(store, home_view).map_err((error) => error.message())?, view):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            if error.kind == "conflict":
+                return Ok(None)
+            return Err(error.message())
+
+
 def execute_local(
     store: Path,
+    selected: Snapshot,
     compiler: str,
     command: str,
     source: Path,
-    view: str,
     profile: str,
     arguments: list[str],
     argv0: Option[str],
 ) -> Result[Option[i32], str]:
-    """An unchanged local capture and selected native record need no service request or control round trips."""
-    selected = snapshot(store, view).map_err((error) => error.message())?
-    if selected.index == "":
-        return Ok(None)
+    """An unchanged local capture of an existing project view and its selected native record need no service request."""
+    view = selected.view
     capturing = begin_work()
     captured = prepare_submit(
         store,
@@ -145,7 +458,9 @@ def execute_local(
                 return Err("selected native snapshot has no execution lease")
             record_work(Operation.EngineLease, view, pinning)
             restoring = begin_work()
-            restore_program(store, unit)?
+            # A unit whose shared carrier is gone is linked again by the engine.
+            if not restore_program(store, unit)?:
+                return Ok(None)
             record_work(Operation.EngineUnit, unit.identity, restoring)
             record_work(Operation.EngineSelect, view, selecting)
             trace(
@@ -153,7 +468,7 @@ def execute_local(
             )
             if command == "run":
                 executing = begin_work()
-                code = run_program(Path(unit.binary), arguments, argv0, true)?
+                code = run_program(Path(unit.binary), arguments, argv0, true, unit.identity)?
                 record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))
@@ -165,18 +480,25 @@ pub def service_identity(store: Path) -> Result[Identity, str]:
 
 
 def installed_compiler() -> Result[str, str]:
-    """Read this home's installation admission once, before deciding whether a service is needed."""
+    """
+    Read this home's installation admission once, before deciding whether a service is needed: in the home's own view
+    of its bakery, or, for an `INCAN_BAKERY` invocation, which binds no view, in the home's installation catalog.
+    """
     admitting = begin_work()
-    catalog = installation_catalog()?
-    compiler = installation_compiler(catalog)?
-    record_work(Operation.EngineAdmission, catalog.0, admitting)
+    mut store = installation_catalog()?
+    mut view = str(HOME_VIEW)
+    if let Some(bound) = selected_home_view()?:
+        store = bakery()?
+        view = bound
+    compiler = installation_compiler(store, view)?
+    record_work(Operation.EngineAdmission, store.0, admitting)
     return Ok(compiler)
 
 
 def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     """Prepare service negotiation only for a request that cannot be answered by a local record read."""
     binary = executable()?
-    generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    generation = service_generation(binary)?
     return Ok(
         Identity(
             store_id=physical_store_identity(store)?,
@@ -188,6 +510,11 @@ def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     )
 
 
+pub def service_generation(binary: str) -> Result[str, str]:
+    """Name the engine service implementation by exact bytes, independent of its installed path."""
+    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])
+
+
 def physical_store_identity(store: Path) -> Result[str, str]:
     """Name the physical root by its filesystem identity, independent of homes, aliases and directory contents."""
     match file_metadata(store)?:
@@ -195,30 +522,50 @@ def physical_store_identity(store: Path) -> Result[str, str]:
         None => return Err("engine store root disappeared during admission")
 
 
-def installation_compiler(store: Path) -> Result[str, str]:
-    """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
-    pin = toolchain_file()?
-    stamp = observe(pin)?.stamp
+def installation_compiler(store: Path, view: str) -> Result[str, str]:
+    """Admit a toolchain once per installation in `view` of `store`, independent of project or alternate stores."""
+    directory = toolchain_directory()?
+    admission = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
-    key = f"incan.engine.installation\t{fingerprint([pin.0] + configuration)?}"
-    selected = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(selected, key, stamp)?:
+    key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
-    checked = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(checked, key, stamp)?:
+    _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    compiler = compiler_fingerprint(load_toolchain()?)?
-    value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
-    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    return record_installation(store, view, key, admission, compiler_fingerprint(load_toolchain()?)?)
+
+
+pub def admitted_installation(store: Path, view: str, key: str, admission: str) -> Result[Option[str], str]:
+    """The compiler admitted for one installation in `view` of the bakery, if any."""
+    return admitted_compiler(snapshot(store, view).map_err((error) => error.message())?, key, admission)
+
+
+pub def record_installation(store: Path, view: str, key: str, admission: str, compiler: str) -> Result[str, str]:
+    """Record `compiler` as the admitted compiler of one installation in `view` of the bakery."""
+    value = json_text(
+        JsonValue.object({"admission": JsonValue.string(admission), "compiler": JsonValue.string(compiler)}),
+    )?
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    _ = commit(put(begin(selected), key, value.encode("utf-8"))).map_err((error) => error.message())?
     return Ok(compiler)
 
 
-def admitted_compiler(selected: Snapshot, key: str, stamp: str) -> Result[Option[str], str]:
-    """Read the portable compiler identity only while its editable installation pin matches admission."""
+def selected_installation(directory: Path) -> Result[str, str]:
+    """Return the selected installation-page identity, admitting a missing installation once."""
+    if let Some(identity) = admitted_identity(directory)?:
+        return Ok(identity)
+    _ = load_toolchain()?
+    match admitted_identity(directory)?:
+        Some(identity) => return Ok(identity)
+        None => return Err("toolchain installation did not publish its admitted page")
+
+
+def admitted_compiler(selected: Snapshot, key: str, admission: str) -> Result[Option[str], str]:
+    """Read the portable compiler identity selected by the immutable installation-page identity in its key."""
     if let Some(text) = record_text(selected, key)?:
         previous = parse(text).map_err((error) => error.message())?
-        if required_text(previous, "pin")? == stamp:
+        if required_text(previous, "admission")? == admission:
             return Ok(Some(required_text(previous, "compiler")?))
     return Ok(None)
 
@@ -242,7 +589,12 @@ def await_completion(mut channel: Channel, request: bytes) -> Result[tuple[Compl
                 captured = true
             Message.Event(event) =>
                 if event.status == "Console":
-                    relay_console(event.trace_handle)?
+                    if console_capture.get("capturing", "") == "yes":
+                        streams = collect_console(event.trace_handle)?
+                        console_capture["captured"] = console_capture.get("captured", "") + streams[0]
+                        console_capture["errors"] = console_capture.get("errors", "") + streams[1]
+                    else:
+                        relay_console(event.trace_handle)?
             Message.Complete(value) =>
                 if not captured:
                     return Err("engine completed before capture")

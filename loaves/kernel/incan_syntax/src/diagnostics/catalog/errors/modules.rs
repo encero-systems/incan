@@ -18,6 +18,33 @@ pub fn cannot_read_file(path: &std::path::Path, error: &std::io::Error, span: Sp
     CompileError::new(format!("Cannot read '{}': {}", path.display(), error), span)
 }
 
+/// An import names a source module that no file of the program defines.
+///
+/// `module` is the path as written. `standard_module` is the standard-library module the same bare path names under
+/// `std`, when there is one: the import most likely meant it. Otherwise the hint names `module_files`, the file each
+/// directory the import resolves from would hold, as the user should see them (project-relative where possible).
+pub fn source_module_not_found(
+    module: &str,
+    standard_module: Option<&str>,
+    module_files: &[String],
+    span: Span,
+) -> CompileError {
+    let error = CompileError::new(format!("Module `{module}` does not exist"), span)
+        .with_stable_code("INCAN-I0001")
+        .with_primary_label(format!("no source file defines `{module}`"));
+    if let Some(standard_module) = standard_module {
+        return error.with_hint(format!(
+            "To use the standard-library module, import `{standard_module}`"
+        ));
+    }
+    let files = module_files
+        .iter()
+        .map(|file| format!("`{file}`"))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    error.with_hint(format!("Create {files}, or correct the module path"))
+}
+
 /// Import path `std.<module>` does not match any known Incan stdlib module.
 ///
 /// Rust standard library paths must use the `rust::` prefix (e.g. `from rust::std::f64::consts import PI`).

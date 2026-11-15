@@ -12,8 +12,15 @@ Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log
 it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
 
 At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
-only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Every Oven
-source receives a private project copy under `.agents/state`, so concurrent generations never share mutable output.
+only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Oven
+sources share a pool of private worker projects under `.agents/state`, one per job. Each Oven source starts in whichever
+worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
+source at a time, so concurrent generations never share mutable output. The worker projects are removed once every
+invocation has exited.
+
+A source that needs a settled installation runs alone after every other invocation has exited. Its compile-only
+listing (`--list`, logged as `NNN-<source>-compile.log` and never joined) starts first among the others, so the run
+alone reuses the compiled unit and only its tests wait.
 """
 
 from rust::std::cell import RefCell
@@ -41,7 +48,7 @@ pub const HEADROOM_BYTES: int = GIB
 const PASSED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ PASSED$"
 const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPASS)( |$)"
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
-# break, so they run after the others have finished.
+# break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
@@ -74,8 +81,9 @@ pub model Invocation:
     pub timeout_seconds: int = 0
     # Runs by itself after the others, because it requires an installation that has stopped changing.
     pub alone: bool = false
-    # A private project removed only after this invocation's process has exited and its external log is durable.
-    pub scratch: Option[Path] = None
+    # Worker projects this invocation may run in: it starts in the first one no other invocation is running in, and its
+    # relative arguments resolve there. Empty runs it in `directory`.
+    pub workers: list[str] = []
 
 
 pub model Summary:
@@ -95,7 +103,8 @@ model Running:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
-    scratch: Option[Path]
+    # The worker project it runs in; empty when it has none.
+    worker: str
 
 
 def main() -> None:
@@ -178,10 +187,10 @@ def run(options: Options) -> Result[str, str]:
     root = repository_root()?
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
-    planned = invocations(root, options.evidence, logs)?
-    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
-    ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
-    succeeded = ran and ran_alone
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
+    succeeded = run_planned(options.oven, planned, options.jobs, options.memory)?
+    remove_worker_projects(planned)?
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -189,42 +198,114 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invocation], str]:
-    """The step's invocations in their fixed order, each with its memory reservation and its own numbered log."""
+pub def invocations(
+    root: Path,
+    evidence: Path,
+    logs: Path,
+    jobs: int,
+    builder_bakery: str = "",
+) -> Result[list[Invocation], str]:
+    """
+    Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
+
+    A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
+    the release units the release already built under the same identities, as the Rust facet tests do. The Oven
+    sources keep the installation's bakery, because their nested commands inherit the environment.
+    """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
     sources = listed_tests(oven.joinpath("src"))?
     if len(sources) == 0:
         return Err("Oven test sources are absent")
+    mut workers: list[str] = []
+    for position in range(min([jobs, len(sources)])):
+        workers.append(isolated_oven_project(root, evidence, position)?.0)
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
-        project, isolated_source = isolated_oven_project(root, _evidence, len(planned), source)?
-        unit = ["test", isolated_source.0]
+        unit = ["test", f"src/{source.name()}"]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(
-            invocation(
-                unit,
-                project.0,
-                PROJECT_RESERVATION_BYTES,
-                logs,
-                len(planned),
-                source,
-                alone,
-                Some(project.parent().parent()),
-            ),
-        )
+        planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
     compiler = root.joinpath("loaves/compiler").0 + "/"
+    mut shared: Dict[str, str] = {}
+    if builder_bakery != "":
+        shared["INCAN_BAKERY"] = builder_bakery
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
-        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+        mut planned_loaf = invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source)
+        planned_loaf.environment = shared
+        planned.append(planned_loaf)
     return Ok(planned)
 
 
-def isolated_oven_project(root: Path, evidence: Path, position: int, source: Path) -> Result[tuple[Path, Path], str]:
-    """Copy the Oven project for one source so its target generations cannot withdraw another test's live views."""
+pub def selected_builder_bakery(builder_home: str) -> str:
+    """Select the release builder's existing bakery for exact-identity reuse, or no override outside a release."""
+    if builder_home == "":
+        return ""
+    bakery = Path(builder_home).joinpath("bakery")
+    if not bakery.is_dir():
+        return ""
+    return bakery.0
+
+
+pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
+    """
+    Run the pooled invocations beside each settled source's compile-ahead, then each settled source alone.
+
+    1. The compile-ahead invocations start first in the pool, so a settled source's compilation overlaps the others.
+    2. Each settled source then runs alone and reuses its compiled unit when its inputs are unchanged.
+    3. Only the planned invocations decide the outcome: a compile-ahead failure repeats in the settled run itself.
+    """
+    # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
+    early = compile_ahead(planned)
+    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory)?
+    # 2. A settled source requires an installation that no other invocation changes any more.
+    ran_alone = run_all(oven, [item for item in planned if item.alone], 1, memory)?
+    # 3. The settled runs decide again what a compile-ahead failure showed.
+    return Ok(len([index for index in failed if index >= len(early)]) == 0 and ran_alone)
+
+
+pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
+    """A compile-only listing of each settled source, in its own log, which may run beside the pooled invocations."""
+    mut ahead: list[Invocation] = []
+    for item in planned:
+        if not item.alone:
+            continue
+        log = item.log.parent().joinpath(f"{item.log.stem()}-compile.log")
+        ahead.append(
+            Invocation(
+                arguments=item.arguments + ["--list"],
+                directory=item.directory,
+                reservation=item.reservation,
+                log=log,
+                environment=item.environment,
+                timeout_seconds=item.timeout_seconds,
+                workers=item.workers,
+            ),
+        )
+    return ahead
+
+
+pub def remove_worker_projects(planned: list[Invocation]) -> Result[None, str]:
+    """Remove the private checkout holding each worker project, once no invocation can run in it any more."""
+    mut removed: list[str] = []
+    for item in planned:
+        for worker in item.workers:
+            checkout = Path(worker).parent().parent()
+            if checkout.0 in removed:
+                continue
+            removed.append(checkout.0)
+            if checkout.exists() or checkout.is_symlink():
+                checkout
+                    .remove_tree()
+                    .map_err((error) => f"cannot remove completed Oven test worker {checkout.0}: {error.message()}")?
+    return Ok(None)
+
+
+def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[Path, str]:
+    """Copy one Oven worker project, whose target its successive invocations reuse, one at a time."""
     checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
         .joinpath(evidence.name())
         .joinpath(str(position))
@@ -244,7 +325,7 @@ def isolated_oven_project(root: Path, evidence: Path, position: int, source: Pat
         .map_err((error) => error.message())?
     _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err((error) => error.message())?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
-    return Ok((project, project.joinpath("src").joinpath(source.name())))
+    return Ok(project)
 
 
 pub def oven_test_state_root(root: Path, configured: str) -> Path:
@@ -260,9 +341,9 @@ def invocation(
     reservation: int,
     logs: Path,
     position: int,
-    source: Path,
+    source: &Path,
     alone: bool = false,
-    scratch: Option[Path] = None,
+    workers: list[str] = [],
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
@@ -272,7 +353,7 @@ def invocation(
         reservation=reservation,
         log=log,
         alone=alone,
-        scratch=scratch,
+        workers=workers,
     )
 
 
@@ -283,7 +364,7 @@ def reservation_of(source: Path, compiler: str) -> int:
     return PROJECT_RESERVATION_BYTES
 
 
-pub def log_name(position: int, source: Path) -> str:
+pub def log_name(position: int, source: &Path) -> str:
     """A log name that sorts in invocation order and names the test source."""
     mut number = str(position)
     while len(number) < 3:
@@ -341,8 +422,15 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
         chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        mut busy = [item.worker for item in active]
+        mut started: list[int] = []
         for index in chosen:
-            child = start(oven, planned[index])?
+            worker = free_worker(planned[index].workers, busy)
+            if len(planned[index].workers) > 0 and worker == "":
+                continue
+            child = start(oven, planned[index], worker)?
+            busy.append(worker)
+            started.append(index)
             active.append(
                 Running(
                     position=index,
@@ -350,22 +438,20 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     timeout_seconds=planned[index].timeout_seconds,
                     started=Instant.now(),
                     child=Rc.new(RefCell.new(child)),
-                    scratch=planned[index].scratch,
+                    worker=worker,
                 ),
             )
-        waiting = [index for index in waiting if index not in chosen]
+        waiting = [index for index in waiting if index not in started]
         mut running: list[Running] = []
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
-                    remove_completed_scratch(item.scratch)?
                     if not status.success():
                         failed.append(item.position)
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
                         _ = item.child.borrow_mut().kill()
                         _ = item.child.borrow_mut().wait()
-                        remove_completed_scratch(item.scratch)?
                         failed.append(item.position)
                     else:
                         running.append(item)
@@ -375,16 +461,12 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
     return Ok(sorted(failed))
 
 
-def remove_completed_scratch(scratch: Option[Path]) -> Result[None, str]:
-    """Remove one private test project only after its child has exited and its file-backed log is complete."""
-    match scratch:
-        None => return Ok(None)
-        Some(path) =>
-            if path.exists() or path.is_symlink():
-                path
-                    .remove_tree()
-                    .map_err((error) => f"cannot remove completed Oven test scratch {path.0}: {error.message()}")?
-            return Ok(None)
+pub def free_worker(workers: list[str], busy: list[str]) -> str:
+    """The first of `workers` that no running invocation occupies, or empty when every one is busy or none exists."""
+    for worker in workers:
+        if worker not in busy:
+            return worker
+    return ""
 
 
 pub def admitted(reservations: list[int], waiting: list[int], held: list[int], jobs: int, memory: int) -> list[int]:
@@ -408,14 +490,16 @@ pub def admitted(reservations: list[int], waiting: list[int], held: list[int], j
     return chosen
 
 
-def start(oven: str, planned: Invocation) -> Result[Child, str]:
-    """Start one invocation with stdout and stderr in its own log, in the order it writes them."""
+def start(oven: str, planned: Invocation, worker: str = "") -> Result[Child, str]:
+    """Start one invocation in `worker`, else its directory, with stdout and stderr in its own log, in written order."""
     log = File.create(planned.log.0).map_err((error) => f"{planned.log.0}: {error}")?
     errors = log.try_clone().map_err((error) => str(error))?
     mut command = Command.new(oven)
     for argument in planned.arguments:
         command.arg(argument)
-    if planned.directory != "":
+    if worker != "":
+        command.current_dir(worker)
+    elif planned.directory != "":
         command.current_dir(planned.directory)
     for name in sorted([name for name in planned.environment.keys()]):
         command.env(name, planned.environment[name])

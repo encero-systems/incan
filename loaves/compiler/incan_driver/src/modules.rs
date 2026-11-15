@@ -15,17 +15,17 @@ use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
-use incan_frontend::ast::{ImportKind, ImportPath, Program};
+use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
-    SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
+    MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
     logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,
-    resolve_source_module_path, self_import_diagnostic_message,
+    resolve_source_module_import_from_source_file, resolve_source_module_path, self_import_diagnostic_message,
 };
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
 
 /// Collect one source graph through an already-resolved compilation session, preserving the entry's logical module
-/// identity. A test or alternate entry must not claim `main` and collide with an imported sibling `main.incn`.
+/// identity (see [`entry_module_segments`]).
 pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
@@ -33,9 +33,24 @@ pub fn collect_modules_detailed_with_session(
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_modules", input = %path.display())
             .entered();
-    let path_segments =
-        logical_module_segments_from_file(&session.source_root, &path).unwrap_or_else(|| vec!["main".to_string()]);
+    let path_segments = entry_module_segments(&session.source_root, &path);
     collect_modules_detailed_with_session_at_path(path, session, path_segments)
+}
+
+/// The logical module identity of a command's entry file.
+///
+/// An entry under the source root is the module its path names there. A test or alternate entry must not claim
+/// `main` and collide with an imported `main.incn`: an entry outside the source root, such as a test module under
+/// `tests/`, is named relative to its own directory, as the sibling modules it imports are, so a test that imports
+/// the project's `main` module (`from main import greeting`) stays a module of its own. An entry whose name is only
+/// a directory entrypoint (`mod.incn`, `__init__.incn`) outside the source root is `main`.
+pub fn entry_module_segments(source_root: &Path, path: &Path) -> Vec<String> {
+    logical_module_segments_from_file(source_root, path).unwrap_or_else(|| {
+        path.parent()
+            .and_then(|directory| logical_module_segments_from_file(directory, path))
+            .filter(|segments| !segments.is_empty())
+            .unwrap_or_else(|| vec!["main".to_string()])
+    })
 }
 
 /// Collect one source graph while preserving the caller-proven logical identity of its entry module.
@@ -65,7 +80,40 @@ pub fn collect_document_modules(
         session,
         vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
         open_sources,
+        &mut SourceGraphReads::default(),
     )
+}
+
+/// The files one source graph's collection read and the paths its import resolution looked for and found absent.
+///
+/// Together they are everything the collection depends on: the same file contents and the same absent paths collect
+/// the same graph, so a build's identity may cover them instead of every file under the source root.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SourceGraphReads {
+    /// Each source file read, in reading order.
+    pub read: Vec<PathBuf>,
+    /// Each absent path an import looked for, in lookup order; repeated lookups are kept once.
+    pub absent: Vec<PathBuf>,
+}
+
+/// Collect a command entry's source graph with what it reads and probes, keeping those when collection refuses: a
+/// refusal is as much a function of those inputs as a graph is, so creating a missing module must reach it. The
+/// collected modules are the ones [`collect_modules_detailed_with_session`] collects for the same entry.
+pub fn collect_source_graph_reads(
+    path: PathBuf,
+    session: &CompilationSession,
+) -> (SourceGraphReads, Result<Vec<ParsedModule>, CliDiagnosticFailure>) {
+    let path_segments = entry_module_segments(&session.source_root, &path);
+    let module_name = path_segments.join("_");
+    let mut reads = SourceGraphReads::default();
+    let collected = collect_modules_detailed_from_seeds(
+        path.clone(),
+        session,
+        vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
+        &HashMap::new(),
+        &mut reads,
+    );
+    (reads, collected)
 }
 
 /// Collect every authored source module for library publication, including modules not imported by `src/lib.incn`.
@@ -81,7 +129,13 @@ pub fn collect_library_modules_detailed_with_session(
             (source_file.to_string_lossy().to_string(), module_name, path_segments)
         })
         .collect();
-    let mut modules = collect_modules_detailed_from_seeds(path.clone(), session, seeds, &HashMap::new())?;
+    let mut modules = collect_modules_detailed_from_seeds(
+        path.clone(),
+        session,
+        seeds,
+        &HashMap::new(),
+        &mut SourceGraphReads::default(),
+    )?;
     if let Some(entry_index) = modules.iter().position(|module| {
         module
             .file_path
@@ -115,11 +169,18 @@ pub fn library_source_seeds(
     let own_roots = session
         .own_standard_package()
         .map(|policy| policy.namespace_roots.as_slice());
+    // A project's shared library omits the sources its description excludes: the project's test modules.
+    let excluded = session
+        .unit()
+        .excluded_sources
+        .iter()
+        .map(|source| source.canonicalize().unwrap_or_else(|_| source.clone()))
+        .collect::<BTreeSet<_>>();
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
     let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {
         let canonical = source_file.canonicalize().unwrap_or_else(|_| source_file.clone());
-        if canonical == entry_path {
+        if canonical == entry_path || excluded.contains(&canonical) {
             continue;
         }
         let Some(path_segments) = logical_module_segments_from_file(&session.source_root, &source_file) else {
@@ -188,6 +249,7 @@ fn collect_modules_detailed_from_seeds(
     session: &CompilationSession,
     mut to_process: Vec<(String, String, Vec<String>)>,
     open_sources: &HashMap<PathBuf, String>,
+    reads: &mut SourceGraphReads,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
@@ -201,12 +263,13 @@ fn collect_modules_detailed_from_seeds(
         processed.insert(file_key.clone());
         dependency_edges.entry(file_key.clone()).or_default();
 
+        reads.read.push(PathBuf::from(&file_path));
         let source = match open_sources.get(Path::new(&file_path)) {
             Some(source) => source.clone(),
             None => read_source_for_diagnostics(&file_path)?,
         };
         let file_path_obj = Path::new(&file_path);
-        let (ast, gated_exports) =
+        let (mut ast, gated_exports) =
             match session
                 .parse_source_unprojected(file_path_obj, &source, true)
                 .and_then(|unprojected| {
@@ -230,8 +293,15 @@ fn collect_modules_detailed_from_seeds(
             };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
+        respell_project_library_imports(&mut ast, current_base, session);
+        let mut missing_modules = Vec::new();
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             let span = resolved.span;
+            for absent in resolved.probed {
+                if !reads.absent.contains(&absent) {
+                    reads.absent.push(absent);
+                }
+            }
             let module_ref = match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
                     let Some(module_ref) = own_standard_module(session, &module_path) else {
@@ -255,6 +325,10 @@ fn collect_modules_detailed_from_seeds(
                         diagnostics::DiagnosticPhase::Typecheck,
                     ));
                 }
+                SourceModuleImportResolution::Missing(missing) => {
+                    missing_modules.push(missing_module_error(session, &missing, span));
+                    continue;
+                }
                 SourceModuleImportResolution::External => continue,
             };
             let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
@@ -265,6 +339,15 @@ fn collect_modules_detailed_from_seeds(
                 to_process.push((dep_path_str, module_name, module_segments));
             }
             dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
+        }
+        // Every import of a module no file defines is refused here, each once, before checking binds its names.
+        if !missing_modules.is_empty() {
+            return Err(CliDiagnosticFailure::from_errors(
+                file_path,
+                source,
+                missing_modules,
+                diagnostics::DiagnosticPhase::Import,
+            ));
         }
 
         let source_positions = diagnostics::SourcePositionIndex::new(&source);
@@ -282,6 +365,64 @@ fn collect_modules_detailed_from_seeds(
     Ok(topologically_sort_modules(modules, &dependency_edges)?)
 }
 
+/// Respell each project-local import of a module the project's shared library provides as an import of that
+/// library, so the module is linked rather than compiled again. The library provides every source-root module but
+/// the excluded ones and the root entry files, as [`library_source_seeds`] selects them. Only the import's kind
+/// changes: its span, alias and items stay, so diagnostics and panic locations still name the authored file and line.
+fn respell_project_library_imports(ast: &mut Program, base_dir: &Path, session: &CompilationSession) {
+    let unit = session.unit();
+    let Some(library) = &unit.project_library else {
+        return;
+    };
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = canonical(&session.source_root);
+    let entry = canonical(&unit.source);
+    let excluded = unit
+        .excluded_sources
+        .iter()
+        .map(|source| canonical(source))
+        .collect::<BTreeSet<_>>();
+    let current_source_file = ast.source_path.clone().map(PathBuf::from);
+    for declaration in &mut ast.declarations {
+        let Declaration::Import(import) = &mut declaration.node else {
+            continue;
+        };
+        if !matches!(import.kind, ImportKind::From { .. } | ImportKind::Module(_)) {
+            continue;
+        }
+        let SourceModuleImportResolution::Local(module_ref) = resolve_source_module_import_from_source_file(
+            base_dir,
+            Some(&session.source_root),
+            current_source_file.as_deref(),
+            import,
+        ) else {
+            continue;
+        };
+        let file = canonical(&module_ref.file_path);
+        if !file.starts_with(&root)
+            || excluded.contains(&file)
+            || is_unselected_package_entrypoint(&root, &file, &entry)
+        {
+            continue;
+        }
+        let Some(path) = logical_module_segments_from_file(&root, &file) else {
+            continue;
+        };
+        let kind = std::mem::replace(&mut import.kind, ImportKind::Python(String::new()));
+        import.kind = match kind {
+            ImportKind::From { items, .. } => ImportKind::PubFrom {
+                library: library.clone(),
+                path,
+                items,
+            },
+            _ => ImportKind::PubLibrary {
+                library: library.clone(),
+                path,
+            },
+        };
+    }
+}
+
 /// The physical source module a standard package's own `std.<root>.…` import names, when the session is that
 /// package and the root is one of its own.
 fn own_standard_module(session: &CompilationSession, module_path: &[String]) -> Option<SourceModuleRef> {
@@ -291,6 +432,33 @@ fn own_standard_module(session: &CompilationSession, module_path: &[String]) -> 
         return None;
     }
     resolve_source_module_path(&session.source_root, &module_path[1..])
+}
+
+/// Refuse an import of a source module that no file defines, naming each file that would define it relative to the
+/// project root, the way the user sees the project.
+fn missing_module_error(
+    session: &CompilationSession,
+    missing: &MissingSourceModule,
+    span: incan_frontend::ast::Span,
+) -> diagnostics::CompileError {
+    let project_root = &session.unit().project_root;
+    let project_root = project_root.canonicalize().unwrap_or_else(|_| project_root.clone());
+    let module_files = missing
+        .module_files
+        .iter()
+        .map(|file| {
+            file.strip_prefix(&project_root)
+                .unwrap_or(file)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    diagnostics::errors::source_module_not_found(
+        &missing.spelling,
+        missing.standard_module.as_deref(),
+        &module_files,
+        span,
+    )
 }
 
 /// Return modules in stable topological order (dependencies first).
@@ -491,7 +659,7 @@ pub fn imported_module_deps_for<'m>(
 /// This is the identity-preserving form of [`imported_module_deps_for`]. Typecheck orchestration uses the indexes to
 /// attach immutable provider facts that were built once for each collected module without changing dependency order
 /// or collapsing modules that happen to share a short name.
-pub(crate) fn imported_module_dep_indexes_for(
+pub fn imported_module_dep_indexes_for(
     modules: &[ParsedModule],
     module_index: usize,
     module_idx_by_key: &HashMap<String, usize>,

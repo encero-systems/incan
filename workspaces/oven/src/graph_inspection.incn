@@ -11,7 +11,9 @@ from files import json_text, read
 from graph_cache import (
     GraphUnit,
     cache_file,
+    published,
     read_graph,
+    relationships,
     stamp_file,
     tree_inputs,
     unchecked_note,
@@ -19,10 +21,11 @@ from graph_cache import (
     unchecked_warning,
 )
 from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
-from observation import file_digest, trace
+from observation import file_digest, trace, watch_inputs, watched_inputs
+from graph_pages import GraphPage, publish_page, request_key, warm_page
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
-from graph_queries import matches, query, query_group, text
+from graph_queries import matches, query, query_group, selection_keys, text
 from graph_identity import keyed, link_keys, declaration_digests
 from graph_snapshot import snapshot_identity, snapshot_status
 from graph_context import pack
@@ -36,7 +39,7 @@ from rust_manifest import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
 from unit_freshness import artifact_identity, fingerprint
-from cli_help import render as render_help
+from cli_help import refused_option, render as render_help
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
@@ -46,6 +49,7 @@ pub const VALUE_OPTIONS: FrozenList[str] = [
     "--format",
     "--limit",
     "--substitute",
+    "--features",
     "--stale",
     "--task",
     "--budget",
@@ -64,11 +68,15 @@ pub model GraphOptions:
     pub term: str = ""
     pub limit: int = 20
     pub strict: bool = false
+    # 0.5.1's `--allow-errors`: the tolerant export, which is the default; it only refuses `--strict` beside it.
+    pub allow_errors: bool = false
     pub substitutes: Dict[str, str] = {}
     pub stale: str = ""
     pub task: str = ""
     pub budget: int = 8000
     pub risk: bool = false
+    # 0.5.1's feature options: the root package's features the inspected unit is checked with.
+    pub request: FeatureRequest = FeatureRequest()
 
 
 pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
@@ -84,7 +92,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         return Err("expected `codegraph`")
     if arguments[0] != "codegraph":
         if arguments[0].startswith("-"):
-            return Err(f"unknown option `{arguments[0]}`")
+            return Err(refused_option(arguments[0]))
         return Err(f"unknown command `{arguments[0]}`")
     # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
     mut result = GraphOptions()
@@ -93,6 +101,25 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
         value = arguments[index]
         if value == "--risk":
             result.risk = true
+            index += 1
+            continue
+        if value in ["--no-default-features", "--all-features"]:
+            if value == "--no-default-features":
+                result.request.default_features = false
+            else:
+                result.request.all_features = true
+            index += 1
+            continue
+        if value == "--features":
+            if index + 1 >= len(arguments):
+                return Err("--features needs a value")
+            for feature in arguments[index + 1].split(","):
+                if feature.strip() != "":
+                    result.request.features.append(feature.strip())
+            index += 2
+            continue
+        if value == "--allow-errors":
+            result.allow_errors = true
             index += 1
             continue
         if value == "--strict":
@@ -107,7 +134,7 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
             apply_flag(result, value, arguments[index + 1])?
             index += 2
         elif value.startswith("-"):
-            return Err(f"unknown option `{value}`")
+            return Err(refused_option(value))
         elif result.path != "":
             return Err(f"unexpected argument `{value}`")
         else:
@@ -116,6 +143,8 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
     # 3. Nothing is built or cached before the path, the format and the query kind are known to be valid.
     if result.path == "":
         return Err("a PATH is required")
+    if result.strict and result.allow_errors:
+        return Err("--allow-errors cannot be combined with --strict")
     if result.format not in ["json", "jsonl", "compact"]:
         return Err("--format is json, jsonl or compact")
     if result.format == "compact" and result.task == "":
@@ -140,8 +169,12 @@ pub def help_text() -> str:
             "  --budget N                  Context byte bound (default 8000; 128..1000000).",
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
             "  --strict                    Refuse unchecked units.",
+            "  --allow-errors              Export unchecked units' parseable facts (the default).",
             "  --risk                      Include optional local git observations.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
+            "  --features A,B              Add public root-package features.",
+            "  --no-default-features       Disable the root package's default feature.",
+            "  --all-features              Select every declared root-package feature.",
         ],
         "incan inspect codegraph . --query defs main",
     )
@@ -225,52 +258,169 @@ def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) 
 
 
 pub model PreparedInspection:
-    """One request's graph selection, shared by its snapshot probe and response and dropped with that request."""
+    """
+    One request's graph selection, shared by its snapshot probe and response and dropped with that request. A warm
+    request holds the bakery page that answers it instead, and prepared nothing.
+    """
 
     pub paths: list[GraphUnit]
     pub root: str
     pub selected: GraphOptions
     pub toolchain: Toolchain
+    # The request's page identity (empty when its answers are not paged), and the page that answers it when warm.
+    pub key: str = ""
+    pub page: Option[GraphPage] = None
 
     pub def snapshot(self) -> Result[str, str]:
         """Identify the exact prepared inputs used by feedback and the answer in this request."""
+        if let Some(page) = self.page:
+            if page.snapshot != "":
+                return Ok(page.snapshot)
+            # A page answered without a snapshot, as a plain query is, cannot name one; the request is prepared now.
+            return prepare_cold(self.selected, self.key, self.toolchain)?.snapshot()
         return snapshot_identity(self.paths, self.root, self.selected.strict)
 
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
-        """Render the admitted request over its prepared graph without reopening the dependency closure."""
-        return response(self.paths, self.root, self.selected, self.toolchain, preferences)
+        """
+        Render the admitted request over its prepared graph without reopening the dependency closure, and keep the
+        answer in the request's page. A warm page answers for the preferences it has an answer for; for others the
+        request is prepared now.
+        """
+        if let Some(page) = self.page:
+            if let Some(answer) = page.answer(preferences)?:
+                trace(f"graph page {self.key[:12]}: warm")
+                return Ok(answer)
+            return prepare_cold(self.selected, self.key, self.toolchain)?.respond(preferences)
+        answered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "")?
+        if self.key != "":
+            keep_page(self, preferences, answered)
+        return Ok(answered.text)
 
 
 pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
     """
-    Prepare and render a validated graph request; CLI syntax failures never enter this boundary.
+    Prepare a validated graph request, or find the bakery page that answers it; CLI syntax failures never enter this
+    boundary.
 
-    1. Resolve the path and read the installed toolchain.
-    2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
-    3. Return the rendered answer through the shared inspection boundary.
+    1. Resolve the path, read the installed toolchain and identify the request.
+    2. A page whose inputs all have the metadata they had answers it: nothing is prepared.
+    3. Otherwise prepare it, watching the inputs its answer will be paged with.
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
-    started = Instant.now()
-    path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    path = inspected_path(selected)?
     toolchain = load_toolchain()?
+    key = page_key(selected, path, toolchain)?
+    # 2. A warm request reads its page and checks its inputs' metadata.
+    if key != "":
+        if let Some(page) = warm_page(key)?:
+            return Ok(
+                PreparedInspection(
+                    paths=[],
+                    root=path.0,
+                    selected=selected,
+                    toolchain=toolchain,
+                    key=key,
+                    page=Some(page),
+                ),
+            )
+    # 3. A cold request prepares, as before.
+    return prepare_cold(selected, key, toolchain)
+
+
+def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Result[PreparedInspection, str]:
+    """
+    Prepare a validated graph request.
+
+    1. Resolve the path; a paged request watches its inputs from here on.
+    2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
+    3. Return the prepared selection to the shared inspection boundary.
+    """
+    # 1. Path failures are execution errors after syntax has been admitted.
+    started = Instant.now()
+    path = inspected_path(selected)?
+    if key != "":
+        watch_inputs()
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
     source = entry_source(path)
     mut paths: list[GraphUnit] = []
     if source.is_file() and source.name().endswith(".incn"):
-        paths = inspect_source(source, selected.profile, toolchain, selected.substitutes)?
+        paths = inspect_source(source, selected.profile, toolchain, selected.substitutes, selected.request)?
     else:
         root = owning_project(path, selected.path)?
         paths = inspect_rust(
             root,
             selected.profile,
-            FeatureRequest(),
+            selected.request,
             selected.substitutes,
             toolchain,
             selected.query == "defs",
         )?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
-    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain))
+    return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain, key=key))
+
+
+def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result[str, str]:
+    """
+    The page identity of a request: every graph option and the resolved path. An Incan source's answer and a Rust
+    project's are paged; a process-risk answer, which observes running processes, never is.
+    """
+    if selected.risk:
+        return Ok("")
+    source = entry_source(path)
+    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query]
+    parts = parts + [selected.term]
+    parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
+    parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
+    parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
+    for name in sorted([name for name in selected.substitutes.keys()]):
+        parts.append(f"substitute:{name}={selected.substitutes[name]}")
+    return request_key(parts, toolchain)
+
+
+def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
+    """
+    Keep a cold answer in its bakery page, with the snapshot the response computed (none for a plain query) and its
+    inputs' metadata. An answer with unchecked units is not paged, since its warnings belong to the request; failing
+    to page never fails it.
+    """
+    started = Instant.now()
+    match keep_checked_page(prepared, preferences, answered):
+        Ok(kept) => trace(f"graph page {prepared.key[:12]}: kept={kept} in {started.elapsed().as_millis()} ms")
+        Err(reason) => trace(f"graph page {prepared.key[:12]}: not kept: {reason}")
+
+
+def keep_checked_page(
+    prepared: PreparedInspection,
+    preferences: Dict[str, int],
+    answered: Answered,
+) -> Result[bool, str]:
+    """Publish the page of a checked answer; `false` when an input is unsettled or a unit is unchecked."""
+    observed = watched_inputs()
+    if answered.unchecked:
+        return Ok(false)
+    return publish_page(prepared.key, observed, answered.snapshot, preferences, answered.text)
+
+
+pub model Answered:
+    """One rendered answer and the snapshot it was answered from; a plain query computes none, so its is empty."""
+
+    pub text: str
+    pub snapshot: str = ""
+    # Whether a selected unit failed checking, so the answer carries warnings that belong to its request.
+    pub unchecked: bool = false
+
+
+def inspected_path(selected: GraphOptions) -> Result[Path, str]:
+    """
+    The resolved path a request inspects. A directory that holds no `loaf.toml` but lies inside a Loaf, such as its
+    `src`, names that Loaf, so its answer is the Loaf's.
+    """
+    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
+    if path.is_dir() and not path.joinpath("loaf.toml").is_file():
+        if let Some(root) = project_root_of(path.joinpath("loaf.toml")):
+            return Ok(root)
+    return Ok(path)
 
 
 def entry_source(path: Path) -> Path:
@@ -298,11 +448,13 @@ def response(
     selected: GraphOptions,
     toolchain: Toolchain,
     preferences: Dict[str, int],
-) -> Result[str, str]:
+    paged: bool = false,
+) -> Result[Answered, str]:
     """
     Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
 
     Every unit that failed checking is named on stderr, one line each, before any answer; `--strict` refuses instead.
+    A paged request's answer that would be cached under its own root is rendered without that cache: its page keeps it.
 
     1. Units that failed checking are named, or refused with `--strict`.
     2. An answer cached under the digest of the selection and the units' graphs is returned as it is.
@@ -317,6 +469,7 @@ def response(
         return Err("\n".join([unchecked_refusal(note) for note in notes]))
     for note in notes:
         warn(unchecked_warning(note))
+    degraded = len(notes) > 0
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
     mut snapshot = ""
     if needs_snapshot(selected):
@@ -331,26 +484,33 @@ def response(
             observed = JsonValue.array(process).to_json().map_err((error) => error.message())?
             snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"
     if selected.stale != "":
-        return json_text(snapshot_status(selected.stale, snapshot))
+        status = json_text(snapshot_status(selected.stale, snapshot))?
+        return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
     portable = shared_query(selected)
+    if paged and not portable:
+        # The request's page keeps this answer; a presentation cache keyed by the same root would only duplicate it.
+        rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
+        return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
     mut inputs: list[str] = []
     match presentation_inputs(paths, root, selected, snapshot, preferences, portable)?:
-        None => return render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)
+        None =>
+            rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
+            return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
         Some(ready) => inputs = ready
     cached = Path(f"{cache_file(fingerprint(inputs)?)?.0}.answer")
     trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
     if cached.is_file():
-        return read(cached)
+        return Ok(Answered(text=read(cached)?, snapshot=snapshot, unchecked=degraded))
     # 3. A missing answer is rendered once, after rechecking its claim.
     held = claim(bakery()?, fingerprint(["graph-answer"] + inputs)?)?
     if cached.is_file():
-        return read(cached)
+        return Ok(Answered(text=read(cached)?, snapshot=snapshot, unchecked=degraded))
     evaluation = Instant.now()
     rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
     if not portable or portable_answer(rendered):
         publish(cached, rendered)?
     trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
-    return Ok(rendered)
+    return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
 
 
 def needs_snapshot(selected: GraphOptions) -> bool:
@@ -458,11 +618,7 @@ def render(
         )
     if selected.query != "":
         started = Instant.now()
-        group = query_group(selected.query)
-        mut definition: Option[str] = None
-        if selected.query == "defs":
-            definition = Some(selected.term)
-        records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)?
+        records = query_records(paths, root, selected, toolchain, degraded, snapshot)?
         trace(f"graph query records: {started.elapsed().as_millis()} ms")
         if selected.format == "json" and selected.query == "defs":
             return definition_response(records, selected.term, selected.limit)
@@ -475,6 +631,62 @@ def render(
     if selected.format == "json":
         return json_text(JsonValue.array(records))
     return Ok("\n".join([json_text(record)? for record in records]))
+
+
+def query_records(
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    toolchain: Toolchain,
+    degraded: bool,
+    snapshot: str,
+) -> Result[list[JsonValue], str]:
+    """
+    The records a query reads: every module and declaration, and the relationships its term can select.
+
+    1. A definition query reads modules and declarations only.
+    2. Any other query reads them first, because they decide what its term names.
+    3. A published graph then gives only the relationships filed under what the term names, never its whole group;
+       a project's own graph gives all of its relationships. Each is kept once per identity.
+    4. Relationships are joined to declaration keys exactly as a whole read joins them.
+    """
+    # 1. Definitions need no relationship.
+    group = query_group(selected.query)
+    if selected.query == "defs" or "," not in group:
+        mut definition: Option[str] = None
+        if selected.query == "defs":
+            definition = Some(selected.term)
+        return read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)
+    # 2. Modules and declarations of every unit, under the one header.
+    kind = group.split(",")[1]
+    nodes = read_records(paths, root, toolchain, "nodes", selected.strict, degraded, snapshot)?
+    keys = selection_keys(nodes, selected.term)
+    mut seen: Dict[str, bool] = {}
+    for record in nodes:
+        seen[text(record, "id")] = true
+    # 3. Each unit's relationships of the query's kind, in unit order.
+    mut relationships_read: list[JsonValue] = []
+    for unit in paths:
+        started = Instant.now()
+        mut lines: list[str] = []
+        if published(unit):
+            lines = relationships(unit, toolchain, kind, keys)?
+        else:
+            lines = read_graph(unit, toolchain, kind)?.split("\n")
+        for line in lines:
+            if line.strip() == "":
+                continue
+            record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
+            if text(record, "record") == "header":
+                continue
+            key = text(record, "id")
+            if key != "" and key in seen:
+                continue
+            seen[key] = true
+            relationships_read.append(record)
+        trace(f"graph relationships {unit.package}: {started.elapsed().as_millis()} ms")
+    # 4. The declarations key the relationships; they are already keyed themselves.
+    return Ok(nodes + link_keys(relationships_read, nodes)?)
 
 
 def definition_response(records: list[JsonValue], term: str, limit: int) -> Result[str, str]:
@@ -605,11 +817,12 @@ def inspect_source(
     profile: str,
     toolchain: Toolchain,
     substitutes: Dict[str, str],
+    request: FeatureRequest = FeatureRequest(),
 ) -> Result[list[GraphUnit], str]:
     """
     Inspect the source closure through checked interfaces, without building an Incan library.
 
-    1. A source outside any project is inspected alone.
+    1. A source outside any project is inspected alone, and selects no features.
     2. A project's dependency graphs are prepared, and the registry graphs join them.
     3. A library is inspected as its project's library; any other source as the project's own unit that contains it.
     4. The standard Loaves the units reach join the answer.
@@ -617,12 +830,14 @@ def inspect_source(
     # 1. A source outside any project stands alone, with no dependencies to prepare.
     match project_root_of(source):
         None =>
+            if len(request.features) > 0 or not request.default_features or request.all_features:
+                return Err("feature selection requires a project")
             parent = source.parent()
             graph = inspect_incan(source, profile, toolchain)?
             return Ok([GraphUnit(path=graph, root=parent, source_root=parent.0)])
         Some(root) =>
             # 2. A project's dependencies contribute the graphs they published, and registry Loaves theirs.
-            prepared = prepare_graph(root, profile, FeatureRequest(), substitutes, toolchain)?
+            prepared = prepare_graph(root, profile, request, substitutes, toolchain)?
             mut paths = prepared.paths + registry_graphs(registry_artifacts(prepared.facets, prepared.request)?)
             # 3. A library is already among the prepared graphs; any other source adds the graph of its own unit.
             if source.name() != "lib.incn":

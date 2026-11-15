@@ -68,12 +68,11 @@ pub def sum_int(values: &list[int]) -> int:
 
 
 pub def sum_bool(values: &list[bool]) -> int:
-    """Sum booleans: 1. Accumulate zero or one through the same checked builtin boundary."""
-    # 1. Count accepted values without changing order or overflow behavior.
+    """Sum booleans by counting true values directly through their borrowed list."""
     mut total = 0
     for value in values:
         if value:
-            total = sum_add(total, 1)
+            total += 1
     return total
 
 

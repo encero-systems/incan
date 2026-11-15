@@ -68,6 +68,6 @@ Tooling views originate from checked compiler facts. [`incan inspect codegraph P
 
 ## What a registry does not define
 
-A registry supports four subject kinds: functions, concrete methods, compilation units and packages. It does not define a general named-module declaration, dynamic runtime-only registration, a remote registry service, a dependency injection container, an event bus, or an authority or capability grant. The design is recorded in [RFC 113: `std.registry` and declaration descriptors](../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md).
+A registry supports four subject kinds: functions, concrete methods, compilation units and packages. It does not define a general named-module declaration, dynamic runtime-only registration, a remote registry service, a dependency injection container, an event bus, or an authority or capability grant.
 
 See the [typed-registry tutorial](../tutorials/typed_registries.md) to build a catalog, the [how-to guide](../how-to/typed_registries.md) for migration and package workflows, and the [`std.registry` reference](../reference/stdlib/registry.md) for exact contracts.

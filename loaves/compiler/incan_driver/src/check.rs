@@ -2,8 +2,16 @@
 //!
 //! Checking reads imported Loaf artifacts and runs admitted vocabulary expansion before ordinary typechecking.
 //! Callers render the returned report; collection, retained expansion errors and checking stay in this driver.
+//!
+//! A check reuses checked bodies per owner exactly as a build does: the engine's graph-selected records are installed
+//! in the session, and the check reports which top-level function bodies it restored and which it checked afresh.
 
+use std::path::Path;
+
+use incan_frontend::checker_records::GraphBodyRecords;
 use incan_frontend::diagnostics::{self, StableDiagnostic};
+use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::typechecker::TypeChecker;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
@@ -11,6 +19,66 @@ use crate::error::{CliError, CliResult};
 use crate::modules::collect_modules_detailed_with_session;
 use crate::session::{CompilationSession, RustFactsSetup};
 use crate::unit::UnitDescription;
+
+/// Schema of the check's body report, the sidecar an engine reads to count a check's body work.
+pub const CHECKED_BODIES_SCHEMA: &str = "incan.checked-bodies/1";
+
+/// The top-level function bodies of one check's project modules: restored from a selected record, or checked afresh.
+#[derive(Debug, Clone, Default)]
+pub struct CheckedBodies {
+    /// Each checked project module, in check order. A module refused before checking contributes nothing.
+    pub modules: Vec<ModuleBodies>,
+}
+
+/// One project module's top-level function bodies, by name.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ModuleBodies {
+    /// The module's source path relative to the project root.
+    pub module: String,
+    /// Functions whose statements this check checked.
+    pub checked: Vec<String>,
+    /// Functions whose checked bodies this check restored from a selected record.
+    pub reused: Vec<String>,
+}
+
+impl CheckedBodies {
+    /// Record one checked module's top-level functions; modules outside the project are dependencies, not owners.
+    fn observe(&mut self, project_roots: &[&Path], module: &ParsedModule, checker: &TypeChecker) {
+        let Some(relative) = project_roots
+            .iter()
+            .find_map(|root| module.file_path.strip_prefix(root).ok())
+        else {
+            return;
+        };
+        let mut bodies = ModuleBodies {
+            module: relative.to_string_lossy().into_owned(),
+            ..ModuleBodies::default()
+        };
+        for declaration in &module.ast.declarations {
+            if let incan_frontend::ast::Declaration::Function(function) = &declaration.node {
+                if checker.restored_body_record(declaration.span) {
+                    bodies.reused.push(function.name.clone());
+                } else {
+                    bodies.checked.push(function.name.clone());
+                }
+            }
+        }
+        self.modules.push(bodies);
+    }
+
+    /// The `incan.checked-bodies/1` report: totals, then each module's functions.
+    pub fn to_json(&self) -> CliResult<String> {
+        let checked: usize = self.modules.iter().map(|module| module.checked.len()).sum();
+        let reused: usize = self.modules.iter().map(|module| module.reused.len()).sum();
+        serde_json::to_string(&serde_json::json!({
+            "schema": CHECKED_BODIES_SCHEMA,
+            "checked": checked,
+            "reused": reused,
+            "modules": self.modules,
+        }))
+        .map_err(|error| CliError::failure(error.to_string()))
+    }
+}
 
 /// One check's presentation: its typed report as JSON, its human message and its warnings.
 #[derive(Serialize, Deserialize)]
@@ -29,24 +97,38 @@ pub struct CheckOutput {
     pub reproducible: bool,
 }
 
-/// Check one unit, capturing the warnings it prints alongside its report.
-pub fn check_unit(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<CheckOutput> {
-    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit, rust));
+/// Check one unit with the engine's selected body records, capturing the warnings it prints alongside its report.
+/// Returns the presentation and the bodies the check restored or checked.
+pub fn check_unit(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+) -> CliResult<(CheckOutput, CheckedBodies)> {
+    let (result, warnings) = crate::diagnostics::capture_warning_output(|| check_report(unit, rust, records));
     match result {
-        Ok(report) => Ok(CheckOutput {
-            json: Some(serde_json::to_string_pretty(&report).map_err(|error| CliError::failure(error.to_string()))?),
-            human_message: report.human_message,
-            exit_code: if report.ok { 0 } else { 1 },
-            warnings,
-            reproducible: report.reproducible,
-        }),
-        Err(error) => Ok(CheckOutput {
-            json: None,
-            human_message: Some(error.message),
-            exit_code: error.exit_code.0,
-            warnings,
-            reproducible: false,
-        }),
+        Ok(mut report) => {
+            let bodies = std::mem::take(&mut report.bodies);
+            let output = CheckOutput {
+                json: Some(
+                    serde_json::to_string_pretty(&report).map_err(|error| CliError::failure(error.to_string()))?,
+                ),
+                human_message: report.human_message,
+                exit_code: if report.ok { 0 } else { 1 },
+                warnings,
+                reproducible: report.reproducible,
+            };
+            Ok((output, bodies))
+        }
+        Err(error) => Ok((
+            CheckOutput {
+                json: None,
+                human_message: Some(error.message),
+                exit_code: error.exit_code.0,
+                warnings,
+                reproducible: false,
+            },
+            CheckedBodies::default(),
+        )),
     }
 }
 
@@ -74,10 +156,18 @@ pub struct DiagnosticReport {
     /// Whether unchanged inputs reproduce this report; never part of the public JSON report.
     #[serde(skip_serializing)]
     reproducible: bool,
+    /// The project's top-level function bodies this check restored or checked; never part of the public JSON report.
+    #[serde(skip_serializing)]
+    bodies: CheckedBodies,
 }
 
 /// Check one unit without rendering the result: its stable diagnostics, warnings included, and whether it passed.
-pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<DiagnosticReport> {
+/// `records` are the engine's graph-selected checked bodies; an owner they hold is restored instead of checked.
+pub fn check_report(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    records: GraphBodyRecords,
+) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
     // Opening the session and extracting Rust facts read artifacts and run rustc, so their failures stay retryable.
     let import_failure = |error: CliError| DiagnosticReport {
@@ -93,6 +183,7 @@ pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<
         Ok(session) => session,
         Err(error) => return Ok(import_failure(error)),
     };
+    session.set_graph_body_records(records);
     let modules = match collect_modules_detailed_with_session(unit.source.clone(), &session) {
         Ok(modules) => modules,
         Err(failure) => return Ok(diagnostic_report_from_failure(failure)),
@@ -100,17 +191,27 @@ pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<
     if let Err(error) = session.resolve_rust_facts(&modules) {
         return Ok(import_failure(error));
     }
-    let typecheck = session.typecheck_unit(&modules, None, &mut |_, _| {});
-    match typecheck {
-        Ok(checked) => Ok(DiagnosticReport {
+    // Module paths are physical; the root is compared as given and resolved, as checked-body publication does.
+    let resolved_root = unit.project_root.canonicalize().ok();
+    let mut roots = vec![unit.project_root.as_path()];
+    roots.extend(resolved_root.as_deref());
+    let mut bodies = CheckedBodies::default();
+    let typecheck = session.typecheck_unit(&modules, None, &mut |module, checker| {
+        bodies.observe(&roots, module, checker)
+    });
+    let mut report = match typecheck {
+        Ok(checked) => DiagnosticReport {
             schema_version: CHECK_REPORT_SCHEMA_VERSION,
             ok: true,
             diagnostics: stable_diagnostics_from(&checked.warnings),
             human_message: None,
             reproducible: true,
-        }),
-        Err(failure) => Ok(diagnostic_report_from_failure(failure)),
-    }
+            bodies: CheckedBodies::default(),
+        },
+        Err(failure) => diagnostic_report_from_failure(failure),
+    };
+    report.bodies = bodies;
+    Ok(report)
 }
 
 /// Project collected CLI diagnostics into their stable machine-readable form, preserving input order.
@@ -147,5 +248,6 @@ fn diagnostic_report_from_failure(failure: CliDiagnosticFailure) -> DiagnosticRe
         diagnostics,
         human_message: Some(human_message),
         reproducible: failure.reproducible(),
+        bodies: CheckedBodies::default(),
     }
 }

@@ -261,17 +261,15 @@ impl TypeChecker {
     ) -> ResolvedType {
         let (callee, args, span, expected_return_ty) = (call.callee, call.args, call.span, call.expected_return_ty);
         match kind {
-            RustItemKind::Function(sig) => {
-                return self.validate_and_record_rust_import_function_call(
-                    rust_path,
-                    sig,
-                    call.type_args,
-                    args,
-                    span,
-                    callee.span,
-                    expected_return_ty,
-                );
-            }
+            RustItemKind::Function(sig) => self.validate_and_record_rust_import_function_call(
+                rust_path,
+                sig,
+                call.type_args,
+                args,
+                span,
+                callee.span,
+                expected_return_ty,
+            ),
             RustItemKind::Type(type_info)
                 if type_info.metadata_completeness.has_constructible_layout()
                     && (!type_info.fields.is_empty() || (type_info.variants.is_empty() && args.is_empty())) =>
@@ -289,13 +287,13 @@ impl TypeChecker {
                         .ident_kinds
                         .insert(callee.span, IdentKind::RustImport);
                 }
-                return result;
+                result
             }
             RustItemKind::Type(_) => {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::rust_constructor_metadata_unavailable(rust_path, span));
-                return ResolvedType::Unknown;
+                ResolvedType::Unknown
             }
             RustItemKind::Unsupported { description } => {
                 self.check_call_args(args);
@@ -304,13 +302,13 @@ impl TypeChecker {
                     description.as_str(),
                     span,
                 ));
-                return ResolvedType::Unknown;
+                ResolvedType::Unknown
             }
             _ => {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::rust_constructor_metadata_unavailable(rust_path, span));
-                return ResolvedType::Unknown;
+                ResolvedType::Unknown
             }
         }
     }

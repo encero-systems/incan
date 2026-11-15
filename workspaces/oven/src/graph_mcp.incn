@@ -51,7 +51,7 @@ pub def options(arguments: list[str]) -> Result[McpOptions, str]:
 pub def serve_graph(selected: McpOptions) -> Result[i32, str]:
     """Serve one project: 1. Validate selection. 2. Read requests. 3. Flush protocol-only replies."""
     # 1. Validate the fixed project selection.
-    root = selected.path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    root = selected.path.resolve().map_err((error) => f"cannot {error.message()}")?
     if not root.is_file() and not root.is_dir():
         return Err("MCP PATH does not exist")
     mut server = GraphServer(root=root.0, profile=selected.profile)

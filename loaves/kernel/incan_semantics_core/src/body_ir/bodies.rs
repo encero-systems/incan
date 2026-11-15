@@ -386,7 +386,7 @@ impl Body {
         // Profile 1 is a straight-line body; profile 2 a body with statement-ifs, whose owned initializers record the
         // whole-owner transfers its branches may perform. Profiles 3 and 4 retain these respective shapes with
         // unresolved result obligations that closed native instantiation must discharge.
-        if !matches!(profile.version, 1 | 2 | 3 | 4) || self.canonical.as_ref() != Some(&profile.owner) {
+        if !matches!(profile.version, 1..=4) || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
         }
         if matches!(profile.version, 3 | 4) != !profile.result_requirements.is_empty() {

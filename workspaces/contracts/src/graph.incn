@@ -5,7 +5,7 @@ from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from std.hash import file_digest
 from std.json import JsonValue
-from rust::std::fs import OpenOptions, Permissions, metadata, rename, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, remove_file, rename, set_permissions
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt, symlink
 from compare import compare
 from files import (
@@ -23,7 +23,7 @@ from files import (
     write_bytes,
 )
 from header import Header
-from run import Outcome, invoke
+from run import Outcome, invoke, invoke_side_by_side
 from graph_context_contract import check_context
 from graph_relocation_contract import check_relocation
 from graph_mcp_contract import check_mcp
@@ -31,6 +31,7 @@ from graph_lsp_contract import check_lsp
 from graph_process_contract import check_process
 from graph_document import GraphDocument, check_reader, document
 from graph_preparation_contract import check_registry_preparation, check_source_preparation
+from graph_page_contract import check_warm_pages
 
 
 pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list[str], str]:
@@ -47,13 +48,20 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
     mut stderr = ""
     mut code: Option[int] = Some(0)
     mut failures: list[str] = []
-    # 1. Every declared inspection runs twice, and its warm second answer must equal the first.
+    # 1. Every declared inspection runs twice, and its warm second answer must equal the first. The first inspection
+    #    builds the graph; the others read it side by side, and then every one of them runs again side by side.
     existing = library_artifacts(project)?
-    for invocation in header.items("graph-commands"):
-        arguments = ["inspect", "codegraph"] + invocation.split(" ")
-        outcome = invoke(incan, arguments, project)?
-        repeated = invoke(incan, arguments, project)?
-        failures = failures + inspection_failures(invocation, outcome, repeated)
+    invocations = header.items("graph-commands")
+    commands = [["inspect", "codegraph"] + invocation.split(" ") for invocation in invocations]
+    mut firsts: list[Result[Outcome, str]] = []
+    if len(commands) > 0:
+        firsts.append(invoke(incan, commands[0], project))
+        firsts.extend(invoke_side_by_side(incan, commands[1:], project))
+    repeats = invoke_side_by_side(incan, commands, project)
+    for index in range(len(invocations)):
+        outcome = firsts[index]?
+        repeated = repeats[index]?
+        failures = failures + inspection_failures(invocations[index], outcome, repeated)
         stdout += outcome.stdout.replace(f"{project.0}/", "")
         stderr += outcome.stderr
         if outcome.code != Some(0):
@@ -67,6 +75,7 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
     if code == Some(0):
         check_registry_preparation(incan, project)?
         check_source_preparation(incan, project)?
+        check_warm_pages(incan, project)?
         for failure in check_documents(incan, project, existing)?:
             failures.append(failure)
     return Ok(failures)
@@ -344,6 +353,10 @@ def check_identity_queries(incan: str, project: Path, document: GraphDocument) -
     declarations = [record for record in records if string_field(record, "record") == "declaration"]
     if len(declarations) > 0:
         check_definition_selection(incan, project, string_field(declarations[0], "id"))?
+    # Each unique project declaration is asked for by its short name and by its full ID; the queries only read the
+    # built graph, so they run side by side.
+    mut names: list[str] = []
+    mut commands: list[list[str]] = []
     for declaration in declarations:
         match declaration.get("span"):
             Some(span) =>
@@ -353,13 +366,17 @@ def check_identity_queries(incan: str, project: Path, document: GraphDocument) -
         name = string_field(declaration, "name")
         if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
             continue
-        identifier = string_field(declaration, "id")
-        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        names.append(name)
+        commands.append(["inspect", "codegraph", ".", "--query", "callers", name])
+        commands.append(["inspect", "codegraph", ".", "--query", "callers", string_field(declaration, "id")])
+    outcomes = invoke_side_by_side(incan, commands, project)
+    for index in range(len(names)):
+        short = outcomes[2 * index]?
         if short.stdout == "":
             continue
-        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        full = outcomes[2 * index + 1]?
         if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
-            return Err(f"full declaration ID and short name select different callers: {name}")
+            return Err(f"full declaration ID and short name select different callers: {names[index]}")
     return Ok(None)
 
 
@@ -402,10 +419,11 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
     # 1. Native compilation does not pay for inspection until publication is explicitly requested.
+    publications_before = published_graph_identities(project, provider)?
     built = invoke(incan, ["build", source.0], project, environment)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
-    if len(published_graphs(project, provider)) != 0:
+    if published_graph_identities(project, provider)? != publications_before:
         return Err("an ordinary provider build collected an unrequested graph")
     native_before = library_artifacts(provider)?
     requested = invoke(incan, ["build", source.0, "--codegraph"], project, environment)?
@@ -474,7 +492,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
     # 5. A linked directory is itself damaged; repair must never follow it into another directory.
-    check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
+    if len(publications_before) == 0:
+        check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
     return Ok(None)
 
 
@@ -503,6 +522,11 @@ def check_linked_view(
         return Err("graph repair followed a linked directory and changed its referent")
     if library_artifacts(referent)? != bodies:
         return Err("graph repair changed compiled bodies in a linked directory's referent")
+    # When the platform reports a linked directory as an ordinary directory, restore the referent before its
+    # temporary owner retires; otherwise this contract itself leaves a dangling warm-run view behind.
+    match remove_file(directory.0):
+        Ok(_) => rename(referent.0, directory.0).map_err((error) => str(error))?
+        Err(_) => pass
     return Ok(None)
 
 
@@ -536,8 +560,23 @@ def published_graphs(project: Path, provider: Path) -> list[Path]:
         directory = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
         graph = directory.joinpath("debug").joinpath("graph_checked.incngraph")
         if graph.is_file():
-            graphs.append(graph)
+            # A linked-view contract can leave an intermediate symlink whose referent is being retired. It is not a
+            # publication until the file can be read through that view.
+            match read_bytes(graph):
+                Ok(_) => graphs.append(graph)
+                Err(_) => pass
     return graphs
+
+
+def published_graph_identities(project: Path, provider: Path) -> Result[list[str], str]:
+    """The exact file generations of existing publications, so a warm reused graph is not mistaken for a new one."""
+    mut identities: list[str] = []
+    for graph in published_graphs(project, provider):
+        info = metadata(graph.0).map_err((error) => str(error))?
+        identity = f"{graph.0}:{info.dev()}:{info.ino()}:{info.size()}"
+        clock = f"{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+        identities.append(f"{identity}:{clock}")
+    return Ok(sorted(identities))
 
 
 def check_rust_links(document: GraphDocument) -> Result[None, str]:

@@ -1253,7 +1253,7 @@ Canonical forms:
 - **Since:** `0.5`
 - **RFC:** `RFC 015`
 - **Stability:** `Experimental`
-- **Activation:** Set `OVEN_TRACE=-` for preparation traces or request a unit description.
+- **Activation:** Set `INCAN_ENGINE_TRACE` to an existing directory for preparation traces or request a unit description.
 - **Use instead of:** Inferring compilation or reuse from timestamps and elapsed time alone.
 - **References:** [CLI reference](../../tooling/reference/cli_reference.md), [Release 0.5](../../release_notes/0_5.md)
 
@@ -1261,7 +1261,7 @@ Oven traces distinguish compilation, executable reuse and replayed refusals, wit
 
 Canonical forms:
 
-- `OVEN_TRACE=- incan run src/main.incn`
+- `INCAN_ENGINE_TRACE=trace incan run src/main.incn`
 - `oven describe-unit src/main.incn`
 
 ### Compiler-backed codegraph inspection

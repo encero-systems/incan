@@ -4,10 +4,64 @@ use crate::error::PlanError;
 use crate::plan::SourceSpan;
 use rustc_span::source_map::SourceMap;
 use rustc_span::{BytePos, DUMMY_SP, SourceFile, Span, SyntaxContext};
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+/// The test files of the unit this process compiles that were checked with generated case entries
+/// (`crate::test_cases`), by the file name plans give them, each with a written copy of the text it was checked as.
+/// The entries lie past the file's own last line, so their spans resolve only against that copy. The registry is this
+/// process's alone: a plan compiled in another process takes the texts with it ([`checked_texts`]).
+static CHECKED_SOURCES: Mutex<BTreeMap<String, PathBuf>> = Mutex::new(BTreeMap::new());
+
+/// Record the texts the unit's files were checked as where they differ from the files, replacing the previous unit's
+/// records, so a file checked as itself resolves against itself. Each copy lives in the temporary directory under its
+/// file's stem and a digest of its text, so an unchanged text reuses its copy.
+pub(crate) fn retain_checked_sources(checked: &[(PathBuf, String)]) -> Result<(), String> {
+    let mut copies = BTreeMap::new();
+    for (file, text) in checked {
+        let digest: String = Sha256::digest(text.as_bytes())
+            .iter()
+            .take(8)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let stem = file.file_stem().and_then(|stem| stem.to_str()).unwrap_or("test");
+        let copy = std::env::temp_dir().join(format!("{stem}-{digest}.incn"));
+        if std::fs::read_to_string(&copy).ok().as_deref() != Some(text.as_str()) {
+            std::fs::write(&copy, text)
+                .map_err(|error| format!("cannot write checked test source {}: {error}", copy.display()))?;
+        }
+        copies.insert(file.to_string_lossy().into_owned(), copy);
+    }
+    *CHECKED_SOURCES
+        .lock()
+        .map_err(|_| "checked source registry is poisoned".to_string())? = copies;
+    Ok(())
+}
+
+/// The recorded files with the texts they were checked as, for a plan that another process compiles: that process
+/// records them again ([`retain_checked_sources`]), so it depends on neither this process nor its temporary directory.
+pub(crate) fn checked_texts() -> Result<Vec<(PathBuf, String)>, String> {
+    let copies = CHECKED_SOURCES
+        .lock()
+        .map_err(|_| "checked source registry is poisoned".to_string())?
+        .clone();
+    copies
+        .into_iter()
+        .map(|(file, copy)| {
+            let text = std::fs::read_to_string(&copy)
+                .map_err(|error| format!("cannot read checked test source {}: {error}", copy.display()))?;
+            Ok((PathBuf::from(file), text))
+        })
+        .collect()
+}
+
+/// The written copy a file was checked as, when it was checked with generated entries.
+fn checked_copy(file: &str) -> Option<PathBuf> {
+    CHECKED_SOURCES.lock().ok()?.get(file).cloned()
+}
 
 /// Source files retained for the invocation; no generated Rust file enters this map.
 pub struct Sources<'a> {
@@ -38,13 +92,11 @@ impl<'a> Sources<'a> {
             reason: "source coordinate is outside the retained file".into(),
         };
         if !self.files.borrow().contains_key(file) {
-            let source = self
-                .map
-                .load_file(Path::new(file))
-                .map_err(|error| PlanError::Invalid {
-                    function: file.to_owned(),
-                    reason: error.to_string(),
-                })?;
+            let path = checked_copy(file).unwrap_or_else(|| PathBuf::from(file));
+            let source = self.map.load_file(&path).map_err(|error| PlanError::Invalid {
+                function: file.to_owned(),
+                reason: error.to_string(),
+            })?;
             self.files.borrow_mut().insert(file.to_owned(), source);
         }
         let files = self.files.borrow();
@@ -62,5 +114,27 @@ impl<'a> Sources<'a> {
         let start = source.start_pos + BytePos(u32::try_from(offset + within).map_err(|_| invalid())?);
         let width = u32::try_from(character.len_utf8()).map_err(|_| invalid())?;
         Ok(Span::new(start, start + BytePos(width), SyntaxContext::root(), None))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plan compiled in another process takes its checked texts along: recording them where nothing is recorded
+    /// restores a copy with the generated entries.
+    #[test]
+    fn checked_texts_restore_the_copy_in_a_process_without_a_record() -> Result<(), String> {
+        let name = "/nowhere/test_handed_off.incn";
+        let text = "def test_one() -> None:\n    pass\n\n\ndef generated_entry() -> None:\n    test_one()\n";
+        retain_checked_sources(&[(PathBuf::from(name), text.to_string())])?;
+        let carried = checked_texts()?;
+        retain_checked_sources(&[])?;
+        assert!(checked_copy(name).is_none());
+
+        retain_checked_sources(&carried)?;
+        let copy = checked_copy(name).ok_or("the carried text restored no copy")?;
+        assert_eq!(std::fs::read_to_string(copy).map_err(|error| error.to_string())?, text);
+        retain_checked_sources(&[])
     }
 }

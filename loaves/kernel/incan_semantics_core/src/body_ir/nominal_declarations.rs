@@ -422,6 +422,83 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         .collect()
 }
 
+/// The Rust items the fields of a constructed layout name, beyond those `held` already lists. A construction writes
+/// every field, so each field's type needs storage even when no body names it, as when a program passes `None` for an
+/// `Option` of an item only a dependency declares. A layout no body of `modules` constructs adds nothing, and an item
+/// `held` already lists keeps its argument count.
+pub fn constructed_rust_field_items(
+    modules: &[BodyIrModule],
+    layouts: &[NominalDeclaration],
+    held: &[NominalDeclaration],
+) -> Vec<NominalDeclaration> {
+    let mut constructed = std::collections::BTreeSet::<String>::new();
+    for module in modules {
+        for body in &module.bodies {
+            note_constructed_rust_items(&body.block.stmts, &mut constructed);
+        }
+        for storage in &module.static_declarations {
+            if let StaticInitializer::Computed(body) = &storage.initial {
+                note_constructed_rust_items(&body.block.stmts, &mut constructed);
+            }
+        }
+    }
+    let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
+    for layout in layouts {
+        if native_opaque_name(&layout.canonical).is_some_and(|path| constructed.contains(&path)) {
+            for ty in &layout.field_types {
+                record_held_rust_items(ty, &mut arities);
+            }
+        }
+    }
+    arities
+        .into_iter()
+        .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
+        .filter(|item| !held.iter().any(|known| known.canonical == item.canonical))
+        .collect()
+}
+
+/// Note the path of every Rust item a statement sequence constructs, descending into nested blocks, closure and
+/// generator bodies and `match` arms.
+fn note_constructed_rust_items(stmts: &[Statement], constructed: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StatementKind::Assign { rvalue, .. } => match rvalue {
+                Rvalue::Aggregate(AggregateKind::Constructor(target), _) => {
+                    if let Some(path) = target.canonical.as_ref().and_then(native_opaque_name) {
+                        constructed.insert(path);
+                    }
+                }
+                Rvalue::Closure { body, .. } => note_constructed_rust_items(&body.stmts, constructed),
+                Rvalue::Generator { body, .. } => note_constructed_rust_items(&body.stmts, constructed),
+                Rvalue::Match { arms, .. } => {
+                    for arm in arms {
+                        note_constructed_rust_items(&arm.guard_stmts, constructed);
+                        note_constructed_rust_items(&arm.body_stmts, constructed);
+                    }
+                }
+                _ => {}
+            },
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                note_constructed_rust_items(&then_block.stmts, constructed);
+                if let Some(block) = else_block {
+                    note_constructed_rust_items(&block.stmts, constructed);
+                }
+            }
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                note_constructed_rust_items(&body.stmts, constructed);
+            }
+            StatementKind::Race { arms, .. } => {
+                for arm in arms {
+                    note_constructed_rust_items(&arm.body.stmts, constructed);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Retain every declared storage type in an executable or imported default frame without granting its statements
 /// execution.
 pub(super) fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&IncanType)) {
@@ -524,7 +601,8 @@ pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
 /// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Ordinary
 /// source declarations in standard packages retain the same keys as other packages. Foreign storage keeps its
 /// native name. Standard source and local declarations cannot collide merely because their short names match.
-/// A key grants no lookup or layout without its retained identity.
+/// A key grants no lookup or layout without its retained identity. It names the declaration as its
+/// [`crate::stable_identity::StableDeclarationId`] does, so a line inserted above a declaration renames no carrier.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -543,31 +621,25 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         SymbolOrigin::Module(_) | SymbolOrigin::Package { .. } => {}
         _ => return None,
     }
+    // A carrier is module-level, so its stable identity is its kind, owning module and name; no byte span enters it.
+    let stable = crate::stable_identity::StableDeclarationId::from_canonical(identity, None, None)?;
     let module = crate::canonical_module_identity(identity)?;
     // Carrier keys are retained in checked scopes and native plans. Reserve their exact spelling rather than a
     // worst-case suffix for every ordinary declaration; spare capacity otherwise survives in every owned key.
     let mut capacity = NOMINAL_CARRIER_KEY_PREFIX.len()
         + kind.len()
-        + 6
-        + 2 * (module.len() + identity.declaration_name.len())
+        + 4
+        + 2 * (module.len() + stable.declaration_name.len())
         + carrier_decimal_digits(module.len())
-        + carrier_decimal_digits(identity.declaration_name.len())
-        + carrier_decimal_digits(identity.declaration_span.start)
-        + carrier_decimal_digits(identity.declaration_span.end);
+        + carrier_decimal_digits(stable.declaration_name.len());
     if identity.declaration_span.expansion.is_some() {
         capacity += "_expansion_".len() + 64;
     }
     let mut key = String::with_capacity(capacity);
     write!(key, "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_", module.len()).ok()?;
     append_carrier_hex(&mut key, module.as_bytes());
-    write!(key, "_{}_", identity.declaration_name.len()).ok()?;
-    append_carrier_hex(&mut key, identity.declaration_name.as_bytes());
-    write!(
-        key,
-        "_{}_{}",
-        identity.declaration_span.start, identity.declaration_span.end
-    )
-    .ok()?;
+    write!(key, "_{}_", stable.declaration_name.len()).ok()?;
+    append_carrier_hex(&mut key, stable.declaration_name.as_bytes());
     if let Some(expansion) = identity.declaration_span.expansion {
         key.push_str("_expansion_");
         append_carrier_hex(&mut key, &expansion);

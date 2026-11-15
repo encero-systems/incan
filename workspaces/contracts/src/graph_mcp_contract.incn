@@ -48,7 +48,7 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     command.arg("mcp").arg(".").current_dir(project.0)
     observations = project.joinpath(".mcp-preparation")
     make_directory(observations)?
-    command.env("INCAN_JEC_TRACE", observations.0)
+    command.env("INCAN_ENGINE_TRACE", observations.0)
     command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
     output = command.output().map_err((error) => str(error))?
     protocol.unlink().map_err((error) => error.message())?
@@ -80,6 +80,8 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
     if (
         "snapshot_id" not in content(replies[3])?
         or "helper" not in content(replies[4])?
+        or " author=workspace] " not in content(replies[4])?
+        or " authored_text=quoted_evidence" not in content(replies[4])?
         or "helper" not in content(replies[5])?
     ):
         return Err("MCP graph tools differ from the public graph facts")
@@ -100,16 +102,19 @@ pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
 
 
 def check_preparations(directory: Path) -> Result[None, str]:
-    """Four graph requests prepare four times; the context's snapshot probe shares its request's preparation."""
+    """
+    Four graph requests prepare at most four times: one its bakery page answers prepares nothing, and the context's
+    snapshot probe shares its request's preparation.
+    """
     mut preparations = 0
     for path in directory.iterdir().map_err((error) => error.message())?:
         for line in read(path)?.split("\n"):
-            if line != "" and required_text(parse_json(line)?, "category")? == "registry_index":
+            if line != "" and required_text(parse_json(line)?, "operation")? == "registry_index":
                 preparations += 1
         remove(path)?
     directory.rmdir().map_err((error) => error.message())?
-    if preparations != 4:
-        return Err(f"four MCP graph requests prepared {preparations} times; expected four")
+    if preparations > 4:
+        return Err(f"four MCP graph requests prepared {preparations} times; expected at most four")
     return Ok(None)
 
 

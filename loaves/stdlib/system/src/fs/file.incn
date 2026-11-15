@@ -13,8 +13,9 @@ from std.primitives.fs.file import (
     write_all as primitive_write_all,
 )
 from std.primitives.fs.path import PrimitivePath
-from std.fs.path import Path, _as_path, _fs_error, _io_error
-from std.io import BinaryReader, IoError
+pub from std.fs.path import Path
+from std.fs.path import _as_path, _fs_error, _io_error
+pub from std.io import BinaryReader, IoError
 
 
 pub class File with BinaryReader:
@@ -69,12 +70,12 @@ pub class File with BinaryReader:
         if size < 0:
             match primitive_read_remaining(self.handle):
                 Ok(data) => return Ok(data)
-                Err(error) => return Err(_io_error(self.path, error))
+                Err(error) => return Err(_io_error(self.path, "read", error))
         if size == 0:
             return Ok(buf)
         match primitive_read_chunk(self.handle, size):
             Ok(data) => return Ok(data)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "read", error))
 
     pub def read_exact(self, size: int) -> Result[bytes, IoError]:
         """
@@ -88,7 +89,7 @@ pub class File with BinaryReader:
         """
         chunk = self.read_bytes(size)?
         if len(chunk) != size:
-            return Err(_fs_error(self.path, "unexpected_eof", "file ended before read_exact size"))
+            return Err(_fs_error(self.path, "read", "unexpected_eof", "file ended before read_exact size"))
         return Ok(chunk)
 
     pub def write(self, data: str) -> Result[int, IoError]:
@@ -109,7 +110,7 @@ pub class File with BinaryReader:
         bytes_out = _encode_text(self.path, out, encoding, errors)?
         match primitive_write_all(self.handle, bytes_out):
             Ok(_) => return Ok(len(out))
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "write", error))
 
     pub def write_bytes(self, data: bytes) -> Result[int, IoError]:
         """
@@ -123,7 +124,7 @@ pub class File with BinaryReader:
         """
         match primitive_write_all(self.handle, data):
             Ok(written) => return Ok(written)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "write", error))
 
     pub def tell(self) -> Result[int, IoError]:
         """
@@ -134,7 +135,7 @@ pub class File with BinaryReader:
         """
         match primitive_tell(self.handle):
             Ok(position) => return Ok(position)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "tell", error))
 
     pub def seek(self, offset: int, whence: int) -> Result[int, IoError]:
         """
@@ -152,7 +153,7 @@ pub class File with BinaryReader:
         """
         match primitive_seek(self.handle, offset, whence):
             Ok(position) => return Ok(position)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "seek", error))
 
     pub def flush(self) -> Result[None, IoError]:
         """
@@ -163,7 +164,7 @@ pub class File with BinaryReader:
         """
         match primitive_flush(self.handle):
             Ok(_) => return Ok(None)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "flush", error))
 
     pub def sync(self) -> Result[None, IoError]:
         """
@@ -174,7 +175,7 @@ pub class File with BinaryReader:
         """
         match primitive_sync(self.handle):
             Ok(_) => return Ok(None)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "sync", error))
 
     pub def fsync(self) -> Result[None, IoError]:
         """
@@ -194,7 +195,7 @@ pub class File with BinaryReader:
         """
         match primitive_sync_data(self.handle):
             Ok(_) => return Ok(None)
-            Err(error) => return Err(_io_error(self.path, error))
+            Err(error) => return Err(_io_error(self.path, "sync", error))
 
 
 pub class OpenOptions:
@@ -374,19 +375,20 @@ pub def _validate_open_options(
         return Err(
             _fs_error(
                 path,
+                "open",
                 "invalid_input",
                 "std.fs open currently supports default buffering (-1) or unbuffered binary mode (0)",
             ),
         )
     if buffering == 0 and not _is_binary_open_file_mode(mode):
-        return Err(_fs_error(path, "invalid_input", "unbuffered std.fs open requires binary mode"))
+        return Err(_fs_error(path, "open", "invalid_input", "unbuffered std.fs open requires binary mode"))
     if _is_binary_open_file_mode(mode):
         if let Some(_) = encoding:
-            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept encoding"))
+            return Err(_fs_error(path, "open", "invalid_input", "binary std.fs open does not accept encoding"))
         if let Some(_) = errors:
-            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept errors"))
+            return Err(_fs_error(path, "open", "invalid_input", "binary std.fs open does not accept errors"))
         if let Some(_) = newline:
-            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept newline"))
+            return Err(_fs_error(path, "open", "invalid_input", "binary std.fs open does not accept newline"))
         return Ok(None)
     if let Some(value) = encoding:
         _validate_text_encoding(path, value)?
@@ -409,7 +411,7 @@ def _validate_text_encoding(path: Path, encoding: str) -> Result[None, IoError]:
     label = RustString.from(encoding).into_bytes()
     match Encoding.for_label(label):
         Some(_) => return Ok(None)
-        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "open", "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
@@ -425,7 +427,7 @@ def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
     """
     if errors == "strict" or errors == "replace":
         return Ok(None)
-    return Err(_fs_error(path, "invalid_input", "std.fs text errors must be strict or replace"))
+    return Err(_fs_error(path, "open", "invalid_input", "std.fs text errors must be strict or replace"))
 
 
 pub def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Result[str, IoError]:
@@ -447,9 +449,9 @@ pub def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Res
         Some(enc) =>
             decoded = enc.decode(data)
             if decoded.2 and errors == "strict":
-                return Err(_fs_error(path, "invalid_data", f"text could not be decoded as {encoding}"))
+                return Err(_fs_error(path, "decode", "invalid_data", f"text could not be decoded as {encoding}"))
             return Ok(_normalize_newlines(decoded.0.to_string()))
-        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "decode", "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 pub def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Result[bytes, IoError]:
@@ -471,9 +473,9 @@ pub def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Resul
         Some(enc) =>
             encoded = enc.encode(data)
             if encoded.2 and errors == "strict":
-                return Err(_fs_error(path, "invalid_data", f"text could not be encoded as {encoding}"))
+                return Err(_fs_error(path, "encode", "invalid_data", f"text could not be encoded as {encoding}"))
             return Ok(encoded.0.to_vec())
-        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "encode", "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 def _option_or_str(value: Option[str], fallback: str) -> str:
@@ -541,7 +543,7 @@ def _open_file_mode(path: Path, mode: str) -> Result[OpenFileMode, IoError]:
     """
     if let Some(spec) = OpenFileMode.from_value(_canonical_open_file_mode(mode)):
         return Ok(spec)
-    return Err(_fs_error(path, "invalid_input", f"invalid file mode: {mode}"))
+    return Err(_fs_error(path, "open", "invalid_input", f"invalid file mode: {mode}"))
 
 
 def _canonical_open_file_mode(mode: str) -> str:
@@ -601,7 +603,7 @@ def _open_primitive_file(
     primitive_path = PrimitivePath(value=path.0)
     match primitive_open_options(primitive_path, readable, writable, appendable, truncating, creating, creating_new):
         Ok(file) => return Ok(file)
-        Err(error) => return Err(_io_error(path, error))
+        Err(error) => return Err(_io_error(path, "open", error))
 
 
 def _mode_from_flags(readable: bool, writable: bool, appendable: bool, truncating: bool, creating_new: bool) -> str:

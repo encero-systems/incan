@@ -17,12 +17,12 @@ pub def place(staged: Path, path: Path) -> Result[None, str]:
 pub def publish(path: Path, text: str) -> Result[None, str]:
     """Publish a completed document by atomic rename, allowing concurrent readers to see only complete files."""
     temporary = Path(f"{path.0}.{id()}.tmp")
-    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => f"cannot write {error.message()}")?
+    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => f"cannot {error.message()}")?
     return place(temporary, path)
 
 
 pub def publish_binary(path: Path, content: bytes) -> Result[None, str]:
     """Publish a complete binary file by atomic rename; graph cache files never contain JSON."""
     temporary = Path(f"{path.0}.{id()}.tmp")
-    temporary.write_bytes(content).map_err((error) => f"cannot write {error.message()}")?
+    temporary.write_bytes(content).map_err((error) => f"cannot {error.message()}")?
     return place(temporary, path)

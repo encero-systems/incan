@@ -6,7 +6,8 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 
 | Module | Owns |
 | --- | --- |
-| `main.incn` | The `oven` and `incan` command lines: dispatch, option parsing and failures for every command. |
+| `main.incn` | The `oven` and `incan` command lines: dispatch and failures for every command. |
+| `unit_options.incn` | The options of the commands that describe a unit: one PATH, the profile, feature flags, substitutes, program entries and the other unit flags. |
 | `surfaces.incn` | Which commands `oven` and which `incan` runs (RFC 118), the refusal for a command given to the other name, and the entry points installation exposes. |
 | `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_loaves.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, reading published Loaf graphs, caching legacy exports by input digest, and querying compiler-owned records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`oven describe-unit PATH`). |
@@ -14,32 +15,34 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `toolchain_archive.incn` | Packing the installed toolchain's named artifacts and rewriting toolchain, registry and standard Loaf paths for relocation. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
 | `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
-| `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
+| `testing.incn` | Discovering test modules, then selecting, running and reporting the collected tests of compiled Incan and Rust harnesses, each in its own process (`incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]`). |
+| `inline_source.incn` | Inline source for `incan run -c CODE`: the digest-named module file a direct run compiles. |
+| `runner_options.incn`, `runner_selection.incn`, `runner_reports.incn` | The test runner options 0.5.1 accepts, `-k` and `-m` expressions with the seeded shuffle, and the console, JSON Lines, JUnit and durations reports. |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, libraries in dependency order, one `rustc` per unit against compiled registry units (`incan build`). |
 | `rust_build.incn` | The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned toolchain's libraries and `rustc` invocation. |
 | `rust_binaries.incn` | A facet's binaries. A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `rust_manifest.incn` | A Loaf's Rust facet declaration: its library crate, binaries and toolchain requests. |
 | `rust_registry.incn` | The registry closure a toolchain ships, and the registry units a build selects from it. |
-| `intake.incn`, `manifest_intent.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
+| `intake.incn`, `manifest_intent.incn`, `manifest_models.incn`, `manifest_fields.incn`, `manifest_dependencies.incn`, `manifest_environments.incn`, `manifest_features.incn`, `manifest_tables.incn`, `manifest_tool.incn`, `manifest_tolerance.incn`, `workspace_inheritance.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
 | `store_path_conversion.incn` | The one boundary adapter between Oven's `std.fs.Path` values and the private path type of the store substrate in `incan_platform.store`; Oven keeps store policy, while the platform owns snapshots, transactions, payloads, repair and collection. |
 | `features.incn` | Project feature requests and the Incan view of the shared local facet graph (RFC 114). |
 | `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
 | `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
 | `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share.
 
 ## Test units
 
-`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names and outcome markers beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
+`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names, outcome markers (`skip`, `xfail`), `slow` flag, `@mark` names, unregistered marks, `@timeout` limit, `@resource` names and `@serial` flag beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
 
-Fixtures, test parameters, async tests, timeouts and resource markers currently produce named refusals. Their execution contracts are not implemented by this initial native harness.
+Fixtures and test parameters produce named refusals. A test's `@timeout` replaces the run's `--timeout`; tests sharing a `@resource` never run at once and a `@serial` test runs alone.
 
 ## Building
 
 `incan toolchain pack OUT` writes the installed toolchain to a `.tar`, `.tar.gz` or `.tar.zst` archive. It includes the named driver and Rust ABI caches, compiled standard Loaves, runtime native dependencies and prepared registry units. Paths in the toolchain manifest, registry closure and Loaf native closures are relative to their containing directories. Rust's sysroot and the driver's local identity proof are not archived. Packing requires `tar` with support for the selected compression format.
 
-`incan toolchain install ARCHIVE` extracts the archive into staging beside `$INCAN_HOME/toolchains/0.6.0-dev.8`, refuses a mismatched toolchain name, creates its `sysroot` link and invokes the staged driver with `--identity SYSROOT`. The local sysroot comes from `INCAN_SYSROOT`, otherwise `rustup run 1.98.0 rustc --print sysroot`, otherwise `rustc --print sysroot`. Install the matching Rust 1.98.0 toolchain with `rustc-dev` first. Only successful identity verification replaces an existing installation; a refusal preserves it.
+`incan toolchain install ARCHIVE` extracts the archive into staging beside `$INCAN_HOME/toolchains/0.6.0-dev.9`, refuses a mismatched toolchain name, creates its `sysroot` link and invokes the staged driver with `--identity SYSROOT`. The local sysroot comes from `INCAN_SYSROOT`, otherwise `rustup run 1.98.0 rustc --print sysroot`, otherwise `rustc --print sysroot`. Install the matching Rust 1.98.0 toolchain with `rustc-dev` first. Only successful identity verification replaces an existing installation; a refusal preserves it.
 
 Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `incan build src/main.incn` in this directory produces the `incan` program. Its standard packages come from `INCAN_STDLIB`.
 

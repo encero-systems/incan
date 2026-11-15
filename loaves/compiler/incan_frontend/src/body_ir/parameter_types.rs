@@ -4,6 +4,7 @@ use super::{
     BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, decorated_bindings,
     semantic_type_from_resolved,
 };
+use crate::body_ir::ContextModules;
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::ResolvedType;
 use incan_lang::lang::derives::{self, DeriveId};
@@ -128,7 +129,7 @@ pub(super) fn physical_type_argument(ty: IncanType) -> IncanType {
 }
 
 /// Collect same-spelled source types from checked provider declarations, including compiled function-only imports.
-pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::collections::BTreeSet<String> {
+pub(super) fn runtime_name_conflicts(context: ContextModules<'_>) -> std::collections::BTreeSet<String> {
     context
         .iter()
         .flat_map(|module| {
@@ -313,6 +314,21 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
         }
         ty => ty,
     }
+}
+
+/// The module's retained bindings, built once and shared by the callable bodies that start from them.
+pub(super) fn shared_retained_type_identities(facts: &TypeCheckInfo) -> &bir::SharedIdentities {
+    facts
+        .body_ir_identity_bases
+        .retained(|| retained_type_identities(facts))
+}
+
+/// The module's declared bindings, built once and shared by the property, partial and default bodies that start
+/// from them.
+pub(super) fn shared_declared_type_identities(facts: &TypeCheckInfo) -> &bir::SharedIdentities {
+    facts
+        .body_ir_identity_bases
+        .declared(|| facts.declarations.named_type_identities.clone())
 }
 
 /// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.

@@ -4,13 +4,13 @@ from rust::std::string import String as RustString
 from rust::std::env import current_exe
 from rust::std::process import Command, exit as native_exit
 from rust::std::thread import sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.hash import file_digest, sha256
 from std.io import BytesIO
 from pub::incan_platform.store.index import Entry, Location
-from pub::incan_platform.store.index import build as build_index, entries as index_entries
+from pub::incan_platform.store.index import write_index, entries as index_entries, pages_written
 from store_path_conversion import collect_layouts, store_path
 from std.fs import Path
 from pub::incan_platform.durability import sync_ordered
@@ -24,6 +24,7 @@ from pub::incan_platform.store import (
     Lookup,
     Snapshot,
     begin,
+    begin_compared,
     commit,
     commit_group,
     commit_pinned,
@@ -38,11 +39,36 @@ from pub::incan_platform.store import (
     lease,
     view_snapshot,
     durable_syncs,
+    graph_barriers,
+    keys_with_prefix,
+    manifest_path,
+    segments,
+    index_levels,
 )
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
+from compiler_graph_records import (
+    family_listing,
+    prepare_evaluation,
+    readers_of,
+    reusable_family_records,
+    supersede_outputs,
+)
+from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadReceipt,
+    ReadScope,
+    RecordKey,
+    RecordRead,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    StoreRecordSource,
+    encode_record_key,
+)
 
 static observed_work: dict[str, int] = {}
 
@@ -64,6 +90,15 @@ def text(found: Result[Lookup, StoreError]) -> str:
 def write_one(root: Path, key: str, value: str, expect: int = 0) -> Result[Snapshot, StoreError]:
     """Commit one value on the latest generation."""
     return commit(put(begin(snapshot(root)?), key, value.encode("utf-8"), expect))
+
+
+def added_segment(before: Snapshot, after: Snapshot) -> Result[str, str]:
+    """The one segment `after` reaches that `before` does not: the segment its commit wrote."""
+    earlier = segments(before).map_err((error) => error.message())?
+    added = [name for name in segments(after).map_err((error) => error.message())? if name not in earlier]
+    if len(added) != 1:
+        return Err(f"a commit reached {len(added)} new segments")
+    return Ok(added[0])
 
 
 def error_kind(result: Result[Snapshot, StoreError]) -> str:
@@ -190,23 +225,26 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     landed = commit(right).map_err((error) => error.message())?
     assert text(lookup(landed, "a")) == "one" and text(lookup(landed, "b")) == "two"
     assert error_kind(commit(rival)) == "conflict"
-    segments = count_files(root.joinpath("segments"))
+    segment_files = count_files(root.joinpath("segments"))
     retained = retained_inventory(root)?
     size_before = retained_bytes(root)?
     unchanged = commit(same).map_err((error) => error.message())?
     assert unchanged.generation == landed.generation
-    assert count_files(root.joinpath("segments")) == segments
+    assert count_files(root.joinpath("segments")) == segment_files
     assert retained_inventory(root)? == retained
     assert retained_bytes(root)? == size_before
     println("S1 unchanged commit: 0 added files, 0 changed bytes, 0 manifest writes")
     # A transaction retains only its final index pages, never intermediate roots from inserting its entries.
     page_store = scratch.path().joinpath("page-store")
     barriers = durable_syncs()
+    ordered = graph_barriers()
     mut batch = begin(snapshot(page_store).map_err((error) => error.message())?)
     for key in ["a", "b", "c", "d"]:
         batch = put(batch, key, b"value")
     _ = commit(batch).map_err((error) => error.message())?
-    assert durable_syncs() - barriers == 2, "a request did not use exactly the graph and acknowledgment barriers"
+    # The graph needs only ordering before CURRENT names it; the acknowledgment is the request's one drive flush.
+    assert durable_syncs() - barriers == 1, "a request flushed the drive more than once"
+    assert graph_barriers() - ordered == 1, "a request did not order its graph ahead of its selection"
     assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
     # One request updates independent views under one CURRENT switch; a conflict changes neither view.
     other = snapshot(root, "project").map_err((error) => error.message())?
@@ -235,9 +273,10 @@ pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None
         Ok(_) => return Err("a missing synchronization target was reported as durable")
         Err(message) =>
             assert message != ""
-    assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
+    older = write_one(root, "a", "old").map_err((error) => error.message())?
+    assert older.generation > 0
     newer = write_one(root, "a", "newer").map_err((error) => error.message())?
-    damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1]}.seg"))?
+    damage_last_byte(root.joinpath("segments").joinpath(f"{added_segment(older, newer)?}.seg"))?
     damaged = snapshot(root).map_err((error) => error.message())?
     assert text(lookup(damaged, "a")) == "<integrity>"
     assert error_kind(write_one(root, "a", "plain")) == "integrity"
@@ -314,9 +353,11 @@ pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> 
     assert write_one(two, "a", "x").map_err((error) => error.message())?.generation > 0
     left = compact(one).map_err((error) => error.message())?
     right = compact(two).map_err((error) => error.message())?
-    assert len(left.segments) == 1 and len(right.segments) == 1
-    assert left.segments[0] == right.segments[0] and left.index == right.index
-    println(f"S2 canonical compaction: equal_base={left.segments[0]} equal_index={left.index}")
+    left_segments = segments(left).map_err((error) => error.message())?
+    right_segments = segments(right).map_err((error) => error.message())?
+    assert len(left_segments) == 1 and len(right_segments) == 1
+    assert left_segments[0] == right_segments[0] and left.index == right.index
+    println(f"S2 canonical compaction: equal_base={left_segments[0]} equal_index={left.index}")
     assert text(lookup(right, "b")) == "y"
     assert text(lookup(right, "c")) == "<deleted>"
     source = scratch.path().joinpath("artifact")
@@ -342,6 +383,380 @@ def damage_last_byte(path: Path) -> Result[None, str]:
     return Ok(None)
 
 
+pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edits_left() -> Result[None, str]:
+    """
+    Selecting one family's reusable records and one record's readers reads only the index pages of their key range:
+    the pages read do not grow with the records every earlier edit left in the store, and a prefix listing returns
+    exactly the keys a whole listing would.
+    """
+    scratch = scratch_directory()?
+    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
+    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
+    target = RecordKey(
+        family="body-ir",
+        identity="function:main",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    mut pages: list[int] = []
+    for scale in [1, 100]:
+        root = scratch.path().joinpath(f"store-{scale}")
+        _ = write_one(root, output, encode_record_key(target)?).map_err((error) => error.message())?
+        for batch in range(scale):
+            mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+            for item in range(10):
+                transaction = put(transaction, f"incan.engine.receipt\t{batch}-{item}", b"earlier edit")
+                transaction = put(
+                    transaction,
+                    f"incan.engine.output\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
+                    b"other family",
+                )
+            commit(transaction).map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        assert len(reusable_family_records(latest, "body-ir", "p")?) == 0
+        assert len(readers_of(latest, [target], "p")?) == 0
+        pages.append(read_counts().pages - before.pages)
+        every = keys(latest).map_err((error) => error.message())?
+        for prefix in ["incan.engine.output\tp\tbody-ir\t", "incan.engine.output\tp\t", "incan.engine.receipt\t5", edge]:
+            assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
+                key for key in every if key.startswith(prefix)
+            ], prefix
+    assert pages[1] <= pages[0] + 10, f"family selection read {pages[0]} pages at scale 1 and {pages[1]} at scale 100"
+    return Ok(None)
+
+
+pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits_came_before() -> Result[None, str]:
+    """
+    Keys that change together sit together. Each edit evaluates one declaration's slot in a new context that reads the
+    same dependency with new evidence, and retires the earlier evaluation. Its edges are written over the earlier ones
+    under the same keys, so after any number of edits the edge indexes hold exactly the current evaluation's entries,
+    tombstones included, and a reader lookup finds the current evaluation.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = RecordKey(
+        family="final",
+        identity="function:helper",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    mut reader = dependency
+    for edit in range(12):
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = RecordKey(
+            family="body-ir",
+            identity="function:main",
+            identity_profile="profile",
+            origin="origin",
+            facet="facet",
+            context=f"edit {edit}",
+        )
+        mut transaction = begin(selected)
+        rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+        receipt = edge_receipt(selected, reader, [read])?
+        _ = prepare_evaluation(transaction, "claim", rank, f"main {edit}".encode("utf-8"), receipt)?
+        supersede_outputs(selected, transaction)?
+        _ = commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut edges: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-"):
+            edges.append(entry.key)
+    assert len(edges) == 2, f"after 12 edits of one declaration the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates a dependency in a new context, and one declaration's slot reads it. The reader's edge into the
+    dependency is keyed by the dependency's slot, not by the context the edit replaced, so after any number of edits the
+    edge indexes hold the one current edge in each direction, tombstones included. A reader lookup still names the
+    exact record read: the current dependency has the current reader, and an earlier context has none.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut earlier = graph_key("final", "function:helper", "checked")
+    mut dependency = earlier
+    mut reader = earlier
+    for edit in range(12):
+        earlier = dependency
+        dependency = graph_key("final", "function:helper", f"checked {edit}")
+        before = snapshot(root).map_err((error) => error.message())?
+        changed = put(begin(before), encode_record_key(dependency)?, f"helper {edit}".encode("utf-8"))
+        selected = commit(changed).map_err((error) => error.message())?
+        reader = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(selected, reader, [RecordRequest(key=dependency, selection=RecordSelection.Field("value"))])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    edges = indexed_keys(root, latest, "incan.engine.edge-")?
+    assert len(edges) == 2, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    assert readers_of(latest, [earlier], "profile")? == []
+    return Ok(None)
+
+
+pub def test_a_reader_of_two_contexts_of_one_record_is_found_from_each() -> Result[None, str]:
+    """
+    One evaluation that makes the same read of two contexts of one record has one incoming edge for each, though both
+    sit under the record's slot. When the next evaluation reads only one of them, the other has no reader left.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    first = graph_key("final", "function:helper", "checked 1")
+    second = graph_key("final", "function:helper", "checked 2")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    transaction = put(put(transaction, encode_record_key(first)?, b"one"), encode_record_key(second)?, b"two")
+    selected = commit(transaction).map_err((error) => error.message())?
+    reader = graph_key("body-ir", "function:main", "edit 0")
+    both = [
+        RecordRequest(key=first, selection=RecordSelection.Field("value")),
+        RecordRequest(key=second, selection=RecordSelection.Field("value")),
+    ]
+    publish_reader(selected, reader, both)?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [first], "profile")? == [reader]
+    assert readers_of(latest, [second], "profile")? == [reader]
+    edited = graph_key("body-ir", "function:main", "edit 1")
+    publish_reader(latest, edited, [both[1]])?
+    current = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(current, [first], "profile")? == []
+    assert readers_of(current, [second], "profile")? == [edited]
+    assert len(indexed_keys(root, current, "incan.engine.edge-")?) == 4
+    return Ok(None)
+
+
+pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context. Its output index entry is keyed by the slot, not by
+    the context, so after any number of edits the output index holds one entry for the slot, tombstones included, and
+    a family selection finds the current evaluation's record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut output = graph_key("body-ir", "function:main", "edit 0")
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    indexed = indexed_keys(root, latest, "incan.engine.output\t")?
+    assert len(indexed) == 1, f"after 12 edits of one declaration the output index holds {len(indexed)} entries"
+    records = reusable_family_records(latest, "body-ir", "profile")?
+    assert len(records) == 1 and records[0].key == output
+    assert records[0].value == b"edit 11"
+    return Ok(None)
+
+
+pub def test_a_family_s_listing_changes_with_each_evaluation_of_a_slot_and_with_nothing_else() -> Result[None, str]:
+    """
+    A check selects its pages again when a family's listing changes: the revisions of the family's output index
+    entries. An entry is keyed by its slot, so the listing changes through the entry's value: with every evaluation of
+    a slot in another context and with every slot that joins the family, and not when a slot is evaluated in the same
+    context again or another family's slot is evaluated.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut listings: set[str] = set()
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+        listings.add(body_listing(root)?)
+    assert len(listings) == 12, f"12 evaluations of one slot, each in a new context, gave {len(listings)} listings"
+    before = body_listing(root)?
+    again = graph_key("body-ir", "function:main", "edit 11")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, again, [read])?
+    elsewhere = graph_key("local", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, elsewhere, [read])?
+    assert body_listing(root)? == before, "the listing changed without another evaluation in the family"
+    joined = graph_key("body-ir", "function:other", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, joined, [read])?
+    assert body_listing(root)? != before, "a slot joined the family and the listing stayed the same"
+    return Ok(None)
+
+
+def body_listing(root: Path) -> Result[str, str]:
+    """The `body-ir` family's listing in the store's latest generation, as one text."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    return Ok("\n".join(family_listing(latest, "body-ir", "profile")?))
+
+
+pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context, and the slot reads the same unchanged dependency. The
+    incoming entry's value names the reading slot, the profile and the record read, none of which the edit changes, so
+    the commit finds the entry unchanged: after any number of edits it is still the frame the first evaluation wrote.
+    A reader lookup names the slot's current record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut reader = graph_key("body-ir", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+    first = incoming_segments(root)?
+    assert len(first) == 1, f"one read left {len(first)} incoming entries"
+    mut written = 0
+    for edit in range(11):
+        reader = graph_key("body-ir", "function:main", f"edit {edit + 1}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+        if incoming_segments(root)? != first:
+            written += 1
+    assert written == 0, f"{written} of 11 edits wrote the incoming entry of a read they did not change"
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+def incoming_segments(root: Path) -> Result[list[str], str]:
+    """The segment that holds each incoming edge entry's frame in the store's latest generation, in key order."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-in\t"):
+            if let Some(location) = entry.location:
+                found.append(location.segment)
+    return Ok(found)
+
+
+def graph_key(family: str, identity: str, context: str) -> RecordKey:
+    """A compiler record key in the one identity profile, origin and facet these graph tests use."""
+    return RecordKey(
+        family=family,
+        identity=identity,
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context=context,
+    )
+
+
+def publish_reader(selected: Snapshot, reader: RecordKey, reads: list[RecordRequest]) -> Result[None, str]:
+    """Publish an evaluation of `reader` that makes `reads`, retiring its slot's earlier evaluation, in one commit."""
+    mut transaction = begin(selected)
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1)
+    receipt = edge_receipt(selected, reader, reads)?
+    _ = prepare_evaluation(transaction, "claim", rank, f"{reader.context}".encode("utf-8"), receipt)?
+    supersede_outputs(selected, transaction)?
+    _ = commit(transaction).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def indexed_keys(root: Path, selected: Snapshot, prefix: str) -> Result[list[str], str]:
+    """Every key the snapshot's index holds under `prefix`, tombstones included."""
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), selected.index).map_err((error) => error.detail)?:
+        if entry.key.startswith(prefix):
+            found.append(entry.key)
+    return Ok(found)
+
+
+def edge_receipt(selected: Snapshot, output: RecordKey, requests: list[RecordRequest]) -> Result[ReadReceipt, str]:
+    """The completed receipt of an evaluation of `output` that reads `requests` through the store, in order."""
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
+    mut roots: list[str] = []
+    for request in requests:
+        roots.append(encode_record_key(request.key)?)
+    source = StoreRecordSource.open(selected, scope, roots)
+    mut reads = RecordReads.start(scope, preparation, requests)
+    for request in requests:
+        match reads.read(source, request):
+            RecordRead.Failed(_) => return Err("the dependency read failed")
+            _ => pass
+    return reads.finish().map_err((_) => "the dependency receipt failed")
+
+
+pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it_writes() -> Result[None, str]:
+    """
+    A commit merges its keys into the index in one pass: writing 64 keys under one leaf reads about the pages that
+    writing one key reads, not one root-to-leaf path per key, and every key, old and new, stays listed and found.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    mut expected: list[str] = []
+    for item in range(1000):
+        key = f"k-{1000 + item}"
+        transaction = put(transaction, key, b"earlier")
+        expected.append(key)
+    commit(transaction).map_err((error) => error.message())?
+    levels = index_levels(snapshot(root).map_err((error) => error.message())?).map_err((error) => error.message())?
+    before_one = read_counts()
+    _ = write_one(root, "k-1250-x", "one").map_err((error) => error.message())?
+    one = read_counts().pages - before_one.pages
+    # One path read to check the key and one to merge it; a page the commit wrote is never read back to install it.
+    assert one == 2 * levels, f"a one-key commit on a {levels}-level index read {one} index pages"
+    expected.append("k-1250-x")
+    transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(64):
+        key = f"k-1500-{10 + item}"
+        transaction = put(transaction, key, b"concentrated")
+        expected.append(key)
+    before_many = read_counts()
+    commit(transaction).map_err((error) => error.message())?
+    many = read_counts().pages - before_many.pages
+    assert many <= one + 4, f"a commit of one key read {one} index pages and a commit of 64 keys read {many}"
+    transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(143):
+        key = f"k-{1000 + item * 7}-spread"
+        transaction = put(transaction, key, b"spread")
+        expected.append(key)
+    transaction = put(transaction, "k-1007", b"replaced")
+    commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert keys(latest).map_err((error) => error.message())? == sorted(expected)
+    assert text(lookup(latest, "k-1007")) == "replaced"
+    assert text(lookup(latest, "k-1500-73")) == "concentrated"
+    assert text(lookup(latest, "k-1994-spread")) == "spread"
+    assert text(lookup(latest, "k-1999")) == "earlier"
+    return Ok(None)
+
+
+pub def test_a_commit_installs_one_index_file_however_large_the_store() -> Result[None, str]:
+    """
+    What a commit writes to the index is bounded by the keys it writes, not by the store: each of 1,400 commits of
+    scattered keys installs exactly one index file, holding at most one new page per key it writes on each level of the
+    index (the path that key changes), at the first generation as after the store has grown.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    keys_per_commit = 16
+    for generation in range(1, 1401):
+        mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+        for item in range(keys_per_commit):
+            transaction = put(transaction, scattered_key(generation, item), b"value")
+        files = count_files(root.joinpath("indexes"))
+        placed = pages_written()
+        published = commit(transaction).map_err((error) => error.message())?
+        installed = count_files(root.joinpath("indexes")) - files
+        assert installed == 1, f"the commit of generation {published.generation} installed {installed} index files"
+        pages = pages_written() - placed
+        levels = index_levels(published).map_err((error) => error.message())?
+        assert pages <= keys_per_commit * levels, f"generation {published.generation} wrote {pages} index pages"
+        if generation == 1 or generation == 1400:
+            println(f"S2 generation {published.generation}: {installed} index file, {pages} pages, {levels} levels")
+    return Ok(None)
+
+
+def scattered_key(generation: int, item: int) -> str:
+    """A key whose position in the index no earlier key predicts, as a content digest's would be."""
+    return "k-" + hexlify(sha256.digest(f"{generation}:{item}".encode("utf-8")))[:24]
+
+
 pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
     """
     A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or
@@ -364,9 +779,81 @@ pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys
         assert after.records - before.records == 1
         assert after.bytes - before.bytes == 24
         assert text(lookup(latest, "missing")) == "<absent>"
+        reached = len(segments(latest).map_err((error) => error.message())?)
         println(
-            f"S2 selected read: scale={scale} segments={len(latest.segments)} pages={after.pages - before.pages} records={after.records - before.records} frame_bytes={after.bytes - before.bytes}",
+            f"S2 selected read: scale={scale} segments={reached} pages={after.pages - before.pages} records={after.records - before.records} frame_bytes={after.bytes - before.bytes}",
         )
+    return Ok(None)
+
+
+pub def test_a_lookup_checks_no_index_page_an_earlier_lookup_checked() -> Result[None, str]:
+    """
+    Index pages are named by their content digest and never rewritten, so a process checks each page against its digest
+    once: looking up the same key again, or its neighbor under the same leaf, reads its path without mapping or hashing
+    any page again, and both still answer their values.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(1000):
+        transaction = put(transaction, f"k-{1000 + item}", f"value {item}".encode("utf-8"))
+    commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    before = read_counts()
+    assert text(lookup(latest, "k-1500")) == "value 500"
+    first = read_counts()
+    assert text(lookup(latest, "k-1500")) == "value 500"
+    assert text(lookup(latest, "k-1501")) == "value 501"
+    second = read_counts()
+    assert first.checked > before.checked, "the first lookup checked no index page"
+    assert second.pages > first.pages, "the later lookups read no index page"
+    again = second.checked - first.checked
+    assert again == 0, f"lookups on a path already checked checked {again} pages again"
+    return Ok(None)
+
+
+pub def test_a_commit_s_manifest_does_not_grow_with_the_store_s_generations() -> Result[None, str]:
+    """
+    Every commit adds a segment, yet the manifest a commit writes, and every later snapshot reads and checks, holds the
+    same lines at generation 3 and at generation 203: a seal costs a long-lived home what it costs a new one.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut lines: list[int] = []
+    mut written = 0
+    for generations in [3, 200]:
+        for _item in range(generations):
+            written += 1
+            write_one(root, f"key-{written}", "value").map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        manifest = Path(manifest_path(latest.root, latest.generation, latest.digest).value)
+        text = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
+        count = len(text.strip().split("\n"))
+        started = Instant.now()
+        write_one(root, f"timed-{written}", "value").map_err((error) => error.message())?
+        elapsed = started.elapsed().as_secs_f64() * 1000.0
+        println(f"S2 manifest: generation={latest.generation} lines={count} bytes={len(text)} next_commit_ms={elapsed}")
+        written += 1
+        lines.append(count)
+    assert lines[1] == lines[0], f"the manifest grew from {lines[0]} to {lines[1]} lines over 200 generations"
+    return Ok(None)
+
+
+pub def test_a_snapshot_reads_its_manifest_once() -> Result[None, str]:
+    """
+    Opening a snapshot reads, checks and decodes the selected generation's manifest once: its lease is registered
+    under the same lifecycle gate, against the manifest just decoded. A cold test case opens about twenty snapshots.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    _ = write_one(root, "key", "value").map_err((error) => error.message())?
+    observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
+    before = observed_work.get("store_manifest_read", 0)
+    held = snapshot(root).map_err((error) => error.message())?
+    reads = observed_work.get("store_manifest_read", 0) - before
+    observe_work(WorkObserver())
+    assert text(lookup(held, "key")) == "value"
+    assert reads == 1, f"opening one snapshot read its manifest {reads} times"
     return Ok(None)
 
 
@@ -430,7 +917,7 @@ pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_
     source.write_bytes(b"shared native bytes").map_err((error) => error.message())?
     put_payload(root, source).map_err((error) => error.message())?
     payloads = retained_inventory(root.joinpath("payloads"))?
-    segments = count_files(root.joinpath("segments"))
+    segment_files = count_files(root.joinpath("segments"))
     pages = count_files(root.joinpath("indexes"))
     bytes_before = retained_bytes(root)?
     before_invalid = retained_inventory(root)?
@@ -444,7 +931,7 @@ pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_
         assert retained_inventory(root)? == before_invalid, "an invalid fork changed the committed store"
     test_view = fork(home, "test").map_err((error) => error.message())?
     assert test_view.index == home.index
-    assert count_files(root.joinpath("segments")) == segments
+    assert count_files(root.joinpath("segments")) == segment_files
     assert count_files(root.joinpath("indexes")) == pages
     assert retained_inventory(root.joinpath("payloads"))? == payloads
     println(
@@ -465,7 +952,7 @@ pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_
         Err(error) =>
             assert error.kind == "conflict", error.message()
     compacted = compact(root).map_err((error) => error.message())?
-    assert len(compacted.segments) == 1
+    assert len(segments(compacted).map_err((error) => error.message())?) == 1
     assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
     assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-home")) == "<absent>"
     assert text(lookup(snapshot(root).map_err((error) => error.message())?, "only-home")) == "h"
@@ -479,7 +966,7 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
     base = snapshot(root).map_err((error) => error.message())?
     transaction = put(put(begin(base), "left", b"one"), "right", b"two")
     original = commit(transaction).map_err((error) => error.message())?
-    segment = root.joinpath("segments").joinpath(f"{original.segments[0]}.seg")
+    segment = root.joinpath("segments").joinpath(f"{segments(original).map_err((error) => error.message())?[0]}.seg")
     buffer = BytesIO(segment.read_bytes().map_err((error) => error.message())?)
     # Inject the same 128-bit accelerator into both segment-directory slots without changing either full-key frame.
     for offset in [16, 104]:
@@ -510,7 +997,8 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
                     ),
                 )
     mut collided = original
-    collided.index = build_index(store_path(root.joinpath("indexes")), entries).map_err((error) => error.detail)?
+    staging = store_path(root.joinpath("staging/collision"))
+    collided.index = write_index(store_path(root), staging, entries).map_err((error) => error.detail)?
     assert text(lookup(collided, "left")) == "one"
     assert text(lookup(collided, "right")) == "two"
     assert text(lookup(collided, "neither")) == "<absent>"
@@ -578,7 +1066,7 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
-        "objects-durable",
+        "objects-ordered",
         "pin-acquired",
         "current-written",
         "current-synced",
@@ -751,7 +1239,7 @@ def observed_finish(operation: Operation, key: str, clock: Option[Clock], bytes:
 
 
 def verify_work_observer(root: Path) -> Result[None, str]:
-    """A caller sees all six work spans, and removing it disables further callbacks."""
+    """A caller sees all seven work spans, and removing it disables further callbacks."""
     observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
     _ = write_one(root, "key", "value").map_err((error) => error.message())?
     for operation in [
@@ -761,10 +1249,35 @@ def verify_work_observer(root: Path) -> Result[None, str]:
         "store_file_rename",
         "store_directory_sync",
         "store_durable_sync",
+        "store_graph_barrier",
     ]:
         assert observed_work.get(operation, 0) > 0, f"missing store observation: {operation}"
     calls = observed_work.get("store_lock", 0)
     observe_work(WorkObserver())
     _ = write_one(root, "key", "next").map_err((error) => error.message())?
     assert observed_work.get("store_lock", 0) == calls, "disabled observer still received work"
+    return Ok(None)
+
+
+pub def test_publishing_a_view_compares_the_revision_it_read() -> Result[None, str]:
+    """
+    A compared publication commits only onto the view revision its transaction read: a second writer that read the
+    same revision and writes something else is refused, one whose writes are already there publishes nothing, a
+    fresh read publishes, and the source the view was forked from never sees the project's writes.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    home = write_one(root, "shared", "base").map_err((error) => error.message())?
+    _ = fork(home, "project").map_err((error) => error.message())?
+    read = snapshot(root, "project").map_err((error) => error.message())?
+    first = commit(put(begin_compared(read), "head", b"one")).map_err((error) => error.message())?
+    assert text(lookup(first, "head")) == "one"
+    assert error_kind(commit(put(begin_compared(read), "head", b"two"))) == "conflict", "a stale revision published"
+    already = commit(put(begin_compared(read), "head", b"one"))
+    assert error_kind(already) == "ok", "an already published write was refused"
+    fresh = snapshot(root, "project").map_err((error) => error.message())?
+    second = commit(put(begin_compared(fresh), "head", b"two")).map_err((error) => error.message())?
+    assert text(lookup(second, "head")) == "two"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "head")) == "<absent>"
+    assert text(lookup(second, "shared")) == "base"
     return Ok(None)

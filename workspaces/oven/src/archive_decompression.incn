@@ -1,0 +1,22 @@
+"""Read a zstd toolchain archive without a `zstd` program on the machine."""
+
+from std.compression.zstd import decompress_stream
+from std.fs import Path
+
+
+pub def plain_archive(archive: Path, plain: Path) -> Result[Path, str]:
+    """
+    The archive as `tar` reads it without a decompression program.
+
+    The host `tar` runs an external `zstd` to read a `.tar.zst`, and a new macOS has none, so the installation
+    decompresses such an archive in process into `plain` and returns that path. Any other archive is read as it is.
+    """
+    if not archive.0.endswith(".tar.zst"):
+        return Ok(archive)
+    source = archive.open("rb").map_err((error) => f"cannot open toolchain archive {archive.0}: {error.message()}")?
+    target = plain.open("wb").map_err((error) => f"cannot create {plain.0}: {error.message()}")?
+    decompress_stream(source, target).map_err(
+        (error) => f"cannot decompress toolchain archive {archive.0} into {plain.0}: {error.message()}",
+    )?
+    target.flush().map_err((error) => f"cannot write {plain.0}: {error.message()}")?
+    return Ok(plain)

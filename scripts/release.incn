@@ -15,7 +15,7 @@ from native_build import (
     StandardGeneration,
     StandardProfile,
     build_runtime,
-    build_candidate_standard_and_start_lsp,
+    build_candidate_standard_with_lsp,
     build_oven_with_standard_profile,
     build_source_interfaces,
     build_source_tools,
@@ -23,8 +23,11 @@ from native_build import (
     cancel_tool_build,
     finish_tool_build,
     publish_support,
+    readmit_build_home,
     require_unique_runtime_root,
+    share_seed_generations,
     standard_profiles,
+    start_candidate_lsp,
 )
 from oven_tests import host_memory, shared_memory
 from release_support import (
@@ -51,6 +54,7 @@ from release_support import (
     reclaim_paths,
     record_tree_sample,
     reuse_reference_log,
+    seed_toolchain_directory,
     require_candidate_census,
     release_receipt,
     release_rust_cache_root,
@@ -63,8 +67,15 @@ from release_support import (
     verification_program,
     write_json,
 )
+from registry_checksums import REGISTRY_CHECKSUMS, write_checksummed_registry
+from release_signer import adopt_signed_bundle, stamp_release_signer
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
+
+# Sources of the native crates the seed installs and its built tools reach by path. The seed links an installed crate
+# only into builds of the sources it was built from, so its tools take these from the seed's own commit.
+const SEED_GENERATION_SOURCES: FrozenList[str] = ["loaves/kernel/incan_lang"]
+const SEED_TOOL_SOURCE: str = "seed-tool-source"
 
 
 pub model ReleasePaths:
@@ -149,14 +160,20 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     5. Join the seed census that defines the integration inventory and passing outcomes.
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+
+    The release workflow signs between phases 4 and 6, in a job that runs nothing built here, so it invokes this twice:
+    `--stamp-signer` stamps and leaves out phase 6; `--verify-installed BUNDLE` runs phases 1, 5 and 6 on the bundle
+    it signed. A local qualification runs all seven, unstamped.
     """
     mut run = prepare_release(options)?
+    signed = run.options.signed_bundle != ""
 
     # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
     phase(run, "checkout")?
     materialize_source(run)?
-    phase(run, "seed-home")?
-    prepare_candidate_home(run)?
+    if not signed:
+        phase(run, "seed-home")?
+        prepare_candidate_home(run)?
 
     # 2. The seed census starts once its only inputs exist, yielding workers while candidate production proceeds.
     reference = match start_reference_census(run):
@@ -165,66 +182,63 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
             phase(run, "reference-verification")?
             return Err(message)
 
-    match phase(run, "source-closure"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    mut candidate = match build_source_closure(run):
+    # 3. The candidate is built here, or is the bundle the workflow signed; a refusal stops the overlapping census.
+    candidate = match produce_candidate(run):
         Ok(built) => built
         Err(message) =>
             _ = cancel_background_step(reference)
             return Err(message)
-
-    # 3. Candidate compiler selection precedes runtime and standard production through that compiler.
-    match phase(run, "candidate-compiler"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    candidate = match build_candidate_compiler(run, candidate):
-        Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-
-    # 4. Shipped tools and archive are all built from the selected source and candidate home.
-    match phase(run, "bundle"):
-        Ok(_) => pass
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-    candidate = match build_bundle(run, candidate):
-        Ok(built) => built
-        Err(message) =>
-            _ = cancel_background_step(reference)
-            return Err(message)
-
-    if not run.options.prove_fixed_point:
+    if not run.options.prove_fixed_point and not signed:
         reclaim(run, "build-lane", [run.paths.lane])?
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
     reference_log = finish_reference_census(run, reference)?
     reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
-    if not run.options.prove_fixed_point:
+    if not run.options.prove_fixed_point and not signed:
         reclaim(run, "source-targets", generated_source_targets(run))?
 
-    # 6. The fresh installation owns the candidate census and the release's one memory measurement.
-    phase(run, "installed-verification")?
-    installed = installed_verification(run, candidate)?
-    candidate_report = candidate_census(run, installed)?
-    compare_reference(run, reference_log, candidate_report)?
+    # 6. The fresh installation owns the census and the one memory measurement; a packing invocation leaves it out.
+    mut counts: Option[Counts] = None
+    if not run.options.stamp_signer:
+        phase(run, "installed-verification")?
+        installed = installed_verification(run, candidate)?
+        candidate_report = candidate_census(run, installed)?
+        compare_reference(run, reference_log, candidate_report)?
+        counts = Some(candidate_report.counts)
 
     # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
-    if run.options.prove_fixed_point:
+    if signed:
+        reclaim(run, "verified-source", [run.paths.source])?
+    elif run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
-        reclaim(run, "fixed-point-work", [run.paths.lane, run.paths.home, run.paths.source])?
+        reclaim(
+            run,
+            "fixed-point-work",
+            [run.paths.lane, run.paths.home, run.paths.source, run.paths.output.joinpath(SEED_TOOL_SOURCE)],
+        )?
     else:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
-    complete_receipt(run, candidate_report.counts)?
+    complete_receipt(run, counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def produce_candidate(run: ReleaseRun) -> Result[Candidate, str]:
+    """Phases 2 to 4: build and pack the candidate, or take the bundle the workflow signed without building anything."""
+    if run.options.signed_bundle != "":
+        phase(run, "bundle")?
+        _ = adopt_signed_bundle(Path(run.options.signed_bundle), run.paths.bundle)?
+        oven = run.paths.bundle.joinpath("incan")
+        lsp = run.paths.bundle.joinpath("incan-lsp")
+        return Ok(Candidate(context=native_context(run, oven, run.paths.home), oven=oven, lsp=lsp, pending_lsp=None))
+    # 2. Source closure, then 3. the compiler that produces the runtime and standard Loaves, then 4. the shipped tools.
+    phase(run, "source-closure")?
+    mut candidate = build_source_closure(run)?
+    phase(run, "candidate-compiler")?
+    candidate = build_candidate_compiler(run, candidate)?
+    phase(run, "bundle")?
+    return build_bundle(run, candidate)
 
 
 def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
@@ -407,8 +421,13 @@ def materialize_source(run: ReleaseRun) -> Result[None, str]:
 
 def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
     """Select immutable seed artifacts by absolute identity inside a fresh writable candidate home."""
-    seed = run.seed_home.joinpath(TOOLCHAIN_DIRECTORY)
+    seed_directory = seed_toolchain_directory(run.seed_home)?
+    seed = run.seed_home.joinpath(seed_directory)
     run.paths.toolchain.mkdir(true, true).map_err((error) => error.message())?
+    # A seed of the previous version reads the candidate home through its own version's directory name.
+    if seed_directory != TOOLCHAIN_DIRECTORY:
+        alias = run.paths.home.joinpath(seed_directory)
+        alias.symlink_to(Path(run.paths.toolchain.name())).map_err((error) => error.message())?
     mut manifest = JsonValue
         .parse(seed.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
         .map_err((error) => error.message())?
@@ -420,8 +439,9 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
         .map_err((error) => error.message())?
     apply_release_trust(run.paths.source, run.paths.toolchain)?
     share_seed_tree(seed, run.paths.toolchain, "loaves")?
-    share_seed_tree(seed, run.paths.toolchain, "native")?
-    share_seed_tree(seed, run.paths.toolchain, "registry")?
+    share_seed_generations(seed, run.paths.toolchain, "native")?
+    # The candidate ships its own registry closure, each unit with the source checksum the release pins.
+    write_checksummed_registry(run.paths.toolchain, run.paths.source.joinpath(REGISTRY_CHECKSUMS))?
     sysroot = manifest_string(read_json(run.paths.toolchain.joinpath("toolchain.json"))?, "sysroot")?
     run.paths.toolchain.joinpath("sysroot").symlink_to(Path(sysroot)).map_err((error) => error.message())?
     preserve_registry_lock(run.paths.toolchain)?
@@ -457,10 +477,11 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
-    seed_context = native_context(run, run.seed_oven, run.seed_home)
+    seed_context = seed_tool_context(run)?
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
+    readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper)?
@@ -473,6 +494,52 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
+
+
+def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
+    """Select the source tree from which the released seed builds the conductor and the support helper."""
+    context = native_context(run, run.seed_oven, run.seed_home)
+    if run.options.seed_source == "":
+        return Ok(context)
+    return Ok(
+        NativeContext(
+            repo=seed_tool_source(run)?,
+            lane=context.lane,
+            home=context.home,
+            builder=context.builder,
+            stdlib=context.stdlib,
+            evidence=context.evidence,
+            timings=context.timings,
+            jobs=context.jobs,
+            memory=context.memory,
+            timeout_seconds=context.timeout_seconds,
+            trace=context.trace,
+        ),
+    )
+
+
+def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
+    """
+    Check out the qualified source with the seed generation's own sources for the native crates the seed installs.
+
+    A seed-built tool links the seed's installed native crates, and the seed refuses a build whose selected sources for
+    such a crate differ from those it was built from. The conductor and support helper therefore take exactly those
+    crates' sources from the seed's commit and every other source from the qualified commit. Every later producer,
+    and so every shipped artifact, builds the qualified sources alone.
+    """
+    verify = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_source}^{{commit}}"]
+    if command_text("git", verify).unwrap_or("").strip() != run.options.seed_source:
+        return Err(f"--seed-source does not identify a commit in this repository: {run.options.seed_source}")
+    root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "seed-tool-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", run.options.source_sha]
+    require_release_step(run, release_step(run, "seed-tool-checkout", "git", checkout, run.root, {}))?
+    mut restore = ["-C", root.0, "restore", f"--source={run.options.seed_source}", "--staged", "--worktree", "--"]
+    for path in SEED_GENERATION_SOURCES:
+        restore.append(path)
+    require_release_step(run, release_step(run, "seed-tool-generation", "git", restore, run.root, {}))?
+    return Ok(root)
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
@@ -497,17 +564,27 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    # The language server records the compiler identity in its lock when it starts, and the readmit of the relinked
+    # driver changes that identity; it starts once the candidate interfaces and runtime are published.
+    build_candidate_providers(context, helper)?
+    pending_lsp = start_candidate_lsp(context)?
+    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+
+
+def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
+    """Readmit the relinked compiler, then produce the candidate interfaces and runtime the providers link."""
+    readmit_build_home(context, helper, "candidate-driver-readmit")?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper, "candidate-")?
     append_timing(
-        run.paths.output.joinpath("timings.tsv"),
+        context.timings,
         "candidate-source-interfaces",
         interfaces_started.elapsed().as_secs_f64(),
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    lsp, pending = build_candidate_standard_and_start_lsp(context, helper, "candidate-")?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+    return Ok(None)
 
 
 def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
@@ -527,7 +604,8 @@ def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
-    """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
+    """Build the shipped tools, stamped for the workflow, copy the bundle tools, and pack the candidate toolchain."""
+    _ = stamp_release_signer(run.paths.source, run.paths.toolchain, run.options.stamp_signer)?
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     overlap = candidate.pending_lsp.is_some()
     oven = match build_oven_with_standard_profile(
@@ -575,7 +653,7 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     identity = reference_cache_identity(
         run.seed_oven,
         run.seed_lsp,
-        run.seed_home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
+        run.seed_home.joinpath(seed_toolchain_directory(run.seed_home)?).joinpath("toolchain.json"),
         contracts_tree,
         stdlib_tree,
     )?
@@ -994,8 +1072,9 @@ def phase(run: ReleaseRun, name: str) -> Result[None, str]:
 
 
 def generated_source_targets(run: ReleaseRun) -> list[Path]:
-    """Name release-produced target roots whose binaries have already moved to the lane, home, or bundle."""
+    """Name release-produced source and target roots whose binaries have already moved to the lane, home, or bundle."""
     return [
+        run.paths.output.joinpath(SEED_TOOL_SOURCE),
         run.paths.source.joinpath("workspaces/oven/target"),
         run.paths.source.joinpath("workspaces/contracts/target"),
         run.paths.source.joinpath("loaves/toolchain/incan-lsp/target"),
@@ -1012,7 +1091,7 @@ def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]
     return Ok(None)
 
 
-def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
+def complete_receipt(run: ReleaseRun, counts: Option[Counts]) -> Result[None, str]:
     """Measure the full run, remove passing-only work trees unless retained, and publish final evidence."""
     mut oven_tests = JsonValue.null()
     runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
@@ -1030,7 +1109,10 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
     retained = measure_release_tree_bytes(run)?
     record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
     run.trace.complete()?
-    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(retained))
+    mut reached = "complete"
+    if counts.is_none():
+        reached = "packed"
+    return write_receipt(run, reached, "passed", 0, counts, oven_tests, release_tree_bytes_json(retained))
 
 
 def remove_passing_work_trees(run: ReleaseRun) -> Result[None, str]:

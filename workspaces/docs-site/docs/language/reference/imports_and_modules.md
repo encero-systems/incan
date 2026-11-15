@@ -44,6 +44,8 @@ from models import *                          # refused: wildcard (INCAN-P0001)
 
 A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b.incan`, `a/b/mod.incn`, `a/b/mod.incan`, `a/b/__init__.incn`, `a/b/__init__.incan`.
 
+Refused (`INCAN-I0001`): a module path that names none of these files in any directory it resolves from. The refusal comes from `incan check` and names the file that would define the module.
+
 ```incan
 # store/relative.incn
 from ..db.schema import Database          # accepted
@@ -65,7 +67,7 @@ The source position applies its operation after resolution. A call calls a funct
 
 Refused (`INCAN-T0001`): a namespace does not expose the requested member, including when that member is private, or the head does not provide a namespace for the remaining path. The diagnostic names the namespace and member once. The name `c` bound by `from std.interop import c` is not a module binding; its members, such as `c.i32`, are specified in [`std.interop`](stdlib/interop.md).
 
-Refused (`INCAN-T0001`): following name links returns to a link already on the active lookup walk. The diagnostic lists the loop in order and identifies where each link is written. A cycle between modules remains accepted when resolving the requested name does not repeat a name link.
+Refused (`INCAN-I0104`): following name links returns to a link already on the active lookup walk. The diagnostic lists the loop in order and identifies where each link is written. A cycle between modules remains accepted when resolving the requested name does not repeat a name link.
 
 ```incan
 import models
@@ -280,7 +282,7 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 ```
 
 - `@ "VERSION"` is a Cargo SemVer requirement. `with [...]` selects crate features, with or without `@`.
-- Without `@`, a known crate takes its default version; an unknown crate without `@` is refused.
+- Outside a project, a crate imported without `@` that an installed standard package declares in its `loaf.toml` takes that declaration's version and features; any other crate without `@` is refused.
 - Annotations are refused on a crate that `loaf.toml` configures.
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.

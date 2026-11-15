@@ -5,14 +5,18 @@ from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from engine_messages import BindingOutcome, Complete, CompletionStatus
-from engine_programs import obtain, prepare_selection
+from request_directory import serve_from, served
+from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit_pinned
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
 from installation_page import begin_command, end_command
+from trace_adapter import count_frozen_work, finish_frozen_counting
+from toolchain import toolchain_directory
+from home import standard_library_dir
 
 
 pub model Pending:
@@ -25,6 +29,10 @@ pub model Pending:
     pub proofs: bool
     pub producer: str
     pub handle: str
+    pub command: str
+    pub format: str
+    # The directory the client's command ran in; its compilations are for that directory.
+    pub directory: str = ""
 
 
 pub model ExecutionLease:
@@ -47,7 +55,9 @@ pub model Ready:
 pub def finish_request(store: Path, pending: Pending) -> Result[Ready, str]:
     """Capture installed facts once for this activation and resume reconciliation before the next request."""
     begin_command()
+    serve_from(pending.directory)
     ready = settled_request(store, pending)
+    served()
     end_command()
     return ready
 
@@ -63,23 +73,39 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
-    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    if pending.command == "check":
+        return settled_check(store, pending, directory.joinpath(run).0)
     producing = begin()
-    produced = obtain(
+    toolchain = toolchain_directory()?.0 + "/"
+    standard = standard_library_dir()?.0 + "/"
+    count_frozen_work([toolchain, standard])
+    reading = read_counts()
+    produced_result = obtain(
         store,
         pending.capture.revision,
         pending.handle,
         directory.joinpath(run).0,
         Some(pending.capture.epoch),
         pending.producer,
-    )?
+        Some(pending.capture.selected),
+    )
+    frozen = finish_frozen_counting()
+    read = read_counts()
+    mut produced = produced_result?
+    produced.index_pages = read.pages - reading.pages
+    produced.keys_listed = read.listed - reading.listed
+    mut counters = pending.capture.counters
+    counters.frozen.stats += frozen.stats
+    counters.frozen.reads += frozen.reads
+    counters.frozen.hashes += frozen.hashes
     record(Operation.EngineUnit, pending.capture.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     match produced.unit:
         None =>
             if pending.proofs:
-                observation = retain(store, run, pending.capture.counters, produced)?
+                observation = retain(store, run, counters, produced)?
             return Ok(
                 Ready(
                     message=Complete(
@@ -103,10 +129,12 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(transaction)
             if let Some(transaction) = produced.transaction:
                 group.append(transaction)
+            if let Some(transaction) = produced.view_transaction:
+                group.append(transaction)
             if let Some(transaction) = selection.transaction:
                 group.append(transaction)
             if pending.proofs:
-                group.append(prepare_report(store, run, pending.capture.counters, produced)?)
+                group.append(prepare_report(store, run, counters, produced)?)
                 observation = run
             if len(group) == 0:
                 group.append(begin_selection(selection.snapshot))
@@ -137,6 +165,52 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                     pin=Some(pin),
                 ),
             )
+
+
+def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, str]:
+    """Check the captured build reach, publish its capture, and return no native selection or execution lease."""
+    checking = begin()
+    outcome = check_program(
+        store,
+        pending.capture.revision,
+        console,
+        pending.format,
+        Some(pending.capture.epoch),
+        Some(pending.capture.selected),
+        pending.view,
+    )?
+    record(Operation.EngineUnit, pending.capture.revision, checking)
+    captured = after_projection(pending.capture)?
+    mut snapshot = captured.snapshot.digest
+    if let Some(transaction) = captured.transaction:
+        snapshot = commit(transaction).map_err((error) => error.message())?.digest
+    mut status = CompletionStatus.Success
+    if outcome.code != 0:
+        status = CompletionStatus.Failed
+    # A requested report shows that a check produced no unit, no plans and no native bake, and which bodies it checked.
+    mut observation = ""
+    if pending.proofs:
+        checked = ProgramOutcome(
+            code=outcome.code,
+            body_evaluations=outcome.body_evaluations,
+            body_reuses=outcome.body_reuses,
+            body_page_writes=outcome.body_page_writes,
+            body_page_decodes=outcome.body_page_decodes,
+        )
+        observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
+    return Ok(
+        Ready(
+            message=Complete(
+                snapshot=snapshot,
+                admission_proof="",
+                result_handles="",
+                binding_outcome=BindingOutcome.NotSelected,
+                status=status,
+                observation_handle=observation,
+            ),
+            console=outcome.console,
+        ),
+    )
 
 
 def required_pin(pin: Option[Rc[LockGuard]]) -> Result[Rc[LockGuard], str]:

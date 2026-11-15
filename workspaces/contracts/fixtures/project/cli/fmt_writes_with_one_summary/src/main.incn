@@ -1,0 +1,13 @@
+# behavior: `incan fmt` names each file it formats and prints one summary for the whole invocation, as 0.5.1 did, not one per file.
+# cli-commands:
+#   fmt src
+# expect-stdout:
+#   Formatted: src/util.incn
+#
+#   ✓ 1 file(s) formatted, 0 error(s)
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """A formatted program beside one module that is not."""
+    pass

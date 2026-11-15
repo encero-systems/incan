@@ -27,7 +27,7 @@ use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface, TypeChecker,
     YieldContext,
 };
-use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
+use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc, rust_auto_trait};
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods;
@@ -41,7 +41,7 @@ use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, S
 use std::collections::{HashMap, HashSet};
 
 use super::ownership_contracts::mutation;
-use super::{AnnotationOwner, PUBLIC_LIBRARY_NAMESPACE, ownership_contracts, reachability, type_info};
+use super::{AnnotationOwner, ownership_contracts, reachability, type_info};
 
 mod callables;
 mod classes;

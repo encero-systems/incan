@@ -4,7 +4,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.ordering import compare, compare_selectors
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
-from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField, StoredVariant
 from crate.primitives.crumb.description_dictionary import Dictionary, slot
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_field, in_variant
 from crate.primitives.crumb.encoding_index import CellIndex, RecordIndex, read_record_index, read_index, selected, bit
@@ -23,7 +23,7 @@ pub model DecodedRoot:
 
 
 pub def read_root(
-    written: StoredDescription,
+    written: &StoredDescription,
     view: MappedView,
     origin: int,
     dictionary: &Dictionary,
@@ -38,20 +38,25 @@ pub def read_root(
     variant = cursor.length(budget)?
     if variant >= len(written.variants):
         return Err(failure(BinaryFailure.VariantIndex, origin))
-    index = read_record_index(written.variants[variant].fields, cursor, budget).map_err(
-        (e) => in_variant(e, written.variants[variant].identity),
-    )?
-    fields = read_fields(written.variants[variant].fields, index, dictionary, budget).map_err(
-        (e) => in_variant(e, written.variants[variant].identity),
-    )?
-    return Ok(
-        DecodedRoot(value=Value.Enum(written.variants[variant].identity, fields), index=index, variant=Some(variant)),
-    )
+    return read_variant(written.variants[variant], variant, cursor, dictionary, budget)
+
+
+def read_variant(
+    stored: &StoredVariant,
+    variant: int,
+    mut cursor: EncodingCursor,
+    dictionary: &Dictionary,
+    mut budget: Budget,
+) -> Result[DecodedRoot, BinaryError]:
+    """Decode one enum variant's fields through the borrowed stored variant, so its field list is never copied."""
+    index = read_record_index(stored.fields, cursor, budget).map_err((e) => in_variant(e, stored.identity))?
+    fields = read_fields(stored.fields, index, dictionary, budget).map_err((e) => in_variant(e, stored.identity))?
+    return Ok(DecodedRoot(value=Value.Enum(stored.identity, fields), index=index, variant=Some(variant)))
 
 
 def read_fields(
-    shape: list[StoredField],
-    index: RecordIndex,
+    shape: &list[StoredField],
+    index: &RecordIndex,
     dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[list[ValueField], BinaryError]:
@@ -59,34 +64,34 @@ def read_fields(
     mut fields: list[ValueField] = []
     mut eligible = 0
     mut position = 0
-    for field in shape:
+    for at in range(len(shape)):
         budget.charge_elements(1).map_err((e) => primitive(e, index.bitmap_origin))?
         budget.charge_bytes(6).map_err((e) => primitive(e, index.bitmap_origin))?
         mut present = true
-        if field.shape.absent != AbsentPolicy.Required:
+        if shape[at].shape.absent != AbsentPolicy.Required:
             present = bit(index.bitmap, eligible, index.bitmap_origin)?
             eligible += 1
         mut value = Value.NoneValue
         if present:
             view, origin = selected(index.cells, position, budget)?
-            value = read_field_cell(field, view, origin, dictionary, budget).map_err(
-                (e) => in_field(e, field.shape.identity),
+            value = read_field_cell(shape[at], view, origin, dictionary, budget).map_err(
+                (e) => in_field(e, shape[at].shape.identity),
             )?
             position += 1
         else:
-            value = absent(field, index.bitmap_origin)?
+            value = absent(shape[at], index.bitmap_origin)?
         fields.append(
             ValueField(
-                identity=field.shape.identity,
-                canonical=field.shape.canonical,
-                absent=field.shape.absent,
+                identity=shape[at].shape.identity,
+                canonical=shape[at].shape.canonical,
+                absent=shape[at].shape.absent,
                 value=value,
             ),
         )
     return Ok(fields)
 
 
-pub def absent(field: StoredField, origin: int) -> Result[Value, BinaryError]:
+pub def absent(field: &StoredField, origin: int) -> Result[Value, BinaryError]:
     """Restore only the explicit stored absence, never a constructor default or missing-data guess."""
     if field.shape.absent == AbsentPolicy.NoneValue:
         return Ok(Value.NoneValue)
@@ -100,7 +105,7 @@ pub def absent(field: StoredField, origin: int) -> Result[Value, BinaryError]:
 
 
 pub def read_field_cell(
-    field: StoredField,
+    field: &StoredField,
     view: MappedView,
     origin: int,
     dictionary: &Dictionary,
@@ -167,7 +172,7 @@ def cell_inner(
 
 def container(
     kind: ContainerKind,
-    arguments: list[TypeNode],
+    arguments: &list[TypeNode],
     view: MappedView,
     origin: int,
     dictionary: &Dictionary,
@@ -219,8 +224,8 @@ def container(
 
 
 def map_cell(
-    arguments: list[TypeNode],
-    index: CellIndex,
+    arguments: &list[TypeNode],
+    index: &CellIndex,
     dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
@@ -248,7 +253,7 @@ def checked_order(previous: Value, current: Value, origin: int, mut budget: Budg
 
 
 def union_cell(
-    arguments: list[TypeNode],
+    arguments: &list[TypeNode],
     mut cursor: EncodingCursor,
     dictionary: &Dictionary,
     mut budget: Budget,

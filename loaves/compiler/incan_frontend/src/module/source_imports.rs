@@ -30,20 +30,27 @@ pub fn resolve_program_source_imports(
                 only_submodules,
             } = stdlib_namespace_items(import);
             // The module the import names, unless it names only submodules of a stdlib namespace.
-            let named_module = (!only_submodules).then(|| ResolvedProgramSourceImport {
-                span: decl.span,
-                resolution: resolve_source_module_import_from_source_file(
+            let named_module = (!only_submodules).then(|| {
+                let mut probed = Vec::new();
+                let resolution = resolve_source_module_import_probing(
                     base_dir,
                     source_root,
                     current_source_file,
                     import,
-                ),
+                    &mut probed,
+                );
+                ResolvedProgramSourceImport {
+                    span: decl.span,
+                    resolution,
+                    probed,
+                }
             });
             named_module
                 .into_iter()
                 .chain(submodules.into_iter().map(|module_path| ResolvedProgramSourceImport {
                     span: decl.span,
                     resolution: SourceModuleImportResolution::Stdlib { module_path },
+                    probed: Vec::new(),
                 }))
                 .collect()
         })
@@ -114,12 +121,28 @@ pub fn resolve_source_module_import(
 /// Resolve one import declaration while retaining the importing source-file identity when it is known.
 ///
 /// A located local module that is the importing file is classified as [`SourceModuleImportResolution::SelfImport`].
-/// This keeps accidental self imports from entering the source graph and becoming a recursive module.
+/// This keeps accidental self imports from entering the source graph and becoming a recursive module. A source path
+/// that names no file in any directory it resolves from is [`SourceModuleImportResolution::Missing`].
 pub fn resolve_source_module_import_from_source_file(
     base_dir: &Path,
     source_root: Option<&Path>,
     current_source_file: Option<&Path>,
     import: &ImportDecl,
+) -> SourceModuleImportResolution {
+    resolve_source_module_import_probing(base_dir, source_root, current_source_file, import, &mut Vec::new())
+}
+
+/// Resolve one import as [`resolve_source_module_import_from_source_file`] does, appending to `probes` every path it
+/// looked for and found absent, in lookup order.
+///
+/// Those paths are inputs of the resolution as much as the file it found: a file created at one of them changes what
+/// the import names, or makes a missing module exist.
+pub fn resolve_source_module_import_probing(
+    base_dir: &Path,
+    source_root: Option<&Path>,
+    current_source_file: Option<&Path>,
+    import: &ImportDecl,
+    probes: &mut Vec<PathBuf>,
 ) -> SourceModuleImportResolution {
     let Some((path, candidates)) = source_import_candidates(import) else {
         return SourceModuleImportResolution::External;
@@ -141,20 +164,77 @@ pub fn resolve_source_module_import_from_source_file(
     let can_use_root_import = !path.is_absolute && path.parent_levels == 0;
 
     let primary_base = primary_import_base_dir(base_dir, source_root, path);
-    if let Some(module_ref) = resolve_first_source_candidate(&primary_base, identity_root.as_deref(), &candidates) {
-        return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
-    }
-
-    if !path.is_absolute
-        && path.parent_levels == 0
-        && let Some(root) = identity_root
-        && root != primary_base
-        && let Some(module_ref) = resolve_first_source_candidate(&root, Some(&root), &candidates)
+    if let Some(module_ref) =
+        resolve_first_source_candidate(&primary_base, identity_root.as_deref(), &candidates, probes)
     {
         return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
     }
 
-    SourceModuleImportResolution::External
+    let mut bases = vec![primary_base.clone()];
+    if !path.is_absolute
+        && path.parent_levels == 0
+        && let Some(root) = identity_root
+        && root != primary_base
+    {
+        if let Some(module_ref) = resolve_first_source_candidate(&root, Some(&root), &candidates, probes) {
+            return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
+        }
+        bases.push(root);
+    }
+
+    if is_zen_import(import) {
+        return SourceModuleImportResolution::External;
+    }
+    SourceModuleImportResolution::Missing(missing_source_module(path, &bases))
+}
+
+/// Whether `import` is `import this`, which names the compiler's own Zen module rather than a source file when the
+/// program has no `this` module of its own.
+pub(super) fn is_zen_import(import: &ImportDecl) -> bool {
+    matches!(
+        &import.kind,
+        ImportKind::Module(path)
+            if path.parent_levels == 0 && !path.is_absolute && path.segments.as_slice() == [stdlib::STDLIB_THIS]
+    )
+}
+
+/// Describe a source import that resolved in none of `bases`, the directories it resolves from in resolution order.
+pub(super) fn missing_source_module(path: &ImportPath, bases: &[PathBuf]) -> MissingSourceModule {
+    let mut spelling = if path.is_absolute {
+        "crate.".to_string()
+    } else if path.parent_levels > 0 {
+        ".".repeat(path.parent_levels + 1)
+    } else {
+        String::new()
+    };
+    spelling.push_str(&path.segments.join("."));
+    let standard_path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+        .chain(path.segments.iter().cloned())
+        .collect::<Vec<_>>();
+    let standard_module =
+        (!path.is_absolute && path.parent_levels == 0 && stdlib::is_known_stdlib_module(&standard_path))
+            .then(|| standard_path.join("."));
+    let mut module_files: Vec<PathBuf> = Vec::new();
+    for base in bases {
+        let base = base.canonicalize().unwrap_or_else(|_| base.clone());
+        let module = path
+            .segments
+            .iter()
+            .fold(base, |directory, segment| directory.join(segment));
+        let file = if module.is_dir() {
+            module.join("mod.incn")
+        } else {
+            module.with_extension("incn")
+        };
+        if !module_files.contains(&file) {
+            module_files.push(file);
+        }
+    }
+    MissingSourceModule {
+        spelling,
+        standard_module,
+        module_files,
+    }
 }
 
 /// Classify a located source module while enforcing the no-self-import invariant.
@@ -212,6 +292,7 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
         SourceModuleImportResolution::Local(module_ref) => Some(module_ref.file_path),
         SourceModuleImportResolution::SelfImport { .. }
         | SourceModuleImportResolution::Stdlib { .. }
+        | SourceModuleImportResolution::Missing(_)
         | SourceModuleImportResolution::External => None,
     }
 }
@@ -277,20 +358,21 @@ pub(super) fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
 /// Resolve a module path under `source_root` to its source file, the way a crate-root import of it resolves; a
 /// standard package reaches its own `std.<root>` modules this way.
 pub fn resolve_source_module_path(source_root: &Path, segments: &[String]) -> Option<SourceModuleRef> {
-    resolve_first_source_candidate(source_root, Some(source_root), &[segments.to_vec()])
+    resolve_first_source_candidate(source_root, Some(source_root), &[segments.to_vec()], &mut Vec::new())
 }
 
-/// Resolve the first candidate path that exists under `base`.
+/// Resolve the first candidate path that exists under `base`, appending each absent path looked for to `probes`.
 pub(super) fn resolve_first_source_candidate(
     base: &Path,
     identity_root: Option<&Path>,
     candidates: &[Vec<String>],
+    probes: &mut Vec<PathBuf>,
 ) -> Option<SourceModuleRef> {
     for candidate in candidates {
         if candidate.is_empty() {
             continue;
         }
-        if let Some(file_path) = resolve_module_path_from_base(base, candidate) {
+        if let Some(file_path) = resolve_module_path_from_base(base, candidate, probes) {
             let logical_segments = identity_root
                 .and_then(|root| logical_module_segments_from_file(root, &file_path))
                 .or_else(|| logical_module_segments_from_file(base, &file_path))
@@ -410,50 +492,28 @@ pub fn logical_module_segments_from_file(base: &Path, module_file: &Path) -> Opt
 ///
 /// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`,
 /// `segments/__init__.incn`, `segments/__init__.incan`. Returns the first path that exists on disk, canonicalized when
-/// possible. Returns `None` if none match.
-pub(super) fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf> {
-    // Build file path from segments
-    let mut file_path = base.to_path_buf();
-    for segment in path {
-        file_path = file_path.join(segment);
+/// possible, and appends every path tried before it to `probes`. Returns `None` if none match.
+pub(super) fn resolve_module_path_from_base(
+    base: &Path,
+    path: &[String],
+    probes: &mut Vec<PathBuf>,
+) -> Option<PathBuf> {
+    let file_path = path
+        .iter()
+        .fold(base.to_path_buf(), |directory, segment| directory.join(segment));
+    let candidates = [
+        file_path.with_extension("incn"),
+        file_path.with_extension("incan"),
+        file_path.join("mod.incn"),
+        file_path.join("mod.incan"),
+        file_path.join("__init__.incn"),
+        file_path.join("__init__.incan"),
+    ];
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.canonicalize().unwrap_or(candidate));
+        }
+        probes.push(candidate);
     }
-
-    // Try .incn extension first (preferred)
-    let mut with_ext = file_path.clone();
-    with_ext.set_extension("incn");
-    if with_ext.exists() {
-        return Some(with_ext.canonicalize().unwrap_or(with_ext));
-    }
-
-    // Try .incan extension (legacy/alternate)
-    with_ext.set_extension("incan");
-    if with_ext.exists() {
-        return Some(with_ext.canonicalize().unwrap_or(with_ext));
-    }
-
-    // Try as directory with mod.incn
-    let mod_file = file_path.join("mod.incn");
-    if mod_file.exists() {
-        return Some(mod_file.canonicalize().unwrap_or(mod_file));
-    }
-
-    // Try as directory with mod.incan (legacy/alternate)
-    let mod_file_legacy = file_path.join("mod.incan");
-    if mod_file_legacy.exists() {
-        return Some(mod_file_legacy.canonicalize().unwrap_or(mod_file_legacy));
-    }
-
-    // Try as directory with __init__.incn (Python-style entrypoint)
-    let init_file = file_path.join("__init__.incn");
-    if init_file.exists() {
-        return Some(init_file.canonicalize().unwrap_or(init_file));
-    }
-
-    // Try as directory with __init__.incan (legacy/alternate)
-    let init_file_legacy = file_path.join("__init__.incan");
-    if init_file_legacy.exists() {
-        return Some(init_file_legacy.canonicalize().unwrap_or(init_file_legacy));
-    }
-
     None
 }

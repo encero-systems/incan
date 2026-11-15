@@ -23,11 +23,15 @@ incan run scripts/release.incn -- "$(git rev-parse HEAD)" target/release \
   --prove-fixed-point --jobs 6 --timeout 600
 ```
 
+A release is signed keylessly from the release workflow's identity (DD-0016), in a job that holds the signing token and runs only `cosign`, so the workflow invokes the program twice around that job. The first invocation adds `--stamp-signer`: it stamps `scripts/release-signer.json` into the `incan` it ships, carries the file in the toolchain it packs, and leaves out installed verification, because a stamped `incan` installs only a signed release; its receipt ends in phase `packed`. The second invocation is `--verify-installed BUNDLE`, where `BUNDLE` holds `toolchain.tar.zst`, `incan` and `incan-lsp`, each with its `ASSET.sigstore.json`: it builds nothing, installs the signed bundle with its stamped `incan`, and runs the seed census and installed verification. The two options exclude each other. Without either, the program builds an unstamped `incan`, says so in one line, and runs every phase; that is every local qualification.
+
+The seed builds only the conductor and the support helper. Both link the seed's installed native crates, and the seed links such a crate only into builds of the sources it was built from. When the source changes one of those crates (`loaves/kernel/incan_lang`), pass `--seed-source SEED_SHA`, the commit the seed was built from: the two seed-built tools then take that crate's sources from the seed's commit and everything else from the source SHA. Every later step, and so every shipped artifact, builds the source SHA alone.
+
 The program builds the source support closure, checked bootstrap interfaces, compiler, runtime, standard Loaves, Oven, language server, and contract runner. It writes `receipt.json` with schema `incan.release-rehearsal/1`, `timings.tsv`, one retained log per phase, `bundle/{incan,incan-lsp,toolchain.tar.zst}`, and `ci/run.*/` installed-verification evidence. A failure leaves a refused receipt naming the current phase. Normal qualification omits `--prove-fixed-point`; release workflows pass the flag because a published release must reproduce DD-0010's driver, runtime, lowering, standard-library floor, Oven, and runner bytes.
 
 The candidate census must have the same case keys as the seed census over the same committed fixture tree, preserve every seed PASS, and preserve the committed baseline. A fresh installation at another source, home, and Rust-sysroot path must reproduce every direct candidate outcome. Linux additionally pulls the pinned Clang artifact with oras and unpacks it through Incan libraries; macOS evidence does not establish that branch.
 
-The toolchain version directory remains `0.6.0-dev.8` because it is the installed release identity, not an orchestration name.
+The toolchain version directory remains `0.6.0-dev.9` because it is the installed release identity, not an orchestration name.
 
 ## Publication
 

@@ -49,9 +49,9 @@ fn primitive_metadata_keeps_source_ownership() -> Result<(), String> {
     Ok(())
 }
 
-/// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
+/// Carrier keys encode a declaration's kind, owner and name, never its byte span, for UTF-8 owners and expansions.
 #[test]
-fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
+fn nominal_carrier_keys_name_declarations_without_byte_spans() -> Result<(), String> {
     for (module, name) in [("types", "Pair"), ("módulo.类型", "Élément"), ("", "_")] {
         for (kind, spelling) in [
             (crate::SemanticSourceTargetKind::Model, "model"),
@@ -80,7 +80,7 @@ fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
                     .map(|value| format!("_expansion_{}", hex::encode(value)))
                     .unwrap_or_default();
                 let expected = format!(
-                    "__incan_carrier_{spelling}_{}_{}_{}_{}_{start}_{end}{suffix}",
+                    "__incan_carrier_{spelling}_{}_{}_{}_{}{suffix}",
                     owner.len(),
                     encode(&owner),
                     name.len(),
@@ -391,4 +391,33 @@ fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std
     callee.params[0].input_access = crate::IncanInputAccess::Inferred;
     assert!(stripped.input_call_profile_gap(&callee).is_none());
     Ok(())
+}
+
+/// Bodies built from the same module-wide bindings end up sharing one identity map, while a body whose map differs
+/// keeps its own, and every map keeps its contents.
+#[test]
+fn equal_identity_maps_share_one_map() {
+    let point = crate::CanonicalSymbolId::module_declaration(
+        vec!["m".to_string()],
+        "Point",
+        SemanticSourceTargetKind::Model,
+        HirSourceSpan::new(0, 5),
+    );
+    let module_wide = std::collections::BTreeMap::from([("Point".to_string(), point)]);
+    let mut bodies = vec![sample_body(), sample_body(), sample_body()];
+    bodies[0].named_type_identities = std::sync::Arc::new(module_wide.clone());
+    bodies[1].named_type_identities = std::sync::Arc::new(module_wide.clone());
+
+    share_equal_identity_maps(&mut bodies);
+
+    assert!(
+        std::sync::Arc::ptr_eq(&bodies[0].named_type_identities, &bodies[1].named_type_identities),
+        "bodies with equal maps kept one map each"
+    );
+    assert!(!std::sync::Arc::ptr_eq(
+        &bodies[0].named_type_identities,
+        &bodies[2].named_type_identities
+    ));
+    assert_eq!(*bodies[1].named_type_identities, module_wide);
+    assert!(bodies[2].named_type_identities.is_empty());
 }

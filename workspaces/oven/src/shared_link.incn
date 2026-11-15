@@ -1,13 +1,17 @@
-"""Select local debug linkage and validate every shared library before reusing a development executable."""
+"""Select local debug linkage and bind its loader generations at link time."""
 
 from std.fs import Path
-from files import read_json
-from home import home
-from json_fields import required_items, required_text
+from std.json import parse
+from bakery import fact_file
+from bakery_records import Fact
+from home_paths import bakery
 from unit import UnitDescription
-from unit_freshness import Key, artifact_identity, fingerprint
+from unit_freshness import Key, fingerprint
 
-const SCHEMA: str = "incan.native-shared/1"
+# Version 2 admits the witness's frozen loader generations when the native unit is recorded instead of on each use.
+# Version 3 links carriers from the bakery's shared native store through bakery-absolute search paths only, so an
+# executable linked in one home runs in every home that shares the bakery.
+const LINKAGE_SCHEMA: str = "incan.native-shared-linkage/3"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
@@ -25,8 +29,8 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
         return Ok(key)
     return Ok(
         Key(
-            digest="sha256:" + fingerprint([SCHEMA, key.digest])?,
-            parts=key.parts + [f"linkage {SCHEMA}"],
+            digest="sha256:" + fingerprint([LINKAGE_SCHEMA, key.digest])?,
+            parts=key.parts + [f"linkage {LINKAGE_SCHEMA}"],
             codegen=key.codegen,
             provenance=key.provenance,
             descriptor=key.descriptor,
@@ -36,11 +40,14 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
 
 
 pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
-    """Select the home's immutable native store only for a requested development executable."""
+    """
+    Select the bakery's immutable shared native store only for a requested development executable. Its carriers are
+    content-addressed, so every home that shares the bakery reads the carriers an executable fact was linked against.
+    """
     if not development_link(unit, requested):
         return Ok([])
-    directory = home()?.joinpath("store").joinpath("native-shared").absolute().map_err(
-        (error) => f"cannot make absolute {error.message()}",
+    directory = bakery()?.joinpath("native-shared").absolute().map_err(
+        (error) => f"cannot {error.message()}",
     )?
     return Ok(["--shared-native", directory.0])
 
@@ -50,29 +57,20 @@ pub def library_witness(binary: Path) -> Path:
     return Path(f"{binary.0}.native-shared.json")
 
 
-pub def witness_current(witness: Path) -> bool:
-    """Admit a loader witness only while every dynamic library it records still has its recorded generation."""
-    match loaded_libraries(witness):
-        Err(_) => return false
-        Ok(libraries) =>
-            if len(libraries) == 0:
-                return false
-            # 2. Replacement, removal and in-place rewrites all invalidate the stored executable.
-            for path, expected in libraries:
-                match artifact_identity(Path(path)):
-                    Err(_) => return false
-                    Ok(actual) =>
-                        if actual != expected:
-                            return false
-            return true
-
-
-def loaded_libraries(witness: Path) -> Result[list[tuple[str, str]], str]:
-    """Read exact loader paths and identities; differently typed fields are refused without coercion."""
-    document = read_json(witness)?
-    if required_text(document, "schema")? != SCHEMA:
-        return Err("unsupported shared native witness")
-    mut libraries: list[tuple[str, str]] = []
-    for row in required_items(document, "libraries")?:
-        libraries.append((required_text(row, "path")?, required_text(row, "identity")?))
-    return Ok(libraries)
+pub def carriers_present(store: Path, fact: Fact, binary: Path) -> Result[bool, str]:
+    """
+    Whether every library the development executable `binary` of `fact` loads is still in place. The executable loads
+    them by path when it starts, so a carrier removed from the shared native store since the link means linking it
+    again. An executable without a loader witness was linked statically and loads none.
+    """
+    match fact_file(store, fact, library_witness(Path(binary.name())).0):
+        None => return Ok(true)
+        Some(witness) =>
+            text = witness.read_text("utf-8", "strict").map_err((error) => f"{witness.0}: {error.message()}")?
+            document = parse(text).map_err((error) => f"{witness.0}: {error.message()}")?
+            listed = document.require("libraries").map_err((error) => f"{witness.0}: {error.message()}")?
+            for library in listed.expect_array().map_err((error) => f"{witness.0}: {error.message()}")?:
+                loaded = library.require("path").map_err((error) => f"{witness.0}: {error.message()}")?
+                if not Path(loaded.expect_str().map_err((error) => f"{witness.0}: {error.message()}")?).is_file():
+                    return Ok(false)
+            return Ok(true)

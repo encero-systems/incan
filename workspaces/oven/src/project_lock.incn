@@ -1,9 +1,13 @@
 """Resolve, compare and atomically publish the one oven.lock owned by a root project."""
 
 from std.fs import Path
+from std.json import JsonValue
+from c_interop import parse_c_targets
+from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader
+from intake import ManifestReader, read_digests, read_manifest_snapshot, read_project
+from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
     DEFAULT_MODE,
@@ -18,15 +22,28 @@ from lock_format import (
     validate_mode,
     write_lock,
 )
-from observation import trace
+from json_fields import required_text
+from observation import file_digest, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
+from retained_readings import recall, retain_content
 from rust_activation import DependencyDomain
-from semver_req import parse_requirement, parse_version, requirement_matches
+from semver_req import (
+    Version,
+    compare_versions,
+    lower_bound,
+    parse_requirement,
+    parse_version,
+    requirement_matches,
+    version_text,
+)
 from rust_registry import read_registry_units, registry_selection, resolve_registry
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
-from unit import project_root_of
+from unit import discovered_project
 from unit_freshness import compiler_fingerprint
+
+# The selection under which a root lock's last no-change reconciliation is retained beside the lock.
+const SETTLED_LOCK: str = "incan.oven.settled-lock/2"
 
 
 pub model LockResult:
@@ -36,6 +53,15 @@ pub model LockResult:
     pub version: str
     pub mode: str
     pub changed: bool
+    # The C interop contracts the lock records; their declared files are identified by bytes, not by a manifest.
+    pub interop: int = 0
+    # One line for each local requirement whose lower bound is not published, so that bound was not tested (RFC 125).
+    pub untested: list[str] = []
+
+
+pub def locked_report(result: LockResult) -> list[str]:
+    """What `oven lock` prints: `locked NAME VERSION (MODE)`, then each untested lower bound."""
+    return [f"locked {result.name} {result.version} ({result.mode})"] + result.untested
 
 
 pub model LockCommand:
@@ -59,7 +85,7 @@ pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
             index += 2
             continue
         if argument.startswith("-"):
-            return Err(f"unknown option `{argument}`")
+            return Err(refused_option(argument))
         if path_seen:
             return Err(f"one PATH is locked at a time; `{argument}` is a second")
         command.path = argument
@@ -83,21 +109,118 @@ pub def ensure_project_lock(
     reader: ManifestReader,
     locked: bool,
 ) -> Result[None, str]:
-    """Refresh a run, build or test root's lock silently, or prove `--locked` needs no change."""
+    """
+    Refresh a run, build or test root's lock silently, or prove `--locked` needs no change.
+
+    1. A lock last reconciled to no change, under the same question, is not resolved again while it and the one
+       manifest that reconciliation read keep the identities they had.
+    2. Otherwise reconcile, and retain a no-change result for the next command.
+    """
     match root_project(path)?:
         None => return Ok(None)
         Some(root) =>
-            _ = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            # 1. An edit to a source changes nothing a lock is resolved from.
+            question = settled_question(profile, request, substitutes, locked)?
+            mut lock = ""
+            if lock_path(root).is_file():
+                lock = content_identity(lock_path(root))?
+            if settled(root, question, lock)?:
+                return Ok(None)
+            # 2. Only a no-change result is retained, for the lock bytes it compared against.
+            result = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            if not result.changed and result.interop == 0:
+                remember_settled(root, question, reader, lock)
             return Ok(None)
 
 
-def root_project(path: Path) -> Result[Option[Path], str]:
+def settled_question(
+    profile: str,
+    request: FeatureRequest,
+    substitutes: Dict[str, str],
+    locked: bool,
+) -> Result[str, str]:
+    """
+    Everything a root's lock is resolved from besides its own manifest and lock: the request, the toolchain and the
+    registry closure it ships, as one selection.
+    """
+    toolchain = load_toolchain()?
+    closure = observe(Path(toolchain.registry_units))?
+    mut parts = [SETTLED_LOCK, TOOLCHAIN, compiler_fingerprint(toolchain)?, toolchain.registry_units_identity]
+    parts.append(closure.stamp)
+    parts.append(profile)
+    parts.append(",".join(request.features))
+    parts.append(f"{request.default_features} {request.all_features} {locked}")
+    for name in sorted([key for key in substitutes.keys()]):
+        parts.append(f"{name}={substitutes[name]}")
+    return Ok("\n".join(parts))
+
+
+def content_identity(path: Path) -> Result[str, str]:
+    """A file's identity by its bytes alone; a restored modification time or an unchanged size hides no edit."""
+    return Ok(f"sha256:{file_digest(path)?}")
+
+
+def settled(root: Path, question: str, lock: str) -> Result[bool, str]:
+    """
+    Whether the root's lock, whose bytes have identity `lock`, was last reconciled to no change under `question`, and
+    the root manifest that reconciliation read still has the bytes it read.
+    """
+    if lock == "":
+        return Ok(false)
+    path = lock_path(root)
+    match recall(path, question, lock):
+        None => return Ok(false)
+        Some(value) =>
+            manifest = root.joinpath("loaf.toml")
+            if required_text(value, "manifest").unwrap_or("") != manifest.0 or not manifest.is_file():
+                return Ok(false)
+            if content_identity(manifest)? != required_text(value, "digest").unwrap_or(""):
+                return Ok(false)
+            trace(f"lock settled {path.0}")
+            return Ok(true)
+
+
+def remember_settled(root: Path, question: str, reader: ManifestReader, lock: str) -> None:
+    """
+    Retain a no-change reconciliation of the lock with identity `lock` when it read one manifest, the root's, and that
+    manifest and the lock still hold the bytes it read. A project with path dependencies is reconciled every time.
+    """
+    # 1. Every manifest the reader parsed must be the root's, however its path was spelled, with one set of bytes.
+    digests = read_digests(reader)
+    manifest = root.joinpath("loaf.toml")
+    mut read = ""
+    for spelled in digests.keys():
+        match Path(spelled).resolve():
+            Err(_) => return
+            Ok(resolved) =>
+                if resolved.0 != manifest.0 or (read != "" and read != digests[spelled]):
+                    return
+                read = digests[spelled]
+    if read == "" or lock == "":
+        return
+    # 2. Neither file changed since the reconciliation read it.
+    match content_identity(manifest):
+        Err(_) => return
+        Ok(current) =>
+            if current != f"sha256:{read}":
+                return
+    path = lock_path(root)
+    match content_identity(path):
+        Err(_) => return
+        Ok(current) =>
+            if current != lock:
+                return
+    value = JsonValue.object({"manifest": JsonValue.string(manifest.0), "digest": JsonValue.string(f"sha256:{read}")})
+    retain_content(path, question, lock, value)
+
+
+pub def root_project(path: Path) -> Result[Option[Path], str]:
     """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
     if path.is_dir() and path.joinpath("loaf.toml").is_file():
-        return Ok(Some(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
-    match project_root_of(path):
+        return Ok(Some(path.resolve().map_err((error) => f"cannot {error.message()}")?))
+    match discovered_project(path)?:
         None => return Ok(None)
-        Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
+        Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot {error.message()}")?))
 
 
 def reconcile(
@@ -114,7 +237,7 @@ def reconcile(
     Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
 
     1. Read and authenticate an existing lock before it can constrain selection.
-    2. Choose the explicit, sticky or default mode, resetting to the default after a toolchain change.
+    2. Choose the explicit mode, else the one the existing lock records under any toolchain, else the default.
     3. Resolve with valid existing producer pins and construct the complete format-1 graph.
     4. Refuse a locked change, or publish a changed lock without changing command output.
     """
@@ -132,7 +255,7 @@ def reconcile(
                 return Err(
                     f"{path.0} records toolchain {known.toolchain.version} ({known.toolchain.identity}), not {TOOLCHAIN} ({identity}); run `oven lock`",
                 )
-    mode = selected_mode(existing, requested_mode, identity)
+    mode = selected_mode(existing, requested_mode)
     rustc = rust_compiler(toolchain)
     configuration = target_configuration(rustc)?
     demand = LocalDemand(
@@ -143,13 +266,17 @@ def reconcile(
         all_features=request.all_features,
     )
     facets = local_facets(demand, configuration, substitutes, reader)?
+    refuse_unmanaged_providers([root.0] + [facet.project for facet in facets], reader)?
     mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false)?
     registry.resolution_mode = mode
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
-    selected = resolve_registry(registry, facets, profile)?
-    generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
+    selected = resolve_registry(registry, facets, profile, root.0)?
+    mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
+    projects = [("", root.0)] + [(facet_package(facet), facet.project) for facet in facets]
+    generated.interop = local_interop(root.0, projects, reader)?
+    generated.graph = graph_identity(generated)?
     root_entry = root_loaf(generated)?
     changed = existing is None or not same_resolution(existing, generated)
     if locked and changed:
@@ -157,16 +284,112 @@ def reconcile(
     if write and changed:
         write_lock(path, generated)?
         trace(f"lock refreshed {path.0} graph={generated.graph}")
-    return Ok(LockResult(name=root_entry.name, version=root_entry.version, mode=mode, changed=changed))
+    return Ok(
+        LockResult(
+            name=root_entry.name,
+            version=root_entry.version,
+            mode=mode,
+            changed=changed,
+            interop=len(generated.interop),
+            untested=untested_bounds(facets, registry.units, selected)?,
+        ),
+    )
 
 
-def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
-    """Use an explicit mode, otherwise keep a same-toolchain lock's mode or take the default."""
+def refuse_unmanaged_providers(projects: list[str], reader: ManifestReader) -> Result[None, str]:
+    """
+    RFC 117: an Oven-managed provider satisfies a `provider` requirement, and this toolchain manages none, so a graph
+    that declares one is refused by name rather than resolved without it.
+    """
+    for project in unique(projects):
+        intent = read_project(Path(project), reader).map_err((error) => error.message())?.intent
+        for wanted in intent.providers:
+            manifest = Path(project).joinpath("loaf.toml").0
+            return Err(
+                f"{manifest}: `dependencies.{wanted.alias}` requires provider `{wanted.provider}` "
+                + f"{wanted.version}, and Oven {TOOLCHAIN} manages no providers",
+            )
+    return Ok(None)
+
+
+pub def untested_bounds(
+    facets: list[LocalFacet],
+    published: list[RegistryUnit],
+    selected: RegistryUnits,
+) -> Result[list[str], str]:
+    """
+    RFC 125: each local requirement whose lower bound names a version that is not published, with the version locked
+    in its place, so the report shows that the bound itself was not tested.
+    """
+    mut lines: list[str] = []
+    for facet in facets:
+        for record in facet.registry:
+            selection = registry_selection(record)?
+            match lower_bound(parse_requirement(selection.requirement)?):
+                None => pass
+                Some(bound) =>
+                    demand = RegistryDemand(selection=selection, domain=facet.domain.value())
+                    if not published_version(published, selection.loaf, bound)? and demand.key() in selected.bindings:
+                        unit = unit_for(selected.bindings[demand.key()], selected.units)?
+                        line = f"untested lower bound: {selection.loaf} {version_text(bound)} is not published; locked {unit.version}"
+                        if line not in lines:
+                            lines.append(line)
+    return Ok(lines)
+
+
+def published_version(units: list[RegistryUnit], loaf: str, version: Version) -> Result[bool, str]:
+    """Whether the registry publishes exactly `version` of `loaf`."""
+    for unit in units:
+        if unit.loaf == loaf and unit.refusal == "" and compare_versions(parse_version(unit.version)?, version) == 0:
+            return Ok(true)
+    return Ok(false)
+
+
+pub def local_interop(
+    root: str,
+    projects: list[Tuple[str, str]],
+    reader: ManifestReader,
+) -> Result[list[LockInterop], str]:
+    """
+    Each local project's `[[interop.c.targets]]` contracts, as `(package, root)` pairs name them: the root's, then each
+    path dependency's under its package, every declared file identified by its bytes.
+    """
+    mut entries: list[LockInterop] = []
+    mut seen: list[str] = []
+    for package, named in projects:
+        project = Path(named).resolve().map_err((error) => f"{named}: {error.message()}")?.0
+        if project in seen:
+            continue
+        seen.append(project)
+        for entry in project_interop(Path(project), reader)?:
+            mut scoped = entry
+            if project != root:
+                scoped.package = package
+            entries.append(scoped)
+    return Ok(entries)
+
+
+def project_interop(root: Path, reader: ManifestReader) -> Result[list[LockInterop], str]:
+    """
+    One manifest's `[[interop.c.targets]]` contracts. Only the `[interop]` table is read here, so a project of any
+    kind, a Rust facet's included, locks as before.
+    """
+    snapshot = read_manifest_snapshot(root, reader).map_err((error) => error.message())?
+    manifest = root.joinpath("loaf.toml").0
+    table = snapshot.parsed.as_table().map_err((error) => f"{manifest}: {error.message()}")?
+    targets = parse_c_targets(table, manifest).map_err((error) => error.message())?
+    return locked_interop(root.0, targets)
+
+
+pub def selected_mode(existing: Option[OvenLock], requested: str) -> str:
+    """
+    Use an explicit mode, otherwise keep the mode an existing lock records, under any toolchain, so nothing switches
+    it back quietly (RFC 125); a project without a lock takes the default.
+    """
     if requested != "":
         return requested
     if let Some(known) = existing:
-        if known.toolchain.version == TOOLCHAIN and known.toolchain.identity == identity:
-            return known.mode
+        return known.mode
     return DEFAULT_MODE
 
 
@@ -293,7 +516,7 @@ pub def toolchain_entry(
     bindings: Dict[str, str],
     target: str,
 ) -> Result[LockLoaf, str]:
-    """Record one selected shipped unit and its exact producer dependency entries."""
+    """Record one selected shipped unit, the source digest its closure records, and its exact dependency entries."""
     mut dependencies: list[LockDependency] = []
     for dependency in unit.dependencies:
         child = unit_for(dependency, units)?
@@ -312,6 +535,7 @@ pub def toolchain_entry(
             version=unit.version,
             origin="toolchain",
             registry=unit.registry,
+            checksum=unit.source_digest,
             entry=unit.entry,
             dependencies=dependencies,
             features=[
@@ -405,7 +629,17 @@ def difference(existing: Option[OvenLock], generated: OvenLock) -> str:
             return f"version mode {known.mode} -> {generated.mode}"
         known_root = root_loaf(known)
         generated_root = root_loaf(generated)
+        interop = interop_difference(known.interop, generated.interop)
+        if interop != "":
+            return interop
         if known_root != generated_root:
             return "the root Loaf or one of its dependency edges"
         return "the resolved dependency graph"
     return "the missing lock"
+
+
+def facet_package(facet: LocalFacet) -> str:
+    """The package name a local project's lock facts are keyed by: its declared name, else its directory's."""
+    if facet.package != "":
+        return facet.package
+    return Path(facet.project).name()

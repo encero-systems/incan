@@ -74,7 +74,10 @@ impl TypeChecker {
             })
         {
             if crate::trace_flags::trace_rust_facts() {
-                eprintln!("rust open owner read needs parameters: {name} {signature:?}");
+                crate::trace_line!(
+                    crate::trace_flags::Category::RustFacts,
+                    "rust open owner read needs parameters: {name} {signature:?}"
+                );
             }
             return false;
         }
@@ -262,9 +265,12 @@ impl TypeChecker {
         let fixed = substitute_resolved_type(template, arguments);
         let binding = self.open_rust_generic_bindings.remove(index);
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "rust open owner fixed: {} = {}.{} => {fixed:?}",
-                binding.name, binding.call.owner, binding.call.method
+                binding.name,
+                binding.call.owner,
+                binding.call.method
             );
         }
         let settled = self.settle_fixed_open_rust_binding(&binding, &fixed);

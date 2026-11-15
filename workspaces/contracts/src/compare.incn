@@ -7,6 +7,10 @@ from std.json import JsonValue, parse
 from header import Header, lines_of
 from run import Outcome
 
+# What an expected output line writes for a duration the run prints in seconds, such as the native test harness's
+# `finished in 0.00s`.
+const DURATION: str = "<duration>"
+
 
 pub def compare(family: str, header: Header, outcome: Outcome) -> list[str]:
     """Every expectation of `header` that `outcome` breaks."""
@@ -64,7 +68,7 @@ def ran(header: Header, outcome: Outcome) -> list[str]:
     actual = lines_of(outcome.stdout)
     if header.declares("expect-stdout"):
         expected = header.items("expect-stdout")
-        if actual != expected:
+        if not lines_match(expected, actual):
             failures.append(f"stdout differs\n{block("expected", expected)}\n{block("actual", actual)}")
     for line in header.items("expect-stdout-contains"):
         if line not in actual:
@@ -85,6 +89,10 @@ def stderr_and_exit(header: Header, outcome: Outcome) -> list[str]:
     for item in header.items("expect-stderr-contains"):
         if item not in outcome.stderr:
             failures.append(f"stderr does not contain `{item}`")
+    for item in header.items("expect-stderr-once"):
+        seen = len(outcome.stderr.split(item)) - 1
+        if seen != 1:
+            failures.append(f"stderr contains `{item}` {seen} times, not once")
     if outcome.code != Some(header.expected_exit()):
         failures.append(f"expected exit {header.expected_exit()}; it exited {outcome.exit_text()}")
     return failures
@@ -164,3 +172,43 @@ def listing(items: list[str]) -> str:
     if len(items) == 0:
         return "nothing"
     return ", ".join(items)
+
+
+def lines_match(expected: list[str], actual: list[str]) -> bool:
+    """Whether printed lines are the expected ones, line for line; `<duration>` in an expected line stands for one."""
+    if len(expected) != len(actual):
+        return false
+    for index in range(len(expected)):
+        if not line_matches(expected[index], actual[index]):
+            return false
+    return true
+
+
+def line_matches(expected: str, actual: str) -> bool:
+    """
+    Whether a printed line is the expected one. An expected line with one `<duration>` matches a line with the same
+    text around it and, in its place, a number of seconds such as `0.00s`.
+    """
+    parts = expected.split(DURATION)
+    if len(parts) != 2:
+        return expected == actual
+    before = parts[0]
+    after = parts[1]
+    if len(actual) <= len(before) + len(after) or not actual.startswith(before) or not actual.endswith(after):
+        return false
+    return is_seconds(actual[len(before):len(actual) - len(after)])
+
+
+def is_seconds(text: str) -> bool:
+    """Whether a text is a number of seconds as the native test harness prints it: digits, a point, digits, `s`."""
+    if not text.endswith("s"):
+        return false
+    number = text[0:len(text) - 1]
+    halves = number.split(".")
+    if len(halves) != 2 or len(halves[0]) == 0 or len(halves[1]) == 0:
+        return false
+    for half in halves:
+        for character in half:
+            if character not in "0123456789":
+                return false
+    return true

@@ -1,0 +1,6 @@
+[project]
+name = "test_runner_options_run_the_selection"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

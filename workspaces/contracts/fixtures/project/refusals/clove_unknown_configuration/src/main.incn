@@ -1,0 +1,23 @@
+# behavior: a binding that links a configuration its Clove does not declare is refused, naming the declared ones (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   unknown configuration `fast` of Clove `clove_unknown_configuration`; it declares `default`, `wide`
+
+from std.interop import c
+
+
+binding R:
+    header = "include/r.h"
+    link = c.loaf_library("clove_unknown_configuration", configuration="fast")
+
+    symbol value() -> c.i32:
+        native = "r_value"
+
+
+def main() -> None:
+    unsafe:
+        println(R.value())

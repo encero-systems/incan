@@ -1,0 +1,12 @@
+"""A slow test runs only when a run asks for slow tests."""
+
+from std.testing import slow
+
+
+@slow
+def test_slow_path() -> None:
+    assert true
+
+
+def test_plain() -> None:
+    assert true

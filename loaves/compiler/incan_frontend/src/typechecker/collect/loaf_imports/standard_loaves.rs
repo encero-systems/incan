@@ -243,24 +243,25 @@ impl TypeChecker {
         Some(info)
     }
 
-    /// The path `library`'s public modules are bound under (see [`LoafEntry::binding_root`]).
+    /// The path `library`'s public modules are bound under (see [`LoafEntry::binding_root`]), from the index's
+    /// admission alone.
     pub(in crate::typechecker) fn loaf_binding_root(&self, library: &str) -> Vec<String> {
         self.loaves
-            .entry(library)
-            .map(LoafEntry::binding_root)
+            .admitted(library)
+            .map(|admitted| admitted.binding_root)
             .unwrap_or_else(|| vec!["pub".to_string(), library.to_string()])
     }
 
     /// Identify an admitted module by its provider package while its lexical binding keeps the dependency alias.
     /// Standard namespaces retain their `std` module origins; a consumer's package alias never becomes a declaring
-    /// package in executable requirements.
+    /// package in executable requirements. The index's admission names both, so no manifest is read.
     pub(super) fn loaf_module_identity(&self, library: &str, module: &[String]) -> Option<CanonicalSymbolId> {
-        let entry = self.loaves.entry(library)?;
-        let mut root = entry.binding_root();
+        let admitted = self.loaves.admitted(library)?;
+        let mut root = admitted.binding_root;
         if let [namespace, owner] = root.as_mut_slice()
             && namespace == "pub"
         {
-            owner.clone_from(&entry.artifact.name);
+            owner.clone_from(&admitted.name);
         }
         root.extend_from_slice(module);
         SymbolTable::module_path_identity(&root)
@@ -269,9 +270,9 @@ impl TypeChecker {
     /// The Loaf import a `std.*` module path reaches: the standard package owning its namespace root, and the module
     /// path inside that package's manifest.
     pub(in crate::typechecker) fn standard_loaf_import(&self, segments: &[String]) -> Option<LoafImport> {
-        let entry = self.loaves.owner_of(segments)?;
+        let owner = self.loaves.admitted_owner_of(segments)?;
         Some(LoafImport {
-            key: entry.key.clone(),
+            key: owner.key,
             module: segments[1..].to_vec(),
         })
     }

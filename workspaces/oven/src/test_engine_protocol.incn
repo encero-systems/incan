@@ -1,7 +1,7 @@
 """Engine control-channel boundaries reject malformed input before allocating or admitting work."""
 
-from core_process import Process, spawn_detached
-from rust::std::thread import sleep
+from core_process import Process, executable, spawn_detached
+from rust::std::thread import sleep, spawn
 from rust::std::time import Duration
 from rust::std::string import String as RustString
 from std.environ import get_or
@@ -11,7 +11,7 @@ from files import write, json_text
 from bakery_roots import Collected, collect
 from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
-from engine_client import service_identity
+from engine_client import service_generation, service_identity
 from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
@@ -19,116 +19,115 @@ from std.json import JsonValue, parse
 from rust::std::process import Child, Command
 from pub::incan_platform.ipc import Connection, dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
-from observation import observe
 from toolchain import load_toolchain, toolchain_directory
-from unit_freshness import fingerprint
-from engine_channel import Channel, SendOutcome
-from engine_codec import decode, encode
+from engine_channel import Channel
 from engine_messages import (
     BindingOutcome,
     CompletionStatus,
-    Resolution,
-    EffectDisposition,
     Message,
     Hello,
-    Welcome,
     Submit,
     Accepted,
     Captured,
-    Query,
-    Page,
     Event,
     Complete,
-    Cancel,
-    Cancelled,
-    Resolve,
-    Pin,
     Release,
     Drain,
     Stop,
-    Ack,
     Refused,
 )
 from engine_state import Identity, ServiceState
 from scratch import scratch_directory
-from engine_wire import Header, Refusal, RefusalKind, zero_id, decode_header, encode_header, joined, scalar
+from engine_wire import Refusal, RefusalKind, zero_id, joined, scalar
+from trace_adapter import count_work, finish_counting
 
 
-def kind(result: Result[Header, Refusal]) -> Option[RefusalKind]:
-    """Retain a typed header refusal for exact category assertions."""
-    match result:
-        Ok(_) => return None
-        Err(refusal) => return Some(refusal.kind)
+pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:
+    """A nonblocking transport resumes one frame after its peer pauses between partial writes."""
+    scratch = scratch_directory()?
+    socket = scratch.path().joinpath("split.sock")
+    source = scratch.path().joinpath("writer.incn")
+    write(
+        source,
+        "from rust::std::io import Write\nfrom rust::std::os::unix::net import UnixStream\nfrom rust::std::thread import sleep\nfrom rust::std::time import Duration\ndef main() -> None:\n    mut peer = UnixStream.connect(\"" + socket.0 + "\").unwrap()\n    peer.write_all([97u8 for _index in range(17)]).unwrap()\n    sleep(Duration.from_millis(20))\n    peer.write_all([98u8 for _index in range(47)]).unwrap()\n",
+    )?
+    mut listener = listen(socket.0, true)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut writer = spawn_detached(binary, ["run", source.0], {})?
+    reader = listener.accept()?
+    worker = spawn(() => read_split_frame(reader))
+    match worker.join():
+        Ok(outcome) => outcome?
+        Err(_) => return Err("split-frame reader thread panicked")
+    return await_exit(writer, true)
 
 
-pub def test_header_round_trip_and_malformed_frames() -> Result[None, str]:
-    """The exact 64-byte layout survives round trips; malformed fields fail closed before payload reads."""
-    check_short_transport()?
-    check_bodies()?
-    header = Header(tag=3, session=zero_id(), request=zero_id(), sequence=72623859790382856u64, length=65536)
-    raw = encode_header(header).map_err((error) => error.detail)?
-    assert len(raw) == 64
-    assert raw[:8] == "INCENG01".encode("utf-8")
-    assert raw[48:56] == scalar(72623859790382856, 8)
-    decoded = decode_header(raw).map_err((error) => error.detail)?
-    assert decoded.sequence == header.sequence
-    assert decoded.length == 65536
-    assert decoded.request == header.request
-    assert kind(decode_header(raw[:63])) == Some(RefusalKind.ShortRead)
-    assert kind(decode_header(joined(["BADMAGIC".encode(), raw[8:]]))) == Some(RefusalKind.BadMagic)
-    assert kind(decode_header(joined([raw[:8], scalar(2, 2), raw[10:]]))) == Some(RefusalKind.Version)
-    assert kind(decode_header(joined([raw[:56], scalar(65537, 4), raw[60:]]))) == Some(RefusalKind.Oversized)
-    assert kind(decode_header(joined([raw[:60], scalar(1, 4)]))) == Some(RefusalKind.Reserved)
-    assert kind(decode_header(joined([raw[:14], scalar(2, 2), raw[16:]]))) == Some(RefusalKind.Flags)
+def read_split_frame(reader: Connection) -> Result[None, str]:
+    """Own an accepted connection on another thread and finish its interrupted frame read there."""
+    mut connection = reader
+    connection.poll_reads()?
+    frame = connection.read_part(64, 64)?
+    assert len(frame) == 64 and frame[0] == 97u8 and frame[16] == 97u8
+    assert frame[17] == 98u8 and frame[63] == 98u8
     return Ok(None)
 
 
-pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
-    """The ninth data frame stays with its caller; cancellation and exact acknowledgments still pass."""
+pub def test_records_engine_check_uses_the_build_route_without_codegen() -> Result[None, str]:
+    """An accepted and refused census check use records capture but produce no native binary."""
     scratch = scratch_directory()?
-    path = scratch.path().joinpath("e.sock").0
-    mut listener = listen(path, true)?
-    mut client = Channel(transport=dial(path)?)
-    mut server = Channel(transport=listener.accept()?)
-    for _index in range(8):
-        match client.send(zero_id(), Message.Event(Event(status="progress", trace_handle=""))).map_err(detail)?:
-            SendOutcome.Sent(_) => pass
-            SendOutcome.Blocked =>
-                assert false, "initial data credit blocked"
-    blocked = client.send(zero_id(), Message.Event(Event(status="ninth", trace_handle=""))).map_err(detail)?
-    match blocked:
-        SendOutcome.Blocked => pass
-        SendOutcome.Sent(_) =>
-            assert false, "ninth frame was sent without credit"
-    assert client.sent == 8
-    assert client.pending.held() == 8
-    _ = client.send(zero_id(), Message.Cancel(Cancel(interest_token="interest"))).map_err(detail)?
-    first = server.receive().map_err(detail)?
-    server.acknowledge(first).map_err(detail)?
-    acknowledged = client.receive().map_err(detail)?
-    match client.send(zero_id(), Message.Event(Event(status="resumed", trace_handle=""))).map_err(detail)?:
-        SendOutcome.Blocked =>
-            assert false, "acknowledged credit did not resume the sender"
-        SendOutcome.Sent(_) => pass
-    for _index in range(7):
-        consumed = server.receive().map_err(detail)?
-        server.acknowledge(consumed).map_err(detail)?
-    cancel = server.receive().map_err(detail)?
-    match cancel.message:
-        Message.Cancel(value) =>
-            assert value.interest_token == "interest"
-        _ =>
-            assert false, "control frame was lost behind exhausted data credits"
-    # An acknowledgment that names no outstanding frame returns no credit and retires the connection.
-    forged = server.send(zero_id(), Message.Ack(Ack(sequence=99u64))).map_err(detail)?
-    for _index in range(7):
-        returned = client.receive().map_err(detail)?
-    match client.receive():
-        Ok(_) =>
-            assert false, "a forged acknowledgment returned a credit"
-        Err(reason) =>
-            assert reason.kind == RefusalKind.Credit
-    assert client.retired
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    source = project.joinpath("main.incn")
+    write(
+        source,
+        "# behavior: a model with typed fields, one with a default, checks beside a function\n# expect-accepted:\n\nmodel User:\n    name: str\n    age: int = 0\n    email: str\n\ndef greet(name: str) -> str:\n    return \"Hello\"\n",
+    )?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    checked = exercise_records_check(binary, source, store, project)
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    return checked
+
+
+def exercise_records_check(binary: str, source: Path, store: Path, project: Path) -> Result[None, str]:
+    """Run one accepted and one refused census check while the caller owns engine cleanup."""
+    accepted = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    expected = b"{\x0a  \"schema_version\": 2,\x0a  \"ok\": true,\x0a  \"diagnostics\": []\x0a}\x0a"
+    assert accepted.status.success() and accepted.stdout == expected and accepted.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "records check generated a native binary directory"
+    write(
+        source,
+        "# behavior: returning a str from a function declared to return int is refused\n# expect-diagnostic: INCAN-T0001\n\ndef foo() -> int:\n    return \"not an int\"\n",
+    )?
+    refused = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .arg("--format")
+        .arg("json")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    report = RustString.from_utf8(refused.stdout).map_err((error) => str(error))?
+    assert refused.status.code() == Some(1i32) and "INCAN-T0001" in str(report) and refused.stderr == b""
+    assert not project.joinpath("target/incan/debug/bin").exists(), "refused records check generated code"
     return Ok(None)
 
 
@@ -137,14 +136,89 @@ def detail(refusal: Refusal) -> str:
     return refusal.detail
 
 
+pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[None, str]:
+    """Byte-identical engine executables negotiate one service generation after installation relocation."""
+    scratch = scratch_directory()?
+    binary = Path(executable()?)
+    relocated = scratch.path().joinpath("relocated-oven")
+    relocated.write_bytes(binary.read_bytes().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    assert service_generation(binary.0)? == service_generation(relocated.0)?
+    return Ok(None)
+
+
+pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
+    """
+    A compiler worker names the native inputs of shared carriers, the driver among them, by their bytes once per file
+    identity: the store records each digest, so a fresh worker hashes no input an earlier worker hashed.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("hello.incn")
+    store = root.joinpath("store")
+    observations = root.joinpath("observations")
+    observations.mkdir(true, true).map_err((error) => error.message())?
+    for edit in range(2):
+        write(source, f"def main() -> None:\n    println(\"fresh {edit}\")\n")?
+        # Each activation retires its worker, so the second edit is compiled by a fresh one.
+        outcome = Command
+            .new(binary)
+            .arg("run")
+            .arg(source.0)
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_ENGINE_TRACE", observations.0)
+            .env("INCAN_WORKER_FOOTPRINT_BOUND", "1")
+            .output()
+            .map_err((error) => str(error))?
+        if not outcome.status.success() or outcome.stdout != f"fresh {edit}\n".encode("utf-8"):
+            error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+            _ = stop_engine(store, binary)
+            return Err(f"fresh-worker run {edit}: status={outcome.status.code()} stderr={error}")
+    stop_engine(store, binary)?
+    mut hashed_by: Dict[str, int] = {}
+    for entry in observations.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut inputs: set[str] = set()
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::native_input_digest",
+            ):
+                fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                    (error) => error.message(),
+                )?
+                inputs.add(fields["input"].expect_str().map_err((error) => error.message())?)
+        for input in inputs:
+            hashed_by[input] = hashed_by.get(input, 0) + 1
+    println(f"native inputs hashed: {len(hashed_by)}")
+    # The first edit's worker names every carrier input, so a driver that traces none of its hashes cannot pass.
+    assert len(hashed_by) > 0, "no worker traced a native input hash"
+    again = sorted([input for input in hashed_by.keys() if hashed_by[input] > 1])
+    assert len(again) == 0, f"fresh workers hashed native inputs an earlier worker hashed: {again}"
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?
     store = admission.path().joinpath("store")
     store.mkdir(true, true).map_err((error) => error.message())?
     installed = service_identity(store)?
+    prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
+    count_work(prefix)
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
+    repeated = finish_counting()
+    assert repeated.stats == 0 and repeated.reads == 0 and repeated.hashes == 0, f"repeated service identity touched frozen inputs: stats={repeated.stats} reads={repeated.reads} hashes={repeated.hashes}"
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
     admissions = durable_commits()
     other = admission.path().joinpath("another-store")
@@ -254,7 +328,7 @@ def check_project_directory_selection() -> Result[None, str]:
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"project records run: status={outcome.status.code()} stderr={error}")
     mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    identity.service_generation = service_generation(binary)?
     mut channel = connect_with(store, identity, binary).map_err(detail)?
     channel.send(zero_id(), Message.Stop(Stop(reason="project selection proof completed"))).map_err(detail)?
     stopped = channel.receive().map_err(detail)?
@@ -267,20 +341,73 @@ def check_project_directory_selection() -> Result[None, str]:
 
 
 def check_worker_residency() -> Result[None, str]:
-    """One compiler serves both activations without retaining bulk decoded manifests, and reads frozen records."""
+    """One compiler serves both activations under a deep runtime path, retains no bulk manifests, and reads frozen records."""
+    check_worker_residency_case(false)?
+    match check_worker_residency_case(true):
+        Err(error) =>
+            assert error == "injected worker-residency failure"
+        Ok(_) => return Err("injected worker-residency failure unexpectedly passed")
+    return Ok(None)
+
+
+def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
+    """Run one residency case and stop any engine it starts before returning success or failure."""
     scratch = scratch_directory()?
     root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    checked = exercise_worker_residency(root, binary, inject_failure)
+    store = root.joinpath("store")
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    match checked:
+        Err(error) => return Err(error)
+        Ok(_) => pass
+    check_frozen_installation_reads(root.joinpath("jec"))?
+    # Stop acknowledges that the resident service drained its buffered observations.
+    lines = observed_lines(root.joinpath("observations"))?
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    compilations = len([line for line in lines if "rustc_codegen_link_teardown" in line])
+    frontend_releases = len([line for line in lines if "frontend_heap_released" in line])
+    checked_releases = len([line for line in lines if "checked_heap_released" in line])
+    # Each compilation returns its checked program's freed heap before rustc allocates on top of it.
+    assert compilations > 0 and frontend_releases == compilations, f"{frontend_releases} of {compilations} compilations released the frontend heap before rustc"
+    # Each compilation also returns its checking heap before lowering builds its contexts.
+    assert checked_releases == compilations, f"{checked_releases} of {compilations} compilations released the checking heap before lowering"
+    # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
+    # after each activation. No activation may be detached from the observer that owns its completion.
+    assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    released_requests = [line for line in lines if "engine request released:" in line]
+    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
+    assert "captures=0 verification=0" in released_requests[0]
+    check_worker_clock(root.joinpath("observations"))?
+    return Ok(None)
+
+
+def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> Result[None, str]:
+    """Exercise the resident worker; the caller owns unconditional engine retirement."""
+    mut runtime = root.joinpath("var/folders/yd/1lgl20914vn4nhg0hgpjd4gr0000gn/T")
+    while len(runtime.0) <= 100:
+        runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
+    runtime.mkdir(true, true).map_err((error) => error.message())?
+    # The engine gets a runtime root other than this process's, as another shell's environment would give it: this
+    # process must still find the engine it stops, wherever that engine listens.
+    fallback_runtime = "/tmp"
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
     write(source, "def main() -> None:\n    println(\"hello\")\n")?
-    trace = root.joinpath("worker.trace")
     observations = root.joinpath("observations")
     observations.mkdir(true, true).map_err((error) => error.message())?
     _ = load_toolchain()?
     jec = root.joinpath("jec")
     jec.mkdir(true, true).map_err((error) => error.message())?
-    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     outcome = Command
         .new(binary)
         .arg("run")
@@ -288,20 +415,23 @@ def check_worker_residency() -> Result[None, str]:
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
-        .env("OVEN_TRACE", trace.0)
         .env("INCAN_ENGINE_TRACE", observations.0)
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order")
-        .env("INCAN_TRACE_DIR", observations.0)
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
         .output()
         .map_err((error) => str(error))?
     if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
+    if inject_failure:
+        return Err("injected worker-residency failure")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     initial_records = compiler_records_read(observations)?
+    initial_digests = link_input_digests(observations)?
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -310,12 +440,12 @@ def check_worker_residency() -> Result[None, str]:
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
-        .env("OVEN_TRACE", trace.0)
         .env("INCAN_ENGINE_TRACE", observations.0)
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order-edited")
-        .env("INCAN_TRACE_DIR", observations.0)
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
         .output()
         .map_err((error) => str(error))?
     if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
@@ -333,31 +463,34 @@ def check_worker_residency() -> Result[None, str]:
     processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
     if processes != 1:
         return Err(f"initial build and one-body edit used {processes} unit compiler processes")
-    # Stop this test's disposable engine before the temporary directory leaves scope.
-    store = root.joinpath("store")
-    mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
-    mut channel = connect_with(store, identity, binary).map_err(detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="retirement proof completed"))).map_err(detail)?
-    stopped = channel.receive().map_err(detail)?
-    match stopped.message:
-        Message.Event(value) =>
-            assert value.status == "Stopping"
-        _ => return Err("retirement proof did not stop its engine")
-    _ = channel.transport.close()
-    check_frozen_installation_reads(jec)?
-    # Stop acknowledges that the resident service drained its buffered observations.
-    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
-    waits = len([line for line in lines if "worker_observer_joined" in line])
-    detached = len([line for line in lines if "worker_observer_detached" in line])
-    releases = len([line for line in lines if "worker_heap_released" in line])
-    # Both activations restore the same resident worker and release its free heap before the next request.
-    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
-    released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
-    assert "captures=0 verification=0" in released_requests[0]
-    check_worker_clock(observations)?
+    # The edited link names the same archives; each was hashed once at its file identity, so none is hashed again.
+    mut hashed: list[str] = []
+    edited_digests = link_input_digests(observations)?
+    for input in sorted([path for path in edited_digests.keys()]):
+        earlier = initial_digests.get(input, 0)
+        if earlier > 0 and edited_digests[input] > earlier and not input.endswith(".o"):
+            hashed.append(input)
+    if len(edited_digests) == 0:
+        return Err("the development links recorded no input digests")
+    if len(hashed) > 0:
+        return Err(f"one-body edit's link hashed {len(hashed)} unchanged archives again: {hashed}")
+    # The links run the dedicated linker shipped beside the driver, never the driver itself.
+    for linker in link_processes(observations)?:
+        if not Path(linker).name().startswith("incan-link"):
+            return Err(f"a development link ran {linker} instead of the dedicated linker")
     return Ok(None)
+
+
+def observed_lines(directory: Path) -> Result[list[str], str]:
+    """Every line of every engine trace file in `directory`, the files in name order."""
+    mut names: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if entry.is_file():
+            names.append(entry.0)
+    mut lines: list[str] = []
+    for name in sorted(names):
+        lines.extend(Path(name).read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"))
+    return Ok(lines)
 
 
 def invocation_count(directory: Path, function: str) -> int:
@@ -409,6 +542,58 @@ def compiler_records_read(directory: Path) -> Result[int, str]:
     return Ok(count)
 
 
+def link_processes(directory: Path) -> Result[list[str], str]:
+    """The executables of the processes that hashed link inputs, from their invocation trace files."""
+    mut executables: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut executable = ""
+        mut linked = false
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "process"):
+                match document.get("executable"):
+                    Some(value) => executable = value.as_str().unwrap_or("")
+                    None => pass
+            elif json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::link_input_digest",
+            ):
+                linked = true
+        if linked and executable not in executables:
+            executables.append(executable)
+    return Ok(executables)
+
+
+def link_input_digests(directory: Path) -> Result[Dict[str, int], str]:
+    """How often the development linker hashed each input path, from its invocation spans."""
+    mut counts: Dict[str, int] = {}
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_rustc_driver::link_input_digest")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            input = fields["input"].expect_str().map_err((error) => error.message())?
+            counts[input] = counts.get(input, 0) + 1
+    return Ok(counts)
+
+
 def invocation_processes(directory: Path, function: str) -> Result[int, str]:
     """Count invocation files containing the requested compiler entry; one resident process owns one such file."""
     mut count = 0
@@ -421,10 +606,7 @@ def invocation_processes(directory: Path, function: str) -> Result[int, str]:
             if line == "":
                 continue
             document = parse(line).map_err((error) => error.message())?
-            if (
-                json_text_is(document, "kind", "begin")
-                and json_text_is(document, "function", function)
-            ):
+            if (json_text_is(document, "kind", "begin") and json_text_is(document, "function", function)):
                 found = true
         if found:
             count += 1
@@ -470,10 +652,12 @@ model InstallationReadCounts:
 
 
 def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
-    """Each service request selects the installed page without reopening its original frozen documents."""
+    """After first admission, a service request selects installed facts without touching a frozen input."""
     prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
     mut events = 0
     mut reads = 0
+    mut frozen_accesses = 0
+    mut completed: Dict[str, int] = {}
     mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
@@ -483,11 +667,18 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
             events += 1
             category = trace_text(event, "category")?
             counts.observe(event, category)?
+            process = str(trace_number(event, "process")?)
+            if category in ["file_stat", "file_read", "file_hash"]:
+                input = trace_text(event, "input")?
+                if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
+                    frozen_accesses += 1
+                    return Err(f"service process {process} {category} touched frozen input {input}")
             if category == "file_read":
                 reads += 1
-                input = trace_text(event, "input")?
-                assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
+            if category == "engine_unit":
+                completed[process] = completed.get(process, 0) + 1
     assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
+    assert frozen_accesses == 0
     counts.check()
     return Ok(None)
 
@@ -563,6 +754,7 @@ def check_collection_before_selection() -> Result[None, str]:
             root.joinpath("console").0,
             Some(captured.epoch),
             "collection-proof",
+            Some(captured.selected),
         )?
         if produced.code != 0:
             console = root.joinpath("console.err").read_text("utf-8", "strict").map_err((error) => error.message())?
@@ -696,7 +888,7 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
 def stop_engine(store: Path, binary: str) -> Result[None, str]:
     """Stop the records engine serving `store`, and require its acknowledgment."""
     mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    identity.service_generation = service_generation(binary)?
     mut channel = connect_with(store, identity, binary).map_err(detail)?
     channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
     stopped = channel.receive().map_err(detail)?
@@ -723,93 +915,6 @@ def collect_superseded(store: Path) -> Result[Collected, str]:
     reclaimed = collect(store, -1)?
     assert manifest.is_file(), "collection discarded a running program's leased generation"
     return Ok(reclaimed)
-
-
-def check_bodies() -> Result[None, str]:
-    """Every message schema round trips byte for byte; bad versions, tags and lengths are refused."""
-    messages = [
-        Message.Hello(
-            Hello(
-                store_id="descriptor",
-                profile="descriptor",
-                service_generation="descriptor",
-                compiler_generation="descriptor",
-                peer_uid=1u32,
-                credits=1,
-                payload_limit=1,
-            ),
-        ),
-        Message.Welcome(
-            Welcome(
-                store_id="descriptor",
-                profile="descriptor",
-                service_generation="descriptor",
-                compiler_generation="descriptor",
-                peer_uid=1u32,
-                credits=1,
-                payload_limit=1,
-            ),
-        ),
-        Message.Submit(
-            Submit(
-                command="descriptor",
-                view="descriptor",
-                input_selection="descriptor",
-                requested_roots="descriptor",
-                options="descriptor",
-                observation_policy="descriptor",
-            ),
-        ),
-        Message.Accepted(Accepted(capture_token="descriptor", interest_token="descriptor")),
-        Message.Captured(Captured(epoch="descriptor", snapshot="descriptor")),
-        Message.Query(
-            Query(snapshot="descriptor", query_root="descriptor", cursor="descriptor", row_limit=1, byte_limit=1),
-        ),
-        Message.Page(Page(snapshot="descriptor", rows_root="descriptor", cursor="descriptor")),
-        Message.Event(Event(status="descriptor", trace_handle="descriptor")),
-        Message.Complete(
-            Complete(
-                snapshot="descriptor",
-                admission_proof="descriptor",
-                result_handles="descriptor",
-                binding_outcome=BindingOutcome.NotSelected,
-                status=CompletionStatus.Unavailable,
-                observation_handle="descriptor",
-            ),
-        ),
-        Message.Cancel(Cancel(interest_token="descriptor")),
-        Message.Cancelled(Cancelled(interest_token="descriptor", effects_stopped=EffectDisposition.NoEffects)),
-        Message.Resolve(Resolve(transaction="descriptor", outcome=Resolution.Unknown)),
-        Message.Pin(Pin(snapshot="descriptor", allowed_roots="descriptor", lease_id="descriptor", purpose="descriptor")),
-        Message.Release(Release(lease_id="descriptor")),
-        Message.Drain(Drain(reason="descriptor")),
-        Message.Stop(Stop(reason="descriptor")),
-        Message.Ack(Ack(sequence=1u64)),
-        Message.Refused(Refused(code=1, command="descriptor", detail="descriptor")),
-    ]
-    for message in messages:
-        tag, raw = encode(message).map_err(detail)?
-        decoded = decode(tag, raw).map_err(detail)?
-        again_tag, again_raw = encode(decoded).map_err(detail)?
-        assert again_tag == tag
-        assert again_raw == raw
-        assert refused_body(decode(tag, raw[:len(raw) - 1]))
-        assert refused_body(decode(tag, joined([raw, scalar(0, 1)])))
-    assert refused_body(decode(16, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
-    assert refused_body(decode(15, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
-    for worker_record_tag in [6, 7, 8, 9]:
-        assert refused_body(decode(worker_record_tag, scalar(1, 2)))
-    assert refused_body(decode(65535, scalar(1, 2)))
-    assert refused_body(decode(1, scalar(2, 2)))
-    assert refused_body(decode(1, joined([scalar(1, 2), scalar(4294967295, 4)])))
-    return Ok(None)
-
-
-def refused_body(decoded: Result[Message, Refusal]) -> bool:
-    """Whether a body was refused before an unvalidated allocation or unknown variant dispatch."""
-    match decoded:
-        Ok(_) => return false
-        Err(_) => return true
 
 
 def process_lifecycle() -> Result[None, str]:
@@ -1083,21 +1188,3 @@ def await_exit(mut child: Process, expected_success: bool) -> Result[None, str]:
             None => sleep(Duration.from_millis(2))
     child.terminate()?
     return Err("test engine did not exit")
-
-
-def check_short_transport() -> Result[None, str]:
-    """A peer disconnecting during the fixed header yields ShortRead and retires only its connection."""
-    scratch = scratch_directory()?
-    path = scratch.path().joinpath("short.sock").0
-    mut listener = listen(path, true)?
-    mut broken = dial(path)?
-    broken.write_part("INCENG01".encode(), "truncated header")?
-    broken.close()?
-    mut receiver = Channel(transport=listener.accept()?)
-    match receiver.receive():
-        Ok(_) =>
-            assert false, "short transport header was admitted"
-        Err(reason) =>
-            assert reason.kind == RefusalKind.ShortRead
-    assert receiver.retired
-    return Ok(None)

@@ -634,13 +634,6 @@ impl CheckedInputBody<'_> {
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, loan)))
             }
-            Expr::Index(base, index) => {
-                let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
-                    return Ok(None);
-                };
-                place.projection.push(flow::Projection::Element(index.span));
-                Ok(Some((place, loan)))
-            }
             _ => Ok(None),
         }
     }

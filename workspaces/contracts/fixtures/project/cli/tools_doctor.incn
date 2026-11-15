@@ -1,0 +1,15 @@
+# behavior: `incan tools doctor` reports how `incan`, `oven` and `incan-lsp` resolve, the home and its toolchains, and the editor settings, as 0.5.1's did without its Cargo sections (#3142).
+# cli-commands:
+#   tools doctor
+#   tools doctor --format text
+# expect-stdout-contains:
+#   Incan tools doctor
+#   PATH incan:
+#   PATH incan-lsp:
+#   editor setup:
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; the doctor reads no project."""
+    pass

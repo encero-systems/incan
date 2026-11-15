@@ -1,0 +1,18 @@
+# behavior: `build --report json` prints 0.5.1's machine-readable build report: version, path, profile, outcome, each artifact with its size and digest, and the time taken (#3142).
+# cli-commands:
+#   build src/main.incn --report json
+#   oven build src/main.incn --report json
+# expect-stdout-contains:
+#   {
+#     "command": "build",
+#     "exit_code": 0,
+#         "kind": "executable",
+#     "path": "src/main.incn",
+#     "profile": "debug",
+#     "schema_version": 1,
+#     "status": "succeeded",
+# expect-exit: 0
+
+def main() -> None:
+    """A program the reported build compiles."""
+    println("built")

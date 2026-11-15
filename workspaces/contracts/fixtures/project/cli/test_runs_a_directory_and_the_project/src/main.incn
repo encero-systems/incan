@@ -1,0 +1,11 @@
+# behavior: `incan test` with a directory, or with no path inside a project, runs every `test_*.incn` and `*_test.incn` module below it, as 0.5.1 does (#3138).
+# cli-commands:
+#   test tests
+#   test
+# expect-stdout-contains:
+#   test_top.incn::test_top PASSED
+#   test_deep.incn::test_deep PASSED
+#   suffix_test.incn::test_suffix PASSED
+
+def main() -> None:
+    println("main")

@@ -21,6 +21,7 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-exit",
     "expect-diagnostic",
     "expect-accepted",
@@ -29,6 +30,8 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-active-features",
     "expect-formatted",
     "pending",
+    "hosts",
+    "trace-invariant",
 ]
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
@@ -44,6 +47,7 @@ const BLOCKS: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-dependencies",
     "expect-std-packages",
     "expect-active-features",
@@ -53,6 +57,7 @@ const BLOCKS: FrozenList[str] = [
 const SUBSET_BLOCKS: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-std-packages",
     "expect-trace-contains",
     "expect-trace-at-most-once",
@@ -64,10 +69,18 @@ const SET_BLOCKS: FrozenList[str] = [
     "expect-trace-at-most-once",
     "expect-stdout-contains",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-dependencies",
     "expect-std-packages",
     "expect-active-features",
 ]
+
+
+pub enum Host(str):
+    """The operating systems a case can be restricted to, as Rust names the host's (`std::env::consts::OS`)."""
+
+    Linux = "linux"
+    Macos = "macos"
 
 
 pub model Header:
@@ -87,6 +100,10 @@ pub model Header:
     pub diagnostics: list[str]
     # Whether the program must check cleanly (`# expect-accepted:`).
     pub accepted: bool
+    # Whether every `cli-commands:` invocation must print the same bytes with tracing on (`# trace-invariant:`).
+    pub trace_invariant: bool = false
+    # The hosts the case runs on (`# hosts:`); empty for every host. Another host reports the case skipped.
+    pub hosts: list[str] = []
     # Why the fixture does not hold yet (`# pending:`).
     pub pending: Option[str]
 
@@ -108,6 +125,8 @@ pub model Header:
             return len(self.diagnostics) > 0
         if key == "expect-accepted":
             return self.accepted
+        if key == "trace-invariant":
+            return self.trace_invariant
         return false
 
     pub def expected_exit(self) -> int:
@@ -228,7 +247,7 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
 
 
 def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
-    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted` and `pending`."""
+    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `trace-invariant`, `hosts` and `pending`."""
     mut next = header
     if key == "expect-exit":
         if next.declares(key):
@@ -244,6 +263,13 @@ def scalar_directive(header: Header, number: int, key: str, value: str) -> Resul
             return Err(f"line {number}: `expect-diagnostic: {value}` is declared twice")
         next.diagnostics.append(value)
         return Ok(next)
+    if key == "trace-invariant":
+        if value != "" or next.trace_invariant:
+            return Err(f"line {number}: `trace-invariant:` takes no value and is declared once")
+        next.trace_invariant = true
+        return Ok(next)
+    if key == "hosts":
+        return hosts_directive(next, number, value)
     if key == "expect-accepted":
         if value != "":
             return Err(f"line {number}: `expect-accepted:` takes no value")
@@ -284,8 +310,8 @@ def finish(header: Header) -> Result[Header, str]:
         line = header.block_lines[key]
         if len(items) == 0 and key in SUBSET_BLOCKS:
             return Err(f"line {line}: `{key}:` lists nothing, so anything would satisfy it")
-        if key == "expect-stderr-contains" and "" in items:
-            return Err(f"line {line}: `expect-stderr-contains:` lists an empty substring, which checks nothing")
+        if key in ["expect-stderr-contains", "expect-stderr-once"] and "" in items:
+            return Err(f"line {line}: `{key}:` lists an empty substring, which checks nothing")
     if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
         return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
     if header.declares("expect-stderr") and header.declares("expect-stderr-contains"):
@@ -293,7 +319,7 @@ def finish(header: Header) -> Result[Header, str]:
     refused = len(header.diagnostics) > 0
     run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares(
         "expect-stderr",
-    ) or header.declares("expect-stderr-contains") or header.declares("expect-exit")
+    ) or header.declares("expect-stderr-contains") or header.declares("expect-stderr-once") or header.declares("expect-exit")
     if refused and (run or header.accepted):
         return Err(
             "`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`",
@@ -363,3 +389,18 @@ def late_reason(number: int, key: str, ended: int, blank: bool) -> str:
     if blank:
         ended_by = f"a blank line ends the header (line {ended})"
     return f"line {number}: `{key}:` after the header ended; {ended_by}, so keep every directive in the unbroken run of `#` lines at the top of the file"
+
+
+def hosts_directive(header: Header, number: int, value: str) -> Result[Header, str]:
+    """Admit `hosts: NAME, ...`: the operating systems the case runs on, each once."""
+    mut next = header
+    if len(next.hosts) > 0:
+        return Err(f"line {number}: `hosts:` is declared twice")
+    for item in value.split(","):
+        name = item.strip()
+        if name not in [host.value() for host in [Host.Linux, Host.Macos]]:
+            return Err(f"line {number}: `hosts:` names `{name}`; a host is `linux` or `macos`, separated by commas")
+        if name in next.hosts:
+            return Err(f"line {number}: `hosts:` names `{name}` twice")
+        next.hosts.append(name)
+    return Ok(next)

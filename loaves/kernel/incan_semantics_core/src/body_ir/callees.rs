@@ -88,8 +88,17 @@ pub struct CheckedForeignCall {
     pub member: String,
     /// Physical linker symbol, without casing or namespace reconstruction.
     pub symbol: String,
-    /// Explicit system library accepted by declaration checking.
+    /// Explicit system library accepted by declaration checking, or the link name of a Clove's library.
     pub library: String,
+    /// The Clove (a C-library Loaf) whose static archive provides `library`; empty for a system library.
+    #[serde(default)]
+    pub clove: String,
+    /// The Clove configuration whose archive the call links; empty for a system library.
+    #[serde(default)]
+    pub configuration: String,
+    /// Whether `library` is an Apple framework (`c.framework`) rather than a library.
+    #[serde(default)]
+    pub framework: bool,
     /// Verified header retained as declaration provenance.
     pub header: String,
     /// Exact native parameter carriers in declaration order.

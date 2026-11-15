@@ -3,6 +3,132 @@
 
 use super::*;
 
+/// Recover generated-member ownership retained by the checker records that supplied reusable bodies.
+///
+/// A generated member has no independent executable representation: its checked nominal owner is the dependency
+/// root. Conflicting owners for one canonical member are invalid retained checker evidence.
+fn retained_generated_member_owners(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+) -> Result<BTreeMap<CanonicalSymbolId, CanonicalSymbolId>, String> {
+    let mut owners = BTreeMap::new();
+    for module in modules {
+        let info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        for (member, owner) in &info.calls.compiler_generated_member_identities {
+            if let Some(previous) = owners.insert(member.clone(), owner.clone())
+                && previous != *owner
+            {
+                return Err(format!(
+                    "compiler-generated member `{}` has conflicting retained owners",
+                    member.render_compact(),
+                ));
+            }
+        }
+    }
+    Ok(owners)
+}
+
+/// Recover nonlocal call roots from accepted Body IR when a reused checker record no longer carries the reference
+/// edge that originally selected the body. The canonical target is producer evidence; source spelling is not.
+fn retained_body_call_requirements(
+    modules: &[BodyIrModule],
+    package_identity: &str,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> BTreeSet<CanonicalSymbolId> {
+    let mut requirements = BTreeSet::new();
+    for body in modules.iter().flat_map(|module| &module.bodies) {
+        collect_retained_body_calls(
+            &body.block.stmts,
+            package_identity,
+            generated_member_owners,
+            &mut requirements,
+        );
+    }
+    requirements
+}
+
+fn collect_retained_body_calls(
+    statements: &[incan_semantics_core::body_ir::Statement],
+    package_identity: &str,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+    requirements: &mut BTreeSet<CanonicalSymbolId>,
+) {
+    use incan_semantics_core::body_ir::{CallableTarget, Callee, Rvalue, StatementKind};
+
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::Call {
+                callee: Callee::Function(CallableTarget::Named(target)),
+                ..
+            } => {
+                if let Some(identity) = &target.canonical {
+                    let requirement = generated_member_owners.get(identity).unwrap_or(identity);
+                    if matches!(&requirement.origin, SymbolOrigin::Package { library, .. } if library != package_identity)
+                    {
+                        requirements.insert(requirement.clone());
+                    }
+                }
+            }
+            StatementKind::Assign {
+                rvalue: Rvalue::Match { arms, .. },
+                ..
+            } => {
+                for arm in arms {
+                    collect_retained_body_calls(
+                        &arm.guard_stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
+                    collect_retained_body_calls(
+                        &arm.body_stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
+                }
+            }
+            StatementKind::Assign {
+                rvalue: Rvalue::Closure { body, .. },
+                ..
+            } => collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements),
+            StatementKind::Assign {
+                rvalue: Rvalue::Generator { body, .. },
+                ..
+            } => collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements),
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                collect_retained_body_calls(
+                    &then_block.stmts,
+                    package_identity,
+                    generated_member_owners,
+                    requirements,
+                );
+                if let Some(block) = else_block {
+                    collect_retained_body_calls(&block.stmts, package_identity, generated_member_owners, requirements);
+                }
+            }
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements);
+            }
+            StatementKind::Race { arms, .. } => {
+                for arm in arms {
+                    collect_retained_body_calls(
+                        &arm.body.stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Carry checker-selected native nominal identities into governed source bodies before publication drops held layouts.
 /// Consumers recover the layouts through the ordinary held-Rust-items boundary; publication retains only used
 /// identities.
@@ -12,60 +138,113 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
         .flat_map(|module| &module.nominal_declarations)
         .filter(|declaration| matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_)))
         .map(|declaration| (declaration.name.clone(), declaration.canonical.clone()))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    for module in modules {
-        for body in &mut module.bodies {
-            for (name, identity) in &identities {
-                std::sync::Arc::make_mut(&mut body.named_type_identities)
-                    .entry(name.clone())
-                    .or_insert_with(|| identity.clone());
-            }
+        .collect::<BTreeMap<_, _>>();
+    extend_shared_identities(
+        modules
+            .iter_mut()
+            .flat_map(|module| module.bodies.iter_mut())
+            .map(|body| &mut body.named_type_identities),
+        &identities,
+    );
+}
+
+/// Add each missing identity to the bodies' shared identity maps. A map that already names every identity is kept,
+/// and the maps that were one shared map stay one shared extension: this runs again on every runtime resolution, and
+/// a private copy per body of a module-wide map multiplied the checked program.
+fn extend_shared_identities<'a>(
+    maps: impl Iterator<Item = &'a mut incan_semantics_core::body_ir::SharedIdentities>,
+    identities: &BTreeMap<String, CanonicalSymbolId>,
+) {
+    // Keyed by the shared map's address; holding the original keeps that address from being reused while it is a key.
+    let mut extended = std::collections::HashMap::new();
+    for map in maps {
+        if identities.keys().all(|name| map.contains_key(name)) {
+            continue;
         }
+        // A map no other body or copy holds is extended in place.
+        if let Some(owned) = std::sync::Arc::get_mut(map) {
+            for (name, identity) in identities {
+                owned.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            continue;
+        }
+        let (_, shared) = extended.entry(std::sync::Arc::as_ptr(map)).or_insert_with(|| {
+            let mut copy = map.as_ref().clone();
+            for (name, identity) in identities {
+                copy.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            (std::sync::Arc::clone(map), std::sync::Arc::new(copy))
+        });
+        *map = std::sync::Arc::clone(shared);
     }
 }
 
 /// Retain canonical declarations for calls introduced by native lowering.
 ///
 /// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through
-/// Oven's ordinary artifact index; its checked public identities select the same `.incnbody` records as source imports.
-/// A lowering-provider producer uses its own checked export map, so specializing its source needs no external artifact.
+/// Oven's ordinary artifact index, which reads its runtime bindings record by name; their identities select the same
+/// `.incnbody` records as source imports. A lowering-provider producer uses its own checked export map, so
+/// specializing its source needs no external artifact.
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
 ) -> Result<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, String> {
     let mut bindings = Vec::new();
     for package in ["incan_native_runtime", "incan_stdlib_primitives"] {
-        let projected;
-        let manifest = if let Some(local) = local.filter(|manifest| manifest.name == package) {
-            local
-        } else {
-            projected = session
-                .loaves()
-                .execution_manifest(package)
-                .map_err(|error| error.to_string())?;
-            let Some(projected) = projected.as_deref() else {
-                continue;
-            };
-            projected
-        };
-        bindings.extend(
-            manifest
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .filter(|export| export.public_path.len() == 2)
-                .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
-                    path: export.public_path.join("::"),
-                    canonical: export.canonical.as_ref()?.hydrate()?,
-                }))
-                .filter(|binding| {
-                    binding.canonical.kind == SemanticSourceTargetKind::Function
-                        && matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
-                }),
-        );
+        if let Some(local) = local.filter(|manifest| manifest.name == package) {
+            bindings.extend(incan_frontend::library_manifest::executable_surface::runtime_bindings(
+                local,
+            ));
+            continue;
+        }
+        let published = session
+            .loaves()
+            .runtime_bindings(package)
+            .map_err(|error| error.to_string())?;
+        if let Some(published) = published {
+            bindings.extend(published.iter().cloned());
+        }
     }
     Ok(bindings)
+}
+
+/// Collect a test unit's modules again with each checked file read from `sources`: the test file with its conftests
+/// and its generated case entries (`crate::test_cases`), and in a batch the other modules and hosting conftests. The
+/// test module keeps its logical identity, as ordinary collection gives it; outside the source root, a batch's entry
+/// module is spelled from the batch's frame, as the modules it imports are (`crate::test_batch`).
+fn collect_test_entries(
+    path: &Path,
+    sources: Vec<(PathBuf, String)>,
+    frame: Option<&Path>,
+    session: &CompilationSession,
+) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    let segments = incan_frontend::module::logical_module_segments_from_file(&session.source_root, path)
+        .or_else(|| frame.and_then(|frame| incan_frontend::module::logical_module_segments_from_file(frame, path)))
+        .unwrap_or_else(|| vec!["main".to_string()]);
+    let overlay: std::collections::HashMap<PathBuf, String> = sources.into_iter().collect();
+    incan_driver::modules::collect_document_modules(path.to_path_buf(), session, segments, &overlay)
+}
+
+/// Merge lowering witnesses from independent accepted products while refusing disagreement for one compiler owner.
+fn canonical_lowering_inputs(
+    inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+) -> Result<Vec<(incan_semantics_core::CompilerNodeId, String)>, String> {
+    let mut canonical = BTreeMap::new();
+    for (identity, witness) in inputs {
+        match canonical.entry(identity) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(witness);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != &witness => {
+                return Err(format!(
+                    "conflicting lowering witnesses for Body IR owner {}",
+                    entry.key().path()
+                ));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    Ok(canonical.into_iter().collect())
 }
 
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
@@ -81,7 +260,8 @@ pub(super) fn runtime_declarations(
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
 /// callables name their compiled items.
 ///
-/// A refusal by source diagnostics or by declaration validation is certified through `receipt`.
+/// A refusal by source diagnostics or by declaration validation is certified through `receipt`. With `inspection` the
+/// manifest describes the source package for inspection (private registries, named by their source modules).
 pub(super) fn checked_modules(
     unit: &UnitDescription,
     rust: &RustFactsSetup,
@@ -90,6 +270,7 @@ pub(super) fn checked_modules(
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
     collect_codegraph: bool,
+    inspection: bool,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -108,7 +289,7 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     session.set_graph_body_records(graph_body_records);
     let library = unit.kind == UnitKind::Library;
-    let modules = if library {
+    let mut modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
@@ -117,18 +298,61 @@ pub(super) fn checked_modules(
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;
-    let tests = crate::test_unit::collect(unit, &session)?;
+    let collected = crate::test_unit::collect(unit, &session)?;
+    // A test file whose tests take fixtures or parameters is checked with its generated case entries, and rustc reads
+    // their spans from the same text; so is every module and hosting conftest of a test batch.
+    crate::spans::retain_checked_sources(&collected.sources)?;
+    if collected.sources.iter().any(|(file, _)| *file == path) {
+        modules = collect_test_entries(&path, collected.sources, collected.frame.as_deref(), &session)
+            .map_err(|failure| receipt.diagnostic(failure))?;
+        session
+            .resolve_rust_facts(&modules)
+            .map_err(|error| error.to_string())?;
+    }
+    let tests = collected.tests;
     let package_identity = unit.package.as_str();
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
-    let mut publication = library.then(|| PublicationFacts::new(package_identity));
+    let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
+    let module_key_index = incan_driver::modules::module_key_index(&modules);
+    let namespace_dependencies = modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| {
+            let mut dependencies = incan_driver::modules::imported_module_dep_indexes_for(
+                &modules,
+                index,
+                &module_key_index,
+                session.own_standard_package(),
+            )
+            .into_iter()
+            .filter_map(|dependency| {
+                modules[dependency]
+                    .file_path
+                    .strip_prefix(&unit.project_root)
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned())
+            })
+            .collect::<Vec<_>>();
+            dependencies.sort();
+            dependencies.dedup();
+            (module.file_path.clone(), dependencies)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
                 callable_products.observe(module, checker);
-                graph_body_output.observe(module, checker);
+                graph_body_output.observe(
+                    module,
+                    checker,
+                    namespace_dependencies
+                        .get(&module.file_path)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                );
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -154,13 +378,7 @@ pub(super) fn checked_modules(
         }
         None => None,
     };
-    let requested = required_loaf_identities(&modules, &analysis, package_identity)?;
-    let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
-        modules.iter().map(|module| &module.ast),
-        session.loaves(),
-        &requested,
-    )
-    .ok_or("unsupported Body IR string conversion contract identity")?;
+    let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref())?;
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
@@ -169,7 +387,7 @@ pub(super) fn checked_modules(
     // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
-    let reached_loaves = resolved.entries;
+    let mut reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
@@ -177,14 +395,61 @@ pub(super) fn checked_modules(
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
-    let loaf_modules = bodies.len();
-    let entry = entry + loaf_modules;
+    let mut loaf_modules = bodies.len();
+    let mut entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
-    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
+    let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
+    let retained_requirements = retained_body_call_requirements(
+        &bodies[loaf_modules..],
+        package_identity,
+        &retained_generated_member_owners,
+    );
+    if !retained_requirements
+        .iter()
+        .all(|identity| requested.contains(identity))
+    {
+        requested.extend(retained_requirements);
+        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+        package_versions.extend(resolved.package_versions);
+        reached_loaves = resolved.entries;
+        let mut authored = bodies.split_off(loaf_modules);
+        let authored_files = files.split_off(loaf_modules);
+        entry = entry - loaf_modules + resolved.modules.len();
+        bodies = resolved.modules;
+        loaf_modules = bodies.len();
+        files = bodies
+            .iter()
+            .map(|module| module.module_id.path().to_owned())
+            .chain(authored_files)
+            .collect();
+        sources = vec![String::new(); loaf_modules];
+        bodies.append(&mut authored);
+    }
+    let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
+        modules.iter().map(|module| &module.ast),
+        session.loaves(),
+        &requested,
+    )
+    .ok_or("unsupported Body IR string conversion contract identity")?;
+    let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
+    cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
+    for body in bodies[loaf_modules..].iter().flat_map(|module| &module.bodies) {
+        if cacheable_bodies
+            .iter()
+            .any(|(identity, _)| identity == &body.direct_call_id)
+        {
+            continue;
+        }
+        let mut witnessed = body.clone();
+        let witness = incan_semantics_core::semantic_digest::body_semantic_digest(&mut witnessed)
+            .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
+        cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
+    }
+    let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
+    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
-    let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
@@ -347,9 +612,12 @@ pub(super) fn complete_dependency_context_in_place(
         .loaf_callables = loaf_callables;
     // A Rust layout's storage stays rustc's: find the Rust items bodies hold only once the layouts are taken, so a
     // field no body reads does not pull its type's private items into the unit. A read field's value is a checked
-    // body local or external signature type, which still counts.
+    // body local or external signature type, which still counts. A constructed layout writes every field, so its field
+    // types count too, even when only a dependency names them.
     let layouts = take_rust_layouts(&mut program.modules)?;
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    let mut opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    let constructed = incan_semantics_core::body_ir::constructed_rust_field_items(&program.modules, &layouts, &opaque);
+    opaque.extend(constructed);
     let native_enums = take_rust_enums(&mut program.modules)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()
@@ -488,26 +756,26 @@ pub(super) fn prepare_runtime_layouts(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<(), String> {
-    if requirements.is_empty() {
-        return Err("runtime layout preparation requested an empty declaration set".to_owned());
-    }
     let requested = requirements
         .into_iter()
         .map(|requirement| requirement.canonical)
         .collect::<BTreeSet<_>>();
-    let resolved = load_loaf_modules(
-        &program.dependencies.loaves,
-        &requested,
-        &program.dependencies.checked_local,
-    )?;
-    program.dependencies.package_versions.extend(resolved.package_versions);
+    // A program without layout requirements reads no layout module, but still installs the dependencies it reached.
     let mut layouts = Vec::new();
-    for mut module in resolved.modules {
-        let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
-        layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
-        layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
-        if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
-            layouts.push(layout);
+    if !requested.is_empty() {
+        let resolved = load_loaf_modules(
+            &program.dependencies.loaves,
+            &requested,
+            &program.dependencies.checked_local,
+        )?;
+        program.dependencies.package_versions.extend(resolved.package_versions);
+        for mut module in resolved.modules {
+            let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
+            layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
+            layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
+            if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
+                layouts.push(layout);
+            }
         }
     }
     program.dependencies.layout_modules = layouts;
@@ -842,4 +1110,79 @@ pub(super) fn take_rust_enums(
         }
     }
     Ok(layouts.into_values().collect())
+}
+
+#[cfg(test)]
+mod shared_identity_tests {
+    use super::*;
+    use incan_semantics_core::HirSourceSpan;
+    use incan_semantics_core::body_ir::SharedIdentities;
+    use std::sync::Arc;
+
+    /// One canonical model identity for a fixture map entry.
+    fn identity(name: &str) -> CanonicalSymbolId {
+        CanonicalSymbolId::module_declaration(
+            vec!["fixture".to_owned()],
+            name,
+            SemanticSourceTargetKind::Model,
+            HirSourceSpan::new(0, 1),
+        )
+    }
+
+    /// Bodies that share one identity map keep sharing one extended map, and a map that already names every identity
+    /// is kept as it is, so a repeated runtime resolution adds no private copy per body.
+    #[test]
+    fn shared_identity_maps_stay_shared_when_extended() -> Result<(), Box<dyn std::error::Error>> {
+        let module_wide: SharedIdentities = Arc::new(BTreeMap::from([("Owned".to_owned(), identity("Owned"))]));
+        let complete: SharedIdentities = Arc::new(BTreeMap::from([("Native".to_owned(), identity("Native"))]));
+        let mut maps = vec![
+            Arc::clone(&module_wide),
+            Arc::clone(&module_wide),
+            Arc::clone(&complete),
+        ];
+        let native = BTreeMap::from([("Native".to_owned(), identity("Native"))]);
+
+        extend_shared_identities(maps.iter_mut(), &native);
+
+        let [first, second, kept] = &maps[..] else {
+            return Err("the fixture holds three maps".into());
+        };
+        assert!(
+            Arc::ptr_eq(first, second),
+            "bodies that shared one map received private copies"
+        );
+        assert!(first.contains_key("Owned") && first.contains_key("Native"));
+        assert!(
+            Arc::ptr_eq(kept, &complete),
+            "a map that already named every identity was copied"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_lowering_inputs;
+    use incan_semantics_core::CompilerNodeId;
+
+    /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
+    #[test]
+    fn lowering_witnesses_are_unique_by_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let value = CompilerNodeId::declaration_span("main", 0, 12);
+        let other = CompilerNodeId::declaration_span("main", 14, 30);
+        let inputs = vec![
+            (value.clone(), "body:a".to_owned()),
+            (other.clone(), "body:b".to_owned()),
+            (value.clone(), "body:a".to_owned()),
+        ];
+        assert_eq!(
+            canonical_lowering_inputs(inputs)?,
+            vec![(value.clone(), "body:a".to_owned()), (other, "body:b".to_owned())]
+        );
+        assert_eq!(
+            canonical_lowering_inputs(vec![(value.clone(), "body:a".to_owned()), (value, "body:b".to_owned())]),
+            Err("conflicting lowering witnesses for Body IR owner main#decl.0..12".to_owned())
+        );
+        Ok(())
+    }
 }

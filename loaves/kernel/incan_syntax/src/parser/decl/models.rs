@@ -1,4 +1,4 @@
-/// Parsing for models, classes, traits, and their fields/methods.
+// Parsing for models, classes, traits, and their fields/methods.
 
 enum ParsedFieldMetadataValue {
     String(Spanned<String>),

@@ -3,6 +3,7 @@
 //! This is the one place the driver calls the typechecker for a whole program; single-module callers go through
 //! the session. Nothing here renders: diagnostics come back as values.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -29,6 +30,10 @@ use incan_semantics_core::SymbolOrigin;
 pub struct TypecheckedModules {
     /// One result per input module, in input order.
     pub type_infos: Vec<TypeCheckInfo>,
+    /// Whole-module Body IR selected with an installable namespace interface, aligned with `type_infos`.
+    pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
+    /// Lowering witnesses carried by the complete namespace records admitted in this pass.
+    pub namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
@@ -72,6 +77,8 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
+    let mut namespace_bodies = Vec::with_capacity(modules.len());
+    let mut namespace_lowering_inputs = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = import_cycle_peers(modules, own_standard_package);
     let related_sources = modules
@@ -92,7 +99,7 @@ pub fn typecheck_modules(
             )
         })
         .collect();
-    let memory_trace = std::env::var_os("INCAN_TRACE_TYPECHECK_MEMORY").is_some();
+    let memory_trace = incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::TypecheckMemory);
     let mut not_prepared = unit
         .not_prepared_loaves
         .iter()
@@ -125,6 +132,31 @@ pub fn typecheck_modules(
         checker
     };
 
+    let namespace_records = modules
+        .iter()
+        .map(|module| {
+            let source = module
+                .file_path
+                .strip_prefix(&unit.project_root)
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned());
+            match source {
+                Some(source) => graph_body_records
+                    .namespace(&source)
+                    .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
+                None => Ok(None),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|message| {
+            CliDiagnosticFailure::single(
+                "",
+                "",
+                diagnostics::CompileError::new(message, Default::default()),
+                diagnostics::DiagnosticPhase::Typecheck,
+            )
+        })?;
+
     for (idx, module) in modules.iter().enumerate() {
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
         let deps_for_module = dep_indexes
@@ -145,6 +177,21 @@ pub fn typecheck_modules(
             .map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
             .collect::<Option<Vec<_>>>()
             .unwrap_or_default();
+        // The graph authenticated every imported declaration-index witness before selecting this namespace. The
+        // module therefore does not need its providers to have appeared earlier in the source-order module list:
+        // its complete checked interface and Body IR are already sufficient for this module and its consumers.
+        if cycle_peers[idx].is_empty()
+            && let Some(record) = &namespace_records[idx]
+            && record.interface.module_name == module.name
+            && record.interface.module_path == module.path_segments
+        {
+            warnings_out.extend(parser_warning_diagnostics(module));
+            dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
+            type_infos.push(TypeCheckInfo::default());
+            namespace_bodies.push(Some(record.body_ir.clone()));
+            namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
+            continue;
+        }
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
@@ -211,6 +258,7 @@ pub fn typecheck_modules(
         match check_result {
             Ok((type_info, interface)) => {
                 type_infos.push(type_info);
+                namespace_bodies.push(None);
                 if let Some(interface) = interface {
                     dependency_interfaces[idx] = Some(interface);
                 }
@@ -264,6 +312,8 @@ pub fn typecheck_modules(
     if diagnostics_out.is_empty() {
         Ok(TypecheckedModules {
             type_infos,
+            namespace_bodies,
+            namespace_lowering_inputs,
             warnings: warnings_out,
         })
     } else {
@@ -287,7 +337,8 @@ fn trace_typecheck_memory(enabled: bool, stage: &str, module: &Path, dependencie
     let live = incan_platform::current_process_live_allocated()
         .map(|bytes| bytes.to_string())
         .unwrap_or_else(|error| format!("unavailable:{error}"));
-    println!(
+    incan_frontend::trace_line!(
+        incan_frontend::trace_flags::Category::TypecheckMemory,
         "typecheck memory: stage={stage} module={} dependencies={dependencies} footprint={footprint} live={live}",
         module.display()
     );
@@ -317,7 +368,28 @@ fn verify_checked_c_bindings(
     if bindings.is_empty() {
         return;
     }
-    let Some(plan) = selected_plan.cloned().or_else(CAbiVerificationPlan::host) else {
+    // A unit verifying against a declared interop target (`--interop-target`) uses that target's plan; otherwise the
+    // host's.
+    let declared = match (selected_plan, &unit.c_abi_target) {
+        (None, Some(target)) => Some(CAbiVerificationPlan::declared(target)),
+        _ => None,
+    };
+    let plan = match declared {
+        Some(Ok(plan)) => Some(plan),
+        Some(Err(message)) => {
+            for (_, module, binding) in bindings {
+                diagnostics_out.push(CliDiagnostic {
+                    file_path: module.file_path.to_string_lossy().to_string(),
+                    source: module.source.clone(),
+                    phase: diagnostics::DiagnosticPhase::Typecheck,
+                    error: diagnostics::CompileError::type_error(message.clone(), binding.span),
+                });
+            }
+            return;
+        }
+        None => selected_plan.cloned().or_else(CAbiVerificationPlan::host),
+    };
+    let Some(plan) = plan else {
         for (_, module, binding) in bindings {
             diagnostics_out.push(CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
@@ -346,14 +418,40 @@ fn verify_checked_c_bindings(
             return;
         }
     };
+    let mut clove_configurations = BTreeMap::new();
     for (module_index, module, binding) in bindings {
-        let verification_binding = resolve_package_owned_c_binding_header(unit, &binding);
-        match verify_checked_c_binding(&toolchain, &plan, &verification_binding) {
+        let (verification_binding, binding_plan, clove_library) = if !binding.configuration.is_empty() {
+            match resolve_clove_binding(unit, &binding, &plan, &mut clove_configurations) {
+                Ok((resolved, clove_plan, library)) => (resolved, clove_plan, Some(library)),
+                Err(message) => {
+                    diagnostics_out.push(CliDiagnostic {
+                        file_path: module.file_path.to_string_lossy().to_string(),
+                        source: module.source.clone(),
+                        phase: diagnostics::DiagnosticPhase::Typecheck,
+                        error: diagnostics::CompileError::type_error(message, binding.span),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            (
+                resolve_package_owned_c_binding_header(unit, &binding),
+                plan.clone(),
+                None,
+            )
+        };
+        match verify_checked_c_binding(&toolchain, &binding_plan, &verification_binding) {
             Ok(receipt) => {
                 type_infos[module_index]
                     .c_abi
                     .verified_bindings
                     .insert(binding.class_name.clone());
+                if let Some(library) = clove_library {
+                    type_infos[module_index]
+                        .c_abi
+                        .clove_libraries
+                        .insert(binding.class_name.clone(), library);
+                }
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
                 for ((enumeration, variant), value) in receipt.enum_values() {
                     enum_values.insert(
@@ -372,6 +470,74 @@ fn verify_checked_c_bindings(
             }
         }
     }
+}
+
+/// Resolve a `c.loaf_library` binding against the Clove the unit describes (RFC 159).
+///
+/// The binding's header must be one of the Clove's public headers, verification uses the named configuration's
+/// definitions and the Clove's include roots (as the archive was compiled), and one unit links one configuration of
+/// each Clove, because two configurations of one library define the same symbols.
+fn resolve_clove_binding(
+    unit: &UnitDescription,
+    binding: &CBindingDescriptor,
+    plan: &CAbiVerificationPlan,
+    selected: &mut BTreeMap<String, String>,
+) -> Result<(CBindingDescriptor, CAbiVerificationPlan, String), String> {
+    let loaf = &binding.system_library;
+    let Some(clove) = unit.cloves.iter().find(|clove| &clove.name == loaf) else {
+        let reached = unit
+            .cloves
+            .iter()
+            .map(|clove| format!("`{}`", clove.name))
+            .collect::<Vec<_>>();
+        let known = if reached.is_empty() {
+            "it reaches none".to_string()
+        } else {
+            format!("it reaches {}", reached.join(", "))
+        };
+        return Err(format!(
+            "`c.loaf_library(\"{loaf}\")` names no Clove this unit reaches ({known}); a Clove is a Loaf with a `[c]` facet: the project itself or a path dependency"
+        ));
+    };
+    let Some(configuration) = clove
+        .configurations
+        .iter()
+        .find(|configuration| configuration.name == binding.configuration)
+    else {
+        let declared = clove
+            .configurations
+            .iter()
+            .map(|configuration| format!("`{}`", configuration.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "unknown configuration `{}` of Clove `{loaf}`; it declares {declared}",
+            binding.configuration
+        ));
+    };
+    if let Some(previous) = selected.get(loaf)
+        && previous != &binding.configuration
+    {
+        return Err(format!(
+            "Clove `{loaf}` is linked in configurations `{previous}` and `{}` in one link closure; two configurations of one library define the same symbols",
+            binding.configuration
+        ));
+    }
+    selected.insert(loaf.clone(), binding.configuration.clone());
+    if !clove.public_headers.contains(&binding.header) {
+        return Err(format!(
+            "`{}` is not a public header of Clove `{loaf}`; it exposes {}",
+            binding.header,
+            clove.public_headers.join(", ")
+        ));
+    }
+    let mut resolved = binding.clone();
+    resolved.header = clove.root.join(&binding.header).to_string_lossy().into_owned();
+    Ok((
+        resolved,
+        plan.with_clove(&configuration.definitions, &clove.include),
+        clove.library.clone(),
+    ))
 }
 
 /// Resolve a package-declared header before passing its spelling to Clang.

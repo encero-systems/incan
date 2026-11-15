@@ -160,22 +160,23 @@ pub fn compile(
     }
     let search = crate::native_search::dependencies(&all, dependency_search_paths);
     if let Some(store) = shared_store {
-        args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
+        // Rustc's relative `-Crpath` entries would name the store from the staged output, not from the viewed copy.
+        args.push("-Cprefer-dynamic".into());
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
-        // The adapter interposes its own executable only to give every object a content-derived store path before
-        // forwarding the otherwise unchanged argument vector to ld. Darwin records those paths in the debug map.
+        // The development linker gives every object a content-derived store path before forwarding the otherwise
+        // unchanged argument vector to ld. Darwin records those paths in the debug map.
         let darwin = identity.target.ends_with("-apple-darwin");
         if darwin {
-            let linker = std::env::current_exe().map_err(|error| {
+            let linker = development_linker().map_err(|error| {
                 DriverError::Invocation(format!("cannot locate stable development linker: {error}"))
             })?;
             args.push(format!("-Clinker={}", linker.display()));
             args.push("-Clinker-flavor=ld".into());
             args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
         }
-        // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
-        // through absolute search paths, which do not depend on where the copy lives.
-        args.extend(absolute_rpaths(&all, identity, darwin));
+        // The executable is linked in the bakery and run from a copy elsewhere, so its carriers are found through
+        // absolute search paths into the bakery's shared native store, which every home on that bakery reads.
+        args.extend(absolute_rpaths(&shared, identity, darwin));
     }
     if access.links_sysroot() && kind != UnitKind::Library {
         args.extend(sysroot_linkage(identity));
@@ -241,6 +242,24 @@ pub fn compile(
     Ok(())
 }
 
+/// The program a development link runs as its linker: the dedicated `incan-link` installed beside this driver under
+/// the same suffix, or this driver itself where none is installed. The dedicated program is small and never relinked,
+/// so a link pays neither the driver's start nor a first-run check.
+pub(crate) fn development_linker() -> std::io::Result<PathBuf> {
+    let driver = std::env::current_exe()?;
+    if let Some(suffix) = driver
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("incan-rustc-driver"))
+    {
+        let linker = driver.with_file_name(format!("incan-link{suffix}"));
+        if linker.is_file() {
+            return Ok(linker);
+        }
+    }
+    Ok(driver)
+}
+
 /// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.
 /// Overflow checks follow the unit profile: on in debug, off in release.
 fn compilation_arguments(
@@ -251,6 +270,7 @@ fn compilation_arguments(
     overflow_checks: bool,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
+    let optimization = optimization_level(overflow_checks);
     let debuginfo = debuginfo(kind, overflow_checks);
     let mut args = vec![
         "incan-rustc-driver".into(),
@@ -265,7 +285,7 @@ fn compilation_arguments(
         "-C".into(),
         format!("overflow-checks={overflow}"),
         "-C".into(),
-        "opt-level=3".into(),
+        format!("opt-level={optimization}"),
         "-C".into(),
         format!("debuginfo={debuginfo}"),
         "-o".into(),
@@ -284,6 +304,11 @@ fn compilation_arguments(
         args.push("-Csplit-debuginfo=unpacked".into());
     }
     args
+}
+
+/// Select unoptimized native code for the debug profile and optimized native code for the release profile.
+fn optimization_level(overflow_checks: bool) -> &'static str {
+    if overflow_checks { "0" } else { "3" }
 }
 
 /// Select full debug metadata for libraries and development executables, but omit metadata stripped from release
@@ -336,8 +361,10 @@ fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
     args
 }
 
-/// Absolute run-time search paths for a shared-linkage executable: each shared library's directory and the
-/// toolchain's own library directory, so a copy of the executable loads them wherever it is placed.
+/// Absolute run-time search paths for a shared-linkage executable: the directory of each shared carrier, in the
+/// bakery's shared native store, and the toolchain's standard library directory. A viewed copy of the executable loads
+/// them wherever it is placed, and no path names the home that linked it. Proc-macro and other compile-time
+/// libraries are never loaded at run time, so their directories are not searched.
 fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
     let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
     for (_, path) in linked {
@@ -362,7 +389,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{UnitKind, debuginfo};
+    use super::{UnitKind, debuginfo, optimization_level};
 
     /// Release executables omit debug metadata while development executables and libraries retain it.
     #[test]
@@ -371,5 +398,12 @@ mod tests {
         assert_eq!(debuginfo(UnitKind::Test, false), "0");
         assert_eq!(debuginfo(UnitKind::Program, true), "2");
         assert_eq!(debuginfo(UnitKind::Library, false), "2");
+    }
+
+    /// Debug compilation remains fast while release compilation retains optimized native code.
+    #[test]
+    fn optimization_follows_unit_profile() {
+        assert_eq!(optimization_level(true), "0");
+        assert_eq!(optimization_level(false), "3");
     }
 }

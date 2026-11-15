@@ -36,7 +36,7 @@ A registration without `with_desugarer()` publishes descriptors only. Using one 
 
 ## Publication and execution
 
-Oven builds the entry and its imports as native host units. It runs registration at the producer and publishes the descriptors, schema version and vocabulary-unit identity with the library. Consumers read those descriptors. Registration runs again when any input of the vocabulary unit changes.
+Oven builds the entry and its imports as native host units. It runs registration at the producer, with an empty environment, and publishes the descriptors, schema version and vocabulary-unit identity with the library. Consumers read those descriptors. Registration runs again when any input of the vocabulary unit changes.
 
 A custom expansion runs in a separate native worker. Requests contain structured syntax and the requesting module's path. Responses contain structured expressions, statements or compilation-unit declarations matching the registered output position. Source text is not an accepted response. Each output source range must lie inside its requesting vocabulary node; an omitted output range inherits that node's range. Distinct output nodes may share a range. A reused response produces the same output as the computation it replaces.
 
@@ -51,7 +51,7 @@ Published metadata version 1 and syntax version 3 are supported. A different ver
 | `INCAN_VOCAB_POLICY` | Defaults to `locked-dependencies`, admitting the exact native units in the resolved provider lock. Other values, including `deny`, deny execution. |
 | `target/incan/vocabulary/providers.lock.json` | Resolved provider, vocabulary-unit identity, manifest hash, worker hash and policy. |
 | `target/incan/vocab-responses/evidence.jsonl` | Provider, vocabulary-unit identity, requesting module, policy, admission, granted capabilities and response decision (`computed`, `reused` or `denied`). |
-| `OVEN_TRACE=-` | Writes vocabulary admission and response decisions to stderr. A nonempty path selects a trace file. |
+| `INCAN_ENGINE_TRACE` | Records vocabulary admission and response decisions in the [tracing](cli_reference.md#tracing) channel, as `reason` and `vocab_runtime` records. |
 
 Admission precedes response-cache reuse and worker execution. Worker artifact paths must remain inside the dependency artifact root, and their bytes must match the published hash. A worker invocation receives no capabilities; the worker starts with an empty environment, and its standard error is discarded. Admission does not provide an operating-system sandbox.
 

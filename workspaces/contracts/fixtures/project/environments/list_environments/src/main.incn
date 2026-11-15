@@ -1,0 +1,17 @@
+# behavior: `oven env list` lists the standard environments and every `[envs.NAME]` the manifest declares, as 0.5.1's `incan env list` did (#3140).
+# cli-commands:
+#   oven env list
+#   oven env list --project .
+# expect-stdout:
+#   dev
+#   test
+#   lint
+#   docs
+#   ci
+#   release
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose environments the case lists."""
+    pass

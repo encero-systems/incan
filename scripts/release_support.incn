@@ -13,8 +13,8 @@ from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.regex import Regex
 
-pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.8"
-pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.8"
+pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.9"
+pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.9"
 pub const FAMILIES: FrozenList[str] = [
     "behavior",
     "check",
@@ -41,7 +41,14 @@ pub const STANDARD_PACKAGES: FrozenList[str] = [
 
 
 pub model ReleaseOptions:
-    """Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout."""
+    """
+    Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout.
+
+    `seed_source` names the commit the seed's installed native generation was built from; empty means the qualified
+    source still carries those sources unchanged. `stamp_signer` selects the release workflow's first invocation, which
+    stamps the signer into the shipped `incan`, packs, and leaves installed verification to the second; `signed_bundle`
+    selects that second invocation, on the bundle the workflow signed in between. A local qualification sets neither.
+    """
 
     pub source_sha: str
     pub output: Path
@@ -49,6 +56,9 @@ pub model ReleaseOptions:
     pub prove_fixed_point: bool
     pub jobs: int
     pub timeout_seconds: int
+    pub seed_source: str = ""
+    pub stamp_signer: bool = false
+    pub signed_bundle: str = ""
 
 
 pub model VerificationOptions:
@@ -268,6 +278,9 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
     mut prove = false
     mut jobs = 4
     mut timeout = 600
+    mut seed_source = ""
+    mut stamp_signer = false
+    mut signed_bundle = ""
     mut index = 0
     while index < len(arguments):
         argument = str(arguments[index])
@@ -277,6 +290,19 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
         elif argument == "--prove-fixed-point":
             prove = true
             index += 1
+        elif argument == "--seed-source":
+            if index + 1 >= len(arguments) or not full_sha(arguments[index + 1]):
+                return Err("--seed-source needs a full lowercase source commit")
+            seed_source = str(arguments[index + 1])
+            index += 2
+        elif argument == "--stamp-signer":
+            stamp_signer = true
+            index += 1
+        elif argument == "--verify-installed":
+            if index + 1 >= len(arguments) or arguments[index + 1] == "":
+                return Err("--verify-installed needs the directory of the signed bundle")
+            signed_bundle = str(arguments[index + 1])
+            index += 2
         elif argument == "--jobs" or argument == "--timeout":
             if index + 1 >= len(arguments):
                 return Err(f"{argument} needs a positive integer")
@@ -292,7 +318,12 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             positional.append(argument)
             index += 1
     if len(positional) != 2:
-        return Err("usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
+        return Err(
+            "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] "
+            + "[--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]",
+        )
+    if stamp_signer and signed_bundle != "":
+        return Err("--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one")
     if not full_sha(positional[0]):
         return Err("SHA must be a full lowercase source commit")
     return Ok(
@@ -303,6 +334,9 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             prove_fixed_point=prove,
             jobs=jobs,
             timeout_seconds=timeout,
+            seed_source=seed_source,
+            stamp_signer=stamp_signer,
+            signed_bundle=signed_bundle,
         ),
     )
 
@@ -424,8 +458,8 @@ pub def release_receipt(
 
 
 pub def digest(path: Path) -> Result[str, str]:
-    """Return a file's lowercase SHA-256 digest."""
-    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+    """Return a file's lowercase SHA-256 digest; a file that cannot be read is named in the refusal."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => f"cannot digest {path.0}: {error.message()}")?))
 
 
 pub def reference_cache_identity(
@@ -442,6 +476,22 @@ pub def reference_cache_identity(
         hasher.update(f"{len(encoded)}:".encode("utf-8"))
         hasher.update(encoded)
     return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def seed_toolchain_directory(seed_home: Path) -> Result[str, str]:
+    """
+    The seed's toolchain directory, named by the version the seed installed rather than the line this release builds.
+
+    A seed of the previous dev line builds the next one, so the two names differ exactly when the line's version moved.
+    """
+    toolchains = seed_home.joinpath("toolchains")
+    entries = toolchains.iterdir().map_err((error) => error.message())?
+    versions = sorted([entry.name() for entry in entries if entry.joinpath("toolchain.json").is_file()])
+    if len(versions) == 0:
+        return Err(f"no installed toolchain in the seed home {seed_home.0}")
+    if len(versions) > 1:
+        return Err(f"the seed home {seed_home.0} installs more than one toolchain: {", ".join(versions)}")
+    return Ok(f"toolchains/{versions[0]}")
 
 
 pub def reference_cache_root(seed_home: Path) -> Path:
@@ -565,6 +615,10 @@ pub def shared_relocated_sysroot(source: Path, cache: Path) -> Result[Path, str]
             return Err(f"cached relocated tree digest disagrees with {identity}: {destination.0}")
         if not same_bytes(source_update, cached_update)?:
             return Err(f"cached relocated Rust update hash disagrees: {cached_update.0}")
+        # Reuse only reads: a permission write changes every entry's status time, and with it the compiler facts
+        # that a concurrent release using this shared home has already admitted.
+        require_readonly_tree(home)?
+        return Ok(home)
     else:
         toolchains.mkdir(true, true).map_err((error) => error.message())?
         _ = source.copy(destination, true, true).map_err((error) => error.message())?
@@ -600,6 +654,16 @@ def only_children(parent: Path, names: list[str]) -> bool:
     match parent.iterdir():
         Ok(children) => return sorted([child.name() for child in children]) == sorted(names)
         Err(_) => return false
+
+
+def require_readonly_tree(root: Path) -> Result[None, str]:
+    """Refuse a cached relocated home with any writable entry, without changing any entry's permissions."""
+    mut entries = root.rglob("*").map_err((error) => error.message())?
+    entries.append(root)
+    for entry in entries:
+        if not entry.stat().map_err((error) => error.message())?.readonly().map_err((error) => error.message())?:
+            return Err(f"cached relocated Rust home has a writable entry: {entry.0}")
+    return Ok(None)
 
 
 def make_tree_readonly(root: Path) -> Result[None, str]:

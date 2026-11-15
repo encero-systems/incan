@@ -156,6 +156,13 @@ impl TypeChecker {
         items: &[ImportItem],
         span: Span,
     ) {
+        // Importing only public namespaces, or only members their records settle, needs those records alone, never the
+        // Loaf's whole checked API.
+        if self.collect_record_namespace_imports(import, items, span)
+            || self.collect_record_member_imports(import, items, span)
+        {
+            return;
+        }
         let library = import.key.as_str();
         let path = import.module.as_slice();
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
@@ -232,7 +239,7 @@ impl TypeChecker {
             };
             if let Some(member) = resolved {
                 self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
-                self.record_standard_surface_import(&root, path, item, &local_name, span);
+                self.record_standard_surface_import(&root, path, item, &local_name, span, false);
                 continue;
             }
             if imports_namespace {
@@ -381,7 +388,7 @@ impl TypeChecker {
 
     /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the
     /// `std.testing` markers. Their declarations come from the manifest like any other; this only records which local
-    /// name now spells the surface.
+    /// name now spells the surface. `marker_free` says the item's own records prove it is no `std.testing` marker.
     pub(in crate::typechecker::collect) fn record_standard_surface_import(
         &mut self,
         root: &[String],
@@ -389,6 +396,7 @@ impl TypeChecker {
         item: &ImportItem,
         local_name: &str,
         span: Span,
+        marker_free: bool,
     ) {
         if root != [stdlib::STDLIB_ROOT] {
             return;
@@ -411,33 +419,33 @@ impl TypeChecker {
                 .insert(local_name.to_string(), (surface_function, symbol_id));
         }
         if dotted == "std.testing" {
-            self.record_testing_marker_import(module, item, local_name, span);
+            self.record_testing_marker_import(module, item, local_name, span, marker_free);
         }
     }
 
     /// Record an imported `std.testing` marker alias so decorator validation can reject runtime calls consistently.
     ///
-    /// The markers are read from the checked metadata of the standard package that owns `std.testing`.
+    /// The markers are read from the checked metadata of the standard package that owns `std.testing`. When the item's
+    /// own records prove it is no marker (`marker_free`), its import leaves that read to the first fixture or test
+    /// module that needs the markers ([`Self::testing_marker_semantics_on_demand`]).
     pub(in crate::typechecker::collect) fn record_testing_marker_import(
         &mut self,
         module: &[Ident],
         item: &ImportItem,
         local_name: &str,
         span: Span,
+        marker_free: bool,
     ) {
         let mut module_path = vec![stdlib::STDLIB_ROOT.to_string()];
         module_path.extend(module.iter().cloned());
-        let Some(manifest) = self.loaves.owner_of(&module_path).map(|entry| &entry.artifact.manifest) else {
-            return;
-        };
-        let semantics = match testing_marker_semantics_from_manifest(manifest) {
-            Ok(Some(semantics)) => semantics,
-            Ok(None) => return,
-            Err(error) => {
-                self.errors
-                    .push(errors::invalid_std_testing_marker_metadata(&error.to_string(), span));
-                return;
+        if marker_free {
+            if self.testing_marker_semantics.is_none() {
+                self.testing_marker_module = Some(module_path);
             }
+            return;
+        }
+        let Some(semantics) = self.read_testing_marker_semantics(&module_path, span) else {
+            return;
         };
         let mut marker_path = module_path;
         marker_path.push(item.name.clone());
@@ -448,6 +456,42 @@ impl TypeChecker {
             self.testing_marker_import_bindings.insert(local_name.to_string());
         }
         self.testing_marker_semantics = Some(semantics);
+    }
+
+    /// The `std.testing` marker contract: the one an import read, or else that of the module an import of a function
+    /// that is no decorator named, read now and reported at `span` when malformed. `None` when no import named
+    /// `std.testing` or its Loaf publishes no markers.
+    pub(in crate::typechecker) fn testing_marker_semantics_on_demand(
+        &mut self,
+        span: Span,
+    ) -> Option<crate::testing_markers::TestingMarkerSemantics> {
+        if self.testing_marker_semantics.is_none()
+            && let Some(module_path) = self.testing_marker_module.take()
+        {
+            self.testing_marker_semantics = self.read_testing_marker_semantics(&module_path, span);
+        }
+        self.testing_marker_semantics.clone()
+    }
+
+    /// Read the marker contract from the checked metadata of the Loaf that owns `module_path`, reporting malformed
+    /// metadata at `span`.
+    fn read_testing_marker_semantics(
+        &mut self,
+        module_path: &[String],
+        span: Span,
+    ) -> Option<crate::testing_markers::TestingMarkerSemantics> {
+        let manifest = self
+            .loaves
+            .owner_of(module_path)
+            .map(|entry| &entry.artifact.manifest)?;
+        match testing_marker_semantics_from_manifest(manifest) {
+            Ok(semantics) => semantics,
+            Err(error) => {
+                self.errors
+                    .push(errors::invalid_std_testing_marker_metadata(&error.to_string(), span));
+                None
+            }
+        }
     }
 
     /// Bind `from std.rust import <bound>`: the typechecker-only capability bounds, which no Loaf declares.

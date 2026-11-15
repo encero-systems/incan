@@ -25,6 +25,7 @@ pub mod compiler_stack;
 pub mod contract_metadata;
 pub mod declaration_interface;
 pub mod decorator_resolution;
+mod documentation;
 pub mod executable_resolution;
 pub mod hir;
 pub mod library_exports;

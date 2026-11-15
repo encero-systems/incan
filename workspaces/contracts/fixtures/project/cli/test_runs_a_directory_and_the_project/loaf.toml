@@ -1,0 +1,6 @@
+[project]
+name = "test_runs_a_directory_and_the_project"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

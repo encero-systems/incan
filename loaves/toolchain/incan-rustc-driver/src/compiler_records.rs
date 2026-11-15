@@ -2,7 +2,8 @@
 //!
 //! This command is an installation boundary, not a compilation fallback. It is the only records-mode path that
 //! opens `.incnlib` artifacts: the candidate compiler validates the manifest with its owning semantic model, then
-//! writes independently content-named values for Oven to admit through the sealed-set path.
+//! writes independently content-named values for Oven to admit through the sealed-set path. Which records a Loaf has,
+//! and their two digests, are the front end's (`LibraryManifest::compiler_records`); this module only writes them.
 
 use std::fs;
 use std::io;
@@ -14,53 +15,6 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const EXPORT_SCHEMA: &str = "incan.compiler-record-export/2";
-
-/// Closed families produced from one admitted Loaf manifest.
-#[derive(Clone, Copy)]
-enum ManifestRecordFamily {
-    Metadata,
-    Alias,
-    Partial,
-    Model,
-    Class,
-    Function,
-    Trait,
-    Enum,
-    TypeAlias,
-    Newtype,
-    Const,
-    Static,
-    MadePrivateType,
-    Vocabulary,
-    SoftKeyword,
-    ContractMetadata,
-    RustAbi,
-}
-
-impl ManifestRecordFamily {
-    /// Stable record-family spelling owned by the converter profile.
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Metadata => "metadata",
-            Self::Alias => "alias",
-            Self::Partial => "partial",
-            Self::Model => "model",
-            Self::Class => "class",
-            Self::Function => "function",
-            Self::Trait => "trait",
-            Self::Enum => "enum",
-            Self::TypeAlias => "type-alias",
-            Self::Newtype => "newtype",
-            Self::Const => "const",
-            Self::Static => "static",
-            Self::MadePrivateType => "made-private-type",
-            Self::Vocabulary => "vocabulary",
-            Self::SoftKeyword => "soft-keyword",
-            Self::ContractMetadata => "contract-metadata",
-            Self::RustAbi => "rust-abi",
-        }
-    }
-}
 
 /// One value the compiler validated and Oven will place in the sealed set.
 #[derive(Serialize)]
@@ -122,7 +76,7 @@ fn manifest_paths(root: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(manifests)
 }
 
-/// Split one validated manifest at the declaration and metadata-family boundaries consumers select.
+/// Write one validated manifest's compiler records as content-named objects and list their keys.
 fn export_manifest(
     output: &Path,
     profile: &str,
@@ -131,227 +85,16 @@ fn export_manifest(
     records: &mut Vec<ExportedRecord>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = format!("loaf/{profile}/{}", manifest.name);
-    let rust_paths = manifest
-        .rust_abi
-        .as_ref()
-        .map(|abi| {
-            abi.items
-                .iter()
-                .map(|item| item.canonical_path.as_str())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    add_value(
-        output,
-        &prefix,
-        ManifestRecordFamily::Metadata,
-        0,
-        &manifest.name,
-        &json!({
-            "name": manifest.name.as_str(),
-            "version": manifest.version.as_str(),
-            "incan_version": manifest.incan_version.as_str(),
-            "manifest_format": manifest.manifest_format,
-            "manifest_digest": manifest_digest,
-            "vocabulary": manifest.vocab.is_some(),
-            "provider_operations": !manifest.contract_metadata.provider.operation_descriptors.is_empty(),
-            "native_unions": !manifest.contract_metadata.native_unions.is_empty(),
-            "rust_paths": rust_paths,
-            "rust_abi_cache_declared": manifest
-                .rust_abi
-                .as_ref()
-                .and_then(|abi| abi.cache_digest.as_ref())
-                .is_some(),
-        }),
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Alias,
-        &manifest.exports.aliases,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Partial,
-        &manifest.exports.partials,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Model,
-        &manifest.exports.models,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Class,
-        &manifest.exports.classes,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Function,
-        &manifest.exports.functions,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Trait,
-        &manifest.exports.traits,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Enum,
-        &manifest.exports.enums,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::TypeAlias,
-        &manifest.exports.type_aliases,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Newtype,
-        &manifest.exports.newtypes,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Const,
-        &manifest.exports.consts,
-        |item| &item.name,
-        records,
-    )?;
-    add_named_values(
-        output,
-        &prefix,
-        ManifestRecordFamily::Static,
-        &manifest.exports.statics,
-        |item| &item.name,
-        records,
-    )?;
-    for (index, item) in manifest.made_private_types.iter().enumerate() {
-        add_value(
-            output,
-            &prefix,
-            ManifestRecordFamily::MadePrivateType,
-            index,
-            &item.name,
-            item,
-            records,
-        )?;
-    }
-    if let Some(vocab) = &manifest.vocab {
-        add_encoded_value(
-            output,
-            &prefix,
-            ManifestRecordFamily::Vocabulary,
-            0,
-            &vocab.package_name,
-            vocab.encode_compiler_record_value()?,
-            records,
-        )?;
-    }
-    for (index, item) in manifest.soft_keywords.activations.iter().enumerate() {
-        add_value(
-            output,
-            &prefix,
-            ManifestRecordFamily::SoftKeyword,
-            index,
-            &item.keyword,
-            item,
-            records,
-        )?;
-    }
-    add_value(
-        output,
-        &prefix,
-        ManifestRecordFamily::ContractMetadata,
-        0,
-        &manifest.name,
-        &manifest.contract_metadata,
-        records,
-    )?;
-    if let Some(rust_abi) = &manifest.rust_abi {
-        add_value(
-            output,
-            &prefix,
-            ManifestRecordFamily::RustAbi,
-            0,
-            &manifest.name,
-            rust_abi,
-            records,
-        )?;
+    for record in manifest.compiler_records(manifest_digest)?.records {
+        write_object(output, format!("{prefix}/{}", record.key()), record.value, records)?;
     }
     Ok(())
 }
 
-/// Add every declaration of one family without combining unrelated declaration payloads.
-fn add_named_values<T: Serialize>(
+/// Address and write one encoded record value without combining it with sibling records.
+fn write_object(
     output: &Path,
-    prefix: &str,
-    family: ManifestRecordFamily,
-    values: &[T],
-    name: impl Fn(&T) -> &str,
-    records: &mut Vec<ExportedRecord>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for (index, value) in values.iter().enumerate() {
-        add_value(output, prefix, family, index, name(value), value, records)?;
-    }
-    Ok(())
-}
-
-/// Encode one semantic value canonically enough for content addressing and retain its logical record identity.
-fn add_value<T: Serialize>(
-    output: &Path,
-    prefix: &str,
-    family: ManifestRecordFamily,
-    index: usize,
-    name: &str,
-    value: &T,
-    records: &mut Vec<ExportedRecord>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    add_encoded_value(
-        output,
-        prefix,
-        family,
-        index,
-        name,
-        LibraryManifest::encode_compiler_record_value(value)?,
-        records,
-    )
-}
-
-/// Address and write one already encoded family value without combining it with sibling records.
-fn add_encoded_value(
-    output: &Path,
-    prefix: &str,
-    family: ManifestRecordFamily,
-    index: usize,
-    name: &str,
+    key: String,
     bytes: Vec<u8>,
     records: &mut Vec<ExportedRecord>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -365,11 +108,6 @@ fn add_encoded_value(
     } else {
         fs::write(&path, &bytes)?;
     }
-    let name_digest = format!("{:x}", Sha256::digest(name.as_bytes()));
-    records.push(ExportedRecord {
-        key: format!("{prefix}/{}/{index:08}/{name_digest}", family.as_str()),
-        revision: revision.clone(),
-        object,
-    });
+    records.push(ExportedRecord { key, revision, object });
     Ok(())
 }

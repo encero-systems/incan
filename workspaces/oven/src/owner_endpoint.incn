@@ -31,7 +31,8 @@ from owner_protocol import PROTOCOL, Reply, Request, discard_reply, prepares_exe
 from owner_protocol import send_document, send_quietly
 from rust_target import inherited_deployment_configuration
 from toolchain import toolchain_file
-from unit_freshness import artifact_identity, fingerprint
+from installation_page import admitted_identity
+from unit_freshness import fingerprint
 
 # How long a started owner has to say it is listening, in 2 ms polls.
 const READINESS_POLLS: int = 7500
@@ -47,10 +48,12 @@ const PRIVATE_DIRECTORY: u32 = 448
 const LIFECYCLE_SECONDS: u64 = 5
 # The suffix of an owner's socket file name.
 const SOCKET_SUFFIX: str = ".sock"
-# Where the user's endpoint directory is made when the platform names no user runtime directory.
+# Where the user's endpoint directory is made when no environment root can keep every endpoint bounded.
 const ENDPOINT_ROOT: str = "/tmp"
 # The digits of a directory's digest that name its sockets in the endpoint directory.
 const DIRECTORY_DIGITS: int = 12
+# The longest fixed endpoint name after the directory prefix (`e-` plus 20 digest digits and `.sock`).
+const MAX_ENDPOINT_NAME: int = 27
 
 
 pub model Endpoint:
@@ -96,25 +99,38 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     The short, depth-independent path prefix of the sockets that belong to the private `directory`.
 
     1. Make `directory` private; the user who owns it owns its sockets.
-    2. Make that user's private endpoint directory: `i-<uid>` under the user runtime directory, or under `/tmp`.
-    3. Name the sockets by a digest of `directory`, so different homes never share one.
+    2. Select an absolute environment root only when the longest endpoint still fits, otherwise use `/tmp`.
+    3. Make that user's private endpoint directory: `i-<uid>` under the selected root.
+    4. Name the sockets by the physical identity of `directory`, so aliases share one and different homes never do.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
     prepare_directory(directory)?
     uid = owner_of(directory)?
-    # 2. The endpoint directory belongs to the same user and nobody else can enter it.
-    endpoints = f"{endpoint_root()}/i-{uid}"
+    # 2. and 3. The endpoint directory belongs to the same user and nobody else can enter it.
+    endpoints = f"{endpoint_root(uid)}/i-{uid}"
     prepare_endpoints(endpoints, uid)?
-    # 3. A digest of the directory keeps the sockets of every home apart at a fixed length.
-    return Ok(f"{endpoints}/{fingerprint([directory])?[0:DIRECTORY_DIGITS]}-")
+    # 4. Device and inode identify the locked directory even when `/var` and `/private/var` spell it differently.
+    physical = metadata(f"{directory}").map_err((error) => f"{directory}: {error}")?
+    identity = fingerprint([str(physical.dev()), str(physical.ino())])?
+    return Ok(f"{endpoints}/{identity[0:DIRECTORY_DIGITS]}-")
 
 
-def endpoint_root() -> str:
-    """The user runtime directory when the platform names one, else `/tmp`."""
-    runtime = get_or("XDG_RUNTIME_DIR", "")
-    if runtime != "" and runtime.startswith("/"):
-        return runtime
+def endpoint_root(uid: u32) -> str:
+    """The first absolute environment root whose longest fixed endpoint fits, else the fixed short root."""
+    for configured in [get_or("XDG_RUNTIME_DIR", ""), get_or("TMPDIR", "")]:
+        root = without_trailing_slashes(configured)
+        prefix_length = len(root) + len(f"/i-{uid}/") + DIRECTORY_DIGITS + 1
+        if root.startswith("/") and prefix_length + MAX_ENDPOINT_NAME <= MAX_SOCKET_PATH:
+            return root
     return ENDPOINT_ROOT
+
+
+def without_trailing_slashes(path: str) -> str:
+    """Remove incidental trailing separators without changing the filesystem location."""
+    mut normalized = path
+    while len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized
 
 
 def owner_of(directory: str) -> Result[u32, str]:
@@ -202,10 +218,14 @@ def executable() -> Result[str, str]:
 
 
 def identity_of(path: Path) -> str:
-    """A file's identity, or `absent`."""
-    match artifact_identity(path):
-        Ok(stamp) => return stamp
-        Err(_) => return "absent"
+    """The installation page identity for the toolchain description, or `absent` before admission."""
+    match path.parent().resolve():
+        Ok(directory) =>
+            match admitted_identity(directory):
+                Ok(Some(identity)) => return identity
+                _ => pass
+        Err(_) => pass
+    return "absent"
 
 
 pub def idle_seconds() -> int:
@@ -251,7 +271,7 @@ pub def connect(endpoint: Endpoint, start: bool) -> Result[Option[Connection], s
         return Ok(None)
     # 3. Only the command holding the exclusive lock can start an owner. The lock is held until this function returns.
     prepare_directory(f"{endpoint.directory}")?
-    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => f"cannot lock {error.message()}")?
+    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => f"cannot {error.message()}")?
     # 4. An owner another command started while this one waited for the lock is used, not a second one.
     match attach(endpoint)?:
         Some(started) => return Ok(Some(started))
@@ -443,7 +463,7 @@ pub def stop_owners() -> Result[int, str]:
     endpoints = Path(prefix).parent()
     named = Path(prefix).name()
     mut stopped = 0
-    for entry in endpoints.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for entry in endpoints.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
         if name.startswith(named) and name.endswith(SOCKET_SUFFIX):
             generation = name[len(named):len(name) - len(SOCKET_SUFFIX)]

@@ -77,5 +77,33 @@ pub from _plan import (
     EnumDeclaration,
     EnumVariant,
 )
-pub from function_records import encode_product, decode_product, encode_scalar, decode_scalar
-pub from record_codec import encode_record_plan, decode_record_plan, encode_entry_binding
+pub from function_records import (
+    encode_product,
+    decode_product,
+    encode_scalar,
+    decode_scalar,
+    product_identities,
+    product_nominals,
+    decode_frames,
+    product_frame_names,
+)
+pub from nominal_identities import (
+    NominalKind,
+    NominalReference,
+    ProductNominal,
+    UnitNominals,
+    describe_nominals,
+    resolve_nominals,
+    unit_nominals,
+    carrier_index,
+    carrier_position,
+    is_carrier_index,
+)
+pub from carrier_positions import fold_carrier_positions, fold_inventories
+pub from record_codec import (
+    encode_record_plan,
+    encode_record_plan_products,
+    decode_record_plan,
+    encode_entry_binding,
+    record_plan_products,
+)

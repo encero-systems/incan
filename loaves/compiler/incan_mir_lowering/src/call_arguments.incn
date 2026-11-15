@@ -31,7 +31,7 @@ from element_borrows import shared_element_place
 from validation_errors import validation_error_reference
 from text_plan import owned_literal
 from numerics import numeric_carrier
-from frame import place_type, Builder, temporary, read_place, literal
+from frame import place_type, Builder, temporary, read_place, literal, forget_moved_arguments, lend_invocation_storage
 from collections import is_collection
 from lists import is_list, exclusive_reference, is_mutable_list_reference
 from closures import packed_input, function_assignment, parameter_representation
@@ -82,7 +82,9 @@ pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty:
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
     generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
-    deferred producers still refuse that contract until retained dependencies are represented.
+    deferred producers still refuse that contract until retained dependencies are represented. Inferred shared access
+    arrives at a type with a shared executable form for a private callable, and at any read-only type for a published
+    callable, as on the base; lowering lends both through the same carriers.
     """
     if parameter.input_access != IncanInputAccess.Inferred:
         if body.is_generator():
@@ -409,20 +411,28 @@ def materialized_shared_argument(
     referent: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation."""
+    """
+    Apply a checked conversion to fresh owned storage, then lend that exact storage for this invocation.
+
+    The frame owns that storage only for the call: it is dropped when the call returns, and by the call's unwind
+    cleanup. An inferred-shared input is never the source of a returned view, so nothing reads it afterward.
+    """
     materialized = call_argument_operand(builder, value, referent, span)?
     if operand_type(builder, materialized)? != referent:
         return Err("unsupported Body IR inferred shared materialization mismatch")
     storage = temporary(builder, referent, span)
+    forget_moved_arguments(builder, [materialized])
     builder.emit(plan_assign(storage, RvalueKind.Use(materialized), span))
-    return explicit_place_argument(
+    lent = explicit_place_argument(
         builder,
         storage,
         OwnershipFact.Borrow,
         expected,
         IncanInputAccess.InferredShared,
         span,
-    )
+    )?
+    lend_invocation_storage(builder, storage, lent)
+    return Ok(lent)
 
 
 def explicit_constant_argument(

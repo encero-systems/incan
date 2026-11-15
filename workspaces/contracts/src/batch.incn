@@ -7,12 +7,30 @@ from fixture import MINIMAL_MANIFEST, Fixture, fixture_files, materialize, mater
 from group_hints import retain_hint
 from run import Outcome, built_program, clear_trace, surface, trace_file, unit_notes
 from timing_hints import Costs, load_costs, retain_costs
-from workers import Invocation, invoke_many
+from workers import Invocation, Pool, close_pool, invoke_many, open_pool, pool_outcome
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
-# An expensive shared attempt can split without limiting any case's original command.
-const GROUP_COMPILATION_SECONDS: int = 5
+# The most cases a first group holds. A group's build takes longer per case the more cases it holds, so larger groups
+# cost more compilation in all; much smaller ones add more builds than they save. Of first groups of 8, 11, 17, 22, 33
+# and 65 cases, the behavior family built its shared cases fastest from groups of 17.
+const FIRST_GROUP_CASES: int = 17
+# Oven's refusal of entry selection by an engine that cannot compile several programs into one unit: one line that
+# names the engine's refusal and the entry option among the options it refuses. Oven gives the refusal no code, and the
+# list of other options it names grows, so only these two parts are matched.
+const ENGINE_REFUSES_OPTIONS: str = "unit records do not implement"
+const ENTRY_OPTION: str = "program-entry"
+# Why every case keeps its own command once the engine refuses shared entries: no partition can make it share.
+pub const SHARED_ENTRIES_REFUSED: str = "the selected engine refuses shared program entries"
+# Why a successful shared compilation that printed anything is not taken whole: its output belongs to some case.
+const OUTPUT_ATTRIBUTION: str = "compiler output requires isolated attribution"
+# Why a module case keeps its own command when one of its imports resolves only from its own source root.
+const ROOT_IMPORT: str = "an import that only the case's source root resolves names no module inside a group"
+
+
+pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
+    """One compatible shared compilation, with no runner-imposed deadline or cached execution outcome."""
+    return Invocation(program=incan, arguments=arguments, project=project, selector=None, duration_hint=duration_hint)
 
 
 model Entry:
@@ -50,7 +68,7 @@ pub def run_batches(
     2. Partition them into groups: this scratch's previous partition, or a full-family hint, or one group to discover
        the partition from.
     3. Compile groups and run their verified entries in one pool, refining refusals before splitting them.
-    4. Retain the partition for the next run.
+    4. Retain the partition for the next run, unless the engine refused to share any compilation.
     """
     # 1. Only the cases whose entry can be compiled together with others are shared; the rest keep their own command.
     entries, refusals = admitted_entries(fixtures)
@@ -73,12 +91,25 @@ pub def run_batches(
     mut outcomes: dict[str, Result[Outcome, str]] = {}
     mut costs = load_costs(hint)
     mut projects: list[Path] = []
-    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs, costs, projects)
+    sharing = compile_groups(
+        incan,
+        scratch,
+        groups,
+        built,
+        notes,
+        partition,
+        overlapping,
+        outcomes,
+        jobs,
+        costs,
+        projects,
+    )
     retain_costs(hint, projects, costs)
-    # 4. Retain the partition whose entries ran fresh in the owning pool.
+    # 4. Retain the partition whose entries ran fresh in the owning pool. An engine that refused sharing taught nothing
+    # about compatibility, so its all-singleton partition never replaces one that a sharing engine can use.
     for group in built:
         partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
-    if len(entries) > 0:
+    if len(entries) > 0 and sharing:
         match write(plan, "\n".join(partition) + "\n"):
             Err(error) => println(f"batch plan: {error}")
             Ok(_) => pass
@@ -135,9 +166,13 @@ def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[l
 
 
 def initial_groups(entries: list[Entry], jobs: int) -> list[list[Entry]]:
-    """Start discovery with balanced optimistic groups so one refused giant compilation cannot serialize workers."""
+    """
+    Start discovery with balanced optimistic groups, at least one per job and none above `FIRST_GROUP_CASES` cases, so
+    one refused giant compilation cannot serialize workers and no first build outlasts the rest of the family.
+    """
     mut groups: list[list[Entry]] = []
-    width = max([1, (len(entries) + max([1, jobs]) - 1) // max([1, jobs])])
+    count = max([1, jobs, (len(entries) + FIRST_GROUP_CASES - 1) // FIRST_GROUP_CASES])
+    width = max([1, (len(entries) + count - 1) // count])
     mut offset = 0
     while offset < len(entries):
         groups.append(entries[offset:min([offset + width, len(entries)])])
@@ -199,10 +234,12 @@ def entry(fixture: Fixture) -> Result[Entry, str]:
         return Err("check-only cases keep their own diagnostic context")
     admit_source(program.source)?
     if fixture.shape == "module":
-        for relative in fixture_files(fixture)?.keys():
+        files = fixture_files(fixture)?
+        for relative in files.keys():
             if relative.startswith("src/") and relative.endswith(".incn"):
-                module = fixture.entry.joinpath(relative[4:])
-                admit_source(fixture.input.text(module)?)?
+                text = fixture.input.text(fixture.entry.joinpath(relative[4:]))?
+                admit_source(text)?
+                admit_imports(relative, text, files)?
     return Ok(Entry(fixture=fixture, source=program.source))
 
 
@@ -218,6 +255,54 @@ def admit_source(source: str) -> Result[None, str]:
         if line.startswith("@"):
             return Err("decorator initialization has not been proven equivalent before entry setup")
     return Ok(None)
+
+
+def admit_imports(relative: str, source: str, files: Dict[str, bytes]) -> Result[None, str]:
+    """
+    Refuse a module case one of whose imports resolves only from the case's source root. An import resolves from the
+    importing file's directory or from the source root, and in a group the case's sources sit under `src/case_N/`: a
+    `crate` path, or a nested file's import that only the case's root defines, names no module there. A top-level file's
+    directory is the case's root, so its imports still resolve.
+    """
+    parts = relative.split("/")
+    directory = "/".join(parts[0:len(parts) - 1]) + "/"
+    for module in imported_modules(source):
+        first = module.split(".")[0]
+        if first == "crate":
+            return Err(ROOT_IMPORT)
+        if directory != "src/" and defines(files, "src/", first) and not defines(files, directory, first):
+            return Err(ROOT_IMPORT)
+    return Ok(None)
+
+
+def defines(files: Dict[str, bytes], directory: str, name: str) -> bool:
+    """Whether the sources in `directory` hold a module or a package named `name`."""
+    if f"{directory}{name}.incn" in files:
+        return true
+    package = f"{directory}{name}/"
+    for relative in files.keys():
+        if relative.startswith(package):
+            return true
+    return false
+
+
+def imported_modules(source: str) -> list[str]:
+    """The dotted module paths a source's `import` and `from` statements name; relative imports are left out."""
+    mut modules: list[str] = []
+    for line in source.split("\n"):
+        mut statement = line.strip()
+        if statement.startswith("pub "):
+            statement = statement[4:].strip()
+        mut names = ""
+        if statement.startswith("from "):
+            names = statement[5:].strip().split(" ")[0]
+        elif statement.startswith("import "):
+            names = statement[7:]
+        for name in names.split(","):
+            path = name.strip().split(" ")[0].replace("::", ".")
+            if path != "" and not path.startswith("."):
+                modules.append(path)
+    return modules
 
 
 def observes_module_identity(source: str) -> bool:
@@ -276,6 +361,27 @@ def isolated_request(
     )
 
 
+model Discovery:
+    """A family's compilation groups in flight: what each request of the pool compiles or runs, and what settled."""
+
+    incan: str
+    scratch: Path
+    costs: Costs
+    # How many parts a group refused without a named case splits into: a job's worth, so the parts build side by side.
+    parts: int
+    # The cases given their own command so far.
+    queued: set[str]
+    # Each group build's request index and its group.
+    attempts: dict[int, GroupProject] = {}
+    # Each group build's request index, the request index of its first entry and the cases its entries run.
+    executions: dict[int, tuple[int, list[str]]] = {}
+    # Each own command's request index and its case.
+    own: dict[int, str] = {}
+    # Each build taken, by request index, with the cases its entries are taken for.
+    taken: list[tuple[int, GroupProject]] = []
+    sharing: bool = true
+
+
 def compile_groups(
     incan: str,
     scratch: Path,
@@ -288,85 +394,156 @@ def compile_groups(
     jobs: int,
     costs: Costs,
     mut projects: list[Path],
+) -> bool:
+    """
+    Compile the partition's groups through the same child budget used for fresh execution and isolated commands, and
+    report whether the engine shared compilations.
+
+    1. Submit every group's build with its gated entries, and every isolated case's own command, to one pool.
+    2. As each build settles, take it, keep it for the cases its output does not name, or refine its refusal, and
+       submit the retries it calls for at once, while other builds still run. An engine that refuses shared entries
+       ends sharing: no group is bisected or attempted again, and each case keeps its own command once.
+    3. Once the pool is idle, record each own command's outcome and the entries of each build taken.
+    """
+    mut pool = open_pool(jobs)
+    mut discovery = Discovery(incan=incan, scratch=scratch, costs=costs, parts=max([2, jobs]), queued=set())
+    # 1. The partition's groups and the isolated cases share one pool.
+    submit(pool, discovery, groups, separate, partition, projects, false)
+    # 2. A settled build's retries join the pool at once, ahead of the requests still queued.
+    while pool.busy():
+        for index in pool.step():
+            if index in discovery.attempts:
+                retry = settled_group(discovery, index, pool_outcome(index), built, notes)
+                submit(pool, discovery, retry, [], partition, projects, true)
+    # 3. Outcomes are recorded once every request settled.
+    results = close_pool(pool)
+    for index in discovery.own.keys():
+        outcomes[discovery.own[index]] = results[index]
+    for build, group in discovery.taken:
+        first, selected = discovery.executions[build]
+        record_entries(group, selected, first, results, outcomes)
+    return discovery.sharing
+
+
+def submit(
+    mut pool: Pool,
+    mut discovery: Discovery,
+    groups: list[list[Entry]],
+    separate: list[Fixture],
+    mut partition: list[str],
+    mut projects: list[Path],
+    urgent: bool,
 ) -> None:
     """
-    Compile each partition wave through the same child budget used for fresh execution and isolated commands.
+    Add each shared group's build and gated entries, and each newly isolated case's own command, to the pool; a
+    retry is `urgent` and goes ahead of the requests still queued, since a build it unlocks may unlock further work.
 
-    1. Retain singleton names and prepare each shared compilation.
-    2. Queue original commands alongside shared compilation waves, including newly isolated cases.
-    3. Run builds and their verified entries under one child budget, recording original results once.
-    4. Retain successful builds and refine refused groups for the next wave.
+    1. A singleton keeps its own command; a group that cannot be prepared is split and prepared again.
+    2. Each prepared group contributes one build, and each isolated case one own command.
+    3. Each build's entries follow it, gated on its success.
     """
     mut pending = groups
-    mut isolated = separate
-    while len(pending) > 0 or len(isolated) > 0:
-        mut requests: list[Invocation] = []
-        mut attempts: list[GroupProject] = []
-        mut retry: list[list[Entry]] = []
-        # 1. Singletons keep their own command; every shared group contributes one compilation request.
-        mut queued = set([fixture.case_name() for fixture in isolated])
+    if not discovery.sharing:
+        pending = dissolved(pending)
+    mut isolated: list[Fixture] = []
+    for fixture in separate:
+        isolate(discovery, fixture, isolated)
+    mut requests: list[Invocation] = []
+    mut builds: list[int] = []
+    base = pool.size()
+    # 1. Singletons keep their own command, and a group that cannot be prepared is split.
+    while len(pending) > 0:
+        mut again: list[list[Entry]] = []
         for entries in pending:
+            if len(entries) == 1:
+                partition.append(entries[0].fixture.case_name())
+                isolate(discovery, entries[0].fixture, isolated)
             if len(entries) < 2:
-                if len(entries) == 1:
-                    partition.append(entries[0].fixture.case_name())
-                    name = entries[0].fixture.case_name()
-                    if name not in outcomes and name not in queued:
-                        isolated.append(entries[0].fixture)
-                        queued.add(name)
                 continue
-            match prepare_group(scratch, entries):
-                Err(_) => split_group(entries, retry, "combined preparation failed")
+            match prepare_group(discovery.scratch, entries):
+                Err(_) => split_group(entries, again, "combined preparation failed", discovery.parts)
                 Ok(group) =>
-                    requests.append(
-                        Invocation(
-                            program=incan,
-                            arguments=group_arguments("build", group.project, entries),
-                            project=group.project,
-                            selector=None,
-                            deadline_seconds=GROUP_COMPILATION_SECONDS,
-                            duration_hint=costs.duration(group.project),
-                        ),
-                    )
-                    attempts.append(group)
+                    # 2. One build per prepared group.
+                    discovery.attempts[base + len(requests)] = group
+                    builds.append(base + len(requests))
+                    arguments = group_arguments("build", group.project, entries)
+                    duration = discovery.costs.duration(group.project)
+                    requests.append(group_compilation_request(discovery.incan, arguments, group.project, duration))
                     projects.append(group.project)
-        # 2. Retained original commands join the first wave under the same budget.
-        mut names: list[str] = []
-        for fixture in isolated:
-            duration = costs.duration(fixture.project_path(scratch))
-            match isolated_request(incan, scratch, fixture, duration):
-                Err(_) => pass
-                Ok(None) => pass
-                Ok(Some(request)) =>
-                    requests.append(request)
-                    names.append(fixture.case_name())
-                    projects.append(request.project)
-        isolated = []
-        # 3. Queue gated entries alongside builds and record original commands once.
-        mut executions: list[tuple[int, list[str]]] = []
-        for parent in range(len(attempts)):
-            first = len(requests)
-            selected = queue_entries(scratch, attempts[parent], parent, requests)
-            executions.append((first, selected))
-        results = invoke_many(requests, jobs)
-        for index in range(len(names)):
-            outcomes[names[index]] = results[len(attempts) + index]
-        # 4. Only clean compilations are shared; refusal diagnostics guide another attempt.
-        for index in range(len(attempts)):
-            group = attempts[index]
-            for note in unit_notes(trace_file(group.project)):
-                notes.append(note)
-            refusal, evidence = compilation_refusal(results[index])
-            if refusal == "":
-                built.append(group)
-                first, selected = executions[index]
-                for offset in range(len(selected)):
-                    outcomes[selected[offset]] = results[first + offset]
-            else:
-                refine_group(group, retry, refusal, evidence)
-        pending = retry
+        pending = again
+    # 2. One own command per isolated case. A case's own command may run beside its entry in a build kept for the
+    # others, so it captures its streams under its own name.
+    for fixture in isolated:
+        duration = discovery.costs.duration(fixture.project_path(discovery.scratch))
+        match isolated_request(discovery.incan, discovery.scratch, fixture, duration):
+            Err(_) => pass
+            Ok(None) => pass
+            Ok(Some(request)) =>
+                mut own = request
+                own.capture = "-own"
+                discovery.own[base + len(requests)] = fixture.case_name()
+                requests.append(own)
+                projects.append(own.project)
+    # 3. Each build's entries follow it.
+    for build in builds:
+        first = base + len(requests)
+        selected = queue_entries(discovery.scratch, discovery.attempts[build], build, requests)
+        discovery.executions[build] = (first, selected)
+    pool.add(requests, urgent)
 
 
-def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
+def isolate(mut discovery: Discovery, fixture: Fixture, mut isolated: list[Fixture]) -> None:
+    """Give `fixture` its own command, once."""
+    if fixture.case_name() not in discovery.queued:
+        discovery.queued.add(fixture.case_name())
+        isolated.append(fixture)
+
+
+def settled_group(
+    mut discovery: Discovery,
+    index: int,
+    result: Result[Outcome, str],
+    mut built: list[GroupProject],
+    mut notes: list[str],
+) -> list[list[Entry]]:
+    """
+    Take a group's quiet build, keep a build whose output names cases for the others, or refine its refusal; the
+    groups to compile or run next.
+    """
+    group = discovery.attempts[index]
+    for note in unit_notes(trace_file(group.project)):
+        notes.append(note)
+    refusal, evidence = compilation_refusal(result)
+    mut retry: list[list[Entry]] = []
+    if refusal == "":
+        built.append(group)
+        discovery.taken.append((index, group))
+    elif refusal == OUTPUT_ATTRIBUTION:
+        if let Some(kept) = kept_build(group, evidence, retry, discovery.parts):
+            built.append(kept)
+            discovery.taken.append((index, kept))
+    elif refusal == SHARED_ENTRIES_REFUSED:
+        discovery.sharing = false
+        retry = dissolved([group.entries])
+    else:
+        refine_group(group, retry, refusal, evidence, discovery.parts)
+    return retry
+
+
+def dissolved(groups: list[list[Entry]]) -> list[list[Entry]]:
+    """Every case of `groups` alone, each shared group named once, for an engine that cannot share compilations."""
+    mut alone: list[list[Entry]] = []
+    for entries in groups:
+        if len(entries) > 1:
+            first = entries[0].fixture.case_name()
+            last = entries[-1].fixture.case_name()
+            println(f"BATCH-ISOLATE {first} .. {last} ({len(entries)} cases): {SHARED_ENTRIES_REFUSED}")
+        for candidate in entries:
+            alone.append([candidate])
+    return alone
+
+
+pub def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
     """The refusal and its diagnostic evidence; an empty refusal means compilation succeeded without output."""
     match result:
         Err(_) => return ("combined compilation refused", "")
@@ -374,15 +551,68 @@ def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
             evidence = outcome.stdout + outcome.stderr
             if "contract invocation timed out" in outcome.stderr:
                 return ("combined compilation exceeded its deadline", evidence)
+            if outcome.code != Some(0) and refuses_entries(outcome.stderr):
+                return (str(SHARED_ENTRIES_REFUSED), evidence)
             if outcome.code != Some(0):
                 return ("combined compilation refused", evidence)
             if outcome.stdout != "" or outcome.stderr != "":
-                return ("compiler output requires isolated attribution", evidence)
+                return (str(OUTPUT_ATTRIBUTION), evidence)
             return ("", "")
 
 
-def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
-    """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
+def refuses_entries(stderr: str) -> bool:
+    """Whether one line of `stderr` is the engine's refusal of options that include program entries."""
+    for line in stderr.split("\n"):
+        if ENGINE_REFUSES_OPTIONS in line and ENTRY_OPTION in line:
+            return true
+    return false
+
+
+def record_entries(
+    group: GroupProject,
+    selected: list[str],
+    first: int,
+    results: list[Result[Outcome, str]],
+    mut outcomes: dict[str, Result[Outcome, str]],
+) -> None:
+    """Record the fresh executions of `group`'s cases, which `selected` names from request `first` of `results` on."""
+    names = set([candidate.fixture.case_name() for candidate in group.entries])
+    for offset in range(len(selected)):
+        if selected[offset] in names:
+            outcomes[selected[offset]] = results[first + offset]
+
+
+def kept_build(
+    group: GroupProject,
+    evidence: str,
+    mut retry: list[list[Entry]],
+    parts: int,
+) -> Option[GroupProject]:
+    """
+    Keep a successful shared build whose output names some of its cases, and show that output. The program it built
+    is valid for every case: the cases the output does not name run from it, and each named case runs its own command,
+    whose output is then its own. Output that names no case cannot be attributed, so the group is split instead.
+    """
+    named, kept = owners(group, evidence)
+    if len(named) == 0:
+        split_group(group.entries, retry, OUTPUT_ATTRIBUTION, parts)
+        return None
+    first = group.entries[0].fixture.case_name()
+    last = group.entries[-1].fixture.case_name()
+    mut shown = f"BATCH-KEEP {first} .. {last} ({len(group.entries)} cases): {len(kept)} run from the build; "
+    shown += f"its output names {len(named)}, which run their own command:"
+    println(shown)
+    for line in evidence.strip().split("\n"):
+        println(f"  {line}")
+    for candidate in named:
+        retry.append([candidate])
+    if len(kept) == 0:
+        return None
+    return Some(GroupProject(entries=kept, project=group.project))
+
+
+def owners(group: GroupProject, evidence: str) -> tuple[list[Entry], list[Entry]]:
+    """The cases of `group` whose source paths `evidence` names, and the others."""
     mut named: list[Entry] = []
     mut remaining: list[Entry] = []
     for index in range(len(group.entries)):
@@ -391,8 +621,14 @@ def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str
             named.append(group.entries[index])
         else:
             remaining.append(group.entries[index])
+    return (named, remaining)
+
+
+def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str, parts: int) -> None:
+    """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
+    named, remaining = owners(group, evidence)
     if len(named) == 0 or len(remaining) == 0:
-        split_group(group.entries, retry, refusal)
+        split_group(group.entries, retry, refusal, parts)
         return
     println(
         f"BATCH-REFINE {len(group.entries)} cases: {len(named)} diagnostic owners isolated; {len(remaining)} retried",
@@ -411,14 +647,21 @@ def prepare_group(scratch: Path, entries: list[Entry]) -> Result[GroupProject, s
     return Ok(GroupProject(entries=entries, project=project))
 
 
-def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str) -> None:
-    """Retain canonical isolation when preparation, compilation or compiler-output attribution refuses sharing."""
+def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str, parts: int) -> None:
+    """
+    Retain canonical isolation when preparation, compilation or compiler-output attribution refuses sharing. No case
+    is named, so the group splits at once into `parts` parts of nearly equal size, at least two and at most one per
+    case, which then build side by side instead of being halved one wave after another.
+    """
     first = entries[0].fixture.case_name()
     last = entries[-1].fixture.case_name()
-    println(f"BATCH-SPLIT {first} .. {last} ({len(entries)} cases): {refusal}; retrying separately")
-    middle = len(entries) // 2
-    retry.append(entries[0:middle])
-    retry.append(entries[middle:])
+    count = max([2, min([parts, len(entries)])])
+    println(f"BATCH-SPLIT {first} .. {last} ({len(entries)} cases): {refusal}; retrying in {count} parts")
+    mut start = 0
+    for part in range(count):
+        end = len(entries) * (part + 1) // count
+        retry.append(entries[start:end])
+        start = end
 
 
 def queue_entries(scratch: Path, group: GroupProject, parent: int, mut requests: list[Invocation]) -> list[str]:

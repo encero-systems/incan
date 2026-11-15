@@ -12,7 +12,7 @@ Standard packages follow the same library boundary as other Loaves. They publish
 
 Oven prepares path libraries before their consumers. Unchanged executables can be retained on disk. Resident project owners retain preparation between run, build and test requests. Input changes invalidate reuse; test results themselves are never cached.
 
-`OVEN_TRACE=-` exposes `reused` or `compiled (...)` decisions. Disabling owners with `OVEN_OWNER=off` does not disable executable reuse.
+`INCAN_ENGINE_TRACE` records `reused` or `compiled (...)` decisions as `reason` records in its directory. Disabling owners with `OVEN_OWNER=off` does not disable executable reuse.
 
 ## Project-owned and installed artifacts
 

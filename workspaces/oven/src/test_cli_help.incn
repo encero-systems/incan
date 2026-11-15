@@ -39,16 +39,22 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert_help(
         "incan",
         [
-            ("run", "incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
-            ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
-            ("explain", "incan explain CODE"),
-            ("test", "incan test PATH [UNIT OPTIONS]"),
-            ("build", "incan build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
-            ("fmt", "incan fmt [--check] PATH..."),
+            ("run", "incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "incan check [PATH] [--format text|json] [UNIT OPTIONS]"),
+            ("lint", "incan lint [PATH] [UNIT OPTIONS]"),
+            ("explain", "incan explain CODE [--format text|json]"),
+            ("test", "incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
+            ("build", "incan build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("fmt", "incan fmt [--check] [--diff] [PATH...]"),
             ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
             ("mcp", "incan mcp PATH [--profile NAME]"),
             ("toolchain pack", "incan toolchain pack OUT"),
             ("toolchain install", "incan toolchain install ARCHIVE"),
+            ("toolchain verify", "incan toolchain verify ASSET"),
+            ("tools doctor", "incan tools doctor [--format text|json]"),
+            ("tools metadata api", "incan tools metadata api [PATH] [--format json|markdown]"),
+            ("tools metadata model", "incan tools metadata model PATH MODEL [--format incan|json]"),
+            ("inspect registry", "incan inspect registry IDENTITY [--project PATH] [--format json]"),
             ("--version", "incan --version"),
         ],
     )
@@ -56,16 +62,28 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
     assert_help(
         "oven",
         [
-            ("run", "oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
-            ("check", "oven check PATH [--format text|json] [UNIT OPTIONS]"),
+            ("run", "oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
+            ("check", "oven check [PATH] [--format text|json] [UNIT OPTIONS]"),
+            ("lint", "oven lint [PATH] [UNIT OPTIONS]"),
             ("lock", "oven lock [--versions lowest|lowest-direct|newest] [PATH]"),
+            ("add", "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"),
+            ("dependency add", "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"),
+            ("dependency list", "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"),
+            ("dependency remove", "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"),
+            ("update", "oven update [NAME] [--project PATH]"),
             ("trust", "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"),
-            ("test", "oven test PATH [UNIT OPTIONS]"),
+            ("test", "oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
             ("describe-unit", "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"),
-            ("build", "oven build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+            ("build", "oven build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
             ("owner stop", "oven owner stop"),
             ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
             ("inspect dependencies", "oven inspect dependencies PATH [UNIT OPTIONS]"),
+            ("inspect features", "oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]"),
+            ("new", "oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]"),
+            ("init", "oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]"),
+            ("version patch", "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]"),
+            ("workspace inspect", "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."),
+            ("env run", "oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]"),
             ("--version", "oven --version"),
         ],
     )
@@ -102,10 +120,14 @@ pub def test_each_surface_runs_only_its_own_commands() -> None:
     `oven` names the `incan` command that runs a language command. The project commands run on both, and `--version`
     names the invoked surface.
     """
-    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["lock"], ["trust", "list"]]:
+    for command in [["describe-unit"], ["owner", "stop"], ["bakery", "status"], ["trust", "list"]]:
         assert command_help("incan", command[0], command[1:] + ["--help"]) == None
         assert misplaced("incan", command[0], command[1:]) == Some(f"incan: unknown command `{command[0]}`")
         assert misplaced("oven", command[0], command[1:]) == None
+    # 0.5.1 ran `incan lock`; its refusal names the `oven` command that runs it now.
+    assert command_help("incan", "lock", ["--help"]) == None
+    assert misplaced("incan", "lock", []) == Some("incan: unknown command `lock`: run `oven lock`")
+    assert misplaced("oven", "lock", []) == None
     for inspection in ["dependencies", "run"]:
         assert command_help("incan", "inspect", [inspection, "--help"]) == None
         unknown = misplaced("incan", "inspect", [inspection, "ID", "--proofs"])

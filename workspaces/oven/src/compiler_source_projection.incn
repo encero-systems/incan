@@ -1,9 +1,17 @@
-"""Project one source file into independently digestible callable-owner and module-header records."""
+"""
+Project one source file into independently digestible owner, default-expression and module-header records.
+
+A record holds its slice's semantic text (see `semantic_text`): an edit to comments, blank lines or documentation
+changes no record, so it invalidates no checked body or plan.
+"""
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
+from std.fs import Path
 from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
+from semantic_text import comment_free, documentation_free
 
 const SOURCE_PROFILE: str = "incan.source-projection/1"
 
@@ -65,16 +73,34 @@ class SourceProjector:
         return SourceProjector(origin=origin, path=path, source=source, lines=lines)
 
     def discover(mut self) -> None:
-        """Locate top-level chunks while attaching consecutive decorators to their following declaration."""
+        """
+        Locate owner chunks while attaching consecutive decorators to their following declaration.
+
+        Top-level lines start chunks. Inside a top-level conditional block, such as `when feature("json"):`, the lines
+        at the block's member indentation start chunks too, so a feature-gated declaration owns its own record while
+        the condition and the block's imports stay in the module header.
+        """
         mut offset = 0
         mut decorated_start = -1
+        mut conditional = false
+        mut member_indent = -1
         for line in self.lines:
             content = line.strip()
-            top_level = content != "" and line[0] not in " \t"
-            if top_level and content.startswith("@"):
+            indent = leading_whitespace(line)
+            mut chunk = false
+            if content != "" and indent == 0:
+                chunk = true
+                if not content.startswith("#"):
+                    conditional = conditional_block(content)
+                    member_indent = -1
+            elif conditional and content != "" and not content.startswith("#"):
+                if member_indent < 0:
+                    member_indent = indent
+                chunk = indent == member_indent
+            if chunk and content.startswith("@"):
                 if decorated_start < 0:
                     decorated_start = offset
-            elif top_level and not content.startswith("#"):
+            elif chunk and not content.startswith("#"):
                 mut start = 0
                 if decorated_start >= 0:
                     start = decorated_start
@@ -87,7 +113,7 @@ class SourceProjector:
             self.boundaries.append(Boundary(start=decorated_start, owner=""))
 
     pub def projection(mut self) -> Result[SourceProjection, str]:
-        """Partition source owners while retaining a body-independent declaration surface for selector invalidation."""
+        """Partition source owners and nested defaults while retaining a declaration surface for selector invalidation."""
         self.discover()
         mut header = ""
         mut declarations = ""
@@ -106,20 +132,25 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
-                    declarations += boundary.owner + "\n" + declaration_surface(text) + "\n"
+                    semantic = documentation_free(text)
+                    declarations += boundary.owner + "\n" + declaration_surface(semantic) + "\n"
                     owners.append(
                         SourceProjectionRecord(
                             key=source_key("owner-source", self.origin, self.path, boundary.owner),
-                            text=text,
+                            text=semantic,
                             start=boundary.start,
                             end=end,
                         ),
                     )
+                    for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                        owners.append(semantic_record(field, documentation_free(field.text)))
+                    for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                        owners.append(semantic_record(default, comment_free(default.text)))
         return Ok(
             SourceProjection(
                 header=SourceProjectionRecord(
                     key=source_key("module-header", self.origin, self.path, "module"),
-                    text=header,
+                    text=documentation_free(header),
                     start=0,
                     end=len(self.source),
                 ),
@@ -135,7 +166,7 @@ class SourceProjector:
 
 
 pub def project_source(origin: str, path: str, source: str) -> Result[SourceProjection, str]:
-    """Produce one module header and one exact source record per top-level declaration owner."""
+    """Produce one module header plus exact source records for top-level owners and nested field defaults."""
     if origin == "" or path == "":
         return Err("source projection requires an origin and logical path")
     return SourceProjector.open(origin, path, source).projection()
@@ -146,9 +177,93 @@ pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
     return source_key("owner-source", origin, path, name)
 
 
+pub def signature_key(origin: str, path: str, facet: str) -> RecordKey:
+    """Name one declaration's header without its implementation, as `signature_record` keys it."""
+    return source_key("declaration-signature", origin, path, facet)
+
+
+pub def compiled_owner_source(
+    projection: &SourceProjection,
+    module: str,
+    name: str,
+    identity: str = "",
+) -> Result[SourceProjectionRecord, str]:
+    """Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression."""
+    for owner in projection.owners:
+        if owner.key.facet == name:
+            return Ok(owner)
+    declaration = stable_member_declaration(identity)
+    if declaration != "":
+        for prefix in ["default:", "field:"]:
+            for owner in projection.owners:
+                if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
+                    return Ok(owner)
+        for prefix in ["model:", "class:", "trait:", "enum:", "newtype:"]:
+            for owner in projection.owners:
+                if owner.key.facet == prefix + declaration:
+                    return Ok(owner)
+    else:
+        for owner in projection.owners:
+            if (
+                (owner.key.facet.startswith("default:") or owner.key.facet.startswith("field:"))
+                and owner.key.facet.endswith(":" + name)
+            ):
+                return Err(f"compiled field body has no stable declaration identity: {module}:{name}")
+    mut default: Option[SourceProjectionRecord] = None
+    for owner in projection.owners:
+        if owner.key.facet.startswith("default:") and owner.key.facet.endswith(":" + name):
+            if default is not None:
+                return Err(f"compiled body output has ambiguous default source: {module}:{name}; identity={identity}")
+            default = Some(owner)
+    match default:
+        Some(owner) => return Ok(owner)
+        None => pass
+    for owner in projection.owners:
+        if owner.key.facet.startswith("field:") and owner.key.facet.endswith(":" + name):
+            return Ok(owner)
+    for owner in projection.owners:
+        if owner.key.facet.endswith(":" + name):
+            return Ok(owner)
+    return Err(f"compiled body output has no matching owner source: {module}:{name}; identity={identity}")
+
+
+def stable_member_declaration(identity: str) -> str:
+    """Recover the enclosing nominal declaration name from one compiler-owned stable identity."""
+    nested = identity.split("#in(")
+    if len(nested) >= 2:
+        owner = nested[len(nested) - 1].split(")")[0]
+        parts = owner.split(":")
+        if len(parts) >= 2 and parts[len(parts) - 1] != "":
+            return parts[len(parts) - 1]
+    compact = identity.split("|")[0].split("::")
+    if len(compact) >= 2:
+        return compact[len(compact) - 2]
+    return ""
+
+
 pub def declaration_index_key(origin: str, path: str) -> RecordKey:
     """Name the body-independent declaration surface used to invalidate project declaration readers before checking."""
     return source_key("declaration-index", origin, path, "module")
+
+
+pub def import_declaration_indexes(
+    origin: str,
+    project_root: str,
+    namespaces: list[CompiledNamespaceValue],
+    staged: list[str],
+) -> Result[list[SourceProjectionRecord], str]:
+    """Project the declaration index of each namespace import whose module is not among the `staged` projections."""
+    mut indexes: list[SourceProjectionRecord] = []
+    mut projected: list[str] = []
+    for namespace in namespaces:
+        for path in namespace.dependencies:
+            if path not in staged and path not in projected:
+                file = Path(project_root).joinpath(path)
+                source = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+                projection = project_source(origin, path, source)?
+                indexes.append(projection.declarations)
+                projected.append(path)
+    return Ok(indexes)
 
 
 pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
@@ -156,6 +271,11 @@ pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionReco
     mut key = owner.key
     key.family = "declaration-signature"
     return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+
+
+def semantic_record(record: SourceProjectionRecord, text: str) -> SourceProjectionRecord:
+    """Keep one nested record's key and source coordinates with its semantic text."""
+    return SourceProjectionRecord(key=record.key, text=text, start=record.start, end=record.end)
 
 
 pub def publish_source_projection(
@@ -212,12 +332,23 @@ def callable_declaration(line: str) -> bool:
     return header.startswith("def ")
 
 
+def conditional_block(line: str) -> bool:
+    """Recognize a top-level conditional-compilation block whose indented members are declarations of the module."""
+    return line.startswith("when ") and line.endswith(":")
+
+
 def declaration_owner(line: str) -> str:
-    """Name an independently owned declaration while imports, aliases and other module forms stay in the header."""
+    """Name an independently owned declaration while imports and other module forms stay in the header."""
     mut header = f"{line}"
     for prefix in ["pub ", "async "]:
         if header.startswith(prefix):
             header = header[len(prefix):]
+    for kind in ["partial", "alias"]:
+        marker = " = " + kind + " "
+        if marker in header:
+            name = identifier_prefix(header)
+            if name != "":
+                return kind + ":" + name
     for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
         prefix = kind + " "
         if header.startswith(prefix):
@@ -237,6 +368,164 @@ def identifier_prefix(candidate: str) -> str:
     if end == 0:
         return ""
     return candidate[:end]
+
+
+def field_default_records(
+    declaration: str,
+    source: str,
+    source_start: int,
+    origin: str,
+    path: str,
+) -> list[SourceProjectionRecord]:
+    """Project each direct model or class field default as its own expression-only source facet."""
+    if not declaration.startswith("model:") and not declaration.startswith("class:"):
+        return []
+    starts = direct_member_starts(source)
+    mut records: list[SourceProjectionRecord] = []
+    for index in range(len(starts)):
+        start = starts[index]
+        mut end = len(source)
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        match default_expression(source[start:end]):
+            None => pass
+            Some((field, relative_start, relative_end)) =>
+                records.append(
+                    SourceProjectionRecord(
+                        key=source_key("owner-source", origin, path, "default:" + declaration + ":" + field),
+                        text=source[start + relative_start:start + relative_end],
+                        start=source_start + start + relative_start,
+                        end=source_start + start + relative_end,
+                    ),
+                )
+    return records
+
+
+def field_records(
+    declaration: str,
+    source: str,
+    source_start: int,
+    origin: str,
+    path: str,
+) -> list[SourceProjectionRecord]:
+    """Project each direct nominal field independently, including fields without a default expression."""
+    starts = direct_member_starts(source)
+    mut records: list[SourceProjectionRecord] = []
+    for index in range(len(starts)):
+        start = starts[index]
+        mut end = len(source)
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        member = source[start:end]
+        match field_name(member):
+            None => pass
+            Some(field) =>
+                records.append(
+                    SourceProjectionRecord(
+                        key=source_key("owner-source", origin, path, "field:" + declaration + ":" + field),
+                        text=member,
+                        start=source_start + start,
+                        end=source_start + end,
+                    ),
+                )
+    return records
+
+
+def field_name(member: str) -> Option[str]:
+    """Return one direct field name without mistaking a method or nested declaration for a field."""
+    first = member.split("\n")[0]
+    mut header = first.strip()
+    if header.startswith("pub "):
+        header = header[4:]
+    colon = character_index(header, ":")
+    if colon <= 0:
+        return None
+    field = identifier_prefix(header[:colon].strip())
+    if field == "" or field != header[:colon].strip():
+        return None
+    return Some(field)
+
+
+def direct_member_starts(source: str) -> list[int]:
+    """
+    Locate direct nominal members after any decorators while bracketed defaults remain one member chunk.
+
+    Members are indented past the declaration's own first line, which is indented itself inside a conditional block.
+    """
+    mut starts: list[int] = []
+    mut offset = 0
+    mut base = -1
+    mut member_indent = -1
+    mut depth = 0
+    for line in source.split("\n"):
+        content = line.strip()
+        indent = leading_whitespace(line)
+        if content != "" and not content.startswith("#") and base < 0:
+            base = indent
+        elif content != "" and not content.startswith("#") and indent > base:
+            if member_indent < 0:
+                member_indent = indent
+            if indent == member_indent and depth == 0:
+                starts.append(offset)
+            depth += delimiter_delta(line)
+            if depth < 0:
+                depth = 0
+        offset += len(line) + 1
+    return starts
+
+
+def default_expression(member: str) -> Option[tuple[str, int, int]]:
+    """Return one direct field name and the trimmed byte range of its declared default expression."""
+    first = member.split("\n")[0]
+    mut header = first.strip()
+    if header.startswith("pub "):
+        header = header[4:]
+    colon = character_index(header, ":")
+    equals = character_index(header, "=")
+    if colon <= 0 or equals <= colon:
+        return None
+    field = identifier_prefix(header[:colon].strip())
+    if field == "" or field != header[:colon].strip():
+        return None
+    raw_equals = character_index(member, "=")
+    if raw_equals < 0:
+        return None
+    mut start = raw_equals + 1
+    while start < len(member) and member[start] in " \t":
+        start += 1
+    mut end = len(member)
+    while end > start and member[end - 1] in " \t\n\r":
+        end -= 1
+    if start == end:
+        return None
+    return Some((field, start, end))
+
+
+def leading_whitespace(line: str) -> int:
+    """Count a line's indentation bytes without assigning a tab-width policy to source coordinates."""
+    mut count = 0
+    while count < len(line) and line[count] in " \t":
+        count += 1
+    return count
+
+
+def character_index(text: str, sought: str) -> int:
+    """Return the first byte position of one ASCII syntax character, or `-1` when absent."""
+    for index in range(len(text)):
+        if text[index:index + 1] == sought:
+            return index
+    return -1
+
+
+def delimiter_delta(line: str) -> int:
+    """Track grouping delimiters well enough to keep ordinary multi-line field defaults in one source facet."""
+    mut delta = 0
+    for character in line:
+        if character in "([{":
+            delta += 1
+        elif character in ")]}":
+            delta -= 1
+    return delta
 
 
 def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:

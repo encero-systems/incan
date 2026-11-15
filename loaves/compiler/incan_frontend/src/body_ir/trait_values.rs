@@ -4,6 +4,7 @@
 //! identity, and each checked call retains the concrete carrier occupying that input's declaration slot.
 
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
+use crate::body_ir::ContextModules;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod inference;
@@ -22,7 +23,7 @@ pub(super) fn retain_inputs(
     module: &mut bir::BodyIrModule,
     program: &ast::Program,
     facts: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     let adoptions = super::collect::collect_trait_argument_witnesses(program, facts, &module.nominal_declarations);

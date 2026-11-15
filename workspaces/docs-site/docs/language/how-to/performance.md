@@ -14,7 +14,7 @@ The installation must contain release-profile standard packages. A debug-only ho
 
 ```bash
 time incan run src/main.incn --profile release
-OVEN_TRACE=- incan run src/main.incn --profile release
+mkdir -p trace && INCAN_ENGINE_TRACE=trace incan run src/main.incn --profile release
 ```
 
 Use the untraced command for timing. Use the trace to distinguish executable reuse from compilation. On macOS, first execution of a new binary can incur a system assessment independently of compilation.

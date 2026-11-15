@@ -6,8 +6,10 @@ cheaply as its kind allows.
   verified once at admission and cannot change after it. Capture derives their roots once from what the home admitted
   and never stats, reads or hashes anything under them.
 - **Editable inputs in reach** are the request roots, the files their recorded lookups resolve to, the paths where a
-  recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares, and the
-  toolchain pin. `build` and `bake` add the package's membership: its source root, listed with the compiler's rules.
+  recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares. `build`
+  and `bake` add the package's membership: its source root, listed with the compiler's rules. A whole program unit
+  adds the files its recorded source graphs read and the absent paths they probed, or, before it has a graph, its
+  listed membership.
 - **Editable inputs out of reach**, such as unrelated sibling fixtures, are never listed, checked or read.
 
 Freshness builds on the metadata observation of `observation`. A file whose device, inode, size, nanosecond
@@ -21,18 +23,19 @@ Metadata only detects change. An epoch's identity is the digest of its roots, it
 its inputs, so touching a file without changing its bytes leaves the identity as it was.
 """
 
-from rust::std::str import from_utf8
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
 from files import json_text
-from home import home, standard_library_dir
+from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
-from toolchain import Toolchain, described_toolchain, toolchain_file
+from toolchain import Toolchain, installation, toolchain_file
+from installation_page import admitted_identity
 from unit import manifest_candidates
+from unit_sources import SourceGraph
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
 # How many times a file that changes while it is read is read before it is reported unstable.
@@ -307,8 +310,11 @@ pub model CaptureRequest:
     # The lookups a first capture starts from, as the current import resolution reports them. A later capture checks
     # these and the previous epoch's.
     pub witnesses: list[LookupWitness] = []
-    # The unit-record producer uses the existing conservative authored inventory until compiler reach replaces it.
+    # A whole program unit: the unit-record producer's request, which captures the unit's membership.
     pub whole_unit: bool = false
+    # What the whole unit's recorded source graphs read and probed. Capture checks exactly these paths; without them it
+    # lists the authored inventory. A request's later captures pass the same reach, so they compare the same paths.
+    pub reach: Option[SourceGraph] = None
 
 
 pub model AdmittedHome:
@@ -319,6 +325,9 @@ pub model AdmittedHome:
     pub pin: str
     # The standard Loaves' sources.
     pub standard_library: str
+    # The immutable installation page and frozen roots already decoded from it.
+    pub admission: str
+    pub pinned: list[str]
 
     pub def frozen_roots(self) -> list[str]:
         """
@@ -335,6 +344,14 @@ pub model AdmittedHome:
         ]
 
 
+pub model SelectedHome:
+    """One request's admitted home, toolchain and standard packages selected from one installation page."""
+
+    pub admitted: AdmittedHome
+    pub toolchain: Toolchain
+    pub standard: list[StandardPackage]
+
+
 pub model CaptureResult:
     """A capture's outcome, its epoch (none when an input was unstable), and the work it did."""
 
@@ -347,7 +364,31 @@ pub model CaptureResult:
 
 pub def admitted_home() -> Result[AdmittedHome, str]:
     """The admitted home this Oven runs with."""
-    return Ok(AdmittedHome(home=home()?.0, pin=toolchain_file()?.0, standard_library=standard_library_dir()?.0))
+    return Ok(selected_home()?.admitted)
+
+
+pub def selected_home() -> Result[SelectedHome, str]:
+    """Select the admitted home and decoded toolchain together for one request."""
+    pin = toolchain_file()?
+    page = installation(pin.parent())?
+    toolchain = page.toolchain.select()
+    admission = match admitted_identity(pin.parent())?:
+        Some(identity) => identity
+        None => return Err("toolchain installation has no admitted page")
+
+    return Ok(
+        SelectedHome(
+            admitted=AdmittedHome(
+                home=home()?.0,
+                pin=pin.0,
+                standard_library=standard_library_dir()?.0,
+                admission=admission,
+                pinned=toolchain_roots(toolchain),
+            ),
+            toolchain=toolchain,
+            standard=[StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests],
+        ),
+    )
 
 
 pub def capture(
@@ -372,7 +413,8 @@ pub def capture_with(
 
     1. Take the frozen roots: from the previous epoch while the toolchain pin is unchanged, else from the pin's bytes.
     2. Capture the roots with their project configuration: the manifest lookup, the lock, the files it declares.
-    3. A `build` or `bake` captures the package's membership.
+    3. A `build` or `bake` captures the package's membership. A whole unit captures the paths its recorded source
+       graphs name, and lists its membership only before it has one.
     4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
     5. Compare with the previous epoch.
     """
@@ -385,8 +427,8 @@ pub def capture_with(
     # 2. The roots and their configuration are always in reach.
     mut membership: list[SourceMembership] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit)?)
-    # 3. A package's membership is listed with the compiler's collection rules.
+        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit, request.reach)?)
+    # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
     for source in membership:
         state.members(source.root, source.extension)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
@@ -415,7 +457,6 @@ model Capture:
     recorded: Dict[str, CapturedInput] = {}
     recorded_listings: Dict[str, CapturedListing] = {}
     recorded_declarations: Dict[str, Declarations] = {}
-    recorded_admitted: list[str] = []
     recorded_witnesses: list[str] = []
 
     def remember(mut self, previous: Option[BuildEpoch]) -> None:
@@ -429,32 +470,26 @@ model Capture:
                     self.recorded_listings[listing.path] = listing
                 for declarations in epoch.declarations:
                     self.recorded_declarations[declarations.manifest] = declarations
-                self.recorded_admitted = epoch.admitted
                 self.recorded_witnesses = [witness.path for witness in epoch.witnesses()]
 
     def take_frozen_roots(mut self) -> Result[None, str]:
-        """
-        Derive the frozen roots once: from the home, and from what the toolchain pin names.
-
-        1. The pin is an editable input in reach, checked metadata first.
-        2. An unchanged pin keeps the admitted roots recorded with it; a pin read now names them afresh.
-        """
-        # 1. The pin selects the installed toolchain; the toolchain's own files are frozen.
-        admission = self.editable(self.admitted.pin, InputRole.ToolchainPin)?
-        match admission:
-            Admission.Read(content) => self.pinned = pinned_roots(self.admitted.pin, content)?
-            Admission.Missing => return Err(f"{self.admitted.pin}: no toolchain is installed")
-            # 2. An unchanged pin names what it named before.
-            Admission.Reused => self.pinned = self.recorded_admitted
-            _ => pass
+        """Select the frozen roots and exact installation-page identity admitted before this request."""
+        self.pinned = sorted(self.admitted.pinned + [self.admitted.pin, f"installation:{self.admitted.admission}"])
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
-    def root(mut self, path: str, command: str, whole_unit: bool) -> Result[list[SourceMembership], str]:
+    def root(
+        mut self,
+        path: str,
+        command: str,
+        whole_unit: bool,
+        reach: Option[SourceGraph],
+    ) -> Result[list[SourceMembership], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
-        1. `run` captures its file and looks up its manifest from the file's directory upward.
+        1. `run` captures its file and looks up its manifest from the file's directory upward. A whole unit captures
+           what its recorded graphs name, or, without them, returns its membership directories.
         2. `build` and `bake` capture the Loaf root's manifest and list its source root.
         """
         if self.is_frozen(path):
@@ -467,13 +502,27 @@ model Capture:
                 _ => pass
             _ = self.manifest_lookup(Path(path))?
             if whole_unit:
-                return self.unit_membership(Path(path))
+                match reach:
+                    Some(graph) => return self.graph_members(graph)
+                    None => return self.unit_membership(Path(path))
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
         if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
         return self.source_memberships(path)
+
+    def graph_members(mut self, graph: SourceGraph) -> Result[list[SourceMembership], str]:
+        """
+        Capture each file a whole unit's recorded graphs read and each absent path they probed, by name, listing no
+        directory. A file created at a probed path is found here; one nothing imported or probed is never met.
+        """
+        for path in graph.read + graph.absent:
+            if self.is_frozen(path):
+                self.counters.frozen.inputs += 1
+                continue
+            _ = self.editable(path, InputRole.Member)?
+        return Ok([])
 
     def unit_membership(mut self, source: Path) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
@@ -766,14 +815,6 @@ def stable_across_read(before: FileMetadata, after: FileMetadata) -> bool:
     return same_file and before.size == after.size and before.modified_ns == after.modified_ns
 
 
-def pinned_roots(pin: str, content: bytes) -> Result[list[str], str]:
-    """The admitted roots a toolchain pin names: compiler, Rust installation, fact caches, native closure, registry."""
-    text = str(from_utf8(content).map_err((error) => f"{pin}: {error}")?)
-    document = parse(text).map_err((error) => f"{pin}: {error.message()}")?
-    toolchain = described_toolchain(document, Path(pin).parent()).map_err((failed) => f"{pin}: {failed}")?
-    return Ok(toolchain_roots(toolchain))
-
-
 def toolchain_roots(toolchain: Toolchain) -> list[str]:
     """Each named file, the content-named directory of each native crate, and the registry the closure lives in."""
     mut roots = [toolchain.driver, toolchain.sysroot] + toolchain.rust_abi + toolchain.search
@@ -820,9 +861,9 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             )
 
 
-def read_file(path: Path) -> Result[bytes, str]:
-    """A file's bytes."""
-    return path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")
+pub def read_file(path: Path) -> Result[bytes, str]:
+    """A file's bytes, naming the read and the path when reading fails, as `files.read` does."""
+    return path.read_bytes().map_err((error) => f"cannot {error.message()}")
 
 
 def absolute(path: str) -> str:

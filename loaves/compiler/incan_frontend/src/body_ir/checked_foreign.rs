@@ -59,12 +59,30 @@ impl BodyBuilder<'_, '_> {
                 .bindings
                 .get(&selected.binding)
                 .ok_or("checked C call lost its binding descriptor")?;
-            if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary {
+            // A Clove binding links the archive of the configuration it names, under the library's link name that
+            // verification resolved from the unit's description.
+            // An Apple framework links by its framework name, as 0.5.1's `c.framework` did.
+            let framework = descriptor.link_capability == c_abi::LinkCapabilityId::Framework;
+            if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary && !framework {
                 return Err(format!(
                     "unsupported checked C native link capability {}",
                     c_abi::link_capability_as_str(descriptor.link_capability)
                 ));
             }
+            let (library, clove, configuration) = if descriptor.configuration.is_empty() {
+                (descriptor.system_library.clone(), String::new(), String::new())
+            } else {
+                (
+                    self.type_info
+                        .c_abi
+                        .clove_libraries
+                        .get(&selected.binding)
+                        .cloned()
+                        .ok_or("checked C Clove binding has no verified library")?,
+                    descriptor.system_library.clone(),
+                    descriptor.configuration.clone(),
+                )
+            };
             let symbol = descriptor
                 .symbols
                 .iter()
@@ -100,7 +118,10 @@ impl BodyBuilder<'_, '_> {
                     binding,
                     member: symbol.name.clone(),
                     symbol: symbol.native.clone(),
-                    library: descriptor.system_library.clone(),
+                    library,
+                    clove,
+                    configuration,
+                    framework,
                     header: descriptor.header.clone(),
                     parameters,
                     return_type,

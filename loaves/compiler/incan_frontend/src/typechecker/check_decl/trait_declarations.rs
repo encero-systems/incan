@@ -325,7 +325,12 @@ impl TypeChecker {
                 return;
             };
             let trait_definition_path = trait_metadata.and_then(|metadata| metadata.definition_path.as_deref());
-            if Self::rust_type_metadata_implements_trait(&backing_metadata, trait_path, trait_definition_path) {
+            let conditionally_implemented_auto_trait = rust_auto_trait(trait_path).is_some_and(|marker| {
+                self.capture_has_native_auto_trait(&ResolvedType::RustPath(backing_path.to_owned()), marker, 0)
+            });
+            if Self::rust_type_metadata_implements_trait(&backing_metadata, trait_path, trait_definition_path)
+                || conditionally_implemented_auto_trait
+            {
                 self.type_info
                     .rust
                     .rusttype_forwarded_trait_adoptions

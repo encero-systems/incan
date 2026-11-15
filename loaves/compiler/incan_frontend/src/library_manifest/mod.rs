@@ -6,12 +6,16 @@
 //! and write APIs.
 
 mod checked_replay;
+pub mod compiler_records;
+pub mod declaration_records;
+pub mod executable_surface;
 mod model;
 pub(crate) mod ownership;
 pub mod public_identities;
 mod retained;
 mod type_projection;
 mod type_refs;
+pub mod type_scope;
 mod validation;
 pub mod wire;
 

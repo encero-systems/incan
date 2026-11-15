@@ -1,6 +1,7 @@
 """Pack the installed toolchain's named closure, rewriting paths at the archive boundary."""
 
 from pub::incan_platform.trace import Operation
+from archive_decompression import plain_archive
 from rust::std::fs import create_dir, remove_dir_all, rename
 from rust::std::os::unix::fs import symlink
 from rust::std::process import Command, id
@@ -9,8 +10,8 @@ from std.environ import get_or
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
-from files import json_text, make_directory, read, read_json, write
-from home import TOOLCHAIN, standard_packages
+from files import json_text, make_directory, read, read_json, remove, write
+from home import TOOLCHAIN, home, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
     NativeCrate,
@@ -23,6 +24,14 @@ from toolchain import (
     finish_installation,
     toolchain_directory,
 )
+from native_references import (
+    NATIVE_CLOSURE_SCHEMA,
+    NativeAnchor,
+    NativeAnchors,
+    RUST_NATIVE_SCHEMA,
+    closure_reference,
+    native_anchors,
+)
 from rust_registry import read_registry_units
 from rust_target import decoded
 from registry_units import RegistryUnit
@@ -33,7 +42,8 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
-from compiler_record_admission import convert
+from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
+from release_trust import CARRIED_TRUST, admit_release, anchor, record as record_signer, ship, stamped
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -48,6 +58,7 @@ const FROM_PROFILE: str = "../../../"
 const RESTATED_RECORD_SUFFIX: str = "native.json.oven-unit"
 pub const PACK_USAGE: str = "incan toolchain pack OUT"
 pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
+pub const VERIFY_USAGE: str = "incan toolchain verify ASSET"
 const RUST_TOOLCHAIN: str = "1.98.0"
 const RUST_INSTALL_COMMAND: str = "rustup toolchain install 1.98.0 --profile minimal --component rustc-dev"
 
@@ -56,21 +67,23 @@ pub def help_text(command: str) -> str:
     """Describe the selected archive operation without loading or changing an installation."""
     if command == "pack":
         return render(PACK_USAGE, [], "incan toolchain pack toolchain.tar.zst")
+    if command == "verify":
+        return render(VERIFY_USAGE, [], "incan toolchain verify toolchain.tar.zst")
     return render(INSTALL_USAGE, [], "incan toolchain install toolchain.tar.zst")
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[tuple[str, str], str]:
     """Require an archive command and one operand, rejecting unknown commands and options before I/O."""
     if len(arguments) == 0:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err("expected `pack OUT`, `install ARCHIVE` or `verify ASSET`")
     command = arguments[0]
-    if command not in ["pack", "install"] and not command.startswith("-"):
+    if command not in ["pack", "install", "verify"] and not command.startswith("-"):
         return Err(f"unknown command `{command}`")
     match unknown_option(arguments):
         Some(reason) => return Err(reason)
         None => pass
     if len(arguments) != 2:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err("expected `pack OUT`, `install ARCHIVE` or `verify ASSET`")
     return Ok((command, arguments[1]))
 
 
@@ -80,8 +93,28 @@ pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
     if command == "pack":
         pack_toolchain(Path(operand))?
         return Ok(0)
+    if command == "verify":
+        verify_asset(Path(operand))?
+        return Ok(0)
     install_toolchain(Path(operand))?
     return Ok(0)
+
+
+pub def verify_asset(asset: Path) -> Result[None, str]:
+    """
+    Verify a release asset's signature bundle, `ASSET.sigstore.json` beside it, against the signer and trust root
+    this `incan` was built with (DD-0016). This is the one verifier: every install channel calls it, and none falls
+    back to a checksum, so a local build, which carries no signer, refuses instead of reporting an unverified asset
+    as fine.
+    """
+    match admit_release(asset, anchor(stamped()?, home()?)?)?:
+        Some(verified) =>
+            println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
+            return Ok(None)
+        None =>
+            return Err(
+                f"cannot verify {asset.0}: this incan is a local build and carries no release signer",
+            )
 
 
 pub def pack_toolchain(output: Path) -> Result[None, str]:
@@ -118,8 +151,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # 1. The registry closure travels with the units the checkout's Loaves reach, each artifact directory once.
     shipped = stage_registry(toolchain, stage)?
     # 2. The driver and the Rust fact caches are linked in under names relative to the toolchain.
-    driver = "bin/" + Path(toolchain.driver).name()
-    link_file(Path(toolchain.driver), stage.joinpath(driver))?
+    driver = stage_driver(Path(toolchain.driver), stage)?
     abi = stage_abi_caches(toolchain.rust_abi, stage)?
     c_tools = stage_c_toolchain(toolchain, stage)?
     # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along,
@@ -128,8 +160,16 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     search = stage_search([path for path in toolchain.search if ships_search(path, shipped)], stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
+    # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
+    # archive converts and copies nothing. The set holds the records of the Loaves the stage ships and no others.
+    manifests = stage.parent().joinpath(f"{stage.name()}-manifests")
+    sealed = sealed_records(toolchain.driver, stage, manifests)
+    if manifests.is_dir():
+        remove_dir_all(manifests.0).map_err((error) => f"cannot remove staged manifests {manifests.0}: {error}")?
+    records = sealed?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
+    description = replaced(description, "compiler_records", records.to_json())?
     for key, relative in c_tools:
         description = replaced(description, key, JsonValue.string(relative))?
     if toolchain.registry_lock != "":
@@ -138,9 +178,59 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     # The installed compiler keeps the capabilities it was relinked with.
     if toolchain.codegraph_on_request:
         description = replaced(description, "codegraph_on_request", JsonValue.bool(true))?
+    if toolchain.closure_anchors:
+        description = replaced(description, "closure_anchors", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
+    # The release signer the installation carries travels inside the archive (DD-0016).
+    _ = ship(directory, stage)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
+
+
+def sealed_records(driver: str, stage: Path, manifests: Path) -> Result[CompilerRecordPin, str]:
+    """Seal the compiler records of the staged Loaves into the stage, exporting them from a view of their manifests."""
+    shipped_manifests(stage, manifests)?
+    return convert(driver, manifests, stage)
+
+
+pub def shipped_manifests(stage: Path, view: Path) -> Result[None, str]:
+    """
+    Copy every Loaf manifest the stage ships to the same place under `view`, as a plain file.
+
+    The compiler exports the records of each manifest below one directory and follows no link. The packing home may
+    hold Loaves the archive leaves behind, such as a runtime an earlier compiler built, so the sealed set is exported
+    from what the stage ships, never from the home.
+    """
+    mut pending = [stage]
+    mut index = 0
+    while index < len(pending):
+        directory = pending[index]
+        index += 1
+        for entry in directory.iterdir().map_err((error) => f"staged toolchain: cannot {error.message()}")?:
+            if entry.is_dir():
+                if not entry.is_symlink():
+                    pending.append(entry)
+            elif entry.name().endswith(".incnlib"):
+                copy = view.joinpath(entry.0[len(stage.0) + 1:])
+                make_directory(copy.parent())?
+                contents = entry.read_bytes().map_err((error) => f"staged manifest: cannot {error.message()}")?
+                copy.write_bytes(contents).map_err((error) => f"staged manifest: cannot {error.message()}")?
+    return Ok(None)
+
+
+pub def stage_driver(driver: Path, stage: Path) -> Result[str, str]:
+    """
+    Link the driver into the stage, with the development linker its relink shipped beside it under the driver's
+    digest, where the installed driver looks for it; returns the driver's name relative to the toolchain.
+    """
+    staged = "bin/" + driver.name()
+    link_file(driver, stage.joinpath(staged))?
+    prefix = "incan-rustc-driver-"
+    if driver.name().startswith(prefix):
+        linker = driver.parent().joinpath("incan-link-" + driver.name()[len(prefix):])
+        if linker.is_file():
+            link_file(linker, stage.joinpath("bin/" + linker.name()))?
+    return Ok(staged)
 
 
 def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[str, str]], str]:
@@ -155,7 +245,7 @@ def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[st
         compiler_path = Path(toolchain.c_compiler)
         compiler = compiler_path
             .resolve()
-            .map_err((error) => f"cannot resolve C compiler {compiler_path.0}: {error.message()}")?
+            .map_err((error) => f"C compiler: cannot {error.message()}")?
         link_file(compiler, stage.joinpath("c/clang/bin/clang"))?
         resources = compiler.parent().parent().joinpath("lib").joinpath("clang")
         link_file(resources, stage.joinpath("c/clang/lib/clang"))?
@@ -218,7 +308,7 @@ def archive(stage: Path, output: Path) -> Result[None, str]:
     parent = output.parent()
     absolute = parent
         .resolve()
-        .map_err((error) => f"cannot resolve toolchain archive directory {parent.0}: {error.message()}")?.joinpath(
+        .map_err((error) => f"toolchain archive directory: cannot {error.message()}")?.joinpath(
         output.name(),
     )
     # 2. Nothing is written at `output` until the archive is complete, and its name chooses the compression.
@@ -408,11 +498,11 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
     """
     if not source.is_dir():
         return Err(f"no standard Loaves at {source.0}")
-    for package in source.iterdir().map_err((error) => f"cannot list standard Loaves at {source.0}: {error.message()}")?:
+    for package in source.iterdir().map_err((error) => f"standard Loaves: cannot {error.message()}")?:
         for profile in (
             package
                 .iterdir()
-                .map_err((error) => f"cannot list standard Loaf profiles at {package.0}: {error.message()}")?
+                .map_err((error) => f"standard Loaf profiles: cannot {error.message()}")?
         ):
             if ".previous." in profile.name():
                 return Err(f"stale standard generation cannot be packed: {profile.0}")
@@ -421,7 +511,7 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
             for artifact in (
                 profile
                     .iterdir()
-                    .map_err((error) => f"cannot list standard Loaf artifacts at {profile.0}: {error.message()}")?
+                    .map_err((error) => f"standard Loaf artifacts: cannot {error.message()}")?
             ):
                 name = artifact.name()
                 if (
@@ -449,7 +539,7 @@ def stage_standard_sources(stage: Path) -> Result[None, str]:
 def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
     """Link a package's authored files into the stage, leaving out build output and hidden entries."""
     for entry in (
-        source.iterdir().map_err((error) => f"cannot list standard source directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"standard source directory: cannot {error.message()}")?
     ):
         name = entry.name()
         if name.startswith(".") or name == "target":
@@ -463,53 +553,71 @@ def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
 
 def stage_native(source: Path, destination: Path, stage: Path, prefix: str) -> Result[None, str]:
     """
-    Resolve a closure's original paths once and express its native dependencies from its installed directory.
+    Resolve a closure's anchored references once and express its native dependencies from its installed directory.
 
     1. Stage the artifact of every extern and name it from the Loaf's profile directory.
     2. Stage the search directories the same way.
     3. Stage the crates its attribute macros expand against.
-    4. Write the rewritten document.
+    4. Write the rewritten document, anchored at the Loaf's directory under its anchored schema.
     """
     document = read_json(source)?
+    anchors = native_anchors()?
     # 1. The prefix names the archive root from this closure's destination directory.
     listed = document.require("externs").map_err((error) => error.message())?
-    externs = stage_extern_pairs(source, listed, stage, prefix)?
+    externs = stage_extern_pairs(source, listed, stage, prefix, anchors)?
     # 2. The directories the closure searches are staged and named the same way, and missing ones are dropped.
     mut directories: list[str] = []
     for item in required_items(document, "search")?:
-        directories.append(located(source.parent(), string_value(item)?))
+        directories.append(closure_reference(source.parent(), string_value(item)?, anchors)?)
     search = stage_search(directories, stage, prefix)?
     # 3. The crates the Loaf's attribute macros expand against travel and are named the same way.
     updated = replaced(document, "externs", JsonValue.array(externs))?
-    macros = stage_macro_externs(source, updated, stage, prefix)?
+    macros = stage_macro_externs(source, updated, stage, prefix, anchors)?
     # 4. Everything else the document says is kept as it was.
-    rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(path) for path in search]))?
-    write_json(destination, rewritten)?
+    sibling = f"{NativeAnchor.Sibling.value()}:"
+    rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(sibling + path) for path in search]))?
+    mut schema = NATIVE_CLOSURE_SCHEMA
+    if destination.name() == "native.json":
+        schema = RUST_NATIVE_SCHEMA
+    write_json(destination, replaced(rewritten, "schema", JsonValue.string(schema))?)?
     if record_path(source).is_file():
         record_payload(destination, published_identity(source)?)?
         stage_publication(record_path(destination), record_path(destination))?
     return Ok(None)
 
 
-def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path, prefix: str) -> Result[list[JsonValue], str]:
-    """Stage each native `[name, path]` pair and name it relative to the closure's destination directory."""
+def stage_extern_pairs(
+    source: Path,
+    listed: JsonValue,
+    stage: Path,
+    prefix: str,
+    anchors: NativeAnchors,
+) -> Result[list[JsonValue], str]:
+    """Stage each native `[name, reference]` pair and anchor it at the closure's destination directory."""
     mut result: list[JsonValue] = []
     for value in array_value(listed)?:
         pair = array_value(value)?
         if len(pair) != 2:
             return Err(f"{source.0}: native extern must be [name, path]")
         path = string_value(pair[1])?
-        relative = stage_artifact(Path(located(source.parent(), path)), stage)?
-        result.append(JsonValue.array([pair[0], JsonValue.string(prefix + relative)]))
+        relative = stage_artifact(Path(closure_reference(source.parent(), path, anchors)?), stage)?
+        anchored = f"{NativeAnchor.Sibling.value()}:{prefix}{relative}"
+        result.append(JsonValue.array([pair[0], JsonValue.string(anchored)]))
     return Ok(result)
 
 
-def stage_macro_externs(source: Path, document: JsonValue, stage: Path, prefix: str) -> Result[JsonValue, str]:
+def stage_macro_externs(
+    source: Path,
+    document: JsonValue,
+    stage: Path,
+    prefix: str,
+    anchors: NativeAnchors,
+) -> Result[JsonValue, str]:
     """Stage the Rust crates a Loaf's attribute macros expand against; a document without any stays as it is."""
     match document.get("macro_externs"):
         None => return Ok(document)
         Some(listed) =>
-            pairs = stage_extern_pairs(source, listed, stage, prefix)?
+            pairs = stage_extern_pairs(source, listed, stage, prefix, anchors)?
             return replaced(document, "macro_externs", JsonValue.array(pairs))
 
 
@@ -542,7 +650,7 @@ def stage_directory(source: Path, stage: Path) -> Result[str, str]:
     """
     canonical = source
         .resolve()
-        .map_err((error) => f"cannot resolve toolchain artifact directory {source.0}: {error.message()}")?
+        .map_err((error) => f"toolchain artifact directory: cannot {error.message()}")?
     if canonical.parent().parent().name() == "loaves":
         return stage_profile(canonical, stage)
     mut relative = "native/" + canonical.name()
@@ -561,7 +669,7 @@ def stage_native_directory(source: Path, destination: Path, stage: Path, prefix:
     """
     make_directory(destination)?
     for entry in (
-        source.iterdir().map_err((error) => f"cannot list native artifact directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"native artifact directory: cannot {error.message()}")?
     ):
         name = entry.name()
         if name in OBSERVATION_CACHES or name.endswith(RESTATED_RECORD_SUFFIX):
@@ -583,7 +691,7 @@ def stage_profile(source: Path, stage: Path) -> Result[str, str]:
     """
     mut names: list[str] = []
     for file in (
-        source.iterdir().map_err((error) => f"cannot list standard profile directory {source.0}: {error.message()}")?
+        source.iterdir().map_err((error) => f"standard profile directory: cannot {error.message()}")?
     ):
         if file.is_file() and is_native_library(file.name()):
             names.append(file.name())
@@ -618,7 +726,7 @@ def link_file(source: Path, destination: Path) -> Result[None, str]:
         return stage_publication(source, destination)
     absolute = source
         .resolve()
-        .map_err((error) => f"cannot resolve staged toolchain input {source.0}: {error.message()}")?
+        .map_err((error) => f"staged toolchain input: cannot {error.message()}")?
     if destination.is_file():
         if file_digest(absolute)? != file_digest(destination)?:
             return Err(f"conflicting toolchain artifacts at {destination.0}")
@@ -685,31 +793,48 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     """
     Verify a staged archive before replacing the installed toolchain; a refused archive preserves the old one.
 
+    0. A release build of `incan` verifies the archive's signature before anything is unpacked, in a fresh home
+       as in any other; a local build carries no signer and says that it installs unverified (DD-0016).
     1. Unpack the archive into a staging directory beside the installation.
-    2. Verify the staged toolchain and publish it, then remove the staging directory whatever happened.
+    2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
+       whatever happened.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
+    4. The home records the signer the archive ships, only when the archive verified.
     """
     target = toolchain_directory()?
+    # 0. An unsigned or altered archive is refused here, by name, before it costs or changes anything.
+    carrier = home()?
+    verified = admit_release(archive, anchor(stamped()?, carrier)?)?
+    match verified:
+        Some(proof) => println(f"verified release signature: {proof.identity}, log entry {proof.log_index}")
+        None => println(f"installing {archive.0} unverified: this incan is a local build and carries no release signer")
     make_directory(target.parent())?
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
+    plain = target.parent().joinpath(f".install-{TOOLCHAIN}.tar")
     # 2. The stage is verified and published, and removed whatever the outcome.
-    result = install_staged(archive, stage, target)
+    result = install_staged(archive, plain, stage, target)
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
+    if plain.is_file():
+        remove(plain)?
     result?
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
     println(f"entry points: oven and incan in {directory.0}")
+    # 4. No archive is trusted for the signer it claims: only a verified one is recorded.
+    if record_signer(verified, target, carrier)?:
+        println(f"recorded the release signer in {carrier.joinpath(CARRIED_TRUST).0}")
     return Ok(None)
 
 
-def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str]:
+def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Result[None, str]:
     """
     Unpack, bind the machine's pinned sysroot and prove driver identity before publishing any installation.
 
-    1. Refuse an archive with a member outside the stage or one that supplies the sysroot link.
+    1. Read a zstd archive through its copy decompressed at `plain`, and refuse an archive with a member outside the
+       stage or one that supplies the sysroot link.
     2. Unpack it.
     3. It is a toolchain of this Oven, and its manifest paths are portable.
     4. Every artifact the manifest names is present.
@@ -718,7 +843,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
-    listing = command_text("tar", ["-tf", archive.0]).map_err(
+    readable = plain_archive(archive, plain)?
+    listing = command_text("tar", ["-tf", readable.0]).map_err(
         (error) => f"cannot inventory toolchain archive {archive.0}: {error}",
     )?
     record(Operation.ArchiveInventory, archive.0, clock)
@@ -727,7 +853,7 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
             admit_archive_member(entry)?
     # 2. The archive is unpacked into the stage.
     clock = begin()
-    run_command("tar", ["-xf", archive.0, "-C", stage.0]).map_err(
+    run_command("tar", ["-xf", readable.0, "-C", stage.0]).map_err(
         (error) => f"cannot unpack toolchain archive {archive.0} into {stage.0}: {error}",
     )?
     record(Operation.ArchiveUnpack, archive.0, clock)
@@ -750,7 +876,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
-    pin = convert(toolchain.driver, stage, stage)?
+    # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
+    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?
@@ -828,7 +955,7 @@ def local_sysroot() -> Result[Path, str]:
     if configured != "":
         sysroot = Path(configured)
             .resolve()
-            .map_err((error) => f"cannot resolve INCAN_SYSROOT {configured}: {error.message()}")?
+            .map_err((error) => f"INCAN_SYSROOT: cannot {error.message()}")?
         require_rust_components(sysroot)?
         return Ok(sysroot)
     output = command_text("rustup", ["run", RUST_TOOLCHAIN, "rustc", "--print", "sysroot"]).map_err(
@@ -836,7 +963,7 @@ def local_sysroot() -> Result[Path, str]:
     )?
     sysroot = Path(output.strip())
         .resolve()
-        .map_err((error) => f"cannot resolve the Rust {RUST_TOOLCHAIN} sysroot {output.strip()}: {error.message()}")?
+        .map_err((error) => f"the Rust {RUST_TOOLCHAIN} sysroot: cannot {error.message()}")?
     require_rust_components(sysroot)?
     return Ok(sysroot)
 

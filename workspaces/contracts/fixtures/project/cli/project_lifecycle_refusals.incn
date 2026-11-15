@@ -1,0 +1,13 @@
+# behavior: Without `--force`, `oven new` refuses a nonempty directory and `oven init` an existing manifest, and `oven new` without a name or `--dir` is refused, as 0.5.1 did (#3139).
+# cli-commands:
+#   oven new src --yes
+#   oven init . --yes
+#   oven new --yes
+# expect-stdout:
+# expect-stderr-contains:
+#   oven
+# expect-exit: 1
+
+def main() -> None:
+    """Provide a source that refused invocations never change."""
+    pass

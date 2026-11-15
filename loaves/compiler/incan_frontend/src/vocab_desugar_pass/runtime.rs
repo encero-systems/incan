@@ -426,10 +426,10 @@ impl NativeDesugarerRuntime {
             return;
         }
         let staged = self.directory.join(format!("{digest}.{}.tmp", std::process::id()));
-        if let Ok(bytes) = serde_json::to_vec(reply) {
-            if fs::write(&staged, bytes).is_ok() {
-                let _ = fs::rename(&staged, self.directory.join(format!("{digest}.json")));
-            }
+        if let Ok(bytes) = serde_json::to_vec(reply)
+            && fs::write(&staged, bytes).is_ok()
+        {
+            let _ = fs::rename(&staged, self.directory.join(format!("{digest}.json")));
         }
     }
 
@@ -470,17 +470,10 @@ fn trace_line(record: &Value) -> String {
     )
 }
 
-/// Mirror lines through Oven's trace destination: stderr for `-`, a file path otherwise, nothing when unset.
+/// Mirror lines into the tracing channel's `vocab_runtime` category, or where `OVEN_TRACE` sends Oven's reasoning.
 fn write_trace(lines: &[String]) {
-    let encoded: String = lines.iter().map(|line| format!("{line}\n")).collect();
-    match std::env::var("OVEN_TRACE").as_deref() {
-        Ok("-") => eprint!("{encoded}"),
-        Ok(path) if !path.is_empty() => {
-            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-                let _ = file.write_all(encoded.as_bytes());
-            }
-        }
-        _ => {}
+    for line in lines {
+        crate::trace_flags::emit(crate::trace_flags::Category::VocabRuntime, line);
     }
 }
 

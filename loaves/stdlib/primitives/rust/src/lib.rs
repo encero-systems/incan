@@ -4,6 +4,7 @@
 
 pub mod channel;
 pub mod collections;
+pub mod crumb;
 pub mod errors;
 pub mod file;
 pub mod frozen;

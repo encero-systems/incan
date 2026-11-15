@@ -1,6 +1,6 @@
 [project]
 name = "incan-rustc-driver"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 private = true
 
 [dependencies]
@@ -17,6 +17,7 @@ incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
@@ -30,6 +31,11 @@ path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
 sysroot_dependencies = ["rustc_driver"]
+
+# The development linker: rewrites link inputs to content-derived paths and runs ld, with no compiler in it.
+[[rust.bin]]
+name = "incan-link"
+path = "src/link_main.rs"
 
 # Native runtime code is linked by compiled programs rather than by the compiler binary.
 [tool.incan.codegraph]

@@ -90,20 +90,20 @@ def emit_inner(
 
 
 def sequence(
-    items: list[Value],
+    items: &list[Value],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,
 ) -> Result[None, CrumbError]:
     """Sequence order and multiplicity are significant; counts describe elements, not encoded bytes."""
     output.unsigned(len(items), budget)?
-    for item in items:
-        emit(item, projection, output, budget)?
+    for at in range(len(items)):
+        emit(items[at], projection, output, budget)?
     return Ok(None)
 
 
 def emit_map(
-    entries: list[MapEntry],
+    entries: &list[MapEntry],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,
@@ -118,7 +118,7 @@ def emit_map(
 
 
 def emit_record(
-    fields: list[ValueField],
+    fields: &list[ValueField],
     projection: Projection,
     mut output: HashOutput,
     mut budget: Budget,

@@ -5,6 +5,7 @@ from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
 from rust::std::time import Instant
 from std.fs import Path
+from std.json import JsonValue, parse
 from timing import work, work_clock
 
 # A deadline is explicit; zero means an invocation may run for as long as it takes.
@@ -32,8 +33,11 @@ pub model Outcome:
 
 
 pub def trace_file(project: Path) -> Path:
-    """Where Oven records this project's compiled and reused units and their reasons."""
-    return project.joinpath("target").joinpath("incan").joinpath("oven.trace")
+    """
+    The tracing channel of this project's commands: a directory in which each of their processes writes its own file,
+    Oven its reasons among its records.
+    """
+    return project.joinpath("target").joinpath("incan").joinpath("trace")
 
 
 pub def built_program(project: Path, name: str) -> Path:
@@ -44,18 +48,60 @@ pub def built_program(project: Path, name: str) -> Path:
 pub def clear_trace(project: Path) -> Result[None, str]:
     """Start one case or shared compilation's trace without erasing notes between its commands."""
     trace = trace_file(project)
-    if trace.is_file():
-        trace.unlink().map_err((error) => error.message())?
+    if trace.is_dir():
+        trace.remove_tree().map_err((error) => error.message())?
     return Ok(None)
+
+
+pub def trace_lines(channel: Path) -> list[str]:
+    """
+    The text a channel's records carry, Oven's reasons and the compiler's text records, file by file in name order
+    and in record order within a file; a file that cannot be read contributes nothing.
+    """
+    mut lines: list[str] = []
+    if not channel.is_dir():
+        return lines
+    mut names: list[str] = []
+    match channel.iterdir():
+        Ok(entries) => names = sorted([entry.name() for entry in entries])
+        Err(_) => return lines
+    for name in names:
+        match channel.joinpath(name).read_text("utf-8", "strict"):
+            Err(_) => pass
+            Ok(text) =>
+                for line in text.split("\n"):
+                    if line != "":
+                        match parse(line):
+                            Ok(record) =>
+                                if text_of(record, "operation") == "reason" or text_of(record, "kind") == "line":
+                                    lines.append(text_of(record, "key"))
+                            Err(_) => pass
+    return lines
+
+
+def text_of(record: JsonValue, key: str) -> str:
+    """A string field of a trace record, or empty."""
+    match record.get(key):
+        Some(value) =>
+            match value.expect_str():
+                Ok(text) => return text
+                Err(_) => return ""
+        None => return ""
+
+
+pub def traced_setting(project: Path) -> Result[list[str], str]:
+    """
+    The setting that traces a command of a case that reads its trace into the case's channel, created first, so a
+    command that removed `target/` still has one.
+    """
+    trace = trace_file(project)
+    trace.mkdir(true, true).map_err((error) => error.message())?
+    return Ok([f"INCAN_ENGINE_TRACE={trace.0}"])
 
 
 pub def unit_notes(trace: Path) -> list[str]:
     """The units Oven prepared for this invocation, preserving their reported order and reasons."""
-    if not trace.is_file():
-        return []
-    match trace.read_text("utf-8", "strict"):
-        Err(_) => return []
-        Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
+    return [line for line in trace_lines(trace) if line.startswith("oven: unit ")]
 
 
 pub def launch(
@@ -71,16 +117,19 @@ pub def launch(
     """
     Start one child with separate captured streams; the caller owns waiting and collection.
 
-    `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
-    declares them. When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
-    The runner prepares its trace destination before requesting early observations, including after target removal.
+    Disposable case projects never retain resident owners. `environment` holds `NAME=value` settings added to the
+    inherited environment, as a case's `environment:` block declares them, and may explicitly override that default.
+    When `stdout_file` is supplied, its consumer owns reading and removing that capture after reaping.
+    A command runs with the tracing channel off unless its settings name one: a case that reads its trace asks for
+    its channel with `traced_setting`, so tracing costs no other case its time.
     `arg0` is the program name the child is started under: `oven` selects the same installed program's project
     surface (RFC 118).
     """
     mut command = Command.new(incan)
-    trace = trace_file(project)
-    trace.parent().mkdir(true, true).map_err((error) => error.message())?
-    command.env("OVEN_TRACE", trace.0)
+    # Every command starts with the case's `target/incan` in place, as cases that write below `target/` expect.
+    trace_file(project).parent().mkdir(true, true).map_err((error) => error.message())?
+    command.env("INCAN_ENGINE_TRACE", "")
+    command.env("OVEN_OWNER", "off")
     for setting in environment:
         name, value = environment_setting(setting)?
         command.env(name, value)

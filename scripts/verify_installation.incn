@@ -15,6 +15,7 @@ from oven_tests import (
     Invocation,
     host_memory,
     run_all_failures,
+    selected_builder_bakery,
     shared_memory,
 )
 from release_support import (
@@ -151,12 +152,12 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
     verifier = current_exe().map_err((error) => error.to_string())?.to_string_lossy().into_owned()
-    retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
+    retain_traces = verification_traces_requested()
     for plan in plans:
         name = verification_phase_name(plan.phase)
         trace_environment = verification_trace_environment(installation.run, name, retain_traces)
         if retain_traces:
-            Path(trace_environment["INCAN_TRACE_DIR"]).mkdir(true, true).map_err((error) => error.message())?
+            Path(trace_environment["INCAN_ENGINE_TRACE"]).mkdir(true, true).map_err((error) => error.message())?
         invocations.append(
             Invocation(
                 arguments=verification_phase_arguments(
@@ -202,11 +203,11 @@ pub def verification_phase_arguments(name: str, run: Path, runner: Path, jobs: i
 
 
 pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> Dict[str, str]:
-    """Select one process-safe phase-owned compiler trace directory when installed tracing is requested."""
+    """Select one phase-owned tracing channel, each process its own file there, when installed tracing is requested."""
     if not enabled:
         return {}
     stem = run.joinpath("traces").joinpath(phase)
-    return {"INCAN_TRACE_DIR": stem.joinpath("compiler").0, "INCAN_NATIVE_TIMING": "1"}
+    return {"INCAN_ENGINE_TRACE": stem.0, "INCAN_NATIVE_TIMING": "1"}
 
 
 pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
@@ -350,7 +351,8 @@ pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, s
             .parse(document.read_text("utf-8", "strict").map_err((error) => error.message())?)
             .map_err((error) => f"{document.0}: {error.message()}")?
         for observed in strings_and_keys(value)?:
-            if observed.startswith("/") and observed != installation.0 and not observed.startswith(installation.0 + "/"):
+            path = audited_path(observed)
+            if path.startswith("/") and path != installation.0 and not path.startswith(installation.0 + "/"):
                 return Err(f"nonportable toolchain JSON {document.0}: {observed}")
     for builder in builder_paths:
         if builder == "":
@@ -492,7 +494,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
     mut environment = command_environment(installation)
-    bakery = selected_rust_facet_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
     if bakery != "":
         environment["INCAN_BAKERY"] = bakery
     manifests = sorted(
@@ -533,16 +535,6 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
     return Ok(len(projects))
-
-
-pub def selected_rust_facet_bakery(builder_home: str) -> str:
-    """Select the release builder's existing Bakery for exact-identity facet reuse, or no override outside release."""
-    if builder_home == "":
-        return ""
-    bakery = Path(builder_home).joinpath("bakery")
-    if not bakery.is_dir():
-        return ""
-    return bakery.0
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:
@@ -817,6 +809,17 @@ def owns_rust_facet(manifest: str) -> bool:
     return false
 
 
+def audited_path(observed: str) -> str:
+    """
+    The path one JSON string names for the relocation audit. An `absolute:` native-closure reference names the path
+    after its anchor; `sibling:`, `toolchain:` and `bakery:` references resolve inside a home and stay as written.
+    """
+    parts = observed.split(":")
+    if len(parts) > 1 and parts[0] == "absolute":
+        return ":".join(parts[1:])
+    return observed
+
+
 def strings_and_keys(value: JsonValue) -> Result[list[str], str]:
     """Collect every JSON string and object key for the relocation audit."""
     mut values: list[str] = []
@@ -850,3 +853,17 @@ def retain_input_digests(run: Path, oven: Path, lsp: Path) -> Result[None, str]:
             .write_text(f"{digest(archive)?}  {archive.0}\n", "utf-8", "strict", None)
             .map_err((error) => error.message())?
     return Ok(None)
+
+
+def verification_traces_requested() -> bool:
+    """
+    Whether installed verification keeps each phase's traces: the tracing channel (`INCAN_ENGINE_TRACE`) is on for this
+    verification, or, for one more release, `INCAN_VERIFY_TRACES=1`, which names its replacement once on stderr.
+    """
+    if get_or("INCAN_VERIFY_TRACES", "") == "1":
+        write_stderr(
+            "verify: `INCAN_VERIFY_TRACES` is replaced by `INCAN_ENGINE_TRACE`, which keeps each phase's traces under "
+            + "the run's `traces/`; it is read for one more release\n",
+        )
+        return true
+    return get_or("INCAN_ENGINE_TRACE", "") != ""

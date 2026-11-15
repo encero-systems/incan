@@ -1,6 +1,6 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
-from intake import intake, read_project, ManifestReader
+from intake import entry_source, intake, read_project, ManifestReader
 from manifest_intent import parse_intent, parse_document
 from manifest_errors import IntakeError, IntakeErrorKind
 from std.fs import Path
@@ -8,6 +8,7 @@ from std.testing import fail
 from scratch import scratch_directory
 from toml_fields import read_manifest
 from files import write
+from dependency_plans import listed_dependencies
 
 
 pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
@@ -94,17 +95,17 @@ pub def test_unsupported_intent_is_not_dropped() -> None:
     """
     Check the intake boundary.
 
-    1. Accept implemented features and empty C intent.
+    1. Accept implemented features, empty C intent and a workspace table.
     2. Refuse unsupported manifest sections.
     """
     # 1. Implemented intent remains accepted.
-    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n"]:
+    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n", "[workspace]\nmembers=[]\n"]:
         match parse_intent(project_manifest(extra), "loaf.toml"):
             Ok(_) => pass
             Err(error) => fail(error.message())
     # 2. Unsupported intent must still be named instead of ignored.
     for extra in [
-        "[workspace]\nmembers=[]\n",
+        "[workspace]\nresolver='2'\n",
         "[interop.cuda]\n",
         "[rust]\ncrate-name='legacy'\n",
         "[build]\nregistry-lock='closure.json'\n",
@@ -121,6 +122,7 @@ pub def test_dependency_options_are_not_silently_ignored() -> None:
 
     1. Retain supported local features.
     2. Name the exact unsupported dependency option.
+    3. Refuse a local path beside `workspace = true`, as 0.5.1 did: the path belongs to `[workspace.dependencies]`.
     """
     # 1. Feature requests survive intake.
     supported = "[dependencies]\nstock={path='../catalog', features=['extra']}\n"
@@ -129,12 +131,20 @@ pub def test_dependency_options_are_not_silently_ignored() -> None:
             assert project.dependencies[0].features == ["extra"]
         Err(error) => fail(error.message())
     # 2. An unknown option does not disappear beside supported ones.
-    unsupported = "[dependencies]\nstock={path='../catalog', features=['extra'], workspace=true}\n"
+    unsupported = "[dependencies]\nstock={path='../catalog', features=['extra'], frobnicate=true}\n"
     match parse_intent(project_manifest(unsupported), "loaf.toml"):
         Ok(_) => fail("unsupported local dependency option was accepted")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Unsupported
-            assert error.field == ["dependencies", "stock", "workspace"]
+            assert error.field == ["dependencies", "stock", "frobnicate"]
+    # 3. An inherited edge takes its path from the workspace root, so a member's own path is refused.
+    inherited_path = "[dependencies]\nstock={path='../catalog', workspace=true}\n"
+    match parse_intent(project_manifest(inherited_path), "loaf.toml"):
+        Ok(_) => fail("a path beside workspace inheritance was accepted")
+        Err(error) =>
+            assert error.kind == IntakeErrorKind.Invalid
+            assert error.field == ["dependencies", "stock", "path"]
+            assert "belong to [workspace.dependencies]" in error.detail
 
 
 pub def test_workbench_aliases_and_unselected_rust_request() -> None:
@@ -167,13 +177,15 @@ pub def test_cycle_refuses() -> None:
             assert error.kind == IntakeErrorKind.Cycle
 
 
-pub def test_conventional_library_cannot_be_a_script() -> None:
-    """Reject a script that selects the conventional library source."""
+pub def test_conventional_library_script_is_ignored() -> None:
+    """Accept a script that names the conventional library, as 0.5.1 did, and ignore it: the library stays a library."""
     match intake(Path("tests/fixtures/collision")):
-        Ok(_) => fail("script-library collision was accepted")
-        Err(error) =>
-            assert error.kind == IntakeErrorKind.Invalid
-            assert error.field == ["project", "scripts", "main"]
+        Err(error) => fail(f"a script naming the conventional library was refused: {error.message()}")
+        Ok(found) =>
+            project = found.projects[0]
+            assert "main" not in project.intent.scripts
+            assert "main" in project.library_scripts
+            assert project.library_scripts["main"] == "src/lib.incn"
 
 
 pub def test_missing_root_refuses() -> None:
@@ -182,6 +194,17 @@ pub def test_missing_root_refuses() -> None:
         Ok(_) => fail("missing local project was accepted")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Missing
+
+
+pub def test_a_missing_entry_is_refused_by_its_path() -> Result[None, str]:
+    """A command's PATH that names nothing is refused as such, before a Rust project route reads it as a project."""
+    scratch = scratch_directory()?
+    missing = scratch.path().joinpath("missing.incn")
+    match entry_source(missing, ManifestReader()):
+        Ok(_) => fail(f"{missing.0}: a missing entry was selected")
+        Err(reason) =>
+            assert reason == f"{missing.0}: no such source file or Loaf directory", reason
+    return Ok(None)
 
 
 pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
@@ -341,4 +364,41 @@ def record_identity_controls() -> Result[None, str]:
             Err(error) =>
                 assert error.kind == IntakeErrorKind.Invalid
                 assert error.field == ["project", "registry-id"]
+    return Ok(None)
+
+
+pub def test_a_provider_dependency_is_read_as_a_provider_requirement() -> Result[None, IntakeError]:
+    """
+    RFC 117: `ALIAS = { provider = "NAME", version = "REQ" }` in `[dependencies]` is a `provider`-kind requirement,
+    read beside the Loaf dependencies and never as one.
+
+    1. The provider, its version requirement, features, `optional` and target are kept; no Loaf request is made, and
+       `oven dependency list` names it as a provider.
+    2. A provider entry that also names a Loaf or a path, has no version, has a requirement that does not parse, or
+       has a name that is not an identity, is refused.
+    """
+    source = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n[dependencies]\nvision = { provider = \"vision-runtime\", version = \">=2.0\", features = [\"gpu\"], optional = true }\nregex = { loaf = \"crates-io/regex\", version = \"1\" }\n"
+    # 1. One provider requirement and one Loaf request.
+    project = parse_intent(source, "loaf.toml")?
+    assert len(project.providers) == 1, f"{len(project.providers)} provider requirements"
+    vision = project.providers[0]
+    assert vision.alias == "vision" and vision.provider == "vision-runtime" and vision.version == ">=2.0"
+    assert vision.features == ["gpu"] and vision.optional and vision.target is None
+    assert [request.alias for request in project.rust_inputs] == ["regex"]
+    match listed_dependencies(source, "loaf.toml"):
+        Ok(lines) =>
+            assert lines == ["regex: crates-io/regex 1", "vision: provider vision-runtime >=2.0"], f"{lines}"
+        Err(reason) => fail(reason)
+    # 2. Anything that would make it a Loaf, or leave it without a checked requirement, is refused.
+    for entry in [
+        "{ provider = 'vision-runtime', loaf = 'crates-io/vision', version = '2' }",
+        "{ provider = 'vision-runtime', path = '../vision', version = '2' }",
+        "{ provider = 'vision-runtime' }",
+        "{ provider = 'vision-runtime', version = 'two' }",
+        "{ provider = 'Vision', version = '2' }",
+    ]:
+        manifest = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nvision = " + entry + "\n"
+        match parse_intent(manifest, "loaf.toml"):
+            Ok(_) => fail(f"a provider entry was accepted: {entry}")
+            Err(_) => pass
     return Ok(None)

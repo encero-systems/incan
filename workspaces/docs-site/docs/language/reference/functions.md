@@ -211,7 +211,7 @@ Arguments bind to normal parameters in this order:
 4. A required parameter that remains unbound is error `INCAN-T0001`.
 5. A named argument that names no parameter is error `INCAN-T0001`, unless the callee declares `**kwargs`.
 6. A positional argument beyond the positional parameters is error `INCAN-T0001`, unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
+7. A defaulted parameter that remains unbound takes its declared default. A default whose type is incompatible with its parameter's type is a type mismatch reported at the default. A default cannot read `self`, its fields or another parameter of the callable: those names are unknown in a default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
 8. In a package other than the callable's, a call may leave a defaulted parameter unbound only when the default is one of the following, and is not a preset of a method partial:
     - a literal, or a negated number literal;
     - a list or dict whose elements are such defaults;
@@ -219,7 +219,7 @@ Arguments bind to normal parameters in this order:
     - a call of a function the package declares, named directly, through a public symbol alias of it or through its module, whose arguments are such defaults;
     - a construction of a newtype the package declares, or of a model or class the package exports, whose arguments are such defaults.
 
-    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`.
+    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`. A call through a public alias of a callable may leave unbound the same defaulted parameters as a call that names the callable.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -535,6 +535,12 @@ Refused (`INCAN-T0001`):
 
 Refused (`INCAN-P0001`): `pub` on a method declared in a trait.
 
+Refused (`INCAN-T0135`): a direct construction of a class, outside the class's own methods, that names one of its private fields. A function of the same module, another module and a subclass are all outside.
+
+### Method overloads
+
+Ordinary methods of one type may share a name when their positional argument counts or parameter types let every call select exactly one of them. A method that overlaps an earlier one of the same name is refused with ``Type 'T' declares conflicting 'm' method overloads``, which also points at the earlier method.
+
 ## Function Values
 
 Named functions are first-class values of a [function type](#function-types); a value of a rest-aware function keeps its rest parameters ([Rest-aware function values](#rest-aware-function-values)).
@@ -557,6 +563,35 @@ Each of these is error `INCAN-T0001`:
 - Duplicate fixed bindings across direct and unpacked arguments.
 - Missing required normal parameters.
 
+An explicit type-argument list on a call of a function or method that declares no type parameters is error `INCAN-T0129`.
+
+## Unreachable Code
+
+Statements after a `return` in the same block never run and produce the warning `INCAN-T0101`, ``Unreachable code after `return` ``, which points at the `return`. The check is local to the block: it does not follow `if`, `match` or loop divergence, and the program still compiles.
+
+## Program Entry
+
+A program's `main`, and a selected additional program entry, takes no parameters and returns `None` or `Result[None, E]`, where `E` is `str` or an error model or enum of the standard library; it may be `async def`. Any other signature is refused when the program is compiled. When `main` returns `Err(error)`, the error is written to standard error after everything the program printed, and the program exits with status `1`; `None` and `Ok(None)` exit `0`.
+
 ## Rust Interop
 
 A function imported from a Rust crate has no rest parameters.
+
+A closure passed to a Rust parameter whose bounds require `Send` or `Sync`, such as the closure `spawn` from `rust::std::thread` takes, captures its values by move, and each captured value must have that property:
+
+- `int`, `float`, `bool`, `str`, `bytes` and the sized numeric types have both.
+- A `list`, `dict`, `set`, `Option`, `Result`, frozen collection or tuple has it when each of its type arguments or elements has it.
+- A model or class has it when every field has it, an enum when every variant payload has it, and a newtype when its underlying type has it.
+- A `rusttype` has it when its declaration adopts it, as in `with Send, Sync`.
+- A Rust `Arc[T]` has `Send` and `Sync` when `T` has both, and a Rust `Mutex[T]` has both when `T` has `Send`. Another Rust type has it when its Rust implementation does.
+- A borrowed capture never has it.
+
+A capture without the property is refused with ``Captured value 'NAME' of type 'TYPE' lacks retained `MARKER` evidence for this Rust callback``.
+
+Checking also refuses these Rust calls and types:
+
+- `INCAN-T0122`: a Rust method call whose arguments check but for which no single native callee can be selected; the diagnostic names the callee and why.
+- `INCAN-T0105`: a Rust associated call that leaves its owner's type arguments open when nothing later fixes them. A local bound to such a call, as in `mut table = HashMap.new()`, takes them from its first use that depends on them.
+- `INCAN-T0120`: a return or field type that names a Rust type borrowing data. A parameter type may name one.
+- A call of an unsafe Rust function: ``Unsafe Rust call `rust::PATH` is unsupported: unsafe interop is out of scope``.
+- An owned use of a Rust value whose type has no retained `Clone` implementation.

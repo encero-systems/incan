@@ -288,6 +288,12 @@ impl TypeChecker {
         let source = self.type_info.expr_type(call.receiver_span)?.clone();
         // A rusttype receiver dereferences through the native type it names.
         let source = self.rusttype_native_target(&source).unwrap_or(source);
+        // A source str a native call returned owns the String storage the call names; it dereferences through that
+        // String, as a local annotated with the String type does.
+        let source = match source {
+            ResolvedType::Str => ResolvedType::RustPath(call.rust_path.to_owned()),
+            other => other,
+        };
         let mut owner = self.rust_closed_owner(&source, info, call.rust_path);
         let mut steps = Vec::new();
         for _ in 0..12 {
@@ -529,11 +535,11 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let owner = self.rust_trait_owner(owner, &info, &path);
+        let owner = self.rust_trait_owner(owner, info, &path);
         let trait_path = if mutable { DEREF_MUT_TRAIT } else { DEREF_TRAIT };
         let implementation = self.rust_adjustment_implementation(info, &owner, trait_path)?;
         let method = if mutable { "deref_mut" } else { "deref" };
-        let owner = self.rust_storage_owner(&owner, &info, &path);
+        let owner = self.rust_storage_owner(&owner, info, &path);
         let reference = |ty: ResolvedType| {
             if mutable {
                 ResolvedType::RefMut(Box::new(ty))

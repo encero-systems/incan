@@ -9,6 +9,9 @@ from std import toml
 from std.toml import TomlLocation
 from std.primitives.errors import Error
 
+# Why 0.6 has no `[sdk]` table and no `--sdk-profile`: both selected standard packages, which every unit now reaches.
+pub const NO_SDK_SELECTION: str = "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"
+
 
 pub enum IntakeErrorKind(str):
     """Stable refusal categories without unvalidated string states."""

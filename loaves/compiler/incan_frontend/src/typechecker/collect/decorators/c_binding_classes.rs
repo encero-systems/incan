@@ -90,15 +90,15 @@ impl TypeChecker {
             }
         };
         let link = link.and_then(|value| self.c_system_library_name(value));
-        let (system_library, link_capability) = match link {
+        let (system_library, link_capability, configuration) = match link {
             Some(link) => link,
             None => {
                 self.errors.push(CompileError::type_error(
-                    "@c.binding requires `link = c.system_library(\"name\")` or `c.framework(\"name\")`".to_string(),
+                    "@c.binding requires `link = c.system_library(\"name\")`, `c.framework(\"name\")` or `c.loaf_library(\"loaf\", configuration=\"name\")`".to_string(),
                     decorator.span,
                 ));
                 valid = false;
-                (String::new(), LinkCapabilityId::SystemLibrary)
+                (String::new(), LinkCapabilityId::SystemLibrary, String::new())
             }
         };
 
@@ -116,6 +116,7 @@ impl TypeChecker {
                     header,
                     system_library,
                     link_capability,
+                    configuration,
                     resources: members.resources,
                     symbols: members.symbols,
                     enums: members.enums,

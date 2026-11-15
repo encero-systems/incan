@@ -1,5 +1,6 @@
 """Adapt Oven's observation switches and compatibility formats to the platform's single span and channel home."""
 
+from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import id
 from rust::std::string import String as RustString
@@ -21,6 +22,7 @@ pub model WorkCounts:
     pub stats: int
     pub pages: int
     pub identities: int
+    pub resolutions: int = 0
 
 
 model ObservationChannels:
@@ -36,6 +38,8 @@ model ObservationChannels:
     # A scoped contract observer uses this same producer boundary without opening an output channel.
     counting_prefix: str = ""
     counts: Dict[str, int] = {}
+    frozen_prefixes: list[str] = []
+    frozen_counts: Dict[str, int] = {}
     emitter: Option[Emitter] = None
     failure: Option[TraceError] = None
     reported: bool = false
@@ -51,6 +55,14 @@ model ObservationChannels:
         if directory == "" and self.legacy_work == "" and self.legacy_reason == "":
             return
         self.process = int(id())
+        # A former variable still works for one release, and names its replacement once, where it writes; an owner's
+        # `OVEN_TRACE` is its internal mailbox, which names nothing.
+        if self.legacy_reason != "" and not internal_role():
+            notice = former_notice("OVEN_TRACE", "`reason`, `native_timing`, `vocab_runtime` and `redo`")
+            self.remember(compatibility_line(self.legacy_reason, f"oven: {notice}\n"))
+        if self.legacy_work != "":
+            notice = former_notice("INCAN_JEC_TRACE", "operation")
+            self.remember(compatibility_notice(self.legacy_work, self.process, notice))
         if directory != "":
             self.canonical = Path(directory).joinpath(f"engine-oven-{self.process}.jsonl").0
         self.run = get_or("INCAN_ENGINE_RUN", "")
@@ -63,7 +75,9 @@ model ObservationChannels:
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
         self.load()
-        return begin(self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "")
+        return begin(
+            self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "" or len(self.frozen_prefixes) > 0,
+        )
 
     def work(mut self, category: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
         """Publish a completed operation and its requested compatibility projection."""
@@ -74,6 +88,9 @@ model ObservationChannels:
                 if self.counting_prefix != "" and key.startswith(self.counting_prefix):
                     name = category.value()
                     self.counts[name] = self.counts.get(name, 0) + 1
+                if self.is_frozen(key):
+                    name = category.value()
+                    self.frozen_counts[name] = self.frozen_counts.get(name, 0) + 1
                 if self.legacy_work != "":
                     self.export_work(started, category, key, bytes)
                 else:
@@ -110,10 +127,43 @@ model ObservationChannels:
             stats=self.counts.get("file_stat", 0),
             pages=self.counts.get("installation_page", 0),
             identities=self.counts.get("artifact_identity", 0),
+            resolutions=self.counts.get("path_resolve", 0),
         )
         self.counting_prefix = ""
         self.counts = {}
         return counts
+
+    def count_frozen_work(mut self, prefixes: list[str]) -> None:
+        """Start counting operations on admitted toolchain roots and the selected Rust toolchain."""
+        self.frozen_prefixes = prefixes
+        self.frozen_counts = {}
+
+    def finish_frozen_counting(mut self) -> WorkCounts:
+        """End one request's whole frozen-input observation and release its retained table."""
+        counts = WorkCounts(
+            reads=self.frozen_counts.get("file_read", 0),
+            hashes=self.frozen_counts.get("file_hash", 0),
+            parses=self.frozen_counts.get("manifest_parse", 0),
+            decodes=self.frozen_counts.get("json_decode", 0),
+            stats=self.frozen_counts.get("file_stat", 0),
+            pages=self.frozen_counts.get("installation_page", 0),
+            identities=self.frozen_counts.get("artifact_identity", 0),
+            resolutions=self.frozen_counts.get("path_resolve", 0),
+        )
+        self.frozen_prefixes = []
+        self.frozen_counts = {}
+        return counts
+
+    def is_frozen(self, key: str) -> bool:
+        """Whether an observed locator belongs to one admitted frozen installation root."""
+        if len(self.frozen_prefixes) == 0:
+            return false
+        if "/.rustup/" in key:
+            return true
+        for prefix in self.frozen_prefixes:
+            if key.startswith(prefix):
+                return true
+        return false
 
     def reason(mut self, message: str) -> None:
         """Record reasoning once at its producer and export the requested legacy line."""
@@ -181,6 +231,16 @@ pub def finish_counting() -> WorkCounts:
     return CHANNELS.finish_counting()
 
 
+pub def count_frozen_work(prefixes: list[str]) -> None:
+    """Observe every traced operation against one request's admitted frozen roots."""
+    CHANNELS.count_frozen_work(prefixes)
+
+
+pub def finish_frozen_counting() -> WorkCounts:
+    """Release the request's frozen-input observer and return its measured operation counts."""
+    return CHANNELS.finish_frozen_counting()
+
+
 pub def work_clock() -> Option[Clock]:
     """Start work only when its canonical channel or existing JEC export was requested at process start."""
     return CHANNELS.work_clock()
@@ -246,3 +306,58 @@ def compatibility_line(destination: str, text: str) -> Result[None, TraceError]:
         output.write_all(RustString.from(text).into_bytes()).map_err((_) => TraceError.Channel)?
         return Ok(None)
     return append(destination, text)
+
+
+pub def former_notice(name: str, categories: str) -> str:
+    """The one notice a former tracing variable gives, naming the channel and the categories that replace it."""
+    replacement = f"`{name}` is replaced by `INCAN_ENGINE_TRACE`, whose {categories} records carry what it selected"
+    return replacement + "; it is read for one more release"
+
+
+def compatibility_notice(directory: str, process: int, notice: str) -> Result[None, TraceError]:
+    """Record a former variable's notice in its own JEC file, as a record its readers already parse."""
+    fields = JsonValue.object(
+        {
+            "schema": JsonValue.string("incan.jec/1"),
+            "process": JsonValue.int(process),
+            "category": JsonValue.string("notice"),
+            "input": JsonValue.string(notice),
+            "nanoseconds": JsonValue.int(0),
+            "ended_ns": JsonValue.int(0),
+            "bytes": JsonValue.int(0),
+            "allocations": JsonValue.null(),
+        },
+    )
+    text = fields.to_json().map_err((_) => TraceError.InvalidSpan)?
+    return append(Path(directory).joinpath(f"oven-{process}.jsonl").0, text + "\n")
+
+
+pub def notice_former_compiler_variables() -> None:
+    """
+    Name the replacement of each former compiler tracing variable this command set, once, where that variable sends
+    its output: a notice file in the `INCAN_TRACE_DIR` directory, standard error for the variables the compiler printed
+    there, standard output for those it printed there. A notice that cannot be written is dropped.
+    """
+    directory = get_or("INCAN_TRACE_DIR", "")
+    if directory != "":
+        notice = former_notice("INCAN_TRACE_DIR", "`invocation`")
+        _ = append(Path(directory).joinpath("former-variable.notice").0, notice + "\n")
+    if get_or("INCAN_TRACE_RUST_FACTS", "") != "":
+        mut output = stderr()
+        line = f"incan: {former_notice("INCAN_TRACE_RUST_FACTS", "`rust_facts`")}\n"
+        _ = output.write_all(RustString.from(line).into_bytes())
+    for name, category in [
+        ("INCAN_TRACE_TYPECHECK_MEMORY", "`typecheck_memory`"),
+        ("INCAN_TRACE_LOWERING", "`lowering`"),
+        ("INCAN_TRACE_LOWERING_FOOTPRINT", "`lowering_footprint`"),
+    ]:
+        if get_or(name, "") != "":
+            println(f"incan: {former_notice(name, category)}")
+
+
+def internal_role() -> bool:
+    """Whether this process is one of Oven's own internal roles, such as a resident owner, rather than a command."""
+    for argument in args():
+        if str(argument).startswith("--internal"):
+            return true
+    return false

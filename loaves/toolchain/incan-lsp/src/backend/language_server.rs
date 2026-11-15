@@ -8,8 +8,13 @@ impl LanguageServer for IncanLanguageServer {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                // Real-time diagnostics via text sync
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+                // Real-time diagnostics via text sync; a save builds the document's overlay on the engine route
+                text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+                    open_close: Some(true),
+                    change: Some(TextDocumentSyncKind::FULL),
+                    save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                    ..Default::default()
+                })),
                 // Hover support
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Signature help for parsed local function calls
@@ -147,6 +152,24 @@ impl LanguageServer for IncanLanguageServer {
         }
     }
 
+    /// On the engine route, build the saved document's overlay, so the project's next build of the saved bytes finds
+    /// its unit instead of compiling it again.
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        if !engine_overlay::selected() {
+            return;
+        }
+        let Ok(path) = params.text_document.uri.to_file_path() else {
+            return;
+        };
+        let built = tokio::task::spawn_blocking(move || engine_overlay::saved(&path)).await;
+        let failure = match built {
+            Ok(Ok(())) => return,
+            Ok(Err(reason)) => reason,
+            Err(error) => format!("the save's build overlay failed: {error}"),
+        };
+        self.client.log_message(MessageType::WARNING, failure).await;
+    }
+
     /// Discard pending analysis and cached facts before clearing the closed document's diagnostics.
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
@@ -168,6 +191,16 @@ impl LanguageServer for IncanLanguageServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
+        // On the engine route, a declaration's signature comes from the editor view's records first.
+        if let Some(signature) = self.engine_hover(uri, position).await {
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```incan\n{signature}\n```"),
+                }),
+                range: None,
+            }));
+        }
         let docs = self.documents.read().await;
         let doc = match docs.get(uri) {
             Some(doc) => doc,

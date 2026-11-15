@@ -19,6 +19,7 @@ from host import (
     WorkerHost,
     complete,
     complete_record,
+    hands_rustc_off,
     host_for,
     next_activation,
     next_request,
@@ -34,6 +35,7 @@ from protocol import (
     completion,
     encode_ready,
     encode_reply,
+    handoff,
     ready,
     request_document,
     retired,
@@ -78,13 +80,12 @@ def own_uid() -> Result[int, str]:
 
 
 def settings(socket: str, idle_millis: int, margin: int, owner: Option[u32]) -> HostSettings:
-    """A host that announces itself to nobody, with a footprint baseline of one thousand bytes."""
+    """A host that announces itself to nobody."""
     return HostSettings(
         socket=socket,
         generation=GENERATION,
         ready="",
         home=temp_dir().to_string_lossy().into_owned(),
-        baseline=1000,
         bounds=Bounds(idle_millis=idle_millis, margin=margin, ceiling=FOOTPRINT_CEILING),
         owner=owner,
     )
@@ -98,6 +99,13 @@ def request_text(generation: str, command: str, retire_after: bool = false) -> s
     if retire_after:
         policy = ",\"retire_after\":true"
     return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}{policy}}}"
+
+
+def check_text(generation: str) -> str:
+    """A request document checking a unit against its sysroot, as Oven sends it."""
+    arguments = "[\"--check\",\"/p/unit.json\",\"/p/sysroot\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
 
 
 def caller(socket: str, payload: str) -> Result[Connection, str]:
@@ -200,12 +208,31 @@ def is_format(request: CompileRequest) -> bool:
         WorkerCommand.Unit => return false
         WorkerCommand.Check => return false
         WorkerCommand.SourceFiles => return false
+        WorkerCommand.RustImports => return false
+
+
+def is_check(request: CompileRequest) -> bool:
+    """Whether the request checks a unit."""
+    match request.command:
+        WorkerCommand.Check => return true
+        _ => return false
 
 
 def is_discovery(request: CompileRequest) -> bool:
     """Whether the request lists a formatting run's sources."""
     match request.command:
         WorkerCommand.SourceFiles => return true
+        WorkerCommand.Unit => return false
+        WorkerCommand.Check => return false
+        WorkerCommand.Format => return false
+        WorkerCommand.RustImports => return false
+
+
+def is_import_discovery(request: CompileRequest) -> bool:
+    """Whether the request lists a unit's Rust crate imports."""
+    match request.command:
+        WorkerCommand.RustImports => return true
+        WorkerCommand.SourceFiles => return false
         WorkerCommand.Unit => return false
         WorkerCommand.Check => return false
         WorkerCommand.Format => return false
@@ -244,7 +271,7 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
             Err(_) => pass
             Ok(_) =>
                 assert false
-    unserved = "a compiler worker accepts only --unit, --check, --fmt and --source-files requests"
+    unserved = "a compiler worker accepts only --unit, --check, --fmt, --source-files and --rust-imports requests"
     assert encode_reply(Reply.Refused(unserved), false) == f"{{\"exit\":1,\"reason\":\"{unserved}\",\"schema\":\"{SCHEMA}\"}}".encode(
         "utf-8",
     )
@@ -451,10 +478,16 @@ pub def test_malformed_frames_are_refused_and_the_next_request_is_served() -> Re
     mut unserved = caller(socket, request_text(GENERATION, "--run"))?
     invalid_policy = request_text(GENERATION, "--fmt").replace("\"cwd\"", "\"retire_after\":\"yes\",\"cwd\"")
     mut invalid_lifetime = caller(socket, invalid_policy)?
-    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
     sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    imports = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--rust-imports\",\"/p/unit.json\"],{sinks}}}"
+    mut import_discovery = caller(socket, imports)?
+    mut valid = caller(socket, request_text(GENERATION, "--fmt"))?
     listing = f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{GENERATION}\",\"arguments\":[\"--source-files\",\"src\"],{sinks}}}"
     mut discovery = caller(socket, listing)?
+    mut request = served(host)?
+    assert is_import_discovery(request) and request.arguments == ["/p/unit.json"]
+    complete(host, ActivationOutcome.Exited(0), -1)
+    assert exit_of(reply(import_discovery)?) == 0
     request = served(host)?
     assert is_format(request)
     assert request.arguments == ["/p/unit.json", "src/main.incn", "--check"]
@@ -564,18 +597,29 @@ pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_it
 
 pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
     """
-    A footprint more than the margin above the baseline after two activations in a row retires the worker: its second
-    reply is marked retired, its socket is withdrawn, and the request already queued is still answered, also retired.
+    A footprint more than the margin above what the first compile left, after two compiling activations in a row,
+    retires the worker, whatever light activation came between them: its second reply is marked retired, its socket is
+    withdrawn, and the request already queued is still answered, also retired.
     """
     socket = socket_path("footprint")
     mut host = host_for(settings(socket, 10000, 100, None))?
-    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
-    assert is_format(served(host)?)
+    # The first compile leaves what the worker keeps; later ones are judged against it.
+    mut warming = caller(socket, check_text(GENERATION))?
+    assert is_check(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1000)
+    assert not retired(reply(warming)?)
+    mut first = caller(socket, check_text(GENERATION))?
+    assert is_check(served(host)?)
     complete(host, ActivationOutcome.Exited(0), 1101)
     assert not retired(reply(first)?)
-    mut second = caller(socket, request_text(GENERATION, "--fmt"))?
-    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    # A formatting run after the check finds the heap the check left; it neither adds to the run nor ends it.
+    mut light = caller(socket, request_text(GENERATION, "--fmt"))?
     assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    assert not retired(reply(light)?)
+    mut second = caller(socket, check_text(GENERATION))?
+    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_check(served(host)?)
     complete(host, ActivationOutcome.Exited(0), 1200)
     second_reply = reply(second)?
     assert exit_of(second_reply) == 0 and retired(second_reply)
@@ -588,8 +632,12 @@ pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker(
 
 
 pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[None, str]:
-    """Excess footprint must persist across consecutive activations; one back within the margin resets it."""
-    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=FOOTPRINT_CEILING))
+    """
+    Excess over what the first compile left must persist across consecutive activations; one back within the margin
+    resets it.
+    """
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=100, ceiling=FOOTPRINT_CEILING))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1000).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1050).retirement)
     assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
@@ -602,9 +650,74 @@ pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[Non
     return Ok(None)
 
 
+pub def test_freed_heap_an_allocator_keeps_does_not_retire_the_worker() -> Result[None, str]:
+    """
+    With its live heap known, a worker whose footprint stays over the margin while its live heap does not keeps
+    serving; a live heap over the margin for two compiles retires it, and the ceiling still judges the footprint.
+    """
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    for _round in range(4):
+        assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 550).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1500, false, 700).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a live heap over the margin for two compiles kept the worker")
+    mut ceiling = lifecycle(Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    match ceiling.settle(ActivationOutcome.Exited(0), 5001, false, 550).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a footprint over the ceiling kept the worker although its live heap was small")
+    return Ok(None)
+
+
+pub def test_the_heap_a_worker_keeps_from_one_compile_to_the_next_does_not_retire_it() -> Result[None, str]:
+    """
+    A worker keeps the Loaf readings its first compile decoded, far over the margin above what it held at start.
+    Compile after compile at that same live heap it keeps serving; a live heap more than the margin above the least
+    it has held after a compile, for two compiles in a row, still retires it. The numbers are a worker's own after a
+    check of a three-function program: 19.5 MB in live allocations, 0.56 MB at start.
+    """
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=FOOTPRINT_CEILING))
+    for _round in range(8):
+        assert stays(
+            policy.settle(ActivationOutcome.Exited(0), 24822408, false, 19549776).retirement,
+        ), "a worker retired at the live heap its first compile left"
+    grown = 19549776 + FOOTPRINT_MARGIN + 1
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 24822408 + FOOTPRINT_MARGIN, false, grown).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 24822408 + FOOTPRINT_MARGIN, false, grown).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a live heap over the margin above the kept heap for two compiles kept the worker")
+    return Ok(None)
+
+
+pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() -> Result[None, str]:
+    """
+    Formatting, a source listing or an import collection is held only to the ceiling: over the margin, within it or
+    unmeasured, it leaves the compiles' run of excess as it was, and over the ceiling it retires the worker at once.
+    """
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1000).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101, true).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1050, true).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), -1, true).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("two compiles over the margin with light activations between kept the worker")
+    mut ceiling = lifecycle(Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    match ceiling.settle(ActivationOutcome.Exited(0), 5001, true).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a light activation over the ceiling kept the worker")
+    return Ok(None)
+
+
 pub def test_a_footprint_over_the_ceiling_retires_the_worker_at_once() -> Result[None, str]:
     """A footprint above the ceiling after any activation retires the worker after that activation alone."""
-    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
     assert stays(policy.settle(ActivationOutcome.Exited(0), 5000).retirement)
     match policy.settle(ActivationOutcome.Panicked, 5001).retirement:
         Some(reason) =>
@@ -625,6 +738,61 @@ def check_one_activation_retirement() -> Result[None, str]:
     assert exit_of(completed) == 0 and retired(completed)
     assert withdrawn(socket)
     assert ended(host)
+    return Ok(None)
+
+
+def unit_text(generation: str) -> str:
+    """A request document compiling a unit against its sysroot, as Oven sends it."""
+    arguments = "[\"--unit\",\"/p/unit.json\",\"unit\",\"/p/out/libunit.rlib\",\"/p/sysroot\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
+
+
+pub def test_a_footprint_over_the_ceiling_hands_rustc_to_the_host_and_retires() -> Result[None, str]:
+    """
+    A compile whose footprint after lowering is above the ceiling hands native compilation to its caller: the worker
+    answers with the handoff it wrote and retires, so rustc runs in a fresh process once this heap is gone.
+    """
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert policy.hands_rustc_off(5001)
+    settled = policy.settle(ActivationOutcome.HandedOff("/p/out/libunit.rustc-handoff"), 5001)
+    match settled.retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a worker that handed rustc to its caller kept serving")
+    socket = socket_path("handoff")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, unit_text(GENERATION))?
+    _ = served(host)?
+    assert hands_rustc_off(host, FOOTPRINT_CEILING + 1)
+    complete(host, ActivationOutcome.HandedOff("/p/out/libunit.rustc-handoff"), FOOTPRINT_CEILING + 1)
+    answered = reply(client)?
+    match handoff(answered):
+        Some(path) =>
+            assert path == "/p/out/libunit.rustc-handoff"
+        None => return Err("the reply did not carry the rustc handoff")
+    assert retired(answered)
+    assert withdrawn(socket)
+    assert ended(host)
+    return Ok(None)
+
+
+pub def test_a_footprint_within_the_ceiling_keeps_rustc_in_the_warm_worker() -> Result[None, str]:
+    """A compile whose footprint after lowering is within the ceiling runs rustc in the worker, which stays warm."""
+    mut policy = lifecycle(Bounds(idle_millis=10000, margin=FOOTPRINT_MARGIN, ceiling=5000))
+    assert not policy.hands_rustc_off(5000)
+    assert not policy.hands_rustc_off(-1)
+    socket = socket_path("in-worker")
+    mut host = host_for(settings(socket, 10000, FOOTPRINT_MARGIN, None))?
+    mut client = caller(socket, unit_text(GENERATION))?
+    _ = served(host)?
+    assert not hands_rustc_off(host, FOOTPRINT_CEILING)
+    complete(host, ActivationOutcome.Exited(0), FOOTPRINT_CEILING)
+    answered = reply(client)?
+    assert exit_of(answered) == 0 and not retired(answered)
+    assert handoff(answered) is None
+    assert not withdrawn(socket)
+    discard(socket)
     return Ok(None)
 
 

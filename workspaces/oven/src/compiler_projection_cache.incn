@@ -1,0 +1,119 @@
+"""Cache source projections once for one successful whole-program body publication."""
+
+from std.fs import Path
+from pub::internal_models import CompiledBodyOutputs
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    compiled_owner_source,
+    project_source,
+    signature_record,
+)
+from unit import UnitDescription, dependency_source_roots
+
+
+pub def projection_cache(
+    unit: UnitDescription,
+    origin: str,
+    outputs: CompiledBodyOutputs,
+) -> Result[Dict[str, SourceProjection], str]:
+    """Project each current module once, including project dependency modules read by fresh bodies."""
+    mut modules: set[str] = set()
+    for namespace in outputs.namespaces:
+        modules.add(namespace.module)
+        for dependency in namespace.dependencies:
+            modules.add(dependency)
+    for value in outputs.values:
+        modules.add(value.module)
+        for dependency in value.dependency_reads:
+            if dependency.package is None:
+                modules.add(project_dependency_module(unit, dependency.module)?)
+    for fallback in outputs.fallbacks:
+        modules.add(fallback.module)
+
+    mut projections: Dict[str, SourceProjection] = {}
+    for module in modules:
+        path = Path(unit.project_root).joinpath(module)
+        source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        projections[module] = project_source(origin, module, source)?
+    mut roots: Dict[str, str] = {}
+    for dependency in dependency_source_roots(unit):
+        roots[dependency[0]] = dependency[1]
+    for value in outputs.values:
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in roots:
+                        key = editable_dependency_projection_key(package, dependency.module)
+                        if key not in projections:
+                            projections[key] = editable_dependency_projection(roots[package], package, dependency.module)?
+                None => pass
+    return Ok(projections)
+
+
+pub def editable_dependency_projection_key(package: str, module: str) -> str:
+    """Key one editable package projection without colliding with project-relative module paths."""
+    return "editable-package:" + str(len(package)) + ":" + package + ":" + module
+
+
+pub def cached_editable_dependency_signature_record(
+    projections: &Dict[str, SourceProjection],
+    package: str,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Select an editable dependency signature from the publication-scoped projection cache."""
+    key = editable_dependency_projection_key(package, module)
+    return Ok(signature_record(compiled_owner_source(projections[key], module, name, identity)?))
+
+
+def editable_dependency_projection(root: str, package: str, module: str) -> Result[SourceProjection, str]:
+    """Project one selected editable dependency module once for the complete body publication."""
+    base = Path(root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    for candidate in candidates:
+        if candidate.is_file():
+            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
+            return project_source(package, module, source)
+    return Err(f"compiled body output dependency module is absent: {package}:{module}")
+
+
+pub def cached_project_signature_record(
+    projections: &Dict[str, SourceProjection],
+    unit: UnitDescription,
+    module: str,
+    name: str,
+    identity: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Bind a checked project callee through its already-projected current source."""
+    source = project_dependency_module(unit, module)?
+    return Ok(signature_record(compiled_owner_source(projections[source], module, name, identity)?))
+
+
+pub def project_dependency_module(unit: UnitDescription, module: str) -> Result[str, str]:
+    """Resolve a checked project module identity to the captured source path used by source projection."""
+    base = Path(unit.source_root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    # Candidates resolve through symlinks (macOS `/var` is `/private/var`), so the root they're compared with must too.
+    root = Path(unit.project_root).resolve().map_err((error) => f"cannot {error.message()}")?
+    prefix = root.0 + "/"
+    for candidate in candidates:
+        match candidate.resolve():
+            Ok(resolved) =>
+                if resolved.0.startswith(prefix) and candidate.is_file():
+                    return Ok(resolved.0[len(prefix):])
+            Err(_) => pass
+    # A standalone program's checked root module is `lib` even when its described source has another file name.
+    if module == "lib":
+        source = Path(unit.source)
+        match source.resolve():
+            Ok(resolved) =>
+                if resolved.0.startswith(prefix) and source.is_file():
+                    return Ok(resolved.0[len(prefix):])
+            Err(_) => pass
+    return Err("compiled body output dependency module is absent: project:" + module)

@@ -81,8 +81,7 @@ When consuming an orchestrated report, update:
 - `## Disagreements` when relevant
 - `## Verification`
 
-Do not invent new findings unless the edit work uncovers a tightly related issue needed to finish the requested fix cleanly.
-Classification on findings is for handling, not suppression.
+Do not invent new findings unless the edit work uncovers a tightly related issue needed to finish the requested fix cleanly. Classification on findings is for handling, not suppression.
 
 ## Output format
 

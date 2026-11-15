@@ -1,0 +1,13 @@
+# behavior: a `members` glob names every matching directory that holds a `loaf.toml`, in sorted order, and an `exclude` glob removes members after expansion, as 0.5.1's workspace table did (#3141).
+# cli-commands:
+#   oven workspace inspect --workspace
+# expect-stdout-contains:
+#   Selected scope (workspace)
+#     - alpha (<project>/packages/alpha)
+#     - beta (<project>/packages/beta)
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program."""
+    pass

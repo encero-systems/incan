@@ -7,11 +7,32 @@ use crate::symbols::{CallableParam, ResolvedType};
 /// Project only explicitly supported scalar/collection/callable types, never a native Debug or serde representation.
 pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result<(), NodeBindingError> {
     match ty {
+        ResolvedType::Never => fields.push("never".into()),
         ResolvedType::Int => fields.push("int".into()),
         ResolvedType::Float => fields.push("float".into()),
+        ResolvedType::Numeric(id) => {
+            fields.push("numeric".into());
+            fields.push(incan_lang::lang::types::numerics::as_str(*id).into());
+        }
         ResolvedType::Bool => fields.push("bool".into()),
         ResolvedType::Str => fields.push("str".into()),
         ResolvedType::Bytes => fields.push("bytes".into()),
+        ResolvedType::FrozenStr => fields.push("frozen-str".into()),
+        ResolvedType::FrozenBytes => fields.push("frozen-bytes".into()),
+        ResolvedType::FrozenList(value) => {
+            fields.push("frozen-list".into());
+            type_fields(value, fields)?;
+        }
+        ResolvedType::FrozenDict(key, value) => {
+            fields.push("frozen-dict".into());
+            type_fields(key, fields)?;
+            type_fields(value, fields)?;
+        }
+        ResolvedType::FrozenSet(value) => {
+            fields.push("frozen-set".into());
+            type_fields(value, fields)?;
+        }
+        ResolvedType::RustPath(path) if !path.is_empty() => fields.extend(["rust-path".into(), path.clone()]),
         ResolvedType::Unit => fields.push("unit".into()),
         ResolvedType::Unknown => fields.push("unknown".into()),
         ResolvedType::Named(name) if !name.is_empty() => fields.extend(["named".into(), name.clone()]),
@@ -35,11 +56,37 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
             fields.push(name.clone());
             type_fields(&arguments[0], fields)?;
         }
+        ResolvedType::Generic(name, arguments) if !name.is_empty() => {
+            fields.extend(["generic".into(), name.clone(), arguments.len().to_string()]);
+            for argument in arguments {
+                type_fields(argument, fields)?;
+            }
+        }
         ResolvedType::Function(parameters, result) => {
             fields.push("callable".into());
             parameter_fields(parameters, fields)?;
             type_fields(result, fields)?;
         }
+        ResolvedType::TypeToken(value) => {
+            fields.push("type-token".into());
+            type_fields(value, fields)?;
+        }
+        ResolvedType::Tuple(values) => {
+            fields.extend(["tuple".into(), values.len().to_string()]);
+            for value in values {
+                type_fields(value, fields)?;
+            }
+        }
+        ResolvedType::SelfType => fields.push("self-type".into()),
+        ResolvedType::Ref(value) => {
+            fields.push("ref".into());
+            type_fields(value, fields)?;
+        }
+        ResolvedType::RefMut(value) => {
+            fields.push("ref-mut".into());
+            type_fields(value, fields)?;
+        }
+        ResolvedType::CallSiteInfer => fields.push("call-site-infer".into()),
         _ => return Err(NodeBindingError::Unsupported("checked type")),
     }
     Ok(())
@@ -56,11 +103,34 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
         return Err(NodeBindingError::Unsupported("type nesting"));
     }
     Ok(match next(fields)? {
+        "never" => ResolvedType::Never,
         "int" => ResolvedType::Int,
         "float" => ResolvedType::Float,
+        "numeric" => {
+            let name = next(fields)?;
+            let id = incan_lang::lang::types::numerics::from_str(name)
+                .filter(|id| incan_lang::lang::types::numerics::as_str(*id) == name)
+                .ok_or(NodeBindingError::Unsupported("numeric type"))?;
+            ResolvedType::Numeric(id)
+        }
         "bool" => ResolvedType::Bool,
         "str" => ResolvedType::Str,
         "bytes" => ResolvedType::Bytes,
+        "frozen-str" => ResolvedType::FrozenStr,
+        "frozen-bytes" => ResolvedType::FrozenBytes,
+        "frozen-list" => ResolvedType::FrozenList(Box::new(read_type_at(fields, depth + 1)?)),
+        "frozen-dict" => ResolvedType::FrozenDict(
+            Box::new(read_type_at(fields, depth + 1)?),
+            Box::new(read_type_at(fields, depth + 1)?),
+        ),
+        "frozen-set" => ResolvedType::FrozenSet(Box::new(read_type_at(fields, depth + 1)?)),
+        "rust-path" => {
+            let path = next(fields)?;
+            if path.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty Rust path"));
+            }
+            ResolvedType::RustPath(path.into())
+        }
         "unit" => ResolvedType::Unit,
         "unknown" => ResolvedType::Unknown,
         "named" => {
@@ -90,10 +160,45 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
                 .ok_or(NodeBindingError::Unsupported("ownership mode"))?;
             ResolvedType::Generic(mode.as_str().into(), vec![read_type_at(fields, depth + 1)?])
         }
+        "generic" => {
+            let name = next(fields)?;
+            if name.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty generic type"));
+            }
+            let count = next(fields)?
+                .parse::<usize>()
+                .map_err(|_| NodeBindingError::MissingNode)?;
+            if count > fields.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let mut arguments = Vec::with_capacity(count);
+            for _ in 0..count {
+                arguments.push(read_type_at(fields, depth + 1)?);
+            }
+            ResolvedType::Generic(name.into(), arguments)
+        }
         "callable" => ResolvedType::Function(
             read_parameters_at(fields, depth + 1)?,
             Box::new(read_type_at(fields, depth + 1)?),
         ),
+        "type-token" => ResolvedType::TypeToken(Box::new(read_type_at(fields, depth + 1)?)),
+        "tuple" => {
+            let count = next(fields)?
+                .parse::<usize>()
+                .map_err(|_| NodeBindingError::MissingNode)?;
+            if count > fields.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            ResolvedType::Tuple(
+                (0..count)
+                    .map(|_| read_type_at(fields, depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+        "self-type" => ResolvedType::SelfType,
+        "ref" => ResolvedType::Ref(Box::new(read_type_at(fields, depth + 1)?)),
+        "ref-mut" => ResolvedType::RefMut(Box::new(read_type_at(fields, depth + 1)?)),
+        "call-site-infer" => ResolvedType::CallSiteInfer,
         _ => return Err(NodeBindingError::Unsupported("canonical type tag")),
     })
 }

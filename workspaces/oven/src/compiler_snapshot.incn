@@ -1,15 +1,16 @@
-"""Stage leased compiler snapshot descriptors in the owner's physical bakery before worker activation."""
+"""
+Stage leased compiler snapshot descriptors in the owner's physical bakery before worker activation, under the owner
+home's own view of that bakery.
+"""
 
 from std.fs import Path
-from publication import publish
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, lease_token, put, snapshot as placed_snapshot
+from home_views import home_view
+from pub::incan_platform.store import Snapshot, begin, commit, lease_token, put, snapshot as placed_snapshot
 from pub::incan_platform.store import store_identity
 from pub::incan_worker_host.record_snapshot import (
     SnapshotHandle,
-    StoreView,
     canonical_roots,
     encode_snapshot_handle,
-    encode_store_view,
     snapshot_handle_digest,
     snapshot_record_key,
 )
@@ -37,7 +38,7 @@ pub def stage_snapshot(
     format_profile: str,
 ) -> Result[StagedSnapshot, str]:
     """
-    Stage one content-named `SnapshotHandle`, then atomically bind the owner's home to that physical bakery.
+    Stage one content-named `SnapshotHandle` in the owner home's own view of that physical bakery.
 
     The returned value keeps the target revision and descriptor publication leased across `Prepare` or `Evaluate`;
     the worker receives only its digest and independently resolves `<home>/bakery.view`.
@@ -61,10 +62,9 @@ pub def stage_snapshot(
     )
     encoded = encode_snapshot_handle(handle)?
     digest = snapshot_handle_digest(handle)?
-    home_view = placed_snapshot(root, HOME_VIEW).map_err((error) => error.message())?
-    published = commit(put(begin(home_view), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
+    view = home_view(home, store, identity)?
+    home_snapshot = placed_snapshot(root, view).map_err((error) => error.message())?
+    published = commit(put(begin(home_snapshot), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
         (error) => error.message(),
     )?
-    binding = encode_store_view(StoreView(store_id=identity, locator=store.0, home_view=HOME_VIEW))?
-    publish(home.joinpath("bakery.view"), binding + "\n")?
     return Ok(StagedSnapshot.retained(digest, selected, published))

@@ -12,6 +12,8 @@ const NATIVE_CGU_PARTITIONS: usize = 16;
 /// The exact record input attached to one compiler definition.
 #[derive(Clone)]
 pub(crate) struct DefinitionInput {
+    /// The plan's name for the definition; it chooses the codegen unit and carries no source position.
+    name: String,
     identity: String,
     fingerprint: String,
 }
@@ -25,8 +27,10 @@ impl DefinitionInput {
         &self.fingerprint
     }
 
+    /// The codegen unit of the definition, from its plan name: a comment that shifts byte offsets, and with them the
+    /// record identity, leaves every definition in the unit it was in, so equal plans compile to equal bytes.
     pub(crate) fn partition(&self) -> usize {
-        stable_partition(&self.identity)
+        stable_partition(&self.name)
     }
 }
 
@@ -45,6 +49,8 @@ struct FunctionProduct {
     schema: u64,
     inputs: Vec<String>,
     function: String,
+    /// The generic instance requests the function's lowering made; the digest authenticates them with the function.
+    requests: Vec<String>,
     digest: String,
 }
 
@@ -144,7 +150,7 @@ impl PlanReader {
             }
             let product: FunctionProduct = serde_json::from_str(&event.product)
                 .map_err(|error| format!("cannot decode native function product for {}: {error}", event.function))?;
-            if product.schema != 3 {
+            if product.schema != 4 {
                 return Err(format!(
                     "native function product for {} has an unsupported schema",
                     event.function
@@ -155,7 +161,9 @@ impl PlanReader {
             if key.strip_prefix("sha256:") != Some(event.key.as_str()) {
                 return Err(format!("native function event key differs for {}", event.function));
             }
-            let digest = incan_semantics_core::semantic_digest::semantic_digest(&vec![product.function.clone()])
+            let mut authenticated = vec![product.function.clone()];
+            authenticated.extend(product.requests.iter().cloned());
+            let digest = incan_semantics_core::semantic_digest::semantic_digest(&authenticated)
                 .map_err(|error| format!("cannot fingerprint native function product: {error}"))?;
             if digest != product.digest {
                 return Err(format!("native function product digest differs for {}", event.function));
@@ -175,6 +183,7 @@ impl PlanReader {
                 .insert(
                     event.function.clone(),
                     DefinitionInput {
+                        name: event.function.clone(),
                         identity: event.identity,
                         fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                     },
@@ -199,6 +208,7 @@ impl PlanReader {
             inputs.insert(
                 layout.name.clone(),
                 DefinitionInput {
+                    name: layout.name.clone(),
                     identity: layout.name.clone(),
                     fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                 },
@@ -210,6 +220,7 @@ impl PlanReader {
             inputs.insert(
                 layout.name.clone(),
                 DefinitionInput {
+                    name: layout.name.clone(),
                     identity: layout.name.clone(),
                     fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                 },

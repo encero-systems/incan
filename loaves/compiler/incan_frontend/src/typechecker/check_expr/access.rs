@@ -52,7 +52,7 @@ use incan_lang::lang::types::numerics::{
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 

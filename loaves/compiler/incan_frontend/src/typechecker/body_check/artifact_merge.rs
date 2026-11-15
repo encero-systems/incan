@@ -78,10 +78,12 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
 pub(super) fn append_references(target: &mut ReferenceArtifacts, local: ReferenceArtifacts) {
     let ReferenceArtifacts {
         resolved_identities,
+        stable_declaration_contexts,
         resolved_write_identities,
         resolved_write_types,
     } = local;
     target.resolved_identities.extend(resolved_identities);
+    target.stable_declaration_contexts.extend(stable_declaration_contexts);
     target.resolved_write_identities.extend(resolved_write_identities);
     target.resolved_write_types.extend(resolved_write_types);
 }
@@ -338,6 +340,7 @@ pub(super) fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInterop
         output_slots,
         enum_accesses,
         enum_values,
+        clove_libraries,
     } = local;
     target.verified_bindings.extend(verified_bindings);
     target.bridge_calls.extend(bridge_calls);
@@ -348,4 +351,5 @@ pub(super) fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInterop
     target.output_slots.extend(output_slots);
     target.enum_accesses.extend(enum_accesses);
     target.enum_values.extend(enum_values);
+    target.clove_libraries.extend(clove_libraries);
 }

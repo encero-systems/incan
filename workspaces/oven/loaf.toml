@@ -1,6 +1,6 @@
 [project]
 name = "oven"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 
 [project.scripts]
 main = "src/main.incn"

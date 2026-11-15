@@ -1,6 +1,8 @@
 """File-operation diagnostics retain the attempted operation and exact path."""
 
 from files import make_directory, read, remove, write
+from observation import file_digest
+from registry_units import RegistryUnit, sole_library
 from scratch import scratch_directory
 from std.fs import Path
 from std.testing import fail
@@ -20,7 +22,8 @@ pub def test_file_errors_name_operation_and_path() -> Result[None, str]:
     missing = root.joinpath("missing.txt")
     require_context(read(missing), "read", missing)
     require_context(remove(missing), "remove", missing)
-    require_context(missing.resolve().map_err((error) => f"cannot resolve {error.message()}"), "resolve", missing)
+    require_context(file_digest(missing), "read", missing)
+    require_context(missing.resolve().map_err((error) => f"cannot {error.message()}"), "resolve", missing)
     # 2. Output failures retain the intended destination, not only the operating-system message.
     unwritable = root.joinpath("missing/output.txt")
     require_context(write(unwritable, "content"), "write", unwritable)
@@ -32,9 +35,36 @@ pub def test_file_errors_name_operation_and_path() -> Result[None, str]:
     return Ok(None)
 
 
+pub def test_file_errors_name_each_operation_and_path_once() -> Result[None, str]:
+    """
+    A refused write, read and directory listing names its operation and its path once. A `std.fs` error already
+    begins with both, so Oven's wrapper adds only `cannot`.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    unwritable = root.joinpath("missing/output.txt")
+    require_once(write(unwritable, "content"), "write", unwritable)
+    missing = root.joinpath("missing.txt")
+    require_once(read(missing), "read", missing)
+    absent = root.joinpath("absent")
+    unit = RegistryUnit(loaf="absent", version="1.0.0", domain="target", directory=absent.0)
+    require_once(sole_library(unit), "list directory", absent)
+    return Ok(None)
+
+
 def require_context[T](result: Result[T, str], operation: str, path: Path) -> None:
     """Require a refused file operation to identify its operation and exact path."""
     match result:
         Ok(_) => fail(f"{operation} unexpectedly succeeded for {path.0}")
         Err(reason) =>
             assert f"cannot {operation}" in reason and path.0 in reason, reason
+
+
+def require_once[T](result: Result[T, str], operation: str, path: Path) -> None:
+    """Require a refusal to read `cannot <operation> <path>: ...`, naming the operation and the path once each."""
+    match result:
+        Ok(_) => fail(f"{operation} unexpectedly succeeded for {path.0}")
+        Err(reason) =>
+            assert reason.startswith(f"cannot {operation} {path.0}: "), reason
+            assert len(reason.split(path.0)) == 2, reason
+            assert len(reason.split(f"{operation} ")) == 2, reason

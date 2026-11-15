@@ -5,10 +5,11 @@
 //! native metadata it loaded, including earlier shared libraries and the pinned standard library.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 
 use rustc_ast as ast;
 use rustc_interface::interface;
@@ -23,6 +24,9 @@ use crate::identity::DriverIdentity;
 type Inputs = Vec<(PathBuf, String)>;
 type Record = (PathBuf, String, Inputs);
 static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
+/// Content identities already proved for an exact filesystem generation in this resident compiler worker.
+static CONTENT_IDENTITIES: LazyLock<Mutex<HashMap<(PathBuf, String), String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// One shared carrier and the exact native inputs whose implementations it already carries.
 struct Library {
@@ -146,7 +150,7 @@ fn prepared(
     shared: &[(String, PathBuf)],
 ) -> Result<Library, DriverError> {
     // ---- Exact recipe and publication lock ----
-    let recipe = recipe(root, artifact, identity, shared)?;
+    let recipe = recipe(root, artifact, identity, store, shared)?;
     let index = store.join(format!("{}.json", recipe.key));
     let lock = File::options()
         .create(true)
@@ -177,17 +181,23 @@ fn recipe(
     root: &str,
     artifact: &Path,
     identity: &DriverIdentity,
+    store: &Path,
     shared: &[(String, PathBuf)],
 ) -> Result<Recipe, DriverError> {
     // ---- Pinned compiler and exact native inputs ----
     let executable = std::env::current_exe().map_err(io_error)?;
-    let mut inputs = vec![observed(artifact)?, observed(&executable)?];
-    let mut content = vec![content_identity(artifact)?, content_identity(&executable)?];
+    let artifact_input = observed(artifact)?;
+    let artifact_content = content_identity(store, &artifact_input)?;
+    let executable_input = observed(&executable)?;
+    let executable_content = content_identity(store, &executable_input)?;
+    let mut inputs = vec![artifact_input, executable_input];
+    let mut content = vec![artifact_content, executable_content];
     let mut system = Vec::new();
     let mut system_content = Vec::new();
     for (_, path) in shared {
-        inputs.push(observed(path)?);
-        content.push(content_identity(path)?);
+        let input = observed(path)?;
+        content.push(content_identity(store, &input)?);
+        inputs.push(input);
     }
 
     // ---- Selected SDK ----
@@ -203,8 +213,9 @@ fn recipe(
         }
         let settings = Path::new(&sdk).join("SDKSettings.json");
         if settings.is_file() {
-            inputs.push(observed(&settings)?);
-            system_content.push(content_identity(&settings)?);
+            let input = observed(&settings)?;
+            system_content.push(content_identity(store, &input)?);
+            inputs.push(input);
         }
     }
 
@@ -343,7 +354,7 @@ fn build(
         "incan-shared-native".into(),
     ];
     if identity.target.ends_with("-apple-darwin") {
-        let linker = std::env::current_exe().map_err(io_error)?;
+        let linker = crate::adapter::development_linker().map_err(io_error)?;
         args.push(format!("-Clinker={}", linker.display()));
         args.push("-Clinker-flavor=ld".into());
         args.push(format!(
@@ -418,9 +429,22 @@ fn observed(path: &Path) -> Result<(PathBuf, String), DriverError> {
     Ok((path.to_owned(), stamp))
 }
 
-/// Name a file input only by bytes for a reproducible carrier recipe while generation witnesses still guard reuse.
-fn content_identity(path: &Path) -> Result<String, DriverError> {
-    crate::adapter::stable_link::file_digest(path).map_err(io_error)
+/// Name a file input only by bytes for a reproducible carrier recipe, reading an exact filesystem generation once
+/// per file identity: the native store records each digest with the file's identity, so a fresh worker reads nothing
+/// the store already named, and a resident worker answers from memory. The generation witness remains the cache key
+/// and is checked again after a read.
+fn content_identity(store: &Path, input: &(PathBuf, String)) -> Result<String, DriverError> {
+    let mut identities = CONTENT_IDENTITIES.lock().map_err(|_| DriverError::State)?;
+    if let Some(identity) = identities.get(input) {
+        return Ok(identity.to_owned());
+    }
+    let identity =
+        crate::adapter::stable_link::identified_digest(store, &input.0, native_input_digest).map_err(io_error)?;
+    if observed(&input.0)? != *input {
+        return Err(refusal("native input changed while computing its content identity"));
+    }
+    identities.insert(input.to_owned(), identity.to_owned());
+    Ok(identity)
 }
 
 /// Reject changed or missing native generations before or after a carrier build.
@@ -438,4 +462,10 @@ fn io_error(error: std::io::Error) -> DriverError {
 /// Name invalid store evidence without disguising it as a source-language diagnostic.
 fn refusal(message: &str) -> DriverError {
     DriverError::Invocation(message.into())
+}
+
+/// Hash one carrier input, as an invocation span a test can count: a worker's every read of a native input's bytes.
+fn native_input_digest(path: &Path) -> std::io::Result<String> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_input_digest", input = %path.display()).entered();
+    crate::adapter::stable_link::file_digest(path)
 }

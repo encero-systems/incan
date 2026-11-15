@@ -1,0 +1,11 @@
+# behavior: a `yield` fixture sets up before its test, the autouse fixture after it, and its teardown runs after the test with its setup locals, as `incan test --nocapture` shows, as 0.5.1 does (#3149).
+# cli-commands:
+#   test tests --nocapture
+# expect-stdout-contains:
+#   auto setup
+#   test saw 7
+#   close resource 7
+#   test_teardown.incn::test_tears_down PASSED
+
+def main() -> None:
+    println("main")

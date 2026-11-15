@@ -1,0 +1,9 @@
+# behavior: a binding relation that names an artifact its target does not declare is refused (#3136)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `helper` is not an artifact of this target
+
+def main() -> None:
+    println("unreachable")

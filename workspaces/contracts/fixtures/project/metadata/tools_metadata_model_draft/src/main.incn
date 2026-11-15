@@ -1,0 +1,12 @@
+# behavior: a project's model metadata is every bundle its manifest declares, publishable or not, as 0.5.1 read it (#3142).
+# cli-commands:
+#   tools metadata model . Draft
+# expect-stdout:
+#   pub model Draft:
+#       pub title: str
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose unpublishable model bundle the case emits."""
+    pass

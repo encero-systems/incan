@@ -37,7 +37,7 @@ from frozen_equality import borrow_frozen_argument, frozen_reference_type
 from decls import library_item
 from model_lists import prefix_place
 from element_places import is_element_place
-from element_borrows import borrow_element_mut
+from element_borrows import borrow_element_mut, shared_element_place
 from options import none_operand
 from builtins import list_call
 from frame import place_type, Builder, temporary, drop_owned, external_call, read_place, literal, terminate_call
@@ -94,13 +94,15 @@ pub def shared_receiver_place(
     index: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Like `argument_place` for a receiver read only through a shared borrow, materializing a list element first."""
+    """Like `argument_place` for a receiver read only through a shared borrow, retaining indexed storage in place."""
     if index >= len(arguments):
         return Err("invalid Body IR list call arity")
     match arguments[index].as_one():
         Some(RustOperand.Place(read)) =>
-            if is_element_place(builder, read.place)?:
-                return materialized_receiver(builder, read.place, span)
+            if read.fact == OwnershipFact.Borrow and is_element_place(builder, read.place)?:
+                match shared_element_place(builder, read.place, span)?:
+                    Some(place) => return Ok(place)
+                    None => return materialized_receiver(builder, read.place, span)
         _ => pass
     return argument_place(builder, arguments, index, span)
 

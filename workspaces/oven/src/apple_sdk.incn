@@ -87,7 +87,9 @@ pub def sdk_paths(sysroot: str) -> Result[list[str], str]:
 
 def selection_identity(sysroot: str) -> str:
     """Observe rustc's selector locations, explicit developer configuration and the exact compiler installation."""
-    mut parts = ["incan.apple-sdk/1", sysroot, observed(sysroot)]
+    # The installation page has already admitted the pinned sysroot; SDK selection owns only its path and the
+    # machine's mutable developer selectors.
+    mut parts = ["incan.apple-sdk/2", sysroot]
     for name in ["DEVELOPER_DIR", "TOOLCHAINS", "SDKROOT"]:
         value = get_or(name, "")
         parts.append(f"{name}={value}")
@@ -153,7 +155,7 @@ def decode(content: bytes) -> Result[str, str]:
 
 def remember(record: Path, basis: str, root: str) -> Result[None, str]:
     """Publish a complete cache record; a racing owner may publish the same observation without weakening it."""
-    record.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    record.parent().mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     document = JsonValue.object(
         {"basis": JsonValue.string(basis), "root": JsonValue.string(root), "sdk": JsonValue.string(sdk_observation(root))},
     )

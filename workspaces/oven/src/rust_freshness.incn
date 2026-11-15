@@ -3,7 +3,7 @@
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
 from files import read, write
-from observation import Ledger, file_metadata, load_ledger, observe, skipped_directory, SETTLE_SECONDS
+from observation import Ledger, file_metadata, load_ledger, note_variable, observe, skipped_directory, SETTLE_SECONDS
 from toolchain import Toolchain
 from unit_freshness import Key, compiler_fingerprint, fingerprint
 from unit_publication import published_identity, source_origins
@@ -314,12 +314,12 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     """Observe project files without entering outputs, hidden directories or symbolic-link cycles."""
     if root.is_file():
         return Ok([root.0])
-    canonical = root.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+    canonical = root.resolve().map_err((error) => f"cannot {error.message()}")?.0
     if canonical in visited:
         return Ok([])
     visited.add(canonical)
     mut paths: list[str] = []
-    for entry in root.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for entry in root.iterdir().map_err((error) => f"cannot {error.message()}")?:
         name = entry.name()
         if skipped_directory(name):
             continue
@@ -375,13 +375,17 @@ pub def extern_paths(arguments: list[str]) -> list[str]:
 
 
 def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[list[str], str]:
-    """Observe tracked variables with package overrides, distinguishing unset from empty Unicode values."""
+    """
+    Observe tracked variables with package overrides, distinguishing unset from empty Unicode values. A watching request
+    also records each variable it read from the process environment, by `environment_observation`.
+    """
     mut inputs: list[str] = []
     for name in sorted(names):
         inputs.append(name)
         if name in environment:
             inputs.extend(observed_environment_value(name, environment[name])?)
             continue
+        note_variable(name, environment_observation(name)?)
         match env_var(name):
             Ok(value) => inputs.extend(observed_environment_value(name, str(value))?)
             Err(error) =>
@@ -389,6 +393,16 @@ def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[
                     VarError.NotPresent => inputs.append("unset")
                     _ => return Err("Rust environment dependency is not Unicode")
     return Ok(inputs)
+
+
+pub def environment_observation(name: str) -> Result[str, str]:
+    """A process environment variable as a check compares it: unset, or a digest of its value, which it never names."""
+    match env_var(name):
+        Ok(value) => return fingerprint(["incan.environment-observation/1", str(value)])
+        Err(error) =>
+            match error:
+                VarError.NotPresent => return Ok("unset")
+                _ => return Err("Rust environment dependency is not Unicode")
 
 
 pub def relocate_dependencies(dependencies: Path, project: Path) -> Result[None, str]:

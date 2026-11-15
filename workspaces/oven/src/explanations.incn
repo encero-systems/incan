@@ -1,0 +1,120 @@
+"""
+`incan explain CODE --format json`: a diagnostic's catalog entry as the versioned JSON document 0.5.1 printed.
+
+The compiler owns the catalog and renders an entry as text; this reads that rendering back into the document's
+fields, so the catalog stays the one source of every explanation.
+"""
+
+from std.json import JsonValue
+from driver_command import driver_command
+from toolchain import Toolchain
+
+# The catalog's list sections, in the order the compiler prints them, and their document fields.
+const SECTIONS: FrozenList[str] = ["Examples:", "Common causes:", "Fixes:"]
+const FIELDS: FrozenList[str] = ["examples", "common_causes", "fixes"]
+
+
+pub def parse_explain(arguments: list[str]) -> Result[tuple[str, str], str]:
+    """The one CODE and the format, text unless `--format json` is given."""
+    mut format = "text"
+    mut codes: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--format":
+            if index + 1 >= len(arguments):
+                return Err("`--format` needs a value")
+            format = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        codes.append(argument)
+        index += 1
+    if format != "text" and format != "json":
+        return Err(f"`--format` is text or json, got `{format}`")
+    if len(codes) != 1:
+        return Err("requires exactly one CODE")
+    return Ok((codes[0], format))
+
+
+pub def explained_json(toolchain: Toolchain, code: str) -> Result[i32, str]:
+    """Print the entry for `code` as JSON; an unknown code prints a not-found document with the closest codes."""
+    mut command = driver_command(toolchain)?
+    command.arg("--explain").arg(code)
+    output = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    stdout = text_of(output.stdout)
+    stderr = text_of(output.stderr)
+    if output.status.success():
+        document = JsonValue.object(
+            {"schema_version": JsonValue.int(1), "found": JsonValue.bool(true), "entry": entry_document(stdout)?},
+        )
+        println(document.to_pretty_json().map_err((error) => error.message())?)
+        return Ok(0)
+    marker = "close matches: "
+    if marker not in stderr:
+        return Err(stderr.strip())
+    matches = [item.strip() for item in stderr.split(marker)[1].strip().split(",")]
+    document = JsonValue.object(
+        {"schema_version": JsonValue.int(1), "found": JsonValue.bool(false), "code": JsonValue.string(code), "close_matches": JsonValue.array(
+            [JsonValue.string(item) for item in matches if item != ""],
+        )},
+    )
+    println(document.to_pretty_json().map_err((error) => error.message())?)
+    return Ok(1)
+
+
+def entry_document(text: str) -> Result[JsonValue, str]:
+    """
+    Read the compiler's rendering: `CODE: TITLE`, `Severity:`, `Phase:`, the summary and explanation paragraphs, the
+    three list sections and an optional `Documentation:` link.
+    """
+    lines = text.split("\n")
+    if len(lines) < 7 or ": " not in lines[0]:
+        return Err("the compiler's explanation has no `CODE: TITLE` line")
+    head = lines[0].split(": ")
+    mut fields: Dict[str, JsonValue] = {"code": JsonValue.string(head[0]), "title": JsonValue.string(": ".join(head[1:])), "severity": JsonValue.string(
+        after(lines[1], "Severity: "),
+    ), "phase": JsonValue.string(after(lines[2], "Phase: ")), "summary": JsonValue.string(lines[4]), "docs_url": JsonValue.null()}
+    mut first_section = len(lines)
+    for index in range(len(lines)):
+        if lines[index] == SECTIONS[0]:
+            first_section = index
+            break
+    fields["explanation"] = JsonValue.string("\n".join(lines[6:first_section]).strip())
+    for position in range(len(SECTIONS)):
+        fields[FIELDS[position]] = JsonValue.array(
+            [JsonValue.string(item) for item in section(lines, SECTIONS[position])],
+        )
+    for line in lines:
+        if line.startswith("Documentation: "):
+            fields["docs_url"] = JsonValue.string(after(line, "Documentation: "))
+    return Ok(JsonValue.object(fields))
+
+
+def section(lines: list[str], heading: str) -> list[str]:
+    """The items under a list heading, up to the next blank line."""
+    mut items: list[str] = []
+    mut inside = false
+    for line in lines:
+        if line == heading:
+            inside = true
+        elif inside and line == "":
+            return items
+        elif inside:
+            items.append(line)
+    return items
+
+
+def after(line: str, prefix: str) -> str:
+    """The text after `prefix`, or the whole line when it does not start with it."""
+    if line.startswith(prefix):
+        return line[len(prefix):]
+    return line
+
+
+def text_of(value: bytes) -> str:
+    """The compiler's output as text; invalid UTF-8 is replaced rather than hiding the explanation."""
+    match value.decode("utf-8", "replace"):
+        Ok(text) => return text
+        Err(_) => return ""

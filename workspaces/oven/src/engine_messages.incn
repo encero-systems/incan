@@ -34,6 +34,8 @@ pub model Submit:
     pub requested_roots: str
     pub options: str
     pub observation_policy: str
+    # The directory the client's command ran in, which its compilations are for; never the engine's own.
+    pub directory: str = ""
 
 
 pub model Accepted:

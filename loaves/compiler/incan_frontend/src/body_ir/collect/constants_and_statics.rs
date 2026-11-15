@@ -5,7 +5,7 @@ use super::*;
 /// Retain imported storage types from their checked owning declarations without resolving a nominal by spelling.
 /// Conflicting copies of one canonical declaration cannot authorize either representation at a consumer global place.
 pub(in crate::body_ir) fn collect_published_storage_types(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
 ) -> HashMap<CanonicalSymbolId, Option<IncanType>> {
     let mut types = HashMap::new();
     for declaration in context.iter().flat_map(|module| &module.static_declarations) {

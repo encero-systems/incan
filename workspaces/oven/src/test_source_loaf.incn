@@ -191,7 +191,7 @@ def fixture_lock(macro_digest: str) -> Result[OvenLock, str]:
         format=1,
         mode="lowest",
         graph="",
-        toolchain=LockToolchain(version="0.6.0-dev.8", identity="sha256:compiler"),
+        toolchain=LockToolchain(version="0.6.0-dev.9", identity="sha256:compiler"),
         loaves=[root, member, sibling, macro],
     )
     lock.graph = graph_identity(lock)?
@@ -228,7 +228,7 @@ def source_fixture(
         format=1,
         mode="lowest",
         graph="",
-        toolchain=LockToolchain(version="0.6.0-dev.8", identity="sha256:compiler"),
+        toolchain=LockToolchain(version="0.6.0-dev.9", identity="sha256:compiler"),
         loaves=[own, selected],
     )
     lock.graph = graph_identity(lock)?

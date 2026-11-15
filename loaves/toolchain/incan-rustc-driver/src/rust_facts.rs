@@ -81,7 +81,7 @@ pub struct RustcFacts {
 impl incan_driver::session::RustFactsSource for RustcFacts {
     /// Reuse the exact bounded extraction for this request and native generation, after shipped ABI lookup.
     fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
-        incan_driver::rust_abi::cached_path_facts(&self.unit, paths, || self.extract_paths(paths))
+        incan_driver::rust_abi::cached_path_facts(&self.unit, paths, |requested| self.extract_paths(requested))
             .map_err(|error| error.message)
     }
 }
@@ -125,7 +125,8 @@ impl RustcFacts {
         }
         // ---- Optional extraction trace ----
         if incan_frontend::trace_flags::trace_rust_facts() {
-            eprintln!(
+            incan_frontend::trace_line!(
+                incan_frontend::trace_flags::Category::RustFacts,
                 "rust facts: {} uncovered paths, {} items in {:?}",
                 paths.len(),
                 facts.len(),

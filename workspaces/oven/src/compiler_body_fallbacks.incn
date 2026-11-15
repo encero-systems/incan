@@ -1,8 +1,87 @@
 """Retain the compiler's exact checker-record fallback reasons when a later producer refuses an owner."""
 
 from pub::internal_models import CompiledBodyFallback
+from rust::incan_semantics_core import SymbolOrigin, decode_incan_symbol_identity
+from std.fs import Path
+from unit import UnitDescription
 
 
 pub def fallback_reasons(fallbacks: list[CompiledBodyFallback]) -> list[str]:
     """Describe every excluded owner without equating a stable checker key with an emitted native symbol."""
     return [f"{fallback.module}::{fallback.name}: {fallback.reason}" for fallback in fallbacks]
+
+
+pub def fallback_lowering_event(
+    unit: UnitDescription,
+    fallbacks: list[CompiledBodyFallback],
+    identity: str,
+) -> Result[bool, str]:
+    """Skip only a self-describing lowering event that names an explicit full-source fallback owner."""
+    owner = match event_owner(identity)?:
+        None => return Ok(false)
+        Some(value) => value
+
+    for fallback in fallbacks:
+        if source_module_of(unit, fallback.module)? == Some(owner.module) and fallback.name == owner.name:
+            return Ok(true)
+    return Ok(false)
+
+
+pub def retained_namespace_event(unit: UnitDescription, rechecked: list[str], identity: str) -> Result[bool, str]:
+    """
+    Whether a lowering event names an owner of a module this request did not check again.
+
+    The compiler restores such a module whole from its namespace record and reports none of its owners. An owner of
+    it that the graph holds no checker record for fell back to full-source checking when the module was last checked,
+    so its event is skipped as that check's explicit fallback was. A rechecked module reports every owner, and an
+    owner missing there stays a refusal.
+    """
+    owner = match event_owner(identity)?:
+        None => return Ok(false)
+        Some(value) => value
+
+    for module in rechecked:
+        if source_module_of(unit, module)? == Some(owner.module):
+            return Ok(false)
+    return Ok(true)
+
+
+model EventOwner:
+    """The source module and declaration a self-describing lowering event names."""
+
+    module: str
+    name: str
+
+
+def event_owner(identity: str) -> Result[Option[EventOwner], str]:
+    """Read the project module and declaration from a canonical event identity; any other origin names no owner."""
+    decoded = decode_incan_symbol_identity(identity).map_err((error) => str(error))?
+    selected = match decoded:
+        None => return Ok(None)
+        Some(value) => value
+
+    match selected.origin:
+        SymbolOrigin.Module(path) => return Ok(Some(EventOwner(module="/".join(path), name=selected.declaration_name)))
+        _ => return Ok(None)
+
+
+def source_module_of(unit: UnitDescription, module: str) -> Result[Option[str], str]:
+    """Name a project-relative module file as a canonical module origin does, when it lies under the source root."""
+    source_root = Path(unit.source_root).resolve().map_err((error) => error.message())?.0 + "/"
+    path = Path(unit.project_root).joinpath(module).resolve().map_err((error) => error.message())?.0
+    if not path.startswith(source_root):
+        return Ok(None)
+    return Ok(Some(source_module(path[len(source_root):])))
+
+
+def source_module(relative: str) -> str:
+    """Name a source-root-relative module the same way a canonical module origin does."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)

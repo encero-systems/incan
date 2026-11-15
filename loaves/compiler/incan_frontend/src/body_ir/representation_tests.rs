@@ -18,9 +18,9 @@ use baselines::{assert_free_function_input_baseline, assert_settled_function_see
 use carriers::{
     assert_builtin_method_identities, assert_frozen_literal_bound_method_identity,
     assert_generic_newtype_provider_methods, assert_generic_view_carrier_storage,
-    assert_independently_retained_newtype_return, assert_native_provider_field_layout,
-    assert_nested_generic_static_call_arguments, assert_nested_generic_static_call_bound_mismatch,
-    assert_nominal_carrier_maps_stay_shared,
+    assert_independently_retained_newtype_return, assert_module_bodies_share_one_identity_map,
+    assert_native_provider_field_layout, assert_nested_generic_static_call_arguments,
+    assert_nested_generic_static_call_bound_mismatch, assert_nominal_carrier_maps_stay_shared,
 };
 use comparison::assert_same_module;
 use equality::assert_equality_contract;
@@ -53,7 +53,13 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     let mut expected = seed.clone();
     super::legacy_trait_values::retain_inputs(&mut expected, &program, &facts, &[]);
     let selected = std::collections::HashSet::new();
-    super::trait_values::retain_inputs(&mut seed, &program, &facts, &[], &selected);
+    super::trait_values::retain_inputs(
+        &mut seed,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     assert_same_module(&expected, &seed)?;
     let through = seed
         .bodies
@@ -63,7 +69,13 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_eq!(through.type_parameters.len(), 1);
     assert!(matches!(through.params[0].ty, super::IncanType::TypeVar(_)));
     super::legacy_trait_returns::retain_returns(&mut expected, &program, &facts, &[]);
-    super::trait_returns::retain_returns(&mut seed, &program, &facts, &[], &selected);
+    super::trait_returns::retain_returns(
+        &mut seed,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     assert_same_module(&expected, &seed)?;
     let forward = seed
         .bodies
@@ -130,6 +142,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
     assert_nominal_carrier_maps_stay_shared()?;
+    assert_module_bodies_share_one_identity_map()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),

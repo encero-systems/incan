@@ -112,4 +112,3 @@ The directive surface is deliberately familiar to Python users, but not identica
 - [Dates and times tutorial](../tutorials/dates_and_times.md)
 - [Dates and times how-to](../how-to/dates_and_times.md)
 - [`std.datetime` reference](../reference/stdlib/datetime.md)
-- [RFC 058: std.datetime](../../RFCs/closed/implemented/058_std_datetime.md)

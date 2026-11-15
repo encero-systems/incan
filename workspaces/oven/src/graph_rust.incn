@@ -8,7 +8,7 @@ from features import FeatureRequest
 from files import remove
 from driver_command import driver_command
 from graph_cache import GraphUnit, content_facts, is_unchecked, publish_unchecked
-from graph_exports import export_file, exported, pending_export, publish_export
+from graph_exports import exported, pending_export, publish_export
 from graph_rust_inputs import (
     discover,
     export_identity,
@@ -219,7 +219,7 @@ def checked_export(
     if let Some(entry) = prior_export(name, project, arguments, environment, toolchain, compiler)?:
         return Ok(entry)
     # 2. The old list is only a lookup hint: a miss discovers the new list before committing an identity.
-    pending = pending_export(export_file(fingerprint(["graph-discovery", name])?)?, project, claimed)?
+    pending = pending_export(fingerprint(["graph-discovery", name])?, project, claimed)?
     if not discover(project, pending.parent(), arguments, environment, unstable, toolchain)?:
         observe(pending, facet, unit_name, arguments, environment, unstable, toolchain)?
         return Ok(pending)
@@ -227,9 +227,10 @@ def checked_export(
     observations = compilation_observations(project, dependencies, arguments, [], toolchain)?
     key = observed_key(project, pending.parent(), arguments, environment, toolchain, compiler)?
     portable = key.refusal == "" and portable_dependencies(project, dependencies)?
-    entry = export_file(export_identity(name, key)?)?
-    if portable and exported(entry)?:
-        return Ok(entry)
+    identity = export_identity(name, key)?
+    if portable:
+        if let Some(entry) = exported(identity)?:
+            return Ok(entry)
     # 3. Diagnostics and undeclared external source bindings remain private to their producing request.
     observe(pending, facet, unit_name, arguments, environment, unstable, toolchain)?
     if is_unchecked(pending) or not portable:
@@ -239,7 +240,7 @@ def checked_export(
     if after.digest != key.digest or not inputs_unchanged(dependencies, observations, Some(project), arguments)?:
         return Err(f"Rust graph inputs of {unit_name} changed during export")
     finish_evidence(project, pending.parent())?
-    return publish_export(entry, pending, name)
+    return publish_export(identity, pending, name)
 
 
 def observe(
@@ -285,6 +286,6 @@ def observe(
         publish_unchecked(path, unit_name, "contributing no facts", "Rust analysis failed\n" + "\n".join(failure))?
         return Ok(None)
     # 3. A completed analysis publishes its whole graph, and only a complete one is ever visible at the final name.
-    publish_binary(path, output.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
+    publish_binary(path, output.read_bytes().map_err((error) => f"cannot {error.message()}")?)?
     remove(output)?
     return Ok(None)

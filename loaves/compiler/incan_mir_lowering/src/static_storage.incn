@@ -52,11 +52,15 @@ from collections import (
     is_collection,
     collection_arguments,
     is_owned_collection,
+    collection_name,
+    collection_reference,
+    owned_runtime_operand,
     begin_collection,
     finish_collection,
     insert_collection,
 )
-from lists import require_list_shape, list_element, is_list
+from lists import require_list_shape, list_element, is_list, is_owned_list
+from statements import is_nominal_type
 from type_parameters import Instance, merge_instance_requests
 from computed_statics import (
     initialize_module_statics,
@@ -75,7 +79,7 @@ from assignments import lower_local_assignment
 from closure_lifting import synthesize
 from frame_instances import append_synthesized, function_names, merge_externals, named_functions
 from function_frames import lower_function
-from list_values import list_assignment, list_base_place, projected_element_read
+from list_values import list_assignment, list_base_place, projected_element_read, value_operand
 from hashed_collections import dictionary_value_read
 from matches import read_generic_decorator
 from carrier_operands import element_operand
@@ -357,6 +361,10 @@ def read_computed_static(
         match read_guarded_static_field(builder, value, slot, ty, span)?:
             Some(operand) => return Ok(operand)
             None => pass
+        # A keyed read borrows the stored dictionary under its guard instead of copying it into a snapshot.
+        match read_guarded_dictionary_entry(builder, value, slot, ty, span)?:
+            Some(entry) => return projected_element_read(builder, value, entry, 1, span)
+            None => pass
     snapshot = load_computed_static(builder, slot, ty, span)
     if len(value.projection) == 0:
         return Ok(read_place(snapshot, snapshot_owns(ty), span))
@@ -467,6 +475,94 @@ def static_field_reader(
     )
 
 
+def read_guarded_dictionary_entry(
+    mut builder: Builder,
+    value: &RustPlace,
+    slot: int,
+    owner: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """
+    Clone the one value a key selects in a guarded dictionary, without copying the dictionary.
+
+    The key is evaluated before its accessor takes the shared storage guard, and only the selected value is cloned
+    under it. Text, numeric and boolean keys are read this way; any other key keeps the snapshot read and its refusals.
+    """
+    match owner:
+        PlanType.Dict(_key, _value) => pass
+        _ => return Ok(None)
+    types = collection_arguments(owner)
+    if len(types) != 2:
+        return Ok(None)
+    if types[0] != PlanType.String and types[0] != PlanType.Bool and not numeric_carrier(types[0]):
+        return Ok(None)
+    match value.projection[0]:
+        PlaceElem.Index(_index) => pass
+        _ => return Ok(None)
+    if is_computed_static(builder.program.statics.as_ref()[slot]):
+        initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
+    mut key = literal(Constant.Int(0), span)
+    match value.projection[0]:
+        PlaceElem.Index(index) => key = value_operand(builder, index, span)?
+        _ => pass
+    admitted = match owned_runtime_operand(builder, key, types[0], span)?:
+        Some(operand) => operand
+        None => return Err("unsupported Body IR collection runtime argument coercion")
+
+    reference = collection_reference(owner, false)
+    path = f"incan_native_runtime::{collection_name(owner, "get")?}"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=types,
+            parameters=[reference, types[0]],
+            return_type=types[1],
+            span=span,
+        ),
+    )
+    name = f"{builder.name}__incan_static_entry_{slot}_{len(builder.synthesized)}"
+    builder.synthesized.append(static_entry_reader(name, reference, types, CalleeKind.Instantiated(path, types), span))
+    output = temporary(builder, types[1], span)
+    terminate_call(builder, CalleeKind.StaticMethod(slot, name), [admitted], output, span)
+    # The cloned value is a new owner, as the value a snapshot's lookup clones is.
+    if (
+        types[1] == PlanType.String
+        or is_owned_collection(types[1])
+        or is_nominal_type(types[1])
+        or is_owned_list(types[1])
+    ):
+        builder.owned.append(output.local)
+    return Ok(Some(output))
+
+
+def static_entry_reader(
+    name: str,
+    receiver: PlanType,
+    types: list[PlanType],
+    callee: CalleeKind,
+    span: SourceSpan,
+) -> Function:
+    """Look one key up in the borrowed dictionary while the enclosing StaticMethod accessor keeps its guard alive."""
+    invocation = TerminatorKind.Call(
+        Callee(kind=callee, span=span),
+        [read_place(plan_place(1, span), false, span), read_place(plan_place(2, span), snapshot_owns(types[0]), span)],
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=[
+            Parameter(name="__incan_receiver", ty=receiver, span=span),
+            Parameter(name="__incan_key", ty=types[0], span=span),
+        ],
+        return_type=types[1],
+        locals=[Local(ty=types[1], span=span), Local(ty=receiver, span=span), Local(ty=types[0], span=span)],
+        blocks=[plan_block([], invocation, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
+
+
 def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: SourceSpan) -> Place:
     """Load a guarded snapshot; only computed storage enters module initialization before the load."""
     if is_computed_static(builder.program.statics.as_ref()[slot]):
@@ -486,7 +582,11 @@ pub def snapshot_owns(ty: PlanType) -> bool:
 
 
 pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
-    """Select a native guarded static's projection inside a fresh snapshot, or return None for other storage."""
+    """
+    Select a native guarded static's projection, or return None for other storage.
+
+    A keyed dictionary entry is read under the storage guard; any other projection is selected inside a fresh snapshot.
+    """
     match value.global():
         Some(global) =>
             slot = static_slot(builder.program.statics.as_ref(), global)?
@@ -500,6 +600,15 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
                 global.ty,
                 builder.intrinsics,
             )?
+            if len(value.projection) != 0:
+                match read_guarded_dictionary_entry(builder, value, slot, ty, span)?:
+                    Some(entry) =>
+                        selected = projected_element_read(builder, value, entry, 1, span)?
+                        match selected.kind:
+                            OperandKind.Copy(place) => return Ok(Some(place))
+                            OperandKind.Move(place) => return Ok(Some(place))
+                            _ => return Err("unsupported Body IR computed static element without a place")
+                    None => pass
             snapshot = load_computed_static(builder, slot, ty, span)
             if len(value.projection) == 0:
                 return Ok(Some(snapshot))

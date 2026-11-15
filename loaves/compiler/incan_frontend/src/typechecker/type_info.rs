@@ -113,6 +113,43 @@ pub struct TypeCheckInfo {
     /// Source newtype trait adoptions and source `sum` members need explicit dispatch and stay outside this snapshot.
     /// Only Body IR reads it; checking decisions and legacy-consumed facts are unchanged.
     pub(crate) body_ir_iterator_sum_items: BTreeMap<crate::ast::Span, ResolvedType>,
+    /// The module-wide identity maps Body IR bodies start from, each built once on first use and shared by every body
+    /// that adds nothing to it. Only Body IR reads them; a clone starts without them.
+    pub(crate) body_ir_identity_bases: BodyIrIdentityBases,
+}
+
+/// One checked module's shared Body IR identity maps: the retained bindings ordinary callable bodies start from, and
+/// the declared bindings property, partial and default bodies start from. A module's bindings can outweigh its bodies,
+/// so every body refers to one map instead of owning a copy.
+#[derive(Debug, Default)]
+pub(crate) struct BodyIrIdentityBases {
+    retained: std::sync::OnceLock<incan_semantics_core::body_ir::SharedIdentities>,
+    declared: std::sync::OnceLock<incan_semantics_core::body_ir::SharedIdentities>,
+}
+
+impl Clone for BodyIrIdentityBases {
+    /// A copy of the facts can be changed, so it builds its own maps rather than sharing ones built from the original.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl BodyIrIdentityBases {
+    /// The retained bindings ordinary callable bodies start from, built by `build` on first use.
+    pub(crate) fn retained(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, CanonicalSymbolId>,
+    ) -> &incan_semantics_core::body_ir::SharedIdentities {
+        self.retained.get_or_init(|| std::sync::Arc::new(build()))
+    }
+
+    /// The declared bindings property, partial and default bodies start from, built by `build` on first use.
+    pub(crate) fn declared(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, CanonicalSymbolId>,
+    ) -> &incan_semantics_core::body_ir::SharedIdentities {
+        self.declared.get_or_init(|| std::sync::Arc::new(build()))
+    }
 }
 
 /// Checked source-path facts for active import-derived bindings.
@@ -161,6 +198,7 @@ pub(crate) struct CallSiteFacts {
     inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
     identity: Option<CanonicalSymbolId>,
+    stable_declaration_context: Option<CanonicalStableDeclarationContext>,
     callable_params: Option<Vec<CallableParam>>,
     monomorph_type_args: Option<Vec<ResolvedType>>,
     body_ir_constructor_type: Option<ResolvedType>,

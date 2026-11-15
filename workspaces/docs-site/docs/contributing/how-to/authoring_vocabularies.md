@@ -98,7 +98,7 @@ For scoped glyphs or leading-dot paths, register `ScopedSurfaceDescriptor` value
 
 ## Inspect admission and reuse
 
-Run `OVEN_TRACE=- incan check src/main.incn` to see vocabulary decisions. The default policy admits exact units in the build's provider lock. Set `INCAN_VOCAB_POLICY=deny` to refuse provider execution even for a resolved dependency. The build records the provider, vocabulary unit identity, module, admission decision and response decision (`computed`, `reused` or `denied`) under `target/incan/vocab-responses/evidence.jsonl`.
+Run `INCAN_ENGINE_TRACE=trace incan check src/main.incn`, with `trace` an existing directory, to record vocabulary decisions there. The default policy admits exact units in the build's provider lock. Set `INCAN_VOCAB_POLICY=deny` to refuse provider execution even for a resolved dependency. The build records the provider, vocabulary unit identity, module, admission decision and response decision (`computed`, `reused` or `denied`) under `target/incan/vocab-responses/evidence.jsonl`.
 
 Providers must be pure functions of their unit identity and request. Responses can be reused, and the compiler can keep workers running between invocations. No capabilities are granted to a worker invocation. This is an admission boundary rather than an operating-system sandbox; ambient filesystem, environment, clock or network access is unsupported.
 

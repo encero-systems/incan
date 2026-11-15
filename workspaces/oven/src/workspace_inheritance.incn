@@ -1,0 +1,196 @@
+"""
+Workspace inheritance, as 0.5.1 shipped it (RFC 077, #3141): a member's `[dependencies] NAME = { workspace = true }`
+takes the entry its workspace root declares under `[workspace.dependencies]`, a local `path` rebased from the root onto
+the member, so the shared entry is spelled once for every member. A member's environment extends the root's
+`[workspace.envs.NAME]` fragment as `workspace:NAME`.
+"""
+
+from std import toml
+from std.fs import Path
+from std.toml import TomlValue
+from files import read
+from manifest_errors import IntakeError, IntakeErrorKind
+
+
+pub model InheritedDependency:
+    """A workspace root's entry for one alias, the root's manifest, and a local edge's path rebased onto the member."""
+
+    pub value: TomlValue
+    pub root_manifest: str
+    pub path: Option[str] = None
+
+
+pub def inherited(alias: str, manifest: str, entry: list[str]) -> Result[InheritedDependency, IntakeError]:
+    """
+    The `[workspace.dependencies]` entry for `alias` of the workspace root that lists `manifest`'s project; a refusal
+    names the member's inheriting entry, `entry`.
+
+    1. Walk up from the member's directory to the nearest `loaf.toml` with a `[workspace]` table.
+    2. Require the project to be that root or one of its `members`.
+    3. Rebase a `path` from the root onto the member.
+    """
+    field = entry + ["workspace"]
+    member = absolute_directory(manifest)
+    # 1. The nearest workspace root.
+    match enclosing_workspace(member):
+        None =>
+            detail = f"`{alias}` inherits from a workspace, but no `loaf.toml` above declares [workspace]"
+            return Err(refused(manifest, field, IntakeErrorKind.Missing, detail))
+        Some(root) =>
+            root_directory, workspace = root
+            root_manifest = root_directory.joinpath("loaf.toml").0
+            # 2. Membership.
+            below = relative(member.0, root_directory.0)
+            if below != "." and below not in members(workspace):
+                detail = f"`{alias}` inherits from the workspace at {root_manifest}, which does not list `{below}` in members"
+                return Err(refused(manifest, field, IntakeErrorKind.Invalid, detail))
+            shared = shared_entry(workspace, alias)
+            match shared:
+                None =>
+                    detail = f"the workspace at {root_manifest} declares no [workspace.dependencies] `{alias}`"
+                    return Err(refused(manifest, field, IntakeErrorKind.Missing, detail))
+                Some(value) =>
+                    # 3. A local edge's path, from the member.
+                    mut rebased: Option[str] = None
+                    match value.as_table():
+                        Ok(entry) =>
+                            if "path" in entry:
+                                match entry["path"].as_str():
+                                    Ok(path) => rebased = Some(relative(joined(root_directory.0, path), member.0))
+                                    Err(_) => pass
+                        Err(_) => pass
+                    return Ok(InheritedDependency(value=value, root_manifest=root_manifest, path=rebased))
+
+
+pub def workspace_envs(manifest: str) -> Dict[str, TomlValue]:
+    """
+    The `[workspace.envs.NAME]` fragments, by name, of the workspace root that is `manifest`'s project or lists it in
+    `members`; members extend them as `workspace:NAME`, as in 0.5.1. A project outside a workspace has none.
+    """
+    mut fragments: Dict[str, TomlValue] = {}
+    member = absolute_directory(manifest)
+    match enclosing_workspace(member):
+        None => return fragments
+        Some(root) =>
+            root_directory, workspace = root
+            below = relative(member.0, root_directory.0)
+            if (below != "." and below not in members(workspace)) or "envs" not in workspace:
+                return fragments
+            match workspace["envs"].as_table():
+                Err(_) => return fragments
+                Ok(envs) =>
+                    for name in sorted([name for name in envs.keys()]):
+                        fragments[name] = envs[name]
+    return fragments
+
+
+def enclosing_workspace(member: Path) -> Option[tuple[Path, Dict[str, TomlValue]]]:
+    """The nearest directory at or above `member` whose `loaf.toml` declares `[workspace]`, with that table."""
+    mut directory = member.clone()
+    while true:
+        found = workspace_at(directory)
+        if found is not None:
+            return found
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 == "":
+            return None
+        directory = parent
+    return None
+
+
+def workspace_at(directory: Path) -> Option[tuple[Path, Dict[str, TomlValue]]]:
+    """A directory's `[workspace]` table, when its `loaf.toml` declares one."""
+    candidate = directory.joinpath("loaf.toml")
+    if not candidate.is_file():
+        return None
+    match read(candidate):
+        Err(_) => return None
+        Ok(source) =>
+            match toml.parse(source):
+                Err(_) => return None
+                Ok(parsed) =>
+                    match parsed.as_table():
+                        Err(_) => return None
+                        Ok(root) =>
+                            if "workspace" not in root:
+                                return None
+                            match root["workspace"].as_table():
+                                Ok(workspace) => return Some((directory, workspace))
+                                Err(_) => return None
+
+
+def shared_entry(workspace: Dict[str, TomlValue], alias: str) -> Option[TomlValue]:
+    """The workspace's `[workspace.dependencies]` entry for `alias`."""
+    if "dependencies" not in workspace:
+        return None
+    match workspace["dependencies"].as_table():
+        Err(_) => return None
+        Ok(entries) =>
+            if alias in entries:
+                return Some(entries[alias])
+            return None
+
+
+def members(workspace: Dict[str, TomlValue]) -> list[str]:
+    """The workspace's member directories, normalized as `relative` spells them."""
+    mut listed: list[str] = []
+    if "members" not in workspace:
+        return listed
+    match workspace["members"].as_array():
+        Err(_) => return listed
+        Ok(entries) =>
+            for entry in entries:
+                match entry.as_str():
+                    Ok(member) => listed.append(relative(joined("/", member), "/"))
+                    Err(_) => pass
+    return listed
+
+
+def absolute_directory(manifest: str) -> Path:
+    """The directory of a manifest path, absolute when the working directory can be read."""
+    match Path(manifest).absolute():
+        Ok(path) => return path.parent()
+        Err(_) => return Path(manifest).parent()
+
+
+def joined(directory: str, path: str) -> str:
+    """`path` under `directory`, unless it is absolute."""
+    if path.startswith("/"):
+        return path
+    return f"{directory}/{path}"
+
+
+def parts(path: str) -> list[str]:
+    """An absolute path's components with `.` and `..` resolved lexically."""
+    mut found: list[str] = []
+    for part in path.split("/"):
+        if part == "" or part == ".":
+            continue
+        if part == "..":
+            if len(found) > 0:
+                found = found[0:len(found) - 1]
+            continue
+        found.append(part)
+    return found
+
+
+pub def relative(target: str, base: str) -> str:
+    """`target` spelled from `base`, both absolute: `.` for the same directory, `..` for each directory climbed."""
+    to = parts(target)
+    start = parts(base)
+    mut common = 0
+    while common < len(to) and common < len(start) and to[common] == start[common]:
+        common += 1
+    mut spelled: list[str] = []
+    for _ in range(len(start) - common):
+        spelled.append("..")
+    for part in to[common:]:
+        spelled.append(part)
+    if len(spelled) == 0:
+        return "."
+    return "/".join(spelled)
+
+
+def refused(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """An unlocated refusal of the member's inheriting entry."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, detail=detail, location=None)

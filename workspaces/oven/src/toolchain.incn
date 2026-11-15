@@ -19,6 +19,9 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   on macOS).
 - `codegraph_on_request`: this compiler accepts `--no-codegraph`, so native compilation and graph publication have
   separate proofs. Its absence preserves bootstrap compatibility with the preceding Oven generation.
+- `closure_anchors`: this compiler accepts `--toolchain-root` and `--bakery-root` and publishes anchored native
+  closures. Its absence keeps those options away from a driver that predates them, as in a release's source closure,
+  which the preceding release's driver builds.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -44,12 +47,16 @@ from unit_publication import (
     verified_payload,
     relocate_payload,
 )
-from compiler_facts import FactAdmission, admit_fact, verified_fact, relocate_fact
+from compiler_facts import FactAdmission, admit_fact, retire_facts, verified_fact, relocate_fact
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
-from installation_page import recall as recall_installation, retain as retain_installation
+from installation_page import (
+    readmit as readmit_installation_page,
+    recall as recall_installation,
+    retain as retain_installation,
+)
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -99,7 +106,7 @@ pub def load_toolchain() -> Result[Toolchain, str]:
     """
     mut directory = toolchain_directory()?
     if directory.is_dir():
-        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        directory = directory.resolve().map_err((error) => f"cannot {error.message()}")?
     return load_toolchain_at(directory)
 
 
@@ -117,11 +124,44 @@ pub def installation(directory: Path) -> Result[Installation, str]:
     """Read the admitted typed page, or verify and admit a changed installation before selecting any facts."""
     if let Some(page) = recall_installation(directory)?:
         return Ok(page)
+    # A home with nothing installed has no page to admit; say what is missing before observing any of its files.
+    description = directory.joinpath("toolchain.json")
+    if not description.is_file():
+        return Err(not_installed(description))
     clock = begin()
     page = retain_installation(directory, unprepared_toolchain)?
     retire_legacy_admission(directory)?
     record(Operation.ToolchainAdmission, directory.0, clock)
     return Ok(page)
+
+
+pub def readmit_installation(directory: Path) -> Result[Installation, str]:
+    """Replace the admitted page only when the owner of an unfinished build installation changed it."""
+    clock = begin()
+    page = readmit_installation_page(directory, read_toolchain)?
+    retire_legacy_admission(directory)?
+    record(Operation.ToolchainAdmission, directory.0, clock)
+    return Ok(page)
+
+
+pub def readmit_selected_installation() -> Result[Installation, str]:
+    """Explicitly re-admit the selected unfinished installation in the home that owns its catalog."""
+    mut directory = toolchain_directory()?
+    if directory.is_dir():
+        directory = directory.resolve().map_err((error) => f"cannot {error.message()}")?
+    return readmit_installation(directory)
+
+
+pub def readmit_relinked_installation(removed: list[str]) -> Result[int, str]:
+    """
+    Re-admit the selected installation after a relink replaced its compiler, then retire the admission records of
+    the compiler files it removed, `removed`. Returns how many records were retired.
+
+    An installed generation is frozen: ordinary commands never notice an edited `toolchain.json`. A relink is the
+    installation's owner, so it asks for this explicitly after it rewrites the manifest.
+    """
+    _ = readmit_selected_installation()?
+    return retire_facts(removed)
 
 
 def parsed_without_admission(directory: Path) -> Result[Toolchain, str]:
@@ -145,11 +185,20 @@ pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
     return Ok(toolchain)
 
 
+def not_installed(description: Path) -> str:
+    """The refusal for a home without this Oven's toolchain: what is missing, and the command that installs it."""
+    lines = [
+        f"no toolchain {TOOLCHAIN} is installed: {description.0} does not exist",
+        "  = hint: install the toolchain archive with `incan toolchain install ARCHIVE`",
+    ]
+    return "\n".join(lines)
+
+
 def parsed_toolchain(directory: Path) -> Result[tuple[Toolchain, JsonValue], str]:
     """The toolchain contract and its description document, without admitting anything it names."""
     path = directory.joinpath("toolchain.json")
     if not path.is_file():
-        return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
+        return Err(not_installed(path))
     document = read_json(path)?
     toolchain = described_toolchain(document, directory).map_err((failed) => f"{path.0}: {failed}")?
     return Ok((toolchain, document))
@@ -232,10 +281,10 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
     loaves = directory.joinpath("loaves")
     if not loaves.is_dir():
         return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
-    for package in loaves.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for package in loaves.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if not package.is_dir():
             continue
-        for profile in package.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        for profile in package.iterdir().map_err((error) => f"cannot {error.message()}")?:
             if profile.is_dir():
                 for artifact in admit_provider(profile)?:
                     paths[artifact.0] = artifact
@@ -245,7 +294,7 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
 def admit_provider(directory: Path) -> Result[list[Path], str]:
     """Admit every transported payload with a producer record before a consumer names its identity."""
     mut paths: list[Path] = []
-    for record in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+    for record in directory.iterdir().map_err((error) => f"cannot {error.message()}")?:
         if record.is_file() and record.name().endswith(".oven-unit"):
             path = Path(record.0[:-10])
             import_publication(path)?
@@ -314,6 +363,9 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
     # 3. The Rust fact caches and the search directories are lists of paths, nothing else.
     abi = strings(field(document, "rust_abi", [])?, ["rust_abi"])?
     search = strings(field(document, "search", [])?, ["search"])?
+    mut default_trusted_publishers: list[str] = []
+    if let Some(value) = document.get("default_trusted_publishers"):
+        default_trusted_publishers = strings(value, ["default_trusted_publishers"])?
     # 4. A path is relative to the toolchain directory, which is what makes a toolchain relocatable.
     return Ok(
         Toolchain(
@@ -324,11 +376,13 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
+            closure_anchors=optional_flag(document, "closure_anchors")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
             c_compiler=optional_path(document, "c_compiler", directory)?,
+            default_trusted_publishers=sorted(default_trusted_publishers),
             compiler_records=optional_compiler_records(document, directory)?,
         ),
     )

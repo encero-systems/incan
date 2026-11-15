@@ -1,5 +1,6 @@
 """Convert operands at carrier boundaries, test union members, and bind enum payloads."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     Carrier,
     Constant,
@@ -26,7 +27,7 @@ from decls import library_enum_item
 from option_tests import is_option_carrier, option_isinstance, enum_tag
 from enums import enum_owner
 from unions import union_test_slots, test_union_tag, carrier_injection
-from text_plan import owned_slice_text
+from text_plan import clone_text_reference, owned_slice_text
 from options import assign_carrier, variant_condition
 from numerics import numeric_carrier
 from patterns import pattern_binds, carrier_pattern_slot, carrier_payload_types
@@ -126,6 +127,9 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
+    # Text an inferred-shared parameter lends reaching a destination that owns text is that destination's copy.
+    if source == PlanType.StringRef and target == PlanType.String:
+        return Ok(read_place(clone_text_reference(builder, value, span)?, true, span))
     # A `const` str reaching a destination that owns text, such as an `Err` payload or a list element, becomes owned
     # text there, as at a `str` parameter.
     if source == PlanType.FrozenStr and target == PlanType.String:
@@ -166,17 +170,17 @@ pub def boundary_plan_operand(
             PlanType.Enum(owner, _name) =>
                 if (
                     owner >= len(builder.enums)
-                    and builder.intrinsics[owner - len(builder.enums)].carrier == Carrier.Declared
+                    and builder.intrinsics[carrier_position(owner)].carrier == Carrier.Declared
                 ):
                     mut convert = false
                     for union in builder.unions:
                         if not semantic_key_matches_native(
-                            builder.intrinsics[owner - len(builder.enums)].semantic_key,
+                            builder.intrinsics[carrier_position(owner)].semantic_key,
                             union,
                         )?:
                             continue
                         mut members: list[PlanType] = []
-                        for variant in builder.intrinsics[owner - len(builder.enums)].variants:
+                        for variant in builder.intrinsics[carrier_position(owner)].variants:
                             members.append(variant.fields[0])
                         convert = PlanType.FrozenStr not in members and PlanType.String in members
                         break
@@ -184,6 +188,7 @@ pub def boundary_plan_operand(
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
+    operand = owned_union_member(builder, operand, target, span)?
     operand = carrier_callable_operand(builder, operand, target, span)?
     operand = option_payload_operand(builder, operand, target.clone(), span)?
     actual_source = operand_type(builder, operand)?
@@ -213,6 +218,30 @@ pub def boundary_plan_operand(
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
+
+
+def owned_union_member(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    A union payload owns its member, so a nominal a shared parameter lends becomes the payload's copy at the union.
+
+    A field of a parameter the body only reads arrives as a shared reference to the field; its declared union member is
+    the owned nominal, which is cloned from that reference. Every other operand is returned unchanged.
+    """
+    match target:
+        PlanType.Enum(owner, _name) =>
+            index = carrier_position(owner)
+            if index < 0 or index >= len(builder.intrinsics) or builder.intrinsics[index].carrier != Carrier.Declared:
+                return Ok(value)
+        _ => return Ok(value)
+    match operand_type(builder, value)?:
+        PlanType.ModelRef(nominal, name) => return Ok(clone_model_reference(builder, value, nominal, name, span))
+        PlanType.EnumRef(nominal, name) => return Ok(clone_enum_reference(builder, value, nominal, name, span))
+        _ => return Ok(value)
 
 
 def copied_native_scalar_referent(
@@ -255,8 +284,8 @@ def converted_carrier_operand(
         _ => return Ok(None)
     if source_owner < len(builder.enums) or target_owner < len(builder.enums):
         return Ok(None)
-    before = builder.intrinsics[source_owner - len(builder.enums)]
-    after = builder.intrinsics[target_owner - len(builder.enums)]
+    before = builder.intrinsics[carrier_position(source_owner)]
+    after = builder.intrinsics[carrier_position(target_owner)]
     if before.carrier == Carrier.Declared or before.carrier != after.carrier:
         return Ok(None)
     # An existing optional payload lifts as a whole, including None inside Some(None).
@@ -314,7 +343,7 @@ def option_payload_operand(
         PlanType.Enum(owner, _name) =>
             if owner < len(builder.enums):
                 return Ok(value)
-            declaration = builder.intrinsics[owner - len(builder.enums)]
+            declaration = builder.intrinsics[carrier_position(owner)]
             if declaration.carrier != Carrier.Option:
                 return Ok(value)
             payload = declaration.variants[1].fields[0]
@@ -507,7 +536,7 @@ def moved_native_enum_payload(
             if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
                 return enum_payload_read(builder, payload, fact, span)
     else:
-        carrier = builder.intrinsics[owner - len(builder.enums)].carrier
+        carrier = builder.intrinsics[carrier_position(owner)].carrier
         if carrier == Carrier.Declared:
             return enum_payload_read(builder, payload, fact, span)
     if len(fields) != 1 or source.projection != Projection.Whole:

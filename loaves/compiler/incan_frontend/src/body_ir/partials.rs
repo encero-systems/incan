@@ -139,7 +139,7 @@ fn function_target(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&span)
+        .get(span)
         .and_then(|binding| binding.identity.as_ref())
         == Some(canonical);
     if !physically_owned {
@@ -373,7 +373,7 @@ pub(super) fn lower_source_partial(
     }
     let direct_call_id = CompilerNodeId::declaration_at(facts.module_identity, decl_span);
     let named_type_identities =
-        builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+        builder.finish_type_identities(super::parameter_types::shared_declared_type_identities(facts.type_info));
     bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
@@ -384,7 +384,7 @@ pub(super) fn lower_source_partial(
         type_parameters: Vec::new(),
         span,
         return_type,
-        named_type_identities: std::sync::Arc::new(named_type_identities),
+        named_type_identities,
         param_locals: params.iter().map(|parameter| parameter.local).collect(),
         params,
         locals: builder.locals,

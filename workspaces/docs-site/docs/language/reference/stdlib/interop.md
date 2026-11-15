@@ -1,6 +1,6 @@
 # `std.interop`: checked C bindings
 
-`std.interop` exports the `c` namespace and the `BindingDeclaration` class. The `c` namespace provides the `binding` declaration, the C types that a binding's declarations use, and the operations that pass values to and from a binding symbol.
+`std.interop` exports the `c` namespace, the `BindingDeclaration` class and the vocabulary's keyword constants. The `c` namespace provides the `binding` declaration, the C types that a binding's declarations use, and the operations that pass values to and from a binding symbol.
 
 ## Import
 
@@ -24,7 +24,11 @@ A `binding` declares `Name` as a private declaration of its module. Its body hol
 | Field | Form | Meaning |
 | --- | --- | --- |
 | `header` | A non-empty string literal. | The C header that declares the binding's functions, constants and types. |
-| `link` | `c.system_library("name")` or `c.framework("name")`, with a non-empty string literal. | The native library the program links: a system library, or an Apple framework. |
+| `link` | `c.system_library("name")`, `c.framework("name")` or `c.loaf_library("loaf", configuration="name")`, with non-empty string literals. | The native library the program links: a system library, an Apple framework, or the static archive of one configuration of a Clove. |
+
+`c.loaf_library("loaf")` names a Clove, a Loaf with a [`[c]` facet](../../../tooling/reference/project_configuration.md#c): the unit's own project or a path dependency. `configuration` defaults to `default`. The binding's `header` is one of the Clove's `public-headers`, spelled relative to the Clove's root. The unit links the static archive Oven compiled for that configuration.
+
+- Refused (`INCAN-T0001`): a `loaf` that names no Clove the unit reaches; a configuration the Clove does not declare; a `header` that is not one of its public headers; and two configurations of one Clove in one unit.
 
 | Member | Declares |
 | --- | --- |
@@ -287,11 +291,32 @@ Before a module with a binding is checked, built or run, each binding is verifie
 | --- | --- | --- |
 | Linux x86-64 host | Default on that host | `x86_64-unknown-linux-gnu` |
 | macOS arm64 host | Default on that host | `arm64-apple-macos11` |
+| Declared `x86_64-unknown-linux-gnu` | `--interop-target x86_64-unknown-linux-gnu` | `x86_64-unknown-linux-gnu` |
+| Declared `aarch64-apple-darwin` | `--interop-target aarch64-apple-darwin` | `arm64-apple-macos11` |
+| Declared `aarch64-linux-android`, `api-level` N | `--interop-target aarch64-linux-android` | `aarch64-linux-androidN` |
+| Declared `aarch64-apple-ios`, `deployment-target` V | `--interop-target aarch64-apple-ios` | `arm64-apple-iosV` |
+| Declared `aarch64-apple-ios-sim`, `deployment-target` V | `--interop-target aarch64-apple-ios-sim` | `arm64-apple-iosV-simulator` |
 
-- The host selects the target. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
-- `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang with the macOS SDK as sysroot on macOS arm64, and `clang` on Linux x86-64.
+- The host selects the target unless `--interop-target` selects a target the package declares in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc); a declared target is verified with its `definitions`, and its `toolchain` and `sdk` requirements must be met by the selected Clang and SDK. A declared header, or a Clove public header, is read from the package; any other relative `header` is a system header, searched only on the target's system include path and never relative to the working directory.
+- A `c.loaf_library` binding is verified with the configuration's resolved `defines` and the Clove's `include` roots, as its archive was compiled.
+- `INCAN_C_ABI_CLANG`, when set, is the Clang executable; otherwise the installed toolchain's own Clang is, when the toolchain carries one. Either is used with no SDK selected unless it is an Android NDK Clang, whose NDK supplies the `android` SDK capability. Without either, the executable is Xcode's Clang with the target's SDK (`macosx`, `iphoneos` or `iphonesimulator`) as sysroot on macOS arm64, and `clang` on Linux x86-64. An Android target requires `INCAN_C_ABI_CLANG`.
+- The selected toolchain's capability and version are read from its `--version`: `apple-clang`, `clang`, or `android-ndk` with the NDK's own release. An Xcode SDK's version is the one it reports; an NDK's `android` version is the newest API level it carries.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
-- Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; and a host binding on a platform other than Linux x86-64 and macOS arm64.
+- Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; a declared target outside this table; a `toolchain` or `sdk` requirement the selection does not meet; and a host binding on a platform other than Linux x86-64 and macOS arm64.
+
+## Keyword constants
+
+| Constant | Value |
+| --- | --- |
+| `NAMESPACE` | `"std.interop"` |
+| `BINDING_KEYWORD` | `"binding"` |
+| `SYMBOL_KEYWORD` | `"symbol"` |
+| `RESOURCE_KEYWORD` | `"resource"` |
+| `ENUM_KEYWORD` | `"enum"` |
+| `STRUCT_KEYWORD` | `"struct"` |
+| `OUTCOME_KEYWORD` | `"outcome"` |
+
+Each is a `str` constant spelling the namespace or declaration keyword the vocabulary registers.
 
 ## See also
 

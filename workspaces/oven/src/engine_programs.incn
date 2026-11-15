@@ -4,28 +4,51 @@ from std.fs import Path
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from engine_capture import BuildEpoch, InputRole
+from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
 from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
-from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies
-from compiler_body_values import body_owners_reading, encode_body_inventory, select_body_inventory_except
+from check_pages import check_page_directory, keep_check_pages
+from compiler_body_publication import (
+    PreparedSourceInputs,
+    prepare_captured_source_inputs,
+    prepare_compiled_bodies,
+    source_origin,
+)
+from compiler_body_values import (
+    SelectedBodyRecord,
+    body_owners_reading,
+    encode_body_inventory,
+    invalid_namespace_modules,
+    select_body_inventory_except,
+    select_namespace_inventory_except,
+)
 from compiler_plan_values import select_plan_inventory_except, plan_owners_reading
+from compiler_graph_records import supersede_outputs
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
-from incan_units import obtain_executable, program_binary, executable_view, view_executable
+from home import StandardPackage
+from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
+from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, put
+from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
-from toolchain import load_toolchain
-from unit import describe
-from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
+from toolchain import Toolchain, load_toolchain, toolchain_directory
+from unit import UnitDescription, describe
+from unit_compiler import (
+    CheckerRecordCounts,
+    PlanRecordCounts,
+    checker_record_counts,
+    graph_body_output_path,
+    plan_record_counts,
+    plan_record_report_path,
+)
 from unit_rust import prepare_native
-from unit_freshness import fingerprint, unit_key
+from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
-from shared_link import development_link, linkage_key, library_witness, witness_current
+from shared_link import carriers_present, development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -59,16 +82,69 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
+    # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
+    pub body_reuses: int = 0
+    # Checked-body pages the request selected, encoded and wrote; and restored pages the compiler had to decode.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
+    pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
     pub plan_function_reuses: int = 0
     pub lowering_demand_evaluations: int = 0
     pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub checker_reuse: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
     pub console: str = ""
     pub epoch_reads: int = 0
+    # Index pages this engine read and keys it listed while producing the unit, before the request commits.
+    pub index_pages: int = 0
+    pub keys_listed: int = 0
     pub transaction: Option[Transaction] = None
+    # An editor overlay's source and checked-body records, published in the editor view only.
+    pub view_transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
+
+
+pub model CheckOutcome:
+    """One compiler check completion and the console frame containing its text or JSON report."""
+
+    pub code: i32
+    pub console: str
+    # Top-level function bodies the check checked, and those it restored from the request view's records.
+    pub body_evaluations: int = 0
+    pub body_reuses: int = 0
+    # Pages the check wrote for its view, and restored pages the compiler decoded itself.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
+
+
+pub model BodyReading:
+    """A request view's graph, the request's source projections, and the owners whose bodies those changed."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
+    pub invalid: list[str]
+
+
+pub model BodySelection:
+    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    pub invalid: list[str]
+    pub retained: list[SelectedBodyRecord]
+
+
+model ProgramHome:
+    """The request-owned compiler and standard packages used to describe and build one program."""
+
+    toolchain: Toolchain
+    standard: Option[list[StandardPackage]] = None
 
 
 pub model NativeSelection:
@@ -80,6 +156,105 @@ pub model NativeSelection:
     pub transaction: Option[Transaction] = None
 
 
+pub def check_program(
+    store: Path,
+    revision: str,
+    console: str,
+    format: str,
+    captured: Option[BuildEpoch] = None,
+    selected_home: Option[SelectedHome] = None,
+    view: str = "",
+) -> Result[CheckOutcome, str]:
+    """
+    Describe and check one captured build reach without requesting code generation or a native selection. The check
+    restores each unchanged checked body from the request view's records, from pages the view keeps between requests.
+    """
+    epoch = request_epoch(store, revision, captured, "check")?
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    described = describe(
+        Path(epoch.roots[0]),
+        epoch.selection.profile,
+        FeatureRequest(),
+        selected_toolchain=Some(toolchain),
+        selected_standard=home.standard,
+    )?
+    if (
+        described.kind != "program"
+        or described.vocabulary
+        or len(described.contract_models) > 0
+        or len(described.c_headers) > 0
+    ):
+        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
+    ready = prepared_for(view, described, toolchain)?
+    # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
+    reading = body_reading(store, view, ready, epoch.inputs)?
+    directory = check_page_directory(store, view, ready)
+    pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory))?
+    return Ok(
+        CheckOutcome(
+            code=checked.code,
+            console=console,
+            body_evaluations=checked.bodies.checked,
+            body_reuses=checked.bodies.reused,
+            body_page_writes=pages.written,
+            body_page_decodes=checked.bodies.decoded,
+        ),
+    )
+
+
+def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
+    stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
+    """
+    ready = prepare_native(described, toolchain, is_editor_view(view))?
+    if ready.trust_stop != "":
+        return Err(ready.trust_stop)
+    return Ok(ready)
+
+
+def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+    """
+    Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
+    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    return Ok(BodyReading(graph=graph, projected=projected, invalid=invalid))
+
+
+def select_bodies(
+    store: Path,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    listing_refusals: bool,
+) -> Result[BodySelection, str]:
+    """
+    Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
+    refusals checks every owner afresh.
+    """
+    reading = body_reading(store, view, ready, inputs)?
+    origin = source_origin(ready)
+    mut invalid = reading.invalid
+    if listing_refusals:
+        invalid = [
+            record.identity
+            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
+        ]
+    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid)?
+    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
+
+
 pub def obtain(
     store: Path,
     revision: str,
@@ -87,6 +262,7 @@ pub def obtain(
     console: str,
     captured: Option[BuildEpoch] = None,
     producer: str = "",
+    selected_home: Option[SelectedHome] = None,
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -96,12 +272,15 @@ pub def obtain(
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
     """
+    listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
-    match read_program(store, handle)?:
-        Some(unit) =>
-            restore_program(store, unit)?
-            return Ok(ProgramOutcome(code=0, unit=Some(unit)))
-        None => pass
+    # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
+    if not listing_refusals:
+        match read_program(store, handle)?:
+            Some(unit) =>
+                if restore_program(store, unit)?:
+                    return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+            None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     opening = begin_work()
     mut epoch_reads = 0
@@ -112,51 +291,77 @@ pub def obtain(
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
     selector = standalone_selector(epoch, producer)?
-    if let Some(unit) = indexed_program(store, epoch, selector)?:
-        restore_program(store, unit)?
-        return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
+    if not listing_refusals:
+        if let Some(unit) = indexed_program(store, epoch, selector)?:
+            if restore_program(store, unit)?:
+                return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
 
-    mut toolchain = load_toolchain()?
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+
     toolchain.console = console
     described = describe(
         Path(epoch.roots[0]),
         epoch.selection.profile,
         FeatureRequest(),
         selected_toolchain=Some(toolchain),
+        selected_standard=home.standard,
     )?
     if (
         described.kind != "program"
         or described.vocabulary
         or len(described.contract_models) > 0
         or len(described.c_headers) > 0
+        or len(described.cloves) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    ready = prepare_native(described, toolchain)?
+    ready = prepared_for(program_view(handle)?, described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
+    # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
+    mut native_key = compiled_key
+    if listing_refusals:
+        native_key = refusal_diagnostic_key(compiled_key)?
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
-    key = linkage_key(compiled_key, development_link(ready, true))?
+    key = linkage_key(native_key, development_link(ready, true))?
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-    # 3. Exactly one existing producer owns claiming and publishing a native unit.
-    graph = snapshot(store).map_err((error) => error.message())?
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
-    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
-    retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, invalid)?
+    # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
+    # writes its source and checked-body records in its own view, so it never changes what a build reads.
+    request_view = program_view(handle)?
+    editor = is_editor_view(request_view)
+    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
+    graph = selection.graph
+    projected = selection.projected
+    invalid = selection.invalid
+    origin = source_origin(ready)
+    invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
+    retained_bodies = selection.retained
     mut selected_bodies = encode_body_inventory(retained_bodies)?
+    selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
     invalid_plans = plan_owners_reading(graph, projected.keys)?
     selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true, Some(selected_bodies))?
-    plan_counts = plan_record_counts(ready, compiled_key)?
+    produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies))?
+    # A bakery hit plans nothing; the report beside the key is the earlier build's.
+    mut plan_counts = PlanRecordCounts()
+    if produced.evaluations > 0:
+        reading_plan_sidecars = begin_work()
+        plan_counts = plan_record_counts(ready, compiled_key)?
+        record_work(
+            Operation.EngineSidecarAuthentication,
+            plan_record_report_path(ready, compiled_key).0,
+            reading_plan_sidecars,
+        )
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
                 body_evaluations=len(invalid),
+                body_page_writes=len(retained_bodies),
                 console=console,
                 epoch_reads=epoch_reads,
                 plan_function_evaluations=plan_counts.plan_evaluations,
@@ -166,11 +371,32 @@ pub def obtain(
             ),
         )
     # 4. Source edits cannot certify a native unit for a different captured epoch.
+    verifying_inputs = begin_work()
+    installed = toolchain_directory()?.0
     for input in epoch.inputs:
+        if frozen_path(input.path, installed, toolchain.sysroot):
+            continue
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
-    mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+    record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
+    mut request_transaction = projected.transaction
+    mut native = produced.transaction
+    if not editor:
+        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+        native = None
+    mut body_evaluations = 0
+    mut body_reuses = 0
+    mut body_ir_evaluations = 0
+    mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
+        # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
+        reading_checker_sidecar = begin_work()
+        checker_counts = checker_record_counts(ready, compiled_key)?
+        record_work(
+            Operation.EngineSidecarAuthentication,
+            graph_body_output_path(ready, compiled_key).0 + ".checker-report.json",
+            reading_checker_sidecar,
+        )
         bodies = prepare_compiled_bodies(
             request_transaction,
             ready,
@@ -178,26 +404,70 @@ pub def obtain(
             Some(plan_record_report_path(ready, compiled_key)),
             Some(graph),
             retained_bodies,
+            checker_counts.restored,
         )?
         request_transaction = bodies.transaction
+        body_evaluations = bodies.checking_evaluations
+        body_reuses = bodies.body_reuses
+        body_ir_evaluations = bodies.body_ir_evaluations
+    # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
+    supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    # An overlay's content-addressed native results and finalized-unit index stay where every build finds them.
+    mut shared = Some(request_transaction)
+    mut view_records: Option[Transaction] = None
+    if editor:
+        shared = native
+        view_records = Some(request_transaction)
+    indexing = begin_work()
+    indexed = index_program(store, selector, unit, shared)?
+    record_work(Operation.EngineProgramIndex, key.digest, indexing)
     return Ok(
         ProgramOutcome(
             code=0,
             unit=Some(unit),
             evaluations=produced.evaluations,
-            body_evaluations=len(invalid),
+            body_evaluations=body_evaluations,
+            body_reuses=body_reuses,
+            body_page_writes=len(retained_bodies),
+            body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
             plan_function_reuses=plan_counts.plan_reuses,
             lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
             lowering_demand_reuses=plan_counts.lowering_demand_reuses,
             native_interface_evaluations=plan_counts.native_interface_evaluations,
+            reusable_declarations=checker_counts.reusable_declarations,
+            all_declarations=checker_counts.all_declarations,
+            checker_reuse=checker_counts.summary,
+            artifact_refusals=checker_counts.artifact_refusals,
             console=console,
             epoch_reads=epoch_reads,
-            transaction=index_program(store, selector, unit, Some(request_transaction))?,
+            transaction=indexed,
+            view_transaction=view_records,
             claim=produced.claim,
+        ),
+    )
+
+
+def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
+    """Use a request's selected installation, or load one for direct producer callers."""
+    match selected:
+        Some(home) => return Ok(ProgramHome(toolchain=home.toolchain, standard=Some(home.standard)))
+        None => return Ok(ProgramHome(toolchain=load_toolchain()?))
+
+
+def refusal_diagnostic_key(key: Key) -> Result[Key, str]:
+    """Keep list-mode compiler evidence separate from an ordinary reusable native unit."""
+    domain = "incan.body-refusal-list-native/1"
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([domain, key.digest])?,
+            parts=key.parts + [f"diagnostic {domain}"],
+            codegen=key.codegen,
+            provenance=key.provenance,
+            descriptor=key.descriptor,
         ),
     )
 
@@ -282,21 +552,30 @@ def decoded_program(text: str) -> Result[NativeUnit, str]:
     )
 
 
-pub def restore_program(store: Path, unit: NativeUnit) -> Result[None, str]:
-    """Validate the selected immutable unit and restore only missing or changed derived executable views."""
-    fact = unit_record(store, unit)?
-    return view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)
+pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
+    """
+    Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
+    caller to resolve the unit again: its executable loads a shared carrier that is gone, or its record was sealed again
+    since this selection, when the unit was linked again to different bytes.
+    """
+    match unit_record(store, unit)?:
+        None => return Ok(false)
+        Some(fact) =>
+            if not carriers_present(store, fact, Path(unit.binary))?:
+                return Ok(false)
+            view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
+            return Ok(true)
 
 
-def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
-    """Verify the exact executable payload and any recorded native loader generations before making a view."""
+def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
+    """
+    The unit's record while it holds the selected executable payload; its immutable record already admitted native
+    loader generations. A record holding other bytes was sealed again after the unit was linked again.
+    """
     fact = required_unit(store, unit.identity)?
     if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Err("selected native payload disagrees with its unit record")
-    if let Some(witness) = loader_witness(store, fact, unit):
-        if not witness_current(witness):
-            return Err("selected native loader inputs disagree with their unit record")
-    return Ok(fact)
+        return Ok(None)
+    return Ok(Some(fact))
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
@@ -332,6 +611,11 @@ def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
         _ => return false
 
 
+def frozen_path(path: str, installed: str, sysroot: str) -> bool:
+    """Whether an obsolete captured row belongs to an installation already admitted as immutable."""
+    return path == installed or path.startswith(installed + "/") or path == sysroot or path.startswith(sysroot + "/")
+
+
 def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
     """Use this activation's captured inputs, or open a previously committed capture."""
     match captured:
@@ -358,7 +642,8 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
         return Ok(None)
     source = Path(epoch.roots[0])
     prefix = source.parent().0 + "/"
-    mut inputs = ["incan.engine.standalone-inputs/1", producer, source.name(), epoch.selection.profile]
+    mut inputs = ["incan.engine.standalone-inputs/2", producer, source.name(), epoch.selection.profile]
+    inputs.extend([f"admitted:{item}" for item in epoch.admitted])
     mut bindings: list[str] = []
     for input in epoch.inputs:
         if input.role == InputRole.ToolchainPin:
@@ -395,13 +680,17 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
                     return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
 
 
-def index_program(
+pub def index_program(
     store: Path,
     selector: Option[str],
     unit: NativeUnit,
     native: Option[Transaction],
 ) -> Result[Option[Transaction], str]:
-    """Add a path-independent finalized-unit index to the same atomic request, never a second publication."""
+    """
+    Add a path-independent finalized-unit index to the same atomic request, never a second publication. The index names
+    the unit's sealed record, so it is written under the record's own expectation: a unit linked again to different
+    bytes replaces its record, and its index with it.
+    """
     match selector:
         None => return Ok(native)
         Some(key) =>
@@ -409,4 +698,4 @@ def index_program(
             if let Some(prepared) = native:
                 transaction = prepared
             descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
-            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_ABSENT)))
+            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_REPAIR)))

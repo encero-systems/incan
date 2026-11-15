@@ -1,0 +1,192 @@
+"""Only a signing release stamps its signer into the shipped `incan`, carries the file and signs its assets."""
+
+from std.encoding.base64 import b64encode
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root
+from release_signer import (
+    BUNDLE_SUFFIX,
+    CARRIED_TRUST,
+    RELEASE_SIGNER,
+    SIGNED_ASSETS,
+    STAMP_MODULE,
+    release_signer,
+    adopt_signed_bundle,
+    stamp_release_signer,
+)
+
+const WORKFLOW: str = "https://github.com/encero-systems/incan/.github/workflows/release.yml"
+const ISSUER: str = "https://token.actions.githubusercontent.com"
+
+
+def checkout(root: Path, signer: str) -> Result[tuple[Path, Path], str]:
+    """A source checkout with the committed stamp module and one signer file, and an empty candidate toolchain."""
+    source = root.joinpath("source")
+    toolchain = root.joinpath("toolchain")
+    for directory in [source.joinpath("scripts"), source.joinpath(STAMP_MODULE).parent(), toolchain]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    committed = repository_root()?.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )?
+    put(source.joinpath(STAMP_MODULE), committed)?
+    put(source.joinpath(RELEASE_SIGNER), signer)?
+    return Ok((source, toolchain))
+
+
+def put(path: Path, content: str) -> Result[None, str]:
+    """Write one text file."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def signer_text(root: str) -> str:
+    """A signer file for the release workflow with one trusted-root slot value."""
+    signer = "{\"workflow\":\"" + WORKFLOW + "\",\"issuer\":\"" + ISSUER + "\"}"
+    return "{\"signer\":" + signer + ",\"trusted_root\":" + root + "}"
+
+
+def bundle_of(root: Path) -> Result[Path, str]:
+    """A packed bundle directory holding one stand-in file per signed asset."""
+    bundle = root.joinpath("bundle")
+    bundle.mkdir(true, true).map_err((error) => error.message())?
+    for asset in SIGNED_ASSETS:
+        put(bundle.joinpath(asset), f"stand-in for {asset}\n")?
+    return Ok(bundle)
+
+
+def test_the_committed_signer_names_the_release_workflow_and_holds_sigstores_trusted_root() -> Result[None, str]:
+    """The repository's signer file names the workflow, and its slot holds the trusted root of Sigstore's instance."""
+    match release_signer(repository_root()?)?:
+        None => return Err(f"{RELEASE_SIGNER} has an empty trusted-root slot")
+        Some(signer) =>
+            assert WORKFLOW in signer
+            assert ISSUER in signer
+            assert "application/vnd.dev.sigstore.trustedroot+json;version=0.1" in signer
+            assert "https://fulcio.sigstore.dev" in signer
+            assert "https://rekor.sigstore.dev" in signer
+    return Ok(None)
+
+
+def test_a_local_qualification_never_stamps_whatever_the_slot_holds() -> Result[None, str]:
+    """
+    Signing is keyless from the release workflow, so any run but its packing invocation is unstamped: with a filled
+    slot, the stamp module and the candidate toolchain stay as they were.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    source, toolchain = checkout(scratch.path(), signer_text("{\"mediaType\":\"fixture\"}"))?
+    before = source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert not stamp_release_signer(source, toolchain, false)?
+    assert source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())? == before
+    assert not toolchain.joinpath(CARRIED_TRUST).is_file()
+    return Ok(None)
+
+
+def test_the_packing_invocation_stamps_the_program_and_carries_the_file_into_the_pack() -> Result[None, str]:
+    """
+    1. The stamp module the shipped `incan` is built from carries the signer file, whole, in base64.
+    2. The candidate toolchain carries the same file, which `toolchain pack` ships.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    signer = signer_text("{\"mediaType\":\"fixture\"}")
+    source, toolchain = checkout(scratch.path(), signer)?
+    assert stamp_release_signer(source, toolchain, true)?
+    # 1. The program's signer is the file, byte for byte.
+    module = source.joinpath(STAMP_MODULE).read_text("utf-8", "strict").map_err((error) => error.message())?
+    stamp = "pub const RELEASE_SIGNER: str = \"" + b64encode(signer.encode("utf-8")) + "\"\n"
+    assert module.endswith(stamp), module
+    assert module.startswith("\"\"\""), module
+    # 2. The archive ships what the program verifies with.
+    shipped = toolchain.joinpath(CARRIED_TRUST).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert shipped == signer
+    return Ok(None)
+
+
+def test_the_verifying_invocation_takes_each_asset_with_its_signature_or_stops() -> Result[None, str]:
+    """
+    1. The signed bundle's assets and their `ASSET.sigstore.json` files land side by side in the release's bundle.
+    2. A bundle the workflow did not sign completely is refused by the missing file's name, and so is a missing asset.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    signed = bundle_of(scratch.path())?
+    for asset in SIGNED_ASSETS:
+        put(signed.joinpath(asset + BUNDLE_SUFFIX), f"signature of {asset}\n")?
+    # 1. The stamped program looks for the signature beside the asset it installs.
+    release = scratch.path().joinpath("release/bundle")
+    release.mkdir(true, true).map_err((error) => error.message())?
+    assert adopt_signed_bundle(signed, release)? == len(SIGNED_ASSETS)
+    for asset in SIGNED_ASSETS:
+        taken = release.joinpath(asset).read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert taken == f"stand-in for {asset}\n"
+        signature = release.joinpath(asset + BUNDLE_SUFFIX)
+        assert signature.read_text("utf-8", "strict").map_err((error) => error.message())? == f"signature of {asset}\n"
+    # 2. Nothing passes for a signature, and nothing for an asset.
+    unsigned = signed.joinpath(SIGNED_ASSETS[1] + BUNDLE_SUFFIX)
+    unsigned.unlink().map_err((error) => error.message())?
+    match adopt_signed_bundle(signed, release):
+        Ok(_) => return Err("a bundle with an unsigned asset was taken")
+        Err(reason) => assert reason.endswith(f" has no {SIGNED_ASSETS[1]}{BUNDLE_SUFFIX}"), reason
+    signed.joinpath(SIGNED_ASSETS[0]).unlink().map_err((error) => error.message())?
+    match adopt_signed_bundle(signed, release):
+        Ok(_) => return Err("a bundle without an asset was taken")
+        Err(reason) => assert reason.endswith(f" has no {SIGNED_ASSETS[0]}"), reason
+    return Ok(None)
+
+
+def test_a_signer_file_without_its_workflow_slot_or_trusted_root_stops_a_stamped_release() -> Result[None, str]:
+    """A file that names no workflow, no issuer or no slot is refused, and an empty slot cannot be stamped."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    damaged = "{\"signer\":{\"workflow\":\"\",\"issuer\":\"x\"},\"trusted_root\":null}"
+    source, toolchain = checkout(scratch.path(), damaged)?
+    assert stamp_release_signer(source, toolchain, true).is_err()
+    put(source.joinpath(RELEASE_SIGNER), "{\"signer\":{\"workflow\":\"w\",\"issuer\":\"x\"}}")?
+    assert stamp_release_signer(source, toolchain, true).is_err()
+    put(source.joinpath(RELEASE_SIGNER), signer_text("null"))?
+    match stamp_release_signer(source, toolchain, true):
+        Ok(_) => return Err("a release with no trusted root was stamped")
+        Err(reason) => assert reason == f"cannot stamp the release: {RELEASE_SIGNER} has no trusted root", reason
+    assert not toolchain.joinpath(CARRIED_TRUST).is_file()
+    return Ok(None)
+
+
+def jobs_of(workflow: str) -> Dict[str, str]:
+    """The text of each job of a workflow file, by its key: a job starts at a key indented two spaces under `jobs:`."""
+    mut jobs: Dict[str, str] = {}
+    mut current = ""
+    mut inside = false
+    for line in workflow.split("\n"):
+        if line == "jobs:":
+            inside = true
+            continue
+        if not inside:
+            continue
+        if line.startswith("  ") and not line.startswith("   ") and line.endswith(":") and not line.startswith("  #"):
+            current = line.strip()[:-1]
+            jobs[current] = ""
+        elif current != "":
+            jobs[current] = jobs[current] + line + "\n"
+    return jobs
+
+
+def test_only_the_signing_job_can_sign_and_it_runs_nothing_the_release_built() -> Result[None, str]:
+    """
+    The release workflow's shape (DD-0016).
+
+    1. Only the `sign` job has `id-token: write`, so only it can sign as the release identity.
+    2. That job checks nothing out and starts neither `incan` nor a downloaded asset: it runs `cosign` alone.
+    3. The job before it packs with `--stamp-signer`, and the job after it verifies with `--verify-installed`.
+    """
+    path = repository_root()?.joinpath(".github/workflows/release.yml")
+    jobs = jobs_of(path.read_text("utf-8", "strict").map_err((error) => error.message())?)
+    # 1. The token is in one job.
+    for name in jobs.keys():
+        assert ("id-token: write" in jobs[name]) == (name == "sign"), name
+    # 2. Nothing the release built, and no script of the repository, runs where the token is.
+    sign = jobs["sign"]
+    assert "cosign sign-blob" in sign
+    for forbidden in ["actions/checkout", "incan run", "incan test", "./incan", "bundle/incan ", "chmod"]:
+        assert forbidden not in sign, forbidden
+    # 3. Stamp and pack before it, installed verification after it.
+    assert "--stamp-signer" in jobs["qualification"]
+    assert "needs: qualification" in sign
+    assert "--verify-installed" in jobs["verify"]
+    assert "needs: sign" in jobs["verify"]
+    return Ok(None)

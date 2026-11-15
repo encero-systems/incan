@@ -45,6 +45,8 @@ mod manifest_types;
 mod module_imports;
 mod pub_library_symbols;
 mod public_modules;
+mod record_members;
+mod record_types;
 mod standard_loaves;
 mod type_remapping;
 
@@ -56,7 +58,7 @@ pub(in crate::typechecker) struct LoafImport {
     pub module: Vec<Ident>,
 }
 
-enum ManifestExportRef<'a> {
+pub(in crate::typechecker::collect) enum ManifestExportRef<'a> {
     Alias(&'a AliasExport),
     Model(&'a ModelExport),
     Class(&'a ClassExport),
@@ -75,7 +77,7 @@ enum ManifestExportRef<'a> {
     Static(&'a StaticExport),
 }
 
-struct PublicModuleMember {
+pub(in crate::typechecker::collect) struct PublicModuleMember {
     kind: SymbolKind,
     canonical: Option<CanonicalSymbolId>,
     source_module_path: Vec<String>,
@@ -85,7 +87,7 @@ struct PublicModuleMember {
 }
 
 /// Shared package context while following a public alias chain to partial projection metadata.
-struct PartialProjectionAliasContext<'a> {
+pub(in crate::typechecker::collect) struct PartialProjectionAliasContext<'a> {
     manifest: &'a LibraryManifest,
     local_name: &'a str,
     imported_type_aliases: &'a HashMap<String, String>,

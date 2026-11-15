@@ -3,8 +3,12 @@ The unit description (`incan.unit/1`, DD-0008): everything the compiler knows ab
 The compiler reads no manifest; it reads this. Its fields are the compiler's `incan_driver::unit::UnitDescription`.
 """
 
+from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
+from clove_units import CloveUnit, clove_unit
+from c_interop import LinkedArchive, linked_archives
+from c_interop_target import CAbiTargetSelection, select_interop_target, selected_abi_clang
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -63,6 +67,16 @@ pub model UnitDescription:
     pub rust_crates: list[str]
     pub contract_models: list[str]
     pub c_headers: list[str]
+    # The Cloves the unit reaches (its own Loaf's C facet and each reached path dependency's), every configuration
+    # compiled into its archive. An archive's identity is part of the description, so a rebuilt Clove rebuilds the
+    # units that link it.
+    pub cloves: list[CloveUnit] = []
+    # The package-owned static archives the host target's `[interop.c]` entry declares, in link order. Oven
+    # passes them to rustc; they are not part of the compiler's description.
+    pub c_archives: list[LinkedArchive] = []
+    # The declared `[[interop.c.targets]]` entry `--interop-target` selects; checked C bindings verify against it
+    # instead of the host. Absent, they verify against the host.
+    pub c_abi_target: Option[CAbiTargetSelection] = None
     # Registry declared by this unit's own package; absent does not invent a default root key.
     pub registry_id: Option[str] = None
     pub externs: list[NativeCrate] = []
@@ -73,6 +87,16 @@ pub model UnitDescription:
     pub rust_abi: list[str] = []
     pub kind: str = "program"
     pub program_entries: list[str] = []
+    # Further test modules a test unit compiles beside its entry, in run order: the modules that share a plain
+    # session-scoped conftest fixture with it, whose tests run in one process.
+    pub test_batch: list[str] = []
+    # The key a test unit binds its project's shared library under (see `project_library`); the compiler then reads
+    # a project-local import of any library module as an import of that library.
+    pub project_library: Option[str] = None
+    # The test modules a project's shared library leaves out, and which a test unit linking it compiles as its own.
+    pub excluded_sources: list[str] = []
+    # Whether a library is checked as its project's program is: a shared library publishes no API.
+    pub program_checks: bool = false
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
     pub vocabulary: bool = false
@@ -125,6 +149,18 @@ pub model UnitDescription:
         ), "rust_abi": texts(self.rust_abi)}
         if let Some(registry) = self.registry_id:
             fields["registry_id"] = JsonValue.string(registry)
+        if len(self.cloves) > 0:
+            fields["cloves"] = JsonValue.array([clove.to_json() for clove in self.cloves])
+        if let Some(target) = self.c_abi_target:
+            fields["c_abi_target"] = target.to_json()
+        if len(self.test_batch) > 0:
+            fields["test_batch"] = texts(self.test_batch)
+        if let Some(library) = self.project_library:
+            fields["project_library"] = JsonValue.string(library)
+        if len(self.excluded_sources) > 0:
+            fields["excluded_sources"] = texts(self.excluded_sources)
+        if self.program_checks:
+            fields["program_checks"] = JsonValue.bool(true)
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:
@@ -167,33 +203,87 @@ def optional_text(value: Option[str]) -> JsonValue:
 
 
 pub def project_root_of(source: Path) -> Option[Path]:
-    """The nearest directory at or above `source`'s directory that holds a `loaf.toml`."""
+    """
+    The nearest directory at or above `source`'s directory that holds a `loaf.toml`. Discovery stops at a directory
+    that holds only the retired `incan.toml`; `discovered_project` reports that stop.
+    """
     for manifest in manifest_candidates(source):
         if manifest.is_file():
             return Some(manifest.parent())
+        if retired_manifest(manifest.parent()) is not None:
+            return None
+    return None
+
+
+pub def discovered_project(source: Path) -> Result[Option[Path], str]:
+    """The project `source` belongs to, refusing a directory on the way that holds `incan.toml` and no `loaf.toml`."""
+    for manifest in manifest_candidates(source):
+        if manifest.is_file():
+            return Ok(Some(manifest.parent()))
+        match retired_refusal(manifest.parent()):
+            Some(reason) => return Err(reason)
+            None => pass
+    return Ok(None)
+
+
+pub def retired_refusal(directory: Path) -> Option[str]:
+    """Why a directory that holds `incan.toml` and no `loaf.toml` is not a project, naming the file and the rename."""
+    match retired_manifest(directory):
+        Some(retired) =>
+            return Some(
+                f"{retired.0}: `incan.toml` is not a project manifest; rename it to loaf.toml once its tables satisfy the Loaf schema",
+            )
+        None => return None
+
+
+def retired_manifest(directory: Path) -> Option[Path]:
+    """A directory's `incan.toml` when it holds no `loaf.toml`: the 0.5 manifest, which is never read."""
+    retired = directory.joinpath("incan.toml")
+    if retired.is_file() and not directory.joinpath("loaf.toml").is_file():
+        return Some(retired)
     return None
 
 
 pub def manifest_candidates(source: Path) -> list[Path]:
-    """Where the manifest of `source` is looked up, nearest first: `loaf.toml` in its directory and each one above."""
+    """
+    Where the manifest of `source` is looked up, nearest first: `loaf.toml` in its directory and each one above. A
+    relative source is looked up from its absolute path, so a source in the working directory, such as `main.incn`,
+    finds the working directory's manifest under a directory that can be resolved.
+    """
     mut candidates: list[Path] = []
     mut directory = source.parent()
+    match source.absolute():
+        Ok(absolute) => directory = absolute.parent()
+        Err(_) => pass
     while true:
         candidates.append(directory.joinpath("loaf.toml"))
         parent = directory.parent()
-        if parent.0 == directory.0 or parent.0 in ["", "."]:
+        if parent.0 == directory.0:
+            return candidates
+        if parent.0 in ["", "."]:
+            if directory.0 not in ["", "."] and not directory.0.startswith("/"):
+                candidates.append(Path("./loaf.toml"))
             return candidates
         directory = parent
     return candidates
 
 
-def standard_loaves(package: str, profile: str, reader: ManifestReader) -> Result[list[UnitLoaf], str]:
+def standard_loaves(
+    package: str,
+    profile: str,
+    reader: ManifestReader,
+    selected: Option[list[StandardPackage]] = None,
+) -> Result[list[UnitLoaf], str]:
     """
     The standard packages a unit of `package` reaches. They are ambient: every one is available, the unit's own
     package excepted, and the unit links the ones it uses.
     """
     mut loaves: list[UnitLoaf] = []
-    for found in standard_packages(reader)?:
+    packages = match selected:
+        Some(known) => known
+        None => standard_packages(reader)?
+
+    for found in packages:
         if found.name != package:
             directory = standard_artifact_dir(found.name, profile)?
             loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
@@ -209,10 +299,21 @@ pub def describe(
     selected_facets: list[LocalFacet] = [],
     direct: bool = false,
     purpose: ActivationPurpose = ActivationPurpose.Normal,
+    selected_standard: Option[list[StandardPackage]] = None,
 ) -> Result[UnitDescription, str]:
     """Describe `source` for its owning purpose, bypassing a Loaf only for explicit direct source execution."""
     clock = begin()
-    result = described(source, profile, request, reader, selected_toolchain, selected_facets, direct, purpose)
+    result = described(
+        source,
+        profile,
+        request,
+        reader,
+        selected_toolchain,
+        selected_standard,
+        selected_facets,
+        direct,
+        purpose,
+    )
     key = (f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|" + f"{request.all_features}|direct={direct}|purpose={purpose.value()}")
     record(Operation.UnitDescription, key, clock)
     return result
@@ -224,6 +325,7 @@ def described(
     request: FeatureRequest,
     reader: ManifestReader,
     selected_toolchain: Option[Toolchain],
+    selected_standard: Option[list[StandardPackage]],
     selected_facets: list[LocalFacet],
     direct: bool,
     purpose: ActivationPurpose,
@@ -233,15 +335,49 @@ def described(
     if not entry.is_file():
         return Err(f"{entry.0}: no such source file")
     if direct:
-        return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
-    match project_root_of(entry):
-        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
+        return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
+    match discovered_project(entry)?:
+        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
             active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
-            return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader)
+            # A project's roots are resolved, so its entry is named through its resolved directory too: `oven build .`
+            # spells it `<project>/./src/lib.incn`, and a checkout may be reached through a link. An entry spelled
+            # outside its own source root would have that root's sources listed a second time, under another name.
+            directory = entry.parent().resolve().map_err((error) => f"{entry.0}: {error.message()}")?
+            placed = directory.joinpath(entry.name())
+            return project_unit(placed, projects[root.0], profile, root.0, active, projects, reader, selected_standard)
+
+
+pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDescription, str]:
+    """
+    The unit with its checked C bindings verifying against its package's declared target `triple` instead of the
+    host (`--interop-target`); an empty triple selects the host.
+    """
+    mut selected = unit
+    if triple == "":
+        return Ok(selected)
+    match discovered_project(Path(unit.source))?:
+        None => return Err(f"`--interop-target {triple}` selects a target a project declares; {unit.source} has none")
+        Some(found) =>
+            graph = intake(found, unit.manifests).map_err((error) => error.message())?
+            for project in graph.projects:
+                if project.root == unit.project_root:
+                    mut target = select_interop_target(project.intent.name, project.intent.c_targets, triple)?
+                    target.verifier = selected_verifier(unit)
+                    selected.c_abi_target = Some(target)
+                    return Ok(selected)
+            return Err(f"`--interop-target {triple}`: {unit.project_root} is not a project of its own graph")
+
+
+def selected_verifier(unit: UnitDescription) -> str:
+    """The Clang a C ABI check selects explicitly: `INCAN_C_ABI_CLANG`, else the toolchain's own, else none."""
+    mut toolchain_clang = ""
+    if let Some(toolchain) = unit.selected_toolchain:
+        toolchain_clang = toolchain.c_compiler
+    return selected_abi_clang(toolchain_clang, get_or("INCAN_C_ABI_CLANG", ""))
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
@@ -260,6 +396,7 @@ def project_unit(
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
     reader: ManifestReader,
+    selected_standard: Option[list[StandardPackage]],
 ) -> Result[UnitDescription, str]:
     """Describe one project in the root's selected graph; dependency builds share its artifact layout."""
     return Ok(
@@ -273,10 +410,12 @@ def project_unit(
             profile=profile,
             declared_features=sorted([name for name in own.intent.features.keys()]),
             active_features=active.active[own.root],
-            loaves=project_loaves(own, profile, artifact_root, active, projects, reader)?,
+            loaves=project_loaves(own, profile, artifact_root, active, projects, reader, selected_standard)?,
             rust_crates=rust_crates_of(own, active.facets),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
+            cloves=project_cloves(own, profile, active, projects)?,
+            c_archives=linked_archives(own.root, own.intent.c_targets)?,
             vocab_entry=own.intent.vocab_entry,
             toolchain_access=own.intent.toolchain_access,
             facets=active.facets,
@@ -286,6 +425,26 @@ def project_unit(
     )
 
 
+def project_cloves(
+    own: LocalProject,
+    profile: str,
+    active: ActiveGraph,
+    projects: Dict[str, LocalProject],
+) -> Result[list[CloveUnit], str]:
+    """
+    The project's own C facet and every reached project's, each compiled or reused as its own unit (RFC 159) under
+    the Clove's own `target`, so every unit that reaches one Clove shares its archives.
+    """
+    mut cloves: list[CloveUnit] = []
+    for root in reachable_roots(own.root, active):
+        if root not in projects:
+            continue
+        project = projects[root]
+        if let Some(facet) = project.intent.c_facet:
+            cloves.append(clove_unit(project.intent.name, root, facet, profile, root)?)
+    return Ok(cloves)
+
+
 def project_loaves(
     own: LocalProject,
     profile: str,
@@ -293,6 +452,7 @@ def project_loaves(
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
     reader: ManifestReader,
+    selected_standard: Option[list[StandardPackage]],
 ) -> Result[list[UnitLoaf], str]:
     """
     List a project's reachable Loaves, preserving direct aliases before transitive package names.
@@ -338,7 +498,7 @@ def project_loaves(
             ),
         )
     # 4. Every standard package is available, except the one the unit is.
-    return Ok(loaves + standard_loaves(own.intent.name, profile, reader)?)
+    return Ok(loaves + standard_loaves(own.intent.name, profile, reader, selected_standard)?)
 
 
 def reachable_roots(start: str, active: ActiveGraph) -> list[str]:

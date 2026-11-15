@@ -116,12 +116,10 @@ impl SurfaceIndex {
         }
         let (mut declaration, remainder): (ExecutableDeclaration, _) =
             postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
-        match &mut declaration {
-            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
-                restore_trait_fields(std::slice::from_mut(nominal), remainder)?;
-            }
-            _ if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),
-            _ => {}
+        match declaration.nominal_mut() {
+            Some(nominal) => restore_trait_fields(std::slice::from_mut(nominal), remainder)?,
+            None if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),
+            None => {}
         }
         if declaration.identity() != Some(identity) {
             return Err(malformed("fragment identity differs from its index"));

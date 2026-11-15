@@ -1,0 +1,15 @@
+"""Tests that use fixtures from both conftests above them."""
+
+from std.testing import assert_eq
+
+
+def test_parent_conftest(root_name: str) -> None:
+    assert_eq(root_name, "root")
+
+
+def test_both_conftests(sub_name: str) -> None:
+    assert_eq(sub_name, "sub of root")
+
+
+def test_conftest_yield(opened: int) -> None:
+    assert_eq(opened, 5)

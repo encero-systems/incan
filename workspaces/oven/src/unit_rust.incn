@@ -31,18 +31,20 @@ from registry_units import RegistryUnits
 from rust_target import target_configuration
 from search_index import search_index
 from sysroot_access import declared_libraries, runtime_sysroot
-from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
+from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler
 from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
+from native_references import closure_reference, native_anchors
 from unit_compiler import compile_prepared_unit
 from callable_products import retain_callable_products
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
+from frozen_inputs import observation as frozen_observation
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
 
@@ -245,6 +247,10 @@ pub def prepare_native(
 
     1. Prepare the shared local graph, or resolve a standalone unit's declared Rust imports.
     2. Bind the selected artifacts and toolchain inputs to the unit.
+
+    A standalone unit's imports are asked of its linked description. Without Rust imports that description is the
+    prepared unit, so the source graph the same compiler activation reported is the one the prepared unit is keyed by,
+    and keying it asks the compiler nothing more.
     """
     # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
     mut unit = described
@@ -252,7 +258,11 @@ pub def prepare_native(
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         unit = resolve_dependencies(unit, toolchain)?
     else:
-        for native in standalone_crates(unit, toolchain)?:
+        linked = prepare_linked(unit, toolchain)?
+        natives = standalone_crates(unit, toolchain, Some(linked))?
+        if len(natives) == 0:
+            return Ok(linked)
+        for native in natives:
             unit = add_rust_root(unit, native)?
     # 2. No source graph is selected again while the prepared unit is linked.
     return prepare_linked(unit, toolchain)
@@ -290,7 +300,7 @@ pub def prepare_linked(
     loaves = unit.loaves
     for loaf in loaves:
         # Checking-only exports supply a manifest, never a claim to an executable native artifact.
-        if loaf.name in checking_interfaces and not loaf_library(loaf).is_file():
+        if loaf.name in checking_interfaces and not available(loaf_library(loaf)):
             continue
         linked, searched = link_loaf(unit, loaf, toolchain_crates, toolchain.native_closures)?
         unit = linked
@@ -299,8 +309,11 @@ pub def prepare_linked(
                 directories.append(directory)
     # 3. The directories are sorted and distinct, as the compiler merges them with the index.
     unit.search = unique(directories)
-    for cache in unit.rust_abi:
-        admit_fact(Path(cache))?
+    # Installed ABI facts were admitted and sealed into the installation page. Synthetic and staged toolchains still
+    # need the direct admission path used by installation preparation and focused tests.
+    if len(toolchain.compiler_facts) != len(toolchain.rust_abi) + 1:
+        for cache in unit.rust_abi:
+            admit_fact(Path(cache))?
     ready = prepare_vocabulary(unit, toolchain)?
     return Ok(with_callable_products(ready, toolchain))
 
@@ -329,7 +342,13 @@ def standard_available(loaf: UnitLoaf) -> bool:
     if not loaf.standard:
         return true
     interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-    return loaf_library(loaf).is_file() and interface.is_file()
+    library = loaf_library(loaf)
+    return available(library) and available(interface)
+
+
+def available(path: Path) -> bool:
+    """Whether a payload was admitted with the installation page or exists as an editable project artifact."""
+    return frozen_observation(path).is_some() or path.is_file()
 
 
 def loaf_library(loaf: UnitLoaf) -> Path:
@@ -345,7 +364,7 @@ def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> U
         if native.name not in [item.name for item in unit.externs]:
             unit.externs.append(native)
         directory = Path(native.path).parent()
-        if native.name != unit.package and directory.joinpath(f"{native.name}.incnlib").is_file():
+        if native.name != unit.package and available(directory.joinpath(f"{native.name}.incnlib")):
             if native.name not in [loaf.name for loaf in unit.loaves]:
                 unit.loaves.append(
                     UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
@@ -383,11 +402,11 @@ def link_loaf(
     """
     linked = native_crate_name(loaf.name)
     library = loaf_library(loaf)
-    if loaf.standard and not library.is_file():
+    if loaf.standard and not available(library):
         return Ok((described, []))
     unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
     closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
-    if not closure.is_file():
+    if not available(closure):
         return Ok((unit, [loaf.dir]))
     document = readings.read(closure)?
     exposed = expose_macro_crates(unit, closure, document, toolchain_crates)?
@@ -467,7 +486,7 @@ def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> 
         if not loaf.is_dependency():
             continue
         interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-        if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
+        if (not available(loaf_library(loaf)) or not available(interface)) and loaf.name not in not_prepared:
             not_prepared.append(loaf.name)
     ready.not_prepared_loaves = sorted(not_prepared)
     return ready
@@ -581,11 +600,13 @@ def expose_macro_crates(
         Some(listed) =>
             entries = array(listed, ["macro_externs"]).map_err((_) => f"{closure.0}: macro_externs is not a list")?
             malformed = f"{closure.0}: a macro extern is not a name and a path"
+            anchors = native_anchors()?
             for entry in entries:
                 pair = strings(entry, ["macro_externs"]).map_err((_) => malformed)?
                 if len(pair) != 2:
                     return Err(malformed)
                 if pair[0] in toolchain_crates:
                     continue
-                result = add_extern(result, NativeCrate(name=pair[0], path=located(closure.parent(), pair[1])))?
+                path = closure_reference(closure.parent(), pair[1], anchors)?
+                result = add_extern(result, NativeCrate(name=pair[0], path=path))?
             return Ok(result)

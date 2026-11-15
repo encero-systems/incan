@@ -1,5 +1,6 @@
 """Lower formatted strings and the display and debug operands they format."""
 
+from pub::incan_mir_plan import carrier_position, is_carrier_index
 from pub::incan_mir_plan import (
     Carrier,
     CalleeKind,
@@ -219,7 +220,7 @@ def display_value_operand(
                 PlanType.Enum(owner, name) =>
                     if (
                         owner >= len(builder.enums)
-                        and builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Declared
+                        and builder.intrinsics[carrier_position(owner)].carrier != Carrier.Declared
                     ):
                         result = format_carrier(builder, place, span)?
                         if read.fact == OwnershipFact.Move:
@@ -374,8 +375,8 @@ def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: Sou
     if is_union_carrier(builder, owner):
         copied = clone_nominal_operand(builder, place, span)?
         return debug_plan_operand(builder, copied, span)
-    if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
-        declaration = builder.intrinsics[owner - len(builder.enums)]
+    if is_carrier_index(owner) and carrier_position(owner) < len(builder.intrinsics):
+        declaration = builder.intrinsics[carrier_position(owner)]
         if declaration.carrier == Carrier.Option or declaration.carrier == Carrier.Result:
             return borrowed_enum_debug(builder, place, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")

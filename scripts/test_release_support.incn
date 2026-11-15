@@ -23,6 +23,7 @@ from release_support import (
     append_bytes,
     append_timing_file,
     check_baseline,
+    digest,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
@@ -37,6 +38,7 @@ from release_support import (
     reserved_admitted,
     require_candidate_census,
     same_bytes,
+    seed_toolchain_directory,
     shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
@@ -50,6 +52,8 @@ from verify_installation import (
     require_shipped_standard_sources,
 )
 from relink_driver import absolute_manifest
+from registry_checksums import REGISTRY_CHECKSUMS, checksummed_closure, is_sha256, write_checksummed_registry
+from check_support import repository_root
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -131,12 +135,38 @@ def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Re
     defaults = parse_release_options([SHA, "out"])?
     assert not defaults.keep_trees
     assert defaults.jobs == 4
+    assert defaults.seed_source == ""
+    assert not defaults.stamp_signer
+    assert defaults.signed_bundle == ""
+    return Ok(None)
+
+
+def test_the_release_workflow_packs_and_verifies_in_two_invocations() -> Result[None, str]:
+    """`--stamp-signer` packs a stamped release; `--verify-installed BUNDLE` verifies the signed one; never both."""
+    packing = parse_release_options([SHA, "out", "--stamp-signer"])?
+    assert packing.stamp_signer and packing.signed_bundle == ""
+    verifying = parse_release_options([SHA, "out", "--verify-installed", "signed"])?
+    assert verifying.signed_bundle == "signed" and not verifying.stamp_signer
+    assert refused_release([SHA, "out", "--verify-installed"]) == "--verify-installed needs the directory of the signed bundle"
+    both = refused_release([SHA, "out", "--stamp-signer", "--verify-installed", "signed"])
+    assert both == "--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one"
+    return Ok(None)
+
+
+def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> Result[None, str]:
+    """The seed's own source commit is an explicit full SHA, separate from the qualified source SHA."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    options = parse_release_options([SHA, "out", "--seed-source", seed])?
+    assert options.source_sha == SHA
+    assert options.seed_source == seed
+    assert refused_release([SHA, "out", "--seed-source"]) == "--seed-source needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-source", "deadbeef"]) == "--seed-source needs a full lowercase source commit"
     return Ok(None)
 
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
@@ -248,6 +278,23 @@ def test_reference_cache_identity_covers_seed_and_reference_source_trees() -> Re
     assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
     assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")? != original
+    return Ok(None)
+
+
+def test_a_missing_file_is_refused_by_its_path() -> Result[None, str]:
+    """A digest of a file that does not exist names that file, as does every identity built from such digests."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    missing = temporary.path().joinpath("toolchain.json")
+    match digest(missing):
+        Ok(found) => return Err(f"a missing file digested to {found}")
+        Err(reason) =>
+            assert reason.startswith(f"cannot digest {missing.0}: "), reason
+    present = temporary.path().joinpath("incan")
+    present.write_bytes(b"oven-a").map_err((error) => error.message())?
+    match reference_cache_identity(present, present, missing, "contracts-a", "stdlib-a"):
+        Ok(found) => return Err(f"an identity over a missing seed manifest digested to {found}")
+        Err(reason) =>
+            assert missing.0 in reason, reason
     return Ok(None)
 
 
@@ -374,6 +421,14 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
     match cached.write_bytes(b"changed"):
         Ok(_) => return Err("the shared relocated tree remained writable")
         Err(_) => pass
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    # Reuse only reads the shared home: a permission write would change what a concurrent release admitted.
+    cached.chmod(false).map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a writable shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("writable entry"), message
+    cached.chmod(true).map_err((error) => error.message())?
     assert shared_relocated_sysroot(tree, cache)?.0 == home.0
     rustup
         .joinpath("update-hashes/tree")
@@ -576,4 +631,162 @@ def test_installed_verification_refuses_a_toolchain_without_standard_sources() -
             assert "ships no standard sources" in message
     primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
     require_shipped_standard_sources(home)?
+    return Ok(None)
+
+
+def test_relocation_audit_reads_anchored_native_references() -> Result[None, str]:
+    """An `absolute:` native-closure reference outside the installation is refused; the home anchors are portable."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    closure = native.joinpath("example.native.json")
+    foreign = "{\"externs\": [[\"example\", \"absolute:/elsewhere/libexample.rlib\"]]}\n"
+    closure.write_text(foreign, "utf-8", "strict", None).map_err((error) => error.message())?
+    match audit_relocation(home, []):
+        Ok(_) => return Err("an absolute native reference outside the installation passed the relocation audit")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+            assert message.contains("/elsewhere/libexample.rlib"), message
+    externs = "[[\"example\", \"sibling:libexample.rlib\"], [\"lang\", \"toolchain:native/lang/liblang.rlib\"]]"
+    macros = "[[\"derive\", \"bakery:carriers/derive/libderive.dylib\"]]"
+    anchored = "{\"externs\": " + externs + ", \"macro_externs\": " + macros + ", \"search\": [\"sibling:.\"]}\n"
+    closure.write_text(anchored, "utf-8", "strict", None).map_err((error) => error.message())?
+    audit_relocation(home, [])?
+    return Ok(None)
+
+
+def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -> Result[None, str]:
+    """
+    A release reads its seed by the version the seed installed, which may precede the line it builds.
+
+    1. A seed home with one installed version selects that version's directory, not the candidate's.
+    2. A home with no installed toolchain, or two, is refused by name.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    # 1. The seed installed the line's previous version.
+    seed.joinpath("toolchains/0.6.0-dev.8").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.8/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    assert seed_toolchain_directory(seed)? == "toolchains/0.6.0-dev.8"
+    assert seed_toolchain_directory(seed)? != TOOLCHAIN_DIRECTORY
+    # 2. Nothing installed, or more than one generation, names no seed.
+    empty = temporary.path().joinpath("empty")
+    empty.joinpath("toolchains").mkdir(true, true).map_err((error) => error.message())?
+    match seed_toolchain_directory(empty):
+        Ok(found) => return Err(f"an empty seed home selected {found}")
+        Err(reason) => assert "no installed toolchain" in reason, reason
+    seed.joinpath("toolchains/0.6.0-dev.7").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.7/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    match seed_toolchain_directory(seed):
+        Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
+        Err(reason) => assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
+    return Ok(None)
+
+
+def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() -> Result[None, str]:
+    """
+    A release writes the candidate home's own registry closure, each unit carrying its pinned crates.io checksum.
+
+    1. Each unit of the candidate's closure records the pin for its Loaf version, and the candidate's manifest names
+       that closure. The seed's entries and producer selection are linked, and the seed's closure is unchanged.
+    2. An unpinned Loaf version is refused by name, and so is a recorded checksum that differs from its pin.
+    3. The release's own pin file pins only `sha256:` digests.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed/registry")
+    seed.joinpath("entries/sha256-aa/artifacts").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("selected.json").write_text("{\"units\": []}\n", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    closure_text = """{"externs": {}, "schema": "incan.oven.closure/1", "units": [
+{"domain": "target", "entry": "sha256:aa", "loaf": "crates-io/serde", "version": "1.0.229"},
+{"domain": "host", "entry": "sha256:bb", "loaf": "crates-io/serde", "version": "1.0.229"},
+{"domain": "target", "entry": "sha256:cc", "loaf": "crates-io/libc", "version": "0.2.190"}]}
+"""
+    seed.joinpath("closure.json").write_text(closure_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    serde = "sha256:4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
+    libc = "sha256:ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+    pins_text = (
+        "{\"checksums\": {\"crates-io/serde\": {\"1.0.229\": \""
+        + serde
+        + "\"}, \"crates-io/libc\": {\"0.2.190\": \""
+        + libc
+        + "\"}}}\n"
+    )
+    pins = temporary.path().joinpath("registry-checksums.json")
+    pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("candidate")
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
+    candidate.joinpath("toolchain.json").write_text(manifest, "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    # 1. The candidate's closure carries each unit's pin; the seed's stays as it was.
+    write_checksummed_registry(candidate, pins)?
+    written = JsonValue.parse(
+        candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
+    ).map_err((error) => error.message())?
+    units: list[JsonValue] = written.require("units").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    mut recorded: list[str] = []
+    for unit in units:
+        match unit.get("checksum"):
+            Some(checksum) => recorded.append(checksum.expect_str().map_err((error) => error.message())?)
+            None => recorded.append("")
+    assert recorded == [serde, serde, libc], f"the candidate closure records {recorded}"
+    named = JsonValue.parse(
+        candidate.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
+    ).map_err((error) => error.message())?
+    registry_units = named.require("registry_units").and_then((value) => value.expect_str()).map_err(
+        (error) => error.message(),
+    )?
+    assert registry_units == "registry/closure.json", f"the candidate manifest names {registry_units}"
+    assert candidate.joinpath("registry/entries").is_symlink(), "the seed's entries were not linked"
+    assert candidate.joinpath("registry/selected.json").is_symlink(), "the seed's selection was not linked"
+    kept = seed.joinpath("closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert kept == closure_text, "the seed's closure was written"
+    # 2. An unpinned version, and a recorded checksum that is not the pin, are refused.
+    unpinned = JsonValue.parse(
+        "{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}, {\"loaf\": \"crates-io/libc\", "
+        + "\"version\": \"0.2.190\"}]}",
+    ).map_err((error) => error.message())?
+    pinned = JsonValue.parse(pins_text).map_err((error) => error.message())?
+    match checksummed_closure(unpinned, pinned):
+        Ok(_) => return Err("a closure with an unpinned Loaf version was accepted")
+        Err(reason) =>
+            assert "pins no checksum for: crates-io/rand 0.9.2" in reason, reason
+            assert REGISTRY_CHECKSUMS in reason, reason
+    other = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    disagreeing = JsonValue.parse(
+        "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \"" + other + "\"}]}",
+    ).map_err((error) => error.message())?
+    match checksummed_closure(disagreeing, pinned):
+        Ok(_) => return Err("a recorded checksum that differs from its pin was accepted")
+        Err(reason) =>
+            assert other in reason and libc in reason, reason
+    # 3. The checked-in pins are `sha256:` digests.
+    released = JsonValue.parse(
+        repository_root()?.joinpath(REGISTRY_CHECKSUMS).read_text("utf-8", "strict").map_err(
+            (error) => error.message(),
+        )?,
+    ).map_err((error) => error.message())?
+    loaves = released.require("checksums").map_err((error) => error.message())?
+    mut count = 0
+    for loaf in loaves.keys():
+        versions = loaves.require(loaf).map_err((error) => error.message())?
+        for version in versions.keys():
+            value = versions.require(version).and_then((entry) => entry.expect_str()).map_err(
+                (error) => error.message(),
+            )?
+            assert is_sha256(value), f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{value}`"
+            count += 1
+    assert count > 0, f"{REGISTRY_CHECKSUMS} pins nothing"
     return Ok(None)

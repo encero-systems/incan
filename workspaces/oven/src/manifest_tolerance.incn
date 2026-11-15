@@ -1,0 +1,66 @@
+"""
+Manifest entries 0.5.1 accepted that this toolchain tolerates without reading, each with a warning from the command
+that selects the project, never silently:
+
+1. `[tool.incan]` keys this toolchain does not read (`manifest_tool`).
+2. A `[project.scripts]` entry that names the conventional library, as hees.ai's `library = "src/lib.incn"`. Intake
+   ignores it: the library is built as a library, never as an executable.
+"""
+
+from std import toml
+from std.fs import Path
+from manifest_tool import unknown_tool_keys
+
+
+pub def library_scripts(root: Path, scripts: Dict[str, str], library: Path) -> Dict[str, str]:
+    """The scripts whose source resolves to the conventional library `library`, by name, with their authored paths."""
+    mut named: Dict[str, str] = {}
+    if not library.is_file():
+        return named
+    match library.resolve():
+        Err(_) => return named
+        Ok(canonical) =>
+            for name in sorted([name for name in scripts.keys()]):
+                path = root.joinpath(scripts[name])
+                if path.is_file():
+                    match path.resolve():
+                        Ok(resolved) =>
+                            if resolved.0 == canonical.0:
+                                named[name] = scripts[name]
+                        Err(_) => pass
+    return named
+
+
+pub def without_scripts(scripts: Dict[str, str], ignored: Dict[str, str]) -> Dict[str, str]:
+    """`scripts` without the ignored entries."""
+    mut kept: Dict[str, str] = {}
+    for name in sorted([name for name in scripts.keys()]):
+        if name not in ignored:
+            kept[name] = scripts[name]
+    return kept
+
+
+pub def tolerated_warnings(manifest: str, source: str, ignored: Dict[str, str]) -> list[str]:
+    """The warnings for a manifest's tolerated entries: unknown `[tool.incan]` keys, then ignored library scripts."""
+    mut warnings: list[str] = []
+    for key in unknown_tool_keys(source):
+        warnings.append(f"{manifest}: [tool.incan] key `{key}` is not read by this toolchain and is ignored")
+    for name in sorted([name for name in ignored.keys()]):
+        warnings.append(library_script_warning(manifest, source, name, ignored[name]))
+    return warnings
+
+
+def library_script_warning(manifest: str, source: str, name: str, path: str) -> str:
+    """One ignored library script's warning, at its manifest line when the text locates the entry."""
+    detail = "names the conventional library, which is built as a library, not as an executable; the entry is ignored"
+    return f"{script_place(manifest, source, name)}: [project.scripts] {name} = \"{path}\" {detail}"
+
+
+def script_place(manifest: str, source: str, name: str) -> str:
+    """`MANIFEST:LINE` for a script entry the text locates, otherwise the manifest alone."""
+    match toml.locate(source, ["project", "scripts", name]):
+        Ok(found) =>
+            match found:
+                Some(location) => return f"{manifest}:{location.line}"
+                None => return manifest
+        Err(_) => return manifest

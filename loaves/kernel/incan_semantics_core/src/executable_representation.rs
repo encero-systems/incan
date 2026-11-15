@@ -86,12 +86,14 @@ use crate::body_ir::{
 /// field lifecycle, original-position and literal-empty-default facts. The positional schema requires fresh producers.
 /// Version 55 retains unresolved source-result independence obligations in checked input profiles. Generic
 /// templates carry their exact result types until the consuming instantiation proves independent storage.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 55;
+/// Version 56 passes eligible immutable parameters through inferred shared storage. Owned uses still materialize at
+/// their typed operation, so older owners with by-value parameter frames cannot be reused under this ABI.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 56;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 55;
+const OLDEST_SUPPORTED_VERSION: u32 = 56;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -261,9 +263,37 @@ pub enum ExecutableDeclaration {
         /// Producer-selected native callees required by any of the three retained frames.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
+    /// A nominal layout whose retained field-default or partial-default frames call native code. A consumer that
+    /// omits a field evaluates those frames in its own body, so the producer's native selections travel with them.
+    NominalWithCallables {
+        /// The checked layout, including its default frames.
+        nominal: NominalDeclaration,
+        /// Checker-proven concrete trait dispatch slots, empty when the layout adopts none.
+        implementations: Vec<crate::body_ir::TraitImplementation>,
+        /// Producer-selected native callees required by the retained default frames; never empty.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
+    /// The nominal layout this fragment carries, whichever of the three nominal forms publishes it.
+    pub fn nominal(&self) -> Option<&NominalDeclaration> {
+        match self {
+            Self::Nominal(value) | Self::NominalWithTraits(value, _) => Some(value),
+            Self::NominalWithCallables { nominal, .. } => Some(nominal),
+            _ => None,
+        }
+    }
+
+    /// The mutable nominal layout this fragment carries, whichever of the three nominal forms publishes it.
+    pub fn nominal_mut(&mut self) -> Option<&mut NominalDeclaration> {
+        match self {
+            Self::Nominal(value) | Self::NominalWithTraits(value, _) => Some(value),
+            Self::NominalWithCallables { nominal, .. } => Some(nominal),
+            _ => None,
+        }
+    }
+
     /// Canonical identity carried by this fragment; it must agree with the selecting index. Native-body records may
     /// transport only exact Rust callable identities, never authorize a package declaration outside that index.
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
@@ -308,6 +338,9 @@ impl ExecutableDeclaration {
             Self::Enum(value) => Some(&value.canonical),
             Self::Trait(value) => Some(value),
             Self::NominalWithTraits(value, _) => Some(&value.canonical),
+            Self::NominalWithCallables { nominal, callables, .. } => {
+                (!callables.is_empty() && valid_native_calls(callables)).then_some(&nominal.canonical)
+            }
             Self::Constant(value) => Some(&value.canonical),
             Self::TypeAlias(value) => Some(&value.canonical),
             Self::Static(value) => Some(&value.canonical),

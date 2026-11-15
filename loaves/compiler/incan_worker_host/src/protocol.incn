@@ -3,7 +3,9 @@ The `incan.compiler-worker/1` documents: one JSON document per frame, each carry
 
 A request names the compiler command and its arguments, the caller's working directory and the files that receive the
 command's console output. A reply gives the status the command exits with, a reason when the worker could not run it,
-and whether the worker retires after it. Readiness tells the process that started the worker that it listens.
+and whether the worker retires after it. A worker whose compile was over its footprint ceiling answers with the rustc
+handoff it wrote instead, which its caller runs in a fresh process. Readiness tells the process that started the
+worker that it listens.
 """
 
 from rust::std::string import String as RustString
@@ -27,6 +29,15 @@ pub enum WorkerCommand:
     Format
     # `--source-files PATH`: list the authored sources a formatting run selects under a path.
     SourceFiles
+    # `--rust-imports UNIT`: list the Rust crate requests in a unit's authored source graph.
+    RustImports
+
+    pub def light(self) -> bool:
+        """Whether the command only reads sources, checking and linking nothing: every command but a unit or a check."""
+        match self:
+            WorkerCommand.Unit => return false
+            WorkerCommand.Check => return false
+            _ => return true
 
 
 pub model CompileRequest:
@@ -61,6 +72,8 @@ pub enum Reply:
     Refused(str)
     # The command started and failed inside the compiler.
     CompilerFault(Fault)
+    # Native compilation is the caller's: run `--rustc-handoff` with this handoff in a fresh process.
+    HandedOff(str)
 
 
 pub enum Admission:
@@ -133,11 +146,12 @@ def retirement_requested(document: JsonValue) -> Result[bool, str]:
 def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
     """
     The served command of an argument list whose required paths are absolute: `--unit UNIT CRATE OUTPUT SYSROOT ...`,
-    `--check UNIT SYSROOT ...`, `--fmt UNIT PATH ...` and `--source-files PATH`. A formatted or listed path resolves
+    `--check UNIT SYSROOT ...`, `--fmt UNIT PATH ...`, `--source-files PATH` and `--rust-imports UNIT`. A formatted or
+    listed path resolves
     against the caller's directory.
     """
     if len(arguments) == 0:
-        return Err("a compiler worker accepts only --unit, --check, --fmt and --source-files requests")
+        return Err("a compiler worker accepts only --unit, --check, --fmt, --source-files and --rust-imports requests")
     mut command = WorkerCommand.Unit
     mut minimum = 5
     mut absolute: list[int] = [1, 3, 4]
@@ -153,8 +167,12 @@ def command_of(arguments: list[str]) -> Result[WorkerCommand, str]:
         command = WorkerCommand.SourceFiles
         minimum = 2
         absolute = []
+    elif arguments[0] == "--rust-imports":
+        command = WorkerCommand.RustImports
+        minimum = 2
+        absolute = [1]
     elif arguments[0] != "--unit":
-        return Err("a compiler worker accepts only --unit, --check, --fmt and --source-files requests")
+        return Err("a compiler worker accepts only --unit, --check, --fmt, --source-files and --rust-imports requests")
     if len(arguments) < minimum:
         return Err(f"a compiler worker {arguments[0]} request is incomplete")
     for index in absolute:
@@ -206,10 +224,11 @@ def strings(document: JsonValue, name: str) -> Result[list[str], str]:
 pub def encode_reply(reply: Reply, retired: bool) -> bytes:
     """
     A reply's document: the status the command exits with and the reason it did not run, which is empty when it ran.
-    A retiring worker marks its reply, so its caller does not dial it again.
+    A retiring worker marks its reply, so its caller does not dial it again, and a handed-off compile names its handoff.
     """
     mut exit = 1
     mut reason = ""
+    mut rustc_handoff = ""
     match reply:
         Reply.Completed(code) => exit = code
         Reply.Refused(why) => reason = why
@@ -217,10 +236,15 @@ pub def encode_reply(reply: Reply, retired: bool) -> bytes:
             match fault:
                 Fault.Panicked => exit = PANIC_STATUS
                 Fault.UnsafeCleanup(why) => reason = why
+        Reply.HandedOff(path) =>
+            exit = 0
+            rustc_handoff = path
     mut fields: Dict[str, JsonValue] = {}
     fields["schema"] = JsonValue.string(SCHEMA)
     fields["exit"] = JsonValue.int(exit)
     fields["reason"] = JsonValue.string(reason)
+    if rustc_handoff != "":
+        fields["handoff"] = JsonValue.string(rustc_handoff)
     if retired:
         fields["retired"] = JsonValue.bool(true)
     return encoded(JsonValue.object(fields))
@@ -295,6 +319,18 @@ pub def retired(document: JsonValue) -> bool:
         if let Some(flag) = value.as_bool():
             return flag
     return false
+
+
+pub def handoff(document: JsonValue) -> Option[str]:
+    """
+    The rustc handoff a worker over its footprint ceiling wrote instead of running rustc, which the caller runs in a
+    fresh process; `None` when the worker completed the command itself.
+    """
+    if let Some(value) = document.get("handoff"):
+        if let Some(path) = value.as_str():
+            if path != "":
+                return Some(path)
+    return None
 
 
 def integer_field(document: JsonValue, name: str) -> Result[int, str]:

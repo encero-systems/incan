@@ -12,7 +12,8 @@ use crate::decorator_resolution;
 use crate::library_manifest::LibraryManifest;
 use incan_lang::lang::stdlib;
 
-const TESTING_MARKER_DECORATOR: &str = "marker";
+/// The decorator a `std.testing` function carries to declare itself a marker.
+pub(crate) const TESTING_MARKER_DECORATOR: &str = "marker";
 const TESTING_MARKER_KIND_KEY: &str = "kind";
 const TESTING_MARKER_RUNNER_ONLY_KEY: &str = "runner_only";
 const TESTING_FIXTURE_SCOPE_ARG_KEY: &str = "scope_arg";

@@ -7,7 +7,7 @@ description = "Shared language vocabulary and semantic helpers for the Incan com
 license = "Apache-2.0"
 name = "incan_lang"
 private = true
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 
 [rust]
 edition = "2024"
@@ -17,3 +17,7 @@ type = "lib"
 [[rust.bin]]
 name = "generate_lang_reference"
 path = "src/bin/generate_lang_reference.rs"
+
+[[rust.bin]]
+name = "generate_vscode_grammar_keywords"
+path = "src/bin/generate_vscode_grammar_keywords.rs"

@@ -6,33 +6,52 @@ from graph_inspection import USAGE as GRAPH_USAGE, VALUE_OPTIONS as GRAPH_VALUE_
 from graph_mcp import USAGE as MCP_USAGE, help_text as mcp_help
 from home_paths import TOOLCHAIN
 from surfaces import OVEN, owner_of
-from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
+from toolchain_archive import PACK_USAGE, INSTALL_USAGE, VERIFY_USAGE, help_text as archive_help
+from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
+from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
+from project_version import VERSION_USAGE, version_help
+from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
+from environments import ENV_USAGE, env_help
+from doctor import DOCTOR_USAGE, doctor_help
+from checked_metadata import API_USAGE, MODEL_USAGE, REGISTRY_USAGE, MetadataView, metadata_help
+from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
-const RUN_OPERANDS: str = "run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
-const INCAN_RUN_OPERANDS: str = "run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
-const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
-const TEST_OPERANDS: str = "test PATH [UNIT OPTIONS]"
-const BUILD_OPERANDS: str = "build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
-const EXPLAIN_USAGE: str = "incan explain CODE"
+const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const INCAN_RUN_OPERANDS: str = "run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const CHECK_OPERANDS: str = "check [PATH] [--format text|json] [UNIT OPTIONS]"
+const LINT_OPERANDS: str = "lint [PATH] [UNIT OPTIONS]"
+const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
+const BUILD_OPERANDS: str = "build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const EXPLAIN_USAGE: str = "incan explain CODE [--format text|json]"
 const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
+const ADD_USAGE: str = "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"
+const DEPENDENCY_USAGE: str = "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"
+const UPDATE_USAGE: str = "oven update [NAME] [--project PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
+const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
     "--features",
     "--substitute",
     "--program-entry",
     "--argv0",
+    "--interop-target",
 ]
 
 
 pub def usage(surface: str) -> str:
     """The surface's overview, composed from the same synopses each command's detailed help uses."""
-    project = [f"{surface} --version", f"{surface} {run_operands(surface)}", f"{surface} {CHECK_OPERANDS}"]
+    project = [
+        f"{surface} --version",
+        f"{surface} {run_operands(surface)}",
+        f"{surface} {CHECK_OPERANDS}",
+        f"{surface} {LINT_OPERANDS}",
+    ]
     if surface == OVEN:
         return overview(
             surface,
@@ -43,8 +62,18 @@ pub def usage(surface: str) -> str:
                 OWNER_USAGE,
                 BAKERY_USAGE,
                 DEPENDENCIES_USAGE,
+                INTEROP_USAGE,
                 LOCK_USAGE,
+                ADD_USAGE,
+                DEPENDENCY_USAGE,
+                UPDATE_USAGE,
                 TRUST_USAGE,
+                NEW_USAGE,
+                INIT_USAGE,
+                VERSION_USAGE,
+                WORKSPACE_USAGE,
+                ENV_USAGE,
+                FEATURES_USAGE,
             ],
         )
     return overview(
@@ -58,6 +87,11 @@ pub def usage(surface: str) -> str:
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
+            VERIFY_USAGE,
+            DOCTOR_USAGE,
+            API_USAGE,
+            MODEL_USAGE,
+            REGISTRY_USAGE,
         ],
     )
 
@@ -69,17 +103,45 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     """
     if owner_of(command, arguments) not in ["", surface]:
         return None
-    if command in ["run", "check", "test", "describe-unit", "build"]:
-        if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
+    if command in ["run", "check", "lint", "test", "describe-unit", "build"]:
+        if requested(arguments, unit_valued()):
             return Some(unit_help(surface, command))
-    elif command == "explain" and requested(arguments):
-        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "explain" and requested(arguments, ["--format"]):
+        return Some(
+            render(
+                EXPLAIN_USAGE,
+                ["  --format text|json  Explanation format (default text)."],
+                "incan explain INCAN-T0001",
+            ),
+        )
     elif command == "lock" and requested(arguments, ["--versions"]):
         return Some(
             render(
                 LOCK_USAGE,
                 ["  --versions MODE  Select lowest, lowest-direct or newest; an omitted mode remains sticky."],
                 "oven lock --versions lowest .",
+            ),
+        )
+    elif command == "add" and requested(arguments, ["--version", "--key", "--project"]):
+        return Some(
+            render(
+                ADD_USAGE,
+                [
+                    "  --version REQUIREMENT  Record this requirement instead of the newest published version.",
+                    "  --key KEY              The [dependencies] key, instead of the name's last part.",
+                    "  --project PATH         The project at or above PATH (default the current directory).",
+                ],
+                "oven add crates-io/serde",
+            ),
+        )
+    elif command == "dependency":
+        return dependency_help(arguments)
+    elif command == "update" and requested(arguments, ["--project"]):
+        return Some(
+            render(
+                UPDATE_USAGE,
+                ["  --project PATH  The project at or above PATH (default the current directory)."],
+                "oven update crates-io/serde",
             ),
         )
     elif command == "trust" and requested(arguments):
@@ -105,8 +167,38 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(format_help())
     elif command == "mcp" and requested(arguments, ["--profile"]):
         return Some(mcp_help())
+    elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
+        return Some(scaffold_help(command))
+    elif command == "tools" and len(arguments) > 1 and arguments[0] == "metadata":
+        if nested_help(arguments[1:], "api", ["--format"]):
+            return Some(metadata_help(MetadataView.Api))
+        if nested_help(arguments[1:], "model", ["--format"]):
+            return Some(metadata_help(MetadataView.Model))
+    elif command == "tools" and nested_help(arguments, "doctor", ["--format"]):
+        return Some(doctor_help())
+    elif command == "env" and env_help_requested(arguments):
+        return Some(env_help())
+    elif command == "workspace" and nested_help(arguments, "inspect", ["--format", "--member", "-p", "--exclude"]):
+        return Some(workspace_help())
+    elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project", "--member", "-p"]):
+        return Some(version_help())
     elif command in ["--version", "version"] and requested(arguments):
         return Some(render(f"{surface} --version", [], f"{surface} --version"))
+    elif command == "interop" and nested_help(arguments, "stage", ["--target", "--adapter", "--output"]):
+        return Some(
+            render(
+                INTEROP_USAGE,
+                [
+                    "  --target TRIPLE        A target the project declares in [[interop.c.targets]].",
+                    "  --adapter android|ios  The fixed layout: jniLibs/arm64-v8a or Frameworks.",
+                    "  --output PATH          A new directory; an existing one is never replaced.",
+                    "  --locked               Refuse a missing or stale oven.lock instead of refreshing it.",
+                    "  --format text|json     The report: lines of text, or 0.5.1's JSON report.",
+                    "  --project PATH         0.5.1's spelling of PATH.",
+                ],
+                "oven interop stage --target aarch64-linux-android --adapter android --output staged",
+            ),
+        )
     elif command == "owner" and nested_help(arguments, "stop"):
         return Some(render(OWNER_USAGE, [], "oven owner stop"))
     elif command == "inspect":
@@ -116,6 +208,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
             return Some(archive_help("pack"))
         if nested_help(arguments, "install"):
             return Some(archive_help("install"))
+        if nested_help(arguments, "verify"):
+            return Some(archive_help("verify"))
     return None
 
 
@@ -123,6 +217,10 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
     """Help for the inspection the surface runs: semantic codegraph facts on `incan`, operational facts on `oven`."""
     if surface != OVEN and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    if surface != OVEN and nested_help(arguments, "registry", ["--project", "--format"]):
+        return Some(metadata_help(MetadataView.Registry))
+    if surface == OVEN and nested_help(arguments, "features", ["--format", "--features"]):
+        return Some(features_help())
     if surface == OVEN and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
         return Some(unit_help(surface, "inspect dependencies"))
     if surface == OVEN and nested_help(arguments, "run"):
@@ -133,6 +231,29 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
                 "INCAN_ENGINE=records oven inspect run 0123456789abcdef0123456789abcdef --proofs",
             ),
         )
+    return None
+
+
+def dependency_help(arguments: list[str]) -> Option[str]:
+    """`oven dependency`'s help, for the group or one of `add`, `list` and `remove`."""
+    subcommands: list[Tuple[str, list[str]]] = [
+        ("add", ["--version", "--key", "--project"]),
+        ("list", ["--project"]),
+        ("remove", ["--project"]),
+    ]
+    for subcommand, valued in subcommands:
+        if nested_help(arguments, subcommand, valued):
+            return Some(
+                render(
+                    DEPENDENCY_USAGE,
+                    [
+                        "  --version REQUIREMENT  On `add`, record this instead of the newest published version.",
+                        "  --key KEY              On `add`, the [dependencies] key, instead of the name's last part.",
+                        "  --project PATH         The project at or above PATH (default the current directory).",
+                    ],
+                    "oven dependency remove crates-io/serde",
+                ),
+            )
     return None
 
 
@@ -150,6 +271,7 @@ def unit_help(surface: str, command: str) -> str:
         "  --features A,B         Add public root-package features.",
         "  --no-default-features  Disable the root package's default feature.",
         "  --all-features         Select every declared root-package feature.",
+        "  --interop-target TRIPLE  Verify checked C bindings against this declared [[interop.c.targets]] entry.",
     ]
     if command == "run":
         return render(
@@ -169,10 +291,12 @@ def unit_help(surface: str, command: str) -> str:
             options + ["  --format text|json    Report format (default text)."],
             f"{surface} check src/main.incn --format json",
         )
+    if command == "lint":
+        return render(f"{surface} {LINT_OPERANDS}", options, f"{surface} lint loaves/kernel/incan_lang")
     if command == "test":
         return render(
             f"{surface} {TEST_OPERANDS}",
-            options + ["  --locked              Refuse a missing or stale oven.lock."],
+            options + ["  --locked              Refuse a missing or stale oven.lock."] + runner_help_lines(),
             f"{surface} test tests/test_example.incn",
         )
     if command == "describe-unit":
@@ -191,6 +315,8 @@ def unit_help(surface: str, command: str) -> str:
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
             "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
             "  --locked               Refuse a missing or stale oven.lock.",
+            "  --report json          Print a JSON build report: version, artifacts, outcome and time.",
+            "  --report-output PATH   Write the build report to PATH instead of stdout.",
         ],
         f"{surface} build src/main.incn --profile debug",
     )
@@ -207,9 +333,31 @@ def direct_options(surface: str) -> list[str]:
     """Expose direct source execution only on the Incan surface."""
     if surface == OVEN:
         return []
-    return ["  --direct               Run PATH as one source file without Oven planning."]
+    return [
+        "  --direct               Run PATH as one source file without Oven planning.",
+        "  -c, --command CODE     Run CODE, a whole module, as direct source.",
+    ]
 
 
 pub def version_text(surface: str) -> str:
     """What `--version` prints on `surface`: its name and the toolchain this Oven builds with."""
     return f"{surface} {TOOLCHAIN}"
+
+
+def unit_valued() -> list[str]:
+    """The value options of the unit commands, so help never reads an option's value as a help flag."""
+    mut valued = list(UNIT_VALUE_OPTIONS)
+    valued.append("--format")
+    valued.append("-c")
+    valued.append("--command")
+    for option in RUNNER_VALUE_OPTIONS:
+        valued.append(option)
+    return valued
+
+
+def env_help_requested(arguments: list[str]) -> bool:
+    """Help for `oven env` or one of its subcommands, before `--`."""
+    for subcommand in ["list", "show", "run"]:
+        if nested_help(arguments, subcommand, ["--format", "--project"]):
+            return true
+    return false

@@ -5,7 +5,7 @@ from std.fs import Path
 from bakery import bakery, fact_file, find, lookup
 from files import make_directory, read
 from home import home
-from graph_exports import export_file, exported
+from graph_exports import exported
 from invocation_identity import invocation_facts
 from rust_freshness import dependency_arguments, dependency_inputs, library_key, relocate_dependencies
 from toolchain import Toolchain, rust_compiler
@@ -35,9 +35,7 @@ pub def prior_export(
                     Err(_) => pass
                     Ok(key) =>
                         if key.refusal == "":
-                            entry = export_file(export_identity(name, key)?)?
-                            if exported(entry)?:
-                                return Ok(Some(entry))
+                            return exported(export_identity(name, key)?)
     return Ok(None)
 
 
@@ -79,13 +77,13 @@ pub def discover(
 
 pub def portable_dependencies(project: Path, dependencies: Path) -> Result[bool, str]:
     """External source locations have no declared portable binding, so their graph is produced without retention."""
-    root = project.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    root = project.resolve().map_err((error) => f"cannot {error.message()}")?
     paths, _ = dependency_inputs(read(dependencies)?)?
     for path in paths:
         mut selected = Path(path)
         if not path.startswith("/"):
             selected = project.joinpath(path)
-        canonical = selected.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        canonical = selected.resolve().map_err((error) => f"cannot {error.message()}")?
         if not canonical.0.startswith(root.0 + "/"):
             return Ok(false)
     return Ok(true)

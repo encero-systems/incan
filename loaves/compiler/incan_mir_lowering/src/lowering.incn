@@ -21,9 +21,12 @@ from pub::incan_mir_plan import (
     GenericEnumDeclaration,
     StaticCell,
     ZipCarrier,
+    fold_carrier_positions,
+    fold_inventories,
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
+from trace_channel import emit, traced
 from pub::incan_platform.probes import current_footprint, current_live_allocated
 from rust::incan_semantics_core import IncanType as RustType, CompilerNodeId
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
@@ -78,6 +81,7 @@ from program_entries import (
 )
 from static_storage import lower_computed_statics
 from frame_instances import lower_instances, merge_externals
+from instance_products import InstanceProducts, instance_transport
 
 
 pub type BodyIrModule = rusttype RustBodyIrModule with Send, Sync:
@@ -108,6 +112,8 @@ pub model UnitContinuation:
     pub instances: list[Instance]
     pub emitted_frames: EmittedFrames
     pub statics: list[StaticCell]
+    # The keyed-product transport its closed instances read and retain in a records request.
+    pub instance_products: Option[InstanceProducts] = None
 
 
 pub enum UnitPlanning:
@@ -256,7 +262,7 @@ def lowered_plan(
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
-    trace = native_environment(trace_key).is_some()
+    trace = traced(trace_key)
     # 1. Validate the checked inputs and prepare their shared layouts.
     source_files = source_file_index(modules, files)?
     empty_templates = index_constructors([], source_files, package_versions)
@@ -305,6 +311,7 @@ def lowered_plan(
     mut program = initial_program
     mut emitted_frames = no_emitted_frames()
     # 2. Lower ordinary frames and static initializers exactly once.
+    instance_products = instance_transport(scalar_products, scalar_bodies, record_report, overflow_checks)
     mut retained_nominals = nominal_instances
     lower_ordinary_bodies(
         context,
@@ -368,6 +375,7 @@ def lowered_plan(
                     instances=instances,
                     emitted_frames=emitted_frames,
                     statics=statics,
+                    instance_products=instance_products,
                 ),
                 requirements,
             ),
@@ -400,6 +408,7 @@ def lowered_plan(
         retained_nominals,
         published,
         trace,
+        instance_products,
     )
 
 
@@ -417,7 +426,7 @@ pub def resume_unit_plan(
 ) -> Result[UnitPlanning, str]:
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
     trace_key: str = "INCAN_TRACE_LOWERING"
-    trace = native_environment(trace_key).is_some()
+    trace = traced(trace_key)
     validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
     source_files = source_file_index(modules, files)?
     mut source_context = continuation.source_context
@@ -441,6 +450,7 @@ pub def resume_unit_plan(
     mut instances = continuation.instances
     mut emitted_frames = continuation.emitted_frames
     mut statics = continuation.statics
+    instance_products = continuation.instance_products
     # #3022: release the copied model shell before Arc.make_mut so retained contexts remain uniquely owned.
     drop(continuation)
     previous_nominal_count = len(context.as_ref().nominal_declarations)
@@ -540,6 +550,7 @@ pub def resume_unit_plan(
                     instances=instances,
                     emitted_frames=emitted_frames,
                     statics=statics,
+                    instance_products=instance_products,
                 ),
                 requirements,
             ),
@@ -570,6 +581,7 @@ pub def resume_unit_plan(
         retained_nominals,
         published,
         trace,
+        instance_products,
     )
 
 
@@ -612,6 +624,7 @@ def finish_unit_plan(
     mut retained_nominals: list[NominalInstance],
     mut published: list[NativeUnionDeclaration],
     trace: bool,
+    products: Option[InstanceProducts] = None,
 ) -> Result[UnitPlanning, str]:
     """Drain instances from preserved ordinary frames, finalize their layouts and publish one complete plan."""
     mut retained_program = program
@@ -639,6 +652,7 @@ def finish_unit_plan(
         intrinsics,
         retained_nominals,
         instance_cells,
+        products,
     )?
     for cell in instance_cells:
         statics.append(cell)
@@ -666,6 +680,7 @@ def finish_unit_plan(
                 instances=retry_instances,
                 emitted_frames=retry_emitted_frames,
                 statics=retry_statics,
+                instance_products=products,
             )
             return Ok(UnitPlanning.NeedsRuntime(retry, requests))
         RuntimeRetention.Complete => pass
@@ -738,6 +753,7 @@ def finish_unit_plan(
         templates,
         enum_templates,
         zip_carriers,
+        len(enums) - len(intrinsics),
     )?
     return Ok(UnitPlanning.Complete(planned))
 
@@ -887,6 +903,7 @@ def completed_plan(
     templates: list[GenericModelDeclaration],
     enum_templates: list[GenericEnumDeclaration],
     zip_carriers: list[ZipCarrier],
+    sources: int,
 ) -> Result[Option[Plan], str]:
     """Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan."""
     has_main, declares_main = main_selection(context, entry_owner)
@@ -898,24 +915,22 @@ def completed_plan(
         return Ok(None)
     if kind == "program":
         program_entries = selected_program_entries(context)?
-    return Ok(
-        Some(
-            Plan(
-                enums=enums,
-                models=models,
-                functions=functions,
-                externals=externals,
-                span=plan_span(file=file, line=1, column=1),
-                statics=statics,
-                exports=exports,
-                tests=test_entries,
-                programs=program_entries,
-                generic_models=templates,
-                generic_enums=enum_templates,
-                zip_carriers=zip_carriers,
-            ),
-        ),
+    planned = Plan(
+        enums=enums,
+        models=models,
+        functions=functions,
+        externals=externals,
+        span=plan_span(file=file, line=1, column=1),
+        statics=statics,
+        exports=exports,
+        tests=test_entries,
+        programs=program_entries,
+        generic_models=templates,
+        generic_enums=enum_templates,
+        zip_carriers=zip_carriers,
     )
+    # The inventories were folded when the last carrier was appended; storage and templates are folded here.
+    return Ok(Some(fold_carrier_positions(planned, sources)?))
 
 
 def lower_plan_frames(
@@ -1100,9 +1115,12 @@ def finalize_plan_layouts(
 ) -> Result[None, str]:
     """Publish completed layouts and validate callable and coroutine storage after every instance has contributed."""
     # Instance lowering can append carriers needed by a callable or coroutine capture.
+    sources = len(enums)
     for declaration_position in range(len(intrinsics)):
         declaration = borrowed_at(intrinsics, declaration_position)
         enums.append(declaration)
+    # No carrier is appended after this point, so each carrier position takes its place in the plan's enum table.
+    fold_inventories(functions, models, enums, externals, sources)?
     if publish:
         publish_local_layouts(models, enums)
     retain_factory_callable_storage(context, functions, models, externals)?
@@ -1126,7 +1144,7 @@ pub def plan_contexts(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
-    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
+    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
     trace_lowering(trace, "validate modules")
     validate_plan_inputs(modules, sources, files, entry, validation_context)?
     trace_lowering_footprint(footprint_trace, "validated modules")
@@ -1150,7 +1168,7 @@ def plan_contexts_parallel(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate a resumed runtime slice and project its body-weighted module ranges concurrently."""
-    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
+    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
     trace_lowering(trace, "validate resumed modules")
     validate_plan_inputs(modules.as_ref(), sources, files, entry, validation_context)?
     trace_lowering_footprint(footprint_trace, "validated resumed modules")
@@ -1213,7 +1231,7 @@ pub def source_file_index(modules: &list[BodyIrModule], files: &list[str]) -> Re
 def trace_lowering(enabled: bool, stage: str) -> None:
     """Report one requested lowering stage without repeating diagnostic selection at each step."""
     if enabled:
-        println(f"lowering: {stage}")
+        emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: {stage}")
 
 
 def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
@@ -1223,11 +1241,21 @@ def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
     match current_footprint():
         Ok(footprint) =>
             match current_live_allocated():
-                Ok(live) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes")
-                Err(reason) => println(
+                Ok(live) => emit(
+                    "lowering_footprint",
+                    "INCAN_TRACE_LOWERING_FOOTPRINT",
+                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes",
+                )
+                Err(reason) => emit(
+                    "lowering_footprint",
+                    "INCAN_TRACE_LOWERING_FOOTPRINT",
                     f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
                 )
-        Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
+        Err(reason) => emit(
+            "lowering_footprint",
+            "INCAN_TRACE_LOWERING_FOOTPRINT",
+            f"lowering footprint: {boundary}: unavailable: {reason}",
+        )
 
 
 def validate_plan_inputs(

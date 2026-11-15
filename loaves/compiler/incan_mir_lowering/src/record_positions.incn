@@ -1,4 +1,10 @@
-"""Bind bounded plan products to relative owner positions and relocate them without lowering their bodies again."""
+"""
+Separate plan products from their source positions, and relocate products without lowering their bodies again.
+
+A product's spans are owner-relative, and each span that locates a Body IR node is stored as that node's ordinal. The
+body's position map, its nodes' owner-relative lines and columns, is a request-local fact: a comment or docstring that
+moves lines inside a body changes the map, never the product.
+"""
 
 from std.json import JsonValue, parse
 from pub::incan_mir_plan import SourceSpan
@@ -6,16 +12,16 @@ from rust::incan_semantics_core import HirSourceSpan
 from checked_values import location
 
 
-pub def relative_body_positions(body: str, source: str, file: str, owner: SourceSpan) -> Result[str, str]:
-    """Witness every Body IR node's relative line and column; only a uniform owner-line move can reuse a product."""
+pub def body_position_map(body: str, source: str, file: str, owner: SourceSpan) -> Result[list[tuple[int, int]], str]:
+    """Each Body IR node's owner-relative line and column, in the producer's serialization order."""
     value = parse(body).map_err((error) => error.message())?
-    mut positions: list[str] = []
+    mut positions: list[tuple[int, int]] = []
     collect_positions(value, source, file, owner, positions)?
-    return Ok(";".join(positions))
+    return Ok(positions)
 
 
 pub def relocate_product(text: str, file: str, line: int) -> Result[str, str]:
-    """Relocate only the existing codec's source-span objects, leaving native instructions and literal text intact."""
+    """Relocate the codec's source-span objects in the function, its runtime and its frames, leaving all else intact."""
     mut product = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
     function = parse(product["function"].expect_str().map_err((error) => error.message())?).map_err(
         (error) => error.message(),
@@ -26,6 +32,13 @@ pub def relocate_product(text: str, file: str, line: int) -> Result[str, str]:
     moved = shift_positions(function, old_file, old_line, file, line)?
     product["function"] = JsonValue.string(moved.to_json().map_err((error) => error.message())?)
     product["runtime"] = shift_positions(product["runtime"], old_file, old_line, file, line)?
+    if "frames" in product:
+        mut frames: list[JsonValue] = []
+        for frame in product["frames"].expect_array().map_err((error) => error.message())?:
+            parsed = parse(frame.expect_str().map_err((error) => error.message())?).map_err((error) => error.message())?
+            shifted = shift_positions(parsed, old_file, old_line, file, line)?
+            frames.append(JsonValue.string(shifted.to_json().map_err((error) => error.message())?))
+        product["frames"] = JsonValue.array(frames)
     return JsonValue.object(product).to_json().map_err((error) => error.message())
 
 
@@ -34,7 +47,7 @@ def collect_positions(
     source: str,
     file: str,
     owner: SourceSpan,
-    mut positions: list[str],
+    mut positions: list[tuple[int, int]],
 ) -> Result[None, str]:
     """Read coordinate fields from the producer's native serialization; this visitor never interprets IR operations."""
     if value.is_array():
@@ -50,7 +63,7 @@ def collect_positions(
                 )?
                 native_offset = source_offset(offset)?
                 span = location(HirSourceSpan.new(native_offset, native_offset), source, file)
-                positions.append(f"{span.line - owner.line}:{span.column}")
+                positions.append((span.line - owner.line, span.column))
             elif key not in ["canonical", "named_type_identities"]:
                 collect_positions(child, source, file, owner, positions)?
     return Ok(None)
@@ -85,4 +98,88 @@ def shift_positions(value: JsonValue, old_file: str, old_line: int, file: str, l
     else:
         for key in [key for key in fields.keys()]:
             fields[key] = shift_positions(fields[key], old_file, old_line, file, line)?
+    return Ok(JsonValue.object(fields))
+
+
+pub def index_positions(text: str, positions: &list[tuple[int, int]]) -> Result[str, str]:
+    """
+    Replace each owner-relative product span that locates a Body IR node by that node's ordinal.
+
+    A relative span (`<owner>`, line l, column c) locates the node at `l - 1, c`; it becomes (`<owner>`, 0, n + 1) for
+    the first such node n. A moved line inside the body therefore changes the position map, never the product. Only a
+    span on the owner line itself may locate no node; it keeps its relative coordinates.
+    """
+    mut ordinals: Dict[str, int] = {}
+    for index in range(len(positions)):
+        line, column = positions[index]
+        key = f"{line}:{column}"
+        if key not in ordinals:
+            ordinals[key] = index
+    return map_product_spans(text, PositionMapping(indexing=true, ordinals=ordinals, positions=list(positions)))
+
+
+pub def place_positions(text: str, positions: &list[tuple[int, int]]) -> Result[str, str]:
+    """Restore each node ordinal in a product to that node's current owner-relative line and column."""
+    ordinals: Dict[str, int] = {}
+    return map_product_spans(text, PositionMapping(indexing=false, ordinals=ordinals, positions=list(positions)))
+
+
+model PositionMapping:
+    """One direction of the translation between owner-relative spans and Body IR node ordinals."""
+
+    indexing: bool
+    ordinals: Dict[str, int]
+    positions: list[tuple[int, int]]
+
+
+def map_product_spans(text: str, mapping: &PositionMapping) -> Result[str, str]:
+    """Translate the spans of a product's function and runtime requirements, leaving every other field intact."""
+    mut product = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
+    function = parse(product["function"].expect_str().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    moved = map_spans(function, mapping)?
+    product["function"] = JsonValue.string(moved.to_json().map_err((error) => error.message())?)
+    product["runtime"] = map_spans(product["runtime"], mapping)?
+    if "frames" in product:
+        mut frames: list[JsonValue] = []
+        for frame in product["frames"].expect_array().map_err((error) => error.message())?:
+            parsed = parse(frame.expect_str().map_err((error) => error.message())?).map_err((error) => error.message())?
+            frames.append(JsonValue.string(map_spans(parsed, mapping)?.to_json().map_err((error) => error.message())?))
+        product["frames"] = JsonValue.array(frames)
+    return JsonValue.object(product).to_json().map_err((error) => error.message())
+
+
+def map_spans(value: JsonValue, mapping: &PositionMapping) -> Result[JsonValue, str]:
+    """Visit the codec's source-span objects; no other field is interpreted."""
+    if value.is_array():
+        mut moved: list[JsonValue] = []
+        for child in value.expect_array().map_err((error) => error.message())?:
+            moved.append(map_spans(child, mapping)?)
+        return Ok(JsonValue.array(moved))
+    if not value.is_object():
+        return Ok(value)
+    mut fields = value.expect_object().map_err((error) => error.message())?
+    if len(fields) == 3 and "file" in fields and "line" in fields and "column" in fields:
+        if fields["file"].expect_str().map_err((error) => error.message())? != "<owner>":
+            return Ok(JsonValue.object(fields))
+        line = fields["line"].expect_int().map_err((error) => error.message())?
+        column = fields["column"].expect_int().map_err((error) => error.message())?
+        if mapping.indexing:
+            key = f"{line - 1}:{column}"
+            if key in mapping.ordinals:
+                fields["line"] = JsonValue.int(0)
+                fields["column"] = JsonValue.int(mapping.ordinals[key] + 1)
+            elif line > 1:
+                # A location below the owner line that no node carries would move with a comment and stay stale.
+                return Err("plan-function span locates no Body IR node")
+        elif line == 0:
+            if column < 1 or column > len(mapping.positions):
+                return Err("plan-function product names a body position the current body does not have")
+            node_line, node_column = mapping.positions[column - 1]
+            fields["line"] = JsonValue.int(node_line + 1)
+            fields["column"] = JsonValue.int(node_column)
+        return Ok(JsonValue.object(fields))
+    for key in [key for key in fields.keys()]:
+        fields[key] = map_spans(fields[key], mapping)?
     return Ok(JsonValue.object(fields))

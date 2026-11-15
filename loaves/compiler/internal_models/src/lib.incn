@@ -85,6 +85,7 @@ pub from records import (
     READ_SCHEMA,
     StoreRecordSource,
     encode_record_key,
+    selected_record_bytes,
 )
 pub from record_service import (
     RECORD_SERVICE_SCHEMA,
@@ -128,19 +129,31 @@ pub from activation_envelopes import (
 pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
+    GraphNamespaceValue,
     CompiledBodyValue,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
+    CompiledNamespaceValue,
     CompiledBodyOutputs,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
     encode_record,
+    content_digest,
+    semantic_digest,
     encode_graph_body_values,
+    encode_graph_namespace_value,
     decode_graph_body_page,
     decode_graph_body_values,
-    encode_compiled_body_outputs,
-    decode_compiled_body_outputs,
+    decode_graph_namespace_value,
     record_root,
+)
+pub from checker_field_grammar import CodecFault
+pub from compiled_body_frames import (
+    CompiledBodyOutput,
+    encode_compiled_body_outputs,
+    compiled_body_frame_size,
+    decode_compiled_body_frame,
+    decode_compiled_body_payload,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

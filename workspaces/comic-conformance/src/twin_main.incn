@@ -1,0 +1,61 @@
+"""Measure the Incan codec twin over the pinned corpus: one line per case with its bytes and median timings."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from rust::std::time import Instant
+from std.fs import Path
+from std.primitives.hex import hexlify
+from corpus import load
+from native_twin import twin_decode, twin_encode, with_input
+
+
+def main() -> None:
+    """Print `id, operation, encoded hex, decoded hex, encode ns, decode ns` for every case with an Incan twin."""
+    arguments = [str(argument) for argument in args()][1:]
+    match run(arguments):
+        Ok(_) => exit(0)
+        Err(message) =>
+            println(f"error\t{message}")
+            exit(1)
+
+
+def run(arguments: list[str]) -> Result[None, str]:
+    """Run each twin case `repetitions` times and report the median encode and decode durations."""
+    if len(arguments) != 2:
+        return Err("usage: native-twin MANIFEST REPETITIONS")
+    repetitions = int(arguments[1])
+    if repetitions < 1:
+        return Err("repetitions must be positive")
+    corpus = load(Path(arguments[0]))?
+    for original in corpus.cases:
+        item = with_input(original, corpus.texts)?
+        mut encode_times: list[float] = []
+        mut decode_times: list[float] = []
+        mut encoded: bytes = b""
+        mut decoded: bytes = b""
+        mut supported = true
+        for _ in range(repetitions):
+            encode_started = Instant.now()
+            result = twin_encode(item)?
+            encode_times.append(encode_started.elapsed().as_secs_f64())
+            match result:
+                Some(value) => encoded = value
+                None => supported = false
+            if not supported:
+                break
+            decode_started = Instant.now()
+            decoded = twin_decode(item, encoded)?
+            decode_times.append(decode_started.elapsed().as_secs_f64())
+        if supported:
+            encode_ns = median(encode_times) * 1000000000.0
+            decode_ns = median(decode_times) * 1000000000.0
+            println(
+                f"{item.id}\t{item.operation.value()}\t{hexlify(encoded)}\t{hexlify(decoded)}\t{encode_ns}\t{decode_ns}",
+            )
+    return Ok(None)
+
+
+def median(values: list[float]) -> float:
+    """The middle sorted duration, robust to one-off scheduler delays."""
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]

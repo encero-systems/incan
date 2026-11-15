@@ -2,11 +2,11 @@
 //! ordinary manifest reader; an unavailable summary takes that reader again rather than guessing at absent facts.
 
 use incan_loaf_names::artifact_stem;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -14,6 +14,12 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
+use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::type_scope::ModuleTypeScope;
+use crate::rust_abi_cache::RustAbiCache;
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
 const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
@@ -31,6 +37,10 @@ pub(super) struct Summary {
     pub rust_abi_cache_declared: bool,
     /// Whether admission validated an external indexed native ABI asset for this Loaf.
     pub rust_abi_cache: bool,
+    /// The digest of the native ABI cache the manifest names, so the cache is read and authenticated without the
+    /// manifest. A summary recorded before it carried the digest has none; the manifest then names the cache.
+    #[serde(default)]
+    pub rust_abi_cache_digest: Option<String>,
 }
 
 impl Summary {
@@ -61,6 +71,7 @@ impl Summary {
                 .and_then(|abi| abi.cache_digest.as_ref())
                 .is_some(),
             rust_abi_cache: artifact.rust_abi_cache.is_some(),
+            rust_abi_cache_digest: manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.clone()),
         }
     }
 }
@@ -74,7 +85,17 @@ pub(super) struct IndexedLoaf {
     pub summary: Summary,
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
+    surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
+    bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
+    /// The shipped native ABI cache, read by the digest the summary names when the manifest is not demanded.
+    rust_abi: Arc<OnceLock<Result<Option<Arc<RustAbiCache>>, LoafIndexError>>>,
+    /// The records read by family and name, kept for the rest of the compilation so each is read once; `None` where
+    /// the installed set holds no such record.
+    named: Arc<Mutex<NamedRecords>>,
 }
+
+/// Records read by name, keyed by family and name.
+type NamedRecords = HashMap<(&'static str, String), Option<Arc<Vec<serde_json::Value>>>>;
 
 impl IndexedLoaf {
     /// Wrap a caller's already admitted entry without reopening its files.
@@ -86,6 +107,10 @@ impl IndexedLoaf {
             summary: Summary::from_artifact(&entry.artifact),
             entry: Arc::default(),
             execution: Arc::default(),
+            surface: Arc::default(),
+            bindings: Arc::default(),
+            rust_abi: Arc::default(),
+            named: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
         indexed
@@ -106,9 +131,14 @@ impl IndexedLoaf {
                 rust_paths: BTreeSet::new(),
                 rust_abi_cache_declared: false,
                 rust_abi_cache: false,
+                rust_abi_cache_digest: None,
             },
             entry: Arc::default(),
             execution: Arc::default(),
+            surface: Arc::default(),
+            bindings: Arc::default(),
+            rust_abi: Arc::default(),
+            named: Arc::default(),
         }
     }
 
@@ -131,6 +161,10 @@ impl IndexedLoaf {
                 summary,
                 entry: Arc::default(),
                 execution: Arc::default(),
+                surface: Arc::default(),
+                bindings: Arc::default(),
+                rust_abi: Arc::default(),
+                named: Arc::default(),
             });
         }
         if !super::compiler_record_set::configured()
@@ -144,6 +178,10 @@ impl IndexedLoaf {
                 summary,
                 entry: Arc::default(),
                 execution: Arc::default(),
+                surface: Arc::default(),
+                bindings: Arc::default(),
+                rust_abi: Arc::default(),
+                named: Arc::default(),
             });
         }
         let before = observation(&path);
@@ -182,6 +220,27 @@ impl IndexedLoaf {
             .map_err(Clone::clone)
     }
 
+    /// The Loaf's shipped native ABI cache. A demanded manifest already holds it; otherwise it is read and
+    /// authenticated by the digest the summary names, without the manifest. A summary without that digest demands
+    /// the manifest, which names the cache.
+    pub fn rust_abi_cache(&self) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+        if let Some(entry) = self.entry.get() {
+            return entry
+                .as_ref()
+                .map(|entry| entry.artifact.rust_abi_cache.clone())
+                .map_err(Clone::clone);
+        }
+        let Some(expected) = self.summary.rust_abi_cache_digest.as_deref() else {
+            return Ok(self.demand()?.artifact.rust_abi_cache.clone());
+        };
+        self.rust_abi
+            .get_or_init(|| {
+                LoafArtifact::read_digested_rust_abi_cache(&self.dir, &self.summary.identity.name, expected)
+                    .map(|(cache, _)| cache)
+            })
+            .clone()
+    }
+
     /// Read the record projection needed to admit executable declarations without demanding the complete manifest.
     pub fn execution_manifest(&self) -> Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError> {
         self.execution
@@ -211,6 +270,171 @@ impl IndexedLoaf {
             .as_ref()
             .map(Arc::clone)
             .map_err(Clone::clone)
+    }
+
+    /// What executable resolution reads of this Loaf: from its own records when the installed set publishes them,
+    /// otherwise derived from the executable projection.
+    pub fn executable_surface(&self) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
+        self.surface
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((surface, digest)) =
+                        super::compiler_record_set::read_surface(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(LoafIndexError::Unreadable {
+                            path: self
+                                .dir
+                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            reason: "executable surface records differ from their admitted inventory".to_owned(),
+                        });
+                    }
+                    return Ok(surface);
+                }
+                let manifest = self.execution_manifest()?;
+                Ok(Arc::new(ExecutableSurface::of(&manifest)))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(Clone::clone)
+    }
+
+    /// The runtime callables native lowering binds in this Loaf: its runtime-bindings record, read by name, when the
+    /// installed set publishes one, otherwise derived from the executable projection.
+    pub fn runtime_bindings(&self) -> Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError> {
+        self.bindings
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((bindings, digest)) =
+                        super::compiler_record_set::read_runtime_bindings(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(LoafIndexError::Unreadable {
+                            path: self
+                                .dir
+                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            reason: "runtime bindings records differ from their admitted inventory".to_owned(),
+                        });
+                    }
+                    return Ok(bindings);
+                }
+                Ok(Arc::new(runtime_bindings(&*self.execution_manifest()?)))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(Clone::clone)
+    }
+
+    /// One declaration's signature, layout or defaults, by its module-qualified name: its own records when the
+    /// installed set publishes them, otherwise projected from the executable projection's checked API. An overloaded
+    /// name has one value per overload.
+    ///
+    /// A set that publishes declaration records holds one for every fact a declaration has, so a missing record there
+    /// is a fact the declaration does not have, such as the defaults of a function without parameters; only a set
+    /// converted before declarations had records is projected.
+    pub fn declaration_facts(
+        &self,
+        facet: DeclarationFacet,
+        declaration: &str,
+    ) -> Result<Vec<serde_json::Value>, LoafIndexError> {
+        let family = RecordFamily::of_declaration(facet).as_str();
+        if super::compiler_record_set::configured() {
+            if let Some(values) = self.named_records(family, declaration)? {
+                return Ok(values.as_ref().clone());
+            }
+            if self.names_record(&[RecordFamily::DeclarationSignature.as_str()], None)? == Some(true) {
+                return Ok(Vec::new());
+            }
+        }
+        let manifest = self.execution_manifest()?;
+        let Some(api) = manifest.contract_metadata.split_documentation().0.api else {
+            return Ok(Vec::new());
+        };
+        let facts = declaration_facts(&api).map_err(|error| LoafIndexError::Unreadable {
+            path: self
+                .dir
+                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            reason: format!("cannot project its declarations: {error}"),
+        })?;
+        Ok(facts
+            .into_iter()
+            .filter(|fact| fact.facet == facet && fact.name == declaration)
+            .map(|fact| fact.value)
+            .collect())
+    }
+
+    /// One public namespace by its path, from its own record. `None` when the installed set holds no namespace record
+    /// at that path, including a set converted before namespaces had records of their own and every Loaf outside
+    /// records mode; such a caller reads the namespace from the manifest.
+    pub fn public_namespace(&self, path: &[String]) -> Result<Option<serde_json::Value>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        let Some(values) = self.named_records(RecordFamily::PublicNamespace.as_str(), &path.join("::"))? else {
+            return Ok(None);
+        };
+        match values.as_slice() {
+            [namespace] => Ok(Some(namespace.clone())),
+            _ => Err(self.inventory_mismatch("a public namespace record differs from its admitted inventory")),
+        }
+    }
+
+    /// The type scope of the module `module` of this Loaf, from its own record. `None` when the installed set holds no
+    /// one such record, including a set converted before modules had type scope records and every Loaf outside records
+    /// mode; such a caller reads the scope from the manifest's checked API.
+    pub fn type_scope(&self, module: &[String]) -> Result<Option<ModuleTypeScope>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        let Some(values) = self.named_records(RecordFamily::TypeScope.as_str(), &module.join("::"))? else {
+            return Ok(None);
+        };
+        let [scope] = values.as_slice() else {
+            return Ok(None);
+        };
+        Ok(serde_json::from_value(scope.clone()).ok())
+    }
+
+    /// The `family` records named `name`, read from the installed set the first time they are asked for and kept for
+    /// the rest of the compilation; `None` when the set holds no such record.
+    fn named_records(
+        &self,
+        family: &'static str,
+        name: &str,
+    ) -> Result<Option<Arc<Vec<serde_json::Value>>>, LoafIndexError> {
+        let mut kept = self.named.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(found) = kept.get(&(family, name.to_owned())) {
+            return Ok(found.clone());
+        }
+        let read = super::compiler_record_set::read_declaration(&self.dir, &self.summary.identity.name, family, name)?;
+        let values = match read {
+            Some((_, digest)) if digest != self.summary.identity.digest => {
+                return Err(self.inventory_mismatch("records read by name differ from their admitted inventory"));
+            }
+            Some((values, _)) => Some(Arc::new(values)),
+            None => None,
+        };
+        kept.insert((family, name.to_owned()), values.clone());
+        Ok(values)
+    }
+
+    /// The refusal of a record that does not belong to the inventory the index admitted this Loaf by.
+    fn inventory_mismatch(&self, reason: &str) -> LoafIndexError {
+        LoafIndexError::Unreadable {
+            path: self
+                .dir
+                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            reason: reason.to_owned(),
+        }
+    }
+
+    /// Whether the installed set holds a record of one of `families` for this Loaf, named `record` when one is given,
+    /// without opening any value; `None` outside records mode.
+    pub fn names_record(&self, families: &[&str], record: Option<&str>) -> Result<Option<bool>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        super::compiler_record_set::names_record(&self.dir, &self.summary.identity.name, families, record)
     }
 
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.

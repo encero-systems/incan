@@ -9,7 +9,7 @@ From the repository root:
 ```bash
 incan build examples/simple/hello.incn
 time incan build examples/simple/hello.incn
-OVEN_TRACE=- incan build examples/simple/hello.incn
+mkdir -p trace && INCAN_ENGINE_TRACE=trace incan build examples/simple/hello.incn
 ```
 
 Measure with tracing disabled; use the separate traced invocation to explain the decision. `reused` means the executable was retained. `compiled (...)` explains an invalidation. Record the compiler version and whether the project owner was already running.

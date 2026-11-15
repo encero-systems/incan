@@ -6,8 +6,9 @@ clone, target and bakery plus a unique worker generation. The sampler records th
 and every descendant every 50 ms. `OUT/memory.tsv` is the stable machine record; `OUT/memory-report.txt`, per-run
 summaries, timelines and command logs retain the human evidence.
 
-The standard-package stand-in and contract runner must stay within the selected budget on every run. Oven remains a
-recorded non-gating workload because its single large source unit has a separate product decision.
+The standard-package stand-in and contract runner must stay within the selected budget on every run, and Oven, the
+toolchain's lowering compile, within the 6 GiB lowering budget (`LOWERING_RESERVATION_BYTES`). The floor build is
+recorded without gating.
 """
 
 from rust::std::env import args
@@ -19,12 +20,14 @@ from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
 from std.fs import Path
 from pub::incan_platform.probes import ProcessResource, parse_process_table, process_table
 from check_support import repository_root, write_stderr
+from oven_tests import LOWERING_RESERVATION_BYTES
 
 pub const MIB: int = 1048576
 pub const DEFAULT_BUDGET_MIB: int = 2048
 pub const DEFAULT_RUNS: int = 3
 pub const INTERVAL_MS: u64 = 50
 const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
+const LOWERING_COMMANDS: FrozenList[str] = ["oven"]
 const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
 
 
@@ -338,10 +341,10 @@ def write_processes(prefix: Path, seen: Dict[int, SeenProcess], order: list[int]
 
 
 pub def measurements_tsv(results: list[Measurement], budget_bytes: int) -> str:
-    """Render the stable six-column release evidence record."""
+    """Render the stable six-column release evidence record, each row with the budget its command is held to."""
     mut text = "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n"
     for result in results:
-        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{budget_bytes}\n"
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{command_budget(result.command, budget_bytes)}\n"
     return text
 
 
@@ -351,24 +354,34 @@ pub def measurements_report(results: list[Measurement], budget_bytes: int) -> st
     for result in results:
         text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes // MIB}\t{result.peak_holder}\t{result.peak_holder_bytes // MIB}\t{result.wall_ms // 1000}\t{budget_outcome(
             result.tree_peak_bytes,
-            budget_bytes,
+            command_budget(result.command, budget_bytes),
         )}\n"
     return text
 
 
+pub def command_budget(command: str, budget_bytes: int) -> int:
+    """The footprint budget a command is held to: the lowering budget for Oven, the selected budget otherwise."""
+    if command in LOWERING_COMMANDS:
+        return LOWERING_RESERVATION_BYTES
+    return budget_bytes
+
+
 pub def budget_outcome(peak_bytes: int, budget_bytes: int) -> str:
-    """Return `under` only when the sampled tree peak does not exceed the selected budget."""
+    """Return `under` only when the sampled tree peak does not exceed the given budget."""
     if peak_bytes <= budget_bytes:
         return "under"
     return "over"
 
 
 pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[None, str]:
-    """Refuse any standard-package or contract-runner measurement above the process-tree footprint budget."""
+    """Refuse any standard-package, contract-runner or Oven measurement above the budget its command is held to."""
     mut exceeded: list[str] = []
     for result in results:
-        if result.command in GATED_COMMANDS and result.tree_peak_bytes > budget_bytes:
-            exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {budget_bytes} bytes")
+        if result.command not in GATED_COMMANDS and result.command not in LOWERING_COMMANDS:
+            continue
+        limit = command_budget(result.command, budget_bytes)
+        if result.tree_peak_bytes > limit:
+            exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {limit} bytes")
     if len(exceeded) > 0:
         return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
     return Ok(None)

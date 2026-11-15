@@ -1,5 +1,6 @@
 """Write typed cells and presence-indexed records using one admitted local dictionary."""
 
+from rust::incan_std_primitives::crumb import encode_scalar_records
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.identity import closed_selector
@@ -7,11 +8,138 @@ from crate.primitives.crumb.ordering import compare, order_values, order_entries
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.descriptions import StoredDescription, StoredField
 from crate.primitives.crumb.description_dictionary import Dictionary, slot
+from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.scalar_cells import scalar_cell, decimal_cell
 from crate.primitives.crumb.spelling import selector_spelling
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
-from crate.primitives.crumb.values import Value, ValueField, Projection
+from crate.primitives.crumb.values import IntegerValue, Value, ValueField, Projection
 from crate.primitives.hex import hexlify
+
+
+pub def scalar_record_batch(
+    description: StoredDescription,
+    records: list[RowRecord],
+    mut budget: Budget,
+) -> Result[Option[list[bytes]], CrumbError]:
+    """Batch the complete fixed-scalar record fast path through one native boundary crossing."""
+    if description.kind != NominalKind.Record:
+        return Ok(None)
+    for field in description.fields:
+        if field.shape.absent != AbsentPolicy.Required or scalar_batch_tag(field.shape.storage_type).is_none():
+            return Ok(None)
+    mut counts: list[i64] = []
+    mut kinds: list[u8] = []
+    mut signed: list[i128] = []
+    mut unsigned: list[u128] = []
+    for record in records:
+        if record.key != description.key:
+            return Ok(None)
+        fields = match record.value:
+            Value.Record(items) => items
+            _ => return Ok(None)
+        if len(fields) != len(description.fields):
+            return Ok(None)
+        counts.append(len(fields).saturating_resize[i64]())
+        for shape in description.fields:
+            mut found = 0
+            mut selected: Option[tuple[u8, i128, u128]] = None
+            for field in fields:
+                if field.identity == shape.shape.identity:
+                    found += 1
+                    if field.canonical != shape.shape.canonical or field.absent != shape.shape.absent:
+                        return Ok(None)
+                    selected = scalar_batch_value(shape.shape.storage_type, field.value)
+            if found != 1 or selected.is_none():
+                return Ok(None)
+            if let Some((kind, signed_value, unsigned_value)) = selected:
+                kinds.append(kind)
+                signed.append(signed_value)
+                unsigned.append(unsigned_value)
+    # Preserve the logical structural work of root, record-field matching and entered cells.
+    for record in records:
+        budget.charge_elements(1)?
+        budget.charge_elements(1)?
+        budget.charge_bytes(len(record.key))?
+        budget.charge_bytes(len(record.key))?
+        budget.charge_elements(1)?
+        budget.enter()?
+        fields = match record.value:
+            Value.Record(items) => items
+            _ => return Err(CrumbError.invalid_input("scalar record batch changed shape"))
+        for _ in fields:
+            budget.charge_elements(1)?
+            budget.charge_bytes(12)?
+        for _ in description.fields:
+            budget.charge_elements(1)?
+            budget.charge_bytes(12)?
+            budget.charge_elements(1)?
+            budget.charge_elements(1)?
+            budget.enter()?
+            budget.leave()?
+        budget.leave()?
+    byte_limit, element_limit = budget.codec_allowance()
+    encoded = encode_scalar_records(
+        counts,
+        kinds,
+        signed,
+        unsigned,
+        byte_limit.saturating_resize[i64](),
+        element_limit.saturating_resize[i64](),
+    )
+    if encoded.kind == 1u8 or encoded.kind == 2u8:
+        return Err(CrumbError.invalid_input(f"scalar record batch at {encoded.at}"))
+    budget.charge_bytes(encoded.scalar_byte_charge.saturating_resize[int]())?
+    budget.charge_elements(encoded.layout_element_charge.saturating_resize[int]())?
+    budget.charge_bytes(encoded.layout_byte_charge.saturating_resize[int]())?
+    return Ok(Some(encoded.rows))
+
+
+def scalar_batch_tag(node: TypeNode) -> Option[u8]:
+    """Map the closed fixed-scalar subset to compact native batch tags."""
+    match node:
+        TypeNode.Scalar(ScalarKind.Boolean) => return Some(0u8)
+        TypeNode.Scalar(kind) =>
+            match kind.integer_facts():
+                Some((signed, bits)) =>
+                    mut tag = 2
+                    if not signed:
+                        tag = 7
+                    if bits == 16:
+                        tag += 1
+                    elif bits == 32:
+                        tag += 2
+                    elif bits == 64:
+                        tag += 3
+                    elif bits == 128:
+                        tag += 4
+                    elif bits != 8:
+                        return None
+                    return Some(tag.saturating_resize[u8]())
+                None => return None
+        _ => return None
+
+
+def scalar_batch_value(node: TypeNode, value: Value) -> Option[tuple[u8, i128, u128]]:
+    """Retain one exact boolean or integer carrier for the native batch encoder."""
+    tag = match scalar_batch_tag(node):
+        Some(selected) => selected
+        None => return None
+    if tag == 0u8:
+        match value:
+            Value.Boolean(flag) =>
+                if flag:
+                    return Some((1u8, 0i128, 0u128))
+                return Some((0u8, 0i128, 0u128))
+            _ => return None
+    match value:
+        Value.Integer(IntegerValue.Signed(number)) =>
+            if tag >= 2u8 and tag <= 6u8:
+                return Some((tag, number, 0u128))
+        Value.Integer(IntegerValue.Unsigned(number)) =>
+            if tag >= 7u8 and tag <= 11u8:
+                return Some((tag, 0i128, number))
+        _ => pass
+    return None
 
 
 pub def root(

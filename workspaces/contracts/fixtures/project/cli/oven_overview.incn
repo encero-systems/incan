@@ -8,14 +8,21 @@
 #   oven --version
 #   oven lock [--versions lowest|lowest-direct|newest] [PATH]
 #   oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
-#   oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-#   oven check PATH [--format text|json] [UNIT OPTIONS]
-#   oven test PATH [UNIT OPTIONS]
+#   oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+#   oven check [PATH] [--format text|json] [UNIT OPTIONS]
+#   oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 #   oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-#   oven build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+#   oven build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   oven owner stop
 #   oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 #   oven inspect dependencies PATH [UNIT OPTIONS]
+#   oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]
+#   oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]
+#   oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]
+#   oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]...
+#   oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]
+#   oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]
+#   oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 

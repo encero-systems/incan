@@ -5,6 +5,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, parse_json, read_json, write
 from driver_command import driver_command
+from compiler_worker import captured_resident
 from home import standard_intents
 from json_fields import array, field, required_items, required_text, strings
 from loaf_local_graph import unique
@@ -16,27 +17,36 @@ from rust_target import decoded
 from registry_units import RegistryDemand, RegistryUnits
 from registry_metadata import bound_entries
 from native_closure_input import native_bindings
+from native_references import closure_reference, native_anchors
 from toml_fields import optional_string, optional_strings, read_manifest
-from toolchain import NativeCrate, Toolchain, located
+from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
-from unit_freshness import fingerprint, unit_key
+from unit_freshness import fingerprint, graph_imports, unit_key
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
 const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
 
 
-pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
+pub def standalone_crates(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    asked: Option[UnitDescription] = None,
+) -> Result[list[NativeCrate], str]:
     """
     Resolve standalone Rust imports against the toolchain's compiled registry. Their transitive dependencies are found
     through the toolchain's search index, which names every registry directory.
 
-    1. Ask the compiler for import syntax from the ordinary source graph.
+    1. Ask the compiler for import syntax from the ordinary source graph, of `asked` when the caller names the
+       description it will key the unit by, else of `described`.
     2. Merge each crate's version and feature requests, using known defaults for omitted versions.
     3. Bind one exact registry artifact per crate.
     """
     # 1. Parsing, including local module discovery, belongs to the compiler.
-    requests = source_requests(described, toolchain)?
+    mut parsed = described
+    if let Some(linked) = asked:
+        parsed = linked
+    requests = source_requests(parsed, toolchain)?
     # 2. A crate has one version requirement and the union of its requested features.
     selections = merged_requests(requests)?
     if len(selections) == 0:
@@ -92,6 +102,7 @@ pub def published_bindings(
 ) -> Result[list[str], str]:
     """The requested native roots as the unit's authored Loaves publish them, or its standard Loaves with `standard`."""
     mut paths: list[str] = []
+    anchors = native_anchors()?
     for loaf in unit.loaves:
         if loaf.standard != standard:
             continue
@@ -100,7 +111,7 @@ pub def published_bindings(
             continue
         for name, artifact in native_bindings(closure, toolchain.native_closures)?:
             if name in roots:
-                paths.append(located(closure.parent(), artifact))
+                paths.append(closure_reference(closure.parent(), artifact, anchors)?)
     return Ok(unique(paths))
 
 
@@ -112,7 +123,8 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     the unit's key and descriptor identify. They are retained under that identity, so an unchanged unit starts no
     compiler, and any change to those inputs asks it again.
 
-    1. Answer from the records retained for this identity.
+    1. Answer from the records retained for this identity, else from those the unit's current source graph was
+       collected with: computing the identity asked the compiler for that graph, and the same collection found them.
     2. Otherwise ask the compiler for the records of the description it reads.
     3. Retain them only while the unit's inputs are still those the compiler read.
     """
@@ -124,24 +136,41 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
         if let Some(records) = retained_imports(retained, identity):
             trace(f"unit {unit.package} imports: reused")
             return Ok(records)
+        if let Some(records) = graph_imports(unit, toolchain)?:
+            trace(f"unit {unit.package} imports: from its source graph")
+            _ = retain_imports(retained, identity, records)
+            return Ok(records)
     # 2. The compiler parses the source graph the description names.
     make_directory(directory)?
     path = directory.joinpath(f"{unit.package}.imports.unit.json")
     write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
-    mut command = driver_command(toolchain)?
-    command.arg("--rust-imports")
-    command.arg(path.0)
-    clock = begin()
-    output = command.output().map_err((error) => error.to_string())?
-    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
-    if not output.status.success():
-        return Err(decoded(output.stderr))
-    records = array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")?
+    output = rust_import_records(toolchain, path)?
+    records = array(parse_json(decoded(output))?, []).map_err((_) => "invalid Rust import records")?
     # 3. An edit made while the compiler read the sources is read again next time. A record that cannot be written
     #    only costs the next command the same parse.
     if identity != "" and imports_identity(unit, toolchain)? == identity:
         _ = retain_imports(retained, identity, records)
     return Ok(records)
+
+
+def rust_import_records(toolchain: Toolchain, path: Path) -> Result[bytes, str]:
+    """Ask the resident compiler for import records, retaining one short-lived process only as its cold fallback."""
+    arguments = ["--rust-imports", path.0]
+    match captured_resident(toolchain, arguments)?:
+        Some(completed) =>
+            if completed.code != 0:
+                return Err(decoded(completed.error))
+            return Ok(completed.output)
+        None => pass
+    mut command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    clock = begin()
+    output = command.output().map_err((error) => error.to_string())?
+    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
+    if not output.status.success():
+        return Err(decoded(output.stderr))
+    return Ok(output.stdout)
 
 
 def imports_identity(unit: UnitDescription, toolchain: Toolchain) -> Result[str, str]:

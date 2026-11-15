@@ -1,7 +1,8 @@
 //! Opt-in boundaries around fresh rustc setup, Incan injection, queries and teardown.
 //!
-//! Timing records never reach the compiled program's console: they go where `OVEN_TRACE` sends Oven's own reasoning
-//! (appended to the file it names, or stderr for `-`), and nowhere when it is unset. rustc prints its phase records
+//! Timing records never reach the compiled program's console: they go to the `native_timing` category of the tracing
+//! channel (`INCAN_ENGINE_TRACE`), or, for one more release, where `OVEN_TRACE` sends Oven's own reasoning (appended
+//! to the file it names, or stderr for `-`), and nowhere when neither is set. rustc prints its phase records
 //! with `eprintln!`, so a timed rustc run redirects stderr and routes only the phase records; every other
 //! captured line still reaches stderr.
 
@@ -81,6 +82,7 @@ struct Clock {
 impl Timing {
     /// Start observing only when the existing native phase diagnostic has been requested.
     pub(crate) fn requested() -> Self {
+        sample_heap();
         Self(requested().then(|| {
             let now = Instant::now();
             Clock {
@@ -99,7 +101,9 @@ impl Timing {
     }
 
     /// Record a named boundary in seconds; durations include preceding diagnostic writes and must not be summed
-    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents.
+    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents. Each
+    /// record names the driver process that reached the boundary, so a trace shows which process ran which phase, and
+    /// its physical footprint and live heap there (each -1 when unknown), so a trace shows which phase holds memory.
     pub(crate) fn mark(&mut self, boundary: &'static str) {
         let Some(clock) = &mut self.0 else {
             return;
@@ -114,6 +118,9 @@ impl Timing {
             "elapsed": now.duration_since(clock.started).as_secs_f64(),
             "interval": now.duration_since(clock.previous).as_secs_f64(),
             "ended_ns": ended_ns,
+            "process": std::process::id(),
+            "footprint": crate::worker::footprint(),
+            "live": crate::worker::live_heap(),
         });
         write_trace(format!("native-time: {record}\n").as_bytes());
         clock.previous = now;
@@ -125,21 +132,44 @@ fn requested() -> bool {
     std::env::var_os("INCAN_NATIVE_TIMING").is_some()
 }
 
-/// Append timing records to the trace sink; a sink that cannot be written loses the records, never the compilation.
-fn write_trace(records: &[u8]) {
-    if records.is_empty() {
+/// How often the heap sampler reads the process's memory.
+const HEAP_SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Start the heap sampler once per process when the timing request is `INCAN_NATIVE_TIMING=heap`. Its thread records
+/// the physical footprint and the live heap every [`HEAP_SAMPLE_INTERVAL`] until the process ends, so a trace shows
+/// the peaks between two boundaries as well as the readings at them. Reading the live heap walks every malloc zone and
+/// takes milliseconds on a large heap, so no other timing request samples.
+fn sample_heap() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    if std::env::var_os("INCAN_NATIVE_TIMING").is_none_or(|value| value != "heap") {
         return;
     }
-    match std::env::var("OVEN_TRACE").as_deref() {
-        Ok("-") => {
-            let _ = std::io::stderr().write_all(records);
-        }
-        Ok(path) if !path.is_empty() => {
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = file.write_all(records);
+    STARTED.call_once(|| {
+        let sampler = std::thread::Builder::new().name("incan-heap-sampler".into()).spawn(|| {
+            loop {
+                std::thread::sleep(HEAP_SAMPLE_INTERVAL);
+                let ended_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .map(|value| value.as_nanos());
+                let record = serde_json::json!({
+                    "ended_ns": ended_ns,
+                    "process": std::process::id(),
+                    "footprint": crate::worker::footprint(),
+                    "live": crate::worker::live_heap(),
+                });
+                write_trace(format!("heap-sample: {record}\n").as_bytes());
             }
-        }
-        _ => {}
+        });
+        // A sampler that cannot start loses the samples, never the compilation.
+        drop(sampler);
+    });
+}
+
+/// Append timing records to the trace sink; a sink that cannot be written loses the records, never the compilation.
+fn write_trace(records: &[u8]) {
+    for line in String::from_utf8_lossy(records).lines() {
+        incan_frontend::trace_flags::emit(incan_frontend::trace_flags::Category::NativeTiming, line);
     }
 }
 

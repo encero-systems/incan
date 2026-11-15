@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's `[tool.incan.envs]` table and names `[envs.NAME]`, which replaces it (#3144).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["tool", "incan", "envs"]: unsupported
+#   [tool.incan.envs] is refused; declare each environment as [envs.NAME]
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

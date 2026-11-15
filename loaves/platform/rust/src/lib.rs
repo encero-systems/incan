@@ -1,9 +1,11 @@
-//! The platform's only unsafe Rust: sanctioned host clock and resource-probe bindings behind safe functions.
+//! The platform's only unsafe Rust: sanctioned host clock, resource-probe, storage-barrier and heap-release bindings
+//! behind safe functions.
 //!
 //! RFC 005 refuses unsafe Rust calls from Incan. This facet contains only the OS calls needed to expose host-aligned
-//! nanoseconds and process resource readings; observation, process-tree policy and encoding stay in Incan. Neither
-//! supported clock advances during suspend or follows wall-clock adjustments. Values compare across processes on the
-//! same host boot.
+//! nanoseconds and process resource readings, the storage barrier a store publication orders its graph with, and the
+//! call that returns freed heap pages to the system; observation, process-tree policy, publication, release policy and
+//! encoding stay in Incan. Neither supported clock advances during suspend or follows wall-clock adjustments. Values
+//! compare across processes on the same host boot.
 
 #[cfg(target_os = "macos")]
 use std::ffi::CStr;
@@ -31,7 +33,32 @@ unsafe extern "C" {
         addresses: *mut *mut libc::vm_address_t,
         count: *mut libc::c_uint,
     ) -> libc::kern_return_t;
+
+    /// libmalloc: return free pages of `zone` (every zone when null) to the system, up to `goal` bytes (all when zero).
+    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
 }
+
+/// Ask the system allocator to return its free heap pages, leaving live allocations untouched.
+///
+/// The system allocator keeps the pages of freed allocations, and the kernel charges them to the process footprint
+/// until the allocator gives them back. macOS asks every malloc zone for pressure relief, which a zone may answer by
+/// returning nothing; Linux with glibc trims the heap. When to release is the caller's policy.
+#[cfg(target_os = "macos")]
+pub fn release_free_heap() {
+    // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no live memory is touched.
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+}
+
+/// Ask the system allocator to return its free heap pages, leaving live allocations untouched.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn release_free_heap() {
+    // SAFETY: malloc_trim only returns free heap pages to the system.
+    unsafe { libc::malloc_trim(0) };
+}
+
+/// Other systems have no heap release; the call returns nothing to the system.
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+pub fn release_free_heap() {}
 
 /// Read the shared raw monotonic host clock in nanoseconds, excluding time suspended.
 ///
@@ -242,4 +269,26 @@ pub fn raw_uptime_ns() -> io::Result<u64> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn raw_uptime_ns() -> io::Result<u64> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "raw host clock unavailable"))
+}
+
+/// Order a file's earlier writes on its device ahead of every later write, without flushing the drive's cache.
+///
+/// Apple filesystems take `F_BARRIERFSYNC`: it synchronizes the file as `fsync` does, then issues a barrier, so
+/// writes queued before it reach stable storage before writes queued after it. A filesystem that refuses the barrier
+/// gets `F_FULLFSYNC` (`sync_all`) instead, which is stronger, never weaker.
+#[cfg(target_os = "macos")]
+pub fn barrier_sync(path: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(path)?;
+    // SAFETY: `file` keeps its descriptor open for the call, and `F_BARRIERFSYNC` takes no third argument.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } != -1 {
+        return Ok(());
+    }
+    file.sync_all()
+}
+
+/// Elsewhere `fsync` (`sync_all`) already reaches stable storage in the order it is called.
+#[cfg(not(target_os = "macos"))]
+pub fn barrier_sync(path: &str) -> io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
 }

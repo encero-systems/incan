@@ -5,19 +5,7 @@ use super::*;
 impl TypeChecker {
     /// Return the public source spelling for one checked API declaration.
     pub(in crate::typechecker::collect) fn api_declaration_name(declaration: &ApiDeclaration) -> &str {
-        match declaration {
-            ApiDeclaration::Function(item) => &item.name,
-            ApiDeclaration::Model(item) => &item.name,
-            ApiDeclaration::Class(item) => &item.name,
-            ApiDeclaration::Trait(item) => &item.name,
-            ApiDeclaration::Enum(item) => &item.name,
-            ApiDeclaration::Newtype(item) => &item.name,
-            ApiDeclaration::TypeAlias(item) => &item.name,
-            ApiDeclaration::Const(item) => &item.name,
-            ApiDeclaration::Static(item) => &item.name,
-            ApiDeclaration::Alias(item) => &item.name,
-            ApiDeclaration::Partial(item) => &item.name,
-        }
+        declaration.name()
     }
 
     /// Return all derived public module namespace paths carried by the checked API artifact.
@@ -128,17 +116,13 @@ impl TypeChecker {
             .contract_metadata
             .identity_graph
             .canonical_for_public_path(&public_path);
-        let mut kinds = self.public_member_symbol_kinds(
-            manifest,
-            source_module_path,
-            &declarations,
-            projected_canonical.as_ref(),
-        );
+        let mut kinds =
+            self.public_member_symbol_kinds(manifest, source_module_path, declarations, projected_canonical.as_ref());
         let mut type_alias = declarations
             .iter()
             .find_map(|declaration| Self::public_member_type_alias(manifest, source_module_path, declaration));
         let (resolved_source_module_path, resolved_source_name) =
-            Self::public_member_source(manifest, &declarations, source_module_path, member);
+            Self::public_member_source(manifest, declarations, source_module_path, member);
         let source_path = resolved_source_module_path
             .iter()
             .cloned()
@@ -208,8 +192,12 @@ impl TypeChecker {
         declarations
             .iter()
             .filter_map(|declaration| match declaration {
-                ApiDeclaration::Alias(alias) => self
-                    .symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                ApiDeclaration::Alias(alias) => projected_canonical
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                    .and_then(|identity| self.symbol_kind_from_canonical_identity(identity))
+                    .or_else(|| {
+                        self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)
+                    })
                     .or_else(|| {
                         self.symbol_kind_from_api_target_path(
                             manifest,

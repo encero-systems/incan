@@ -1,0 +1,8 @@
+"""A mark the module does not register."""
+
+from std.testing import mark
+
+
+@mark("network")
+def test_remote() -> None:
+    assert true

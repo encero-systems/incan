@@ -17,6 +17,9 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{CliError, CliResult};
 use crate::unit::UnitDescription;
+
+/// The schema of the semantic facts a library publishes beside its manifest, read by Oven's publication record.
+const LOAF_FACTS_SCHEMA: &str = "incan.loaf-facts/1";
 use exports::{LibraryReexportResolver, module_key};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
@@ -34,7 +37,7 @@ use incan_frontend::library_manifest::{
     ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, NativeUnionExport,
     NativeUnionOwnerExport, TypeRef,
 };
-use incan_frontend::loaf_index::LoafNativeClosure;
+use incan_frontend::loaf_index::{LoafNativeClosure, NativeAnchors};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
     CHECKED_REGISTRY_METADATA_SCHEMA_VERSION, CheckedRegistryMetadataModule, CheckedRegistryMetadataPackage,
@@ -52,13 +55,18 @@ use incan_semantics_core::executable_representation::{
 /// Encoded Loaf artifacts retained across native compilation without retaining checked modules or Body IR.
 ///
 /// Writing remains a separate operation so a failed native compilation cannot publish a partial library. The
-/// manifest is written last, preserving its role as the completeness marker for the sibling artifact set.
+/// manifest is written last, preserving its role as the completeness marker for the sibling artifact set. It
+/// serializes, so a fresh rustc process can publish it once native compilation succeeds there.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PreparedLoafPublication {
     name: String,
     surface: Vec<u8>,
     graph: Option<Vec<u8>>,
     rust_abi: Option<Vec<u8>>,
     closure: Vec<u8>,
+    /// The semantic facts consumers that only compile against this library are keyed on (RFC 179), bound to the
+    /// manifest bytes by their digest.
+    facts: Vec<u8>,
     manifest: String,
 }
 
@@ -83,6 +91,7 @@ impl PreparedLoafPublication {
             write(format!("{}.rustabi", artifact_stem(&self.name)), &rust_abi)?;
         }
         write(format!("{}.native.json", artifact_stem(&self.name)), &self.closure)?;
+        write(format!("{}.incnfacts", artifact_stem(&self.name)), &self.facts)?;
         write(
             format!("{}.incnlib", artifact_stem(&self.name)),
             self.manifest.as_bytes(),
@@ -106,6 +115,10 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
+    /// Whether the manifest describes the source package for inspection rather than publication: it keeps the
+    /// unit's non-public registries and names the entry module's registries by its source file (`lib` for `lib.incn`,
+    /// `main` for `main.incn`), as RFC 113's source-package inspection does.
+    inspection: bool,
     /// First inspected fact per exact canonical query path, shared across module visits until ABI publication.
     rust_items: BTreeMap<String, Arc<RustItemMetadata>>,
 }
@@ -122,13 +135,21 @@ impl PublicationFacts {
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
             rust_items: BTreeMap::new(),
+            inspection: false,
         }
+    }
+
+    /// Describe the source package for inspection instead of publication (see the `inspection` field).
+    pub fn for_inspection(mut self, inspection: bool) -> Self {
+        self.inspection = inspection;
+        self
     }
 
     /// Collect one checked module's public exports, API metadata and registries.
     ///
-    /// A registry declared in the unit's entry module is published under the module path `lib`; a migration tombstone
-    /// from that same module is published at the package root because that is where consumers import its former name.
+    /// A registry declared in the unit's entry module is published under the module path `lib`, or under its source
+    /// file's name for an inspection; a migration tombstone from that same module is published at the package root
+    /// because that is where consumers import its former name.
     pub fn visit(&mut self, module: &ParsedModule, checker: &TypeChecker, entry: bool) {
         self.collect_native_rust_items(module, checker);
         let exports = collect_checked_public_exports(&module.ast, checker);
@@ -139,10 +160,15 @@ impl PublicationFacts {
         };
         self.made_private_types
             .extend(collect_checked_made_private_types(&module.ast, &published_module_path));
-        let registry_path = if entry {
-            vec!["lib".to_string()]
-        } else {
-            module.path_segments.clone()
+        let registry_path = match (entry, self.inspection) {
+            (false, _) => module.path_segments.clone(),
+            (true, false) => vec!["lib".to_string()],
+            (true, true) => module
+                .file_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| vec![stem.to_string()])
+                .unwrap_or_else(|| module.path_segments.clone()),
         };
         self.api_modules.push(collect_checked_api_metadata(
             &module.ast,
@@ -227,7 +253,13 @@ impl PublicationFacts {
         model_bundles: &[CanonicalModelBundle],
     ) -> CliResult<LibraryManifest> {
         materialize_api_alias_projections(&mut self.api_modules);
-        let docstring_errors = validate_checked_api_docstrings(&self.api_modules)
+        // A project's shared library is checked as its program is: it publishes no API, so its docstrings are free.
+        let documented = if unit.program_checks {
+            &self.api_modules[..0]
+        } else {
+            &self.api_modules[..]
+        };
+        let docstring_errors = validate_checked_api_docstrings(documented)
             .into_iter()
             .map(|diagnostic| {
                 match modules
@@ -300,9 +332,12 @@ impl PublicationFacts {
 
         // ---- Public registries ----
         materialize_registry_reexport_projections(&mut self.registry_modules, &self.alias_modules);
+        let inspection = self.inspection;
         for module in &mut self.registry_modules {
-            module.registries.retain(|registry| registry.public);
-            module.entries.retain(|entry| entry.registry_public);
+            if !inspection {
+                module.registries.retain(|registry| registry.public);
+                module.entries.retain(|entry| entry.registry_public);
+            }
         }
         self.registry_modules
             .retain(|module| !module.registries.is_empty() || !module.entries.is_empty());
@@ -337,13 +372,15 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 }
 
 /// Prepare a Loaf's native files beside its rlib: governed bodies, native closure, optional ABI cache and manifest.
-/// Inspection graphs have a separate requested publication and proof. The manifest is written last, so its presence
-/// means the native artifact set is complete.
+/// Inspection graphs have a separate requested publication and proof. The native closure names its inputs from the
+/// current home's `anchors`, so homes that share a bakery publish the same closure bytes. The manifest is written last,
+/// so its presence means the native artifact set is complete.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
+    anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
@@ -374,18 +411,23 @@ pub fn prepare_loaf_publication(
     let rust_abi = prepare_rust_abi_cache(&mut manifest)?;
 
     // ---- Native closure and manifest ----
-    let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
+    let published = closure
+        .published(dir, anchors)
+        .map_err(|error| CliError::failure(format!("cannot publish the native closure of {name}: {error}")))?;
+    let closure = serde_json::to_vec_pretty(&published)
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
-    let manifest = manifest
+    let encoded = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
+    let facts = loaf_facts(&manifest, &encoded)?;
     Ok(PreparedLoafPublication {
         name,
         surface,
         graph: graph.map(<[u8]>::to_vec),
         rust_abi,
         closure,
-        manifest,
+        manifest: encoded,
+        facts,
     })
 }
 
@@ -395,31 +437,27 @@ pub fn write_loaf(
     manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
+    anchors: &NativeAnchors,
     graph: Option<&[u8]>,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, graph)?.write(dir)
+    prepare_loaf_publication(dir, manifest, bodies, closure, anchors, graph)?.write(dir)
 }
 
-/// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
-/// home does not change its closure bytes. Native inputs outside that root retain their exact selected paths.
-/// Readers resolve relative paths against the publishing Loaf's directory before comparing or linking artifacts.
-fn sibling_relative_closure(directory: &Path, closure: &LoafNativeClosure) -> LoafNativeClosure {
-    let mut published = closure.clone();
-    let Some(root) = directory.parent().and_then(Path::parent) else {
-        return published;
-    };
-    let paths = published
-        .externs
-        .iter_mut()
-        .chain(&mut published.macro_externs)
-        .map(|(_, path)| path)
-        .chain(&mut published.search);
-    for path in paths {
-        if let Ok(relative) = path.strip_prefix(root) {
-            *path = Path::new("../..").join(relative);
-        }
-    }
-    published
+/// The semantic facts a library publishes beside its manifest (RFC 179): the digest consumers that only compile
+/// against it are keyed on, bound to the exact manifest bytes it describes.
+fn loaf_facts(manifest: &LibraryManifest, encoded: &str) -> CliResult<Vec<u8>> {
+    let manifest_digest = hex::encode(Sha256::digest(encoded.as_bytes()));
+    let digests = manifest
+        .compiler_records(&manifest_digest)
+        .map_err(|error| CliError::failure(format!("cannot derive the facts of {}: {error}", manifest.name)))?
+        .digests;
+    serde_json::to_vec(&serde_json::json!({
+        "schema": LOAF_FACTS_SCHEMA,
+        "manifest_digest": manifest_digest,
+        "semantic_facts": digests.semantic_facts,
+        "record_content": digests.record_content,
+    }))
+    .map_err(|error| CliError::failure(format!("cannot encode the facts of {}: {error}", manifest.name)))
 }
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts

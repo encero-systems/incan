@@ -1,5 +1,8 @@
 """Oven's formatting invocation; the compiler owns parsing and the single formatter implementation."""
 
+from rust::std::env import temp_dir
+from rust::std::io import Write, stderr
+from rust::std::process import id as process_id
 from std.fs import Path
 from rust::std::string import String as RustString
 from compiler_worker import captured_resident
@@ -7,21 +10,22 @@ from driver_command import driver_command
 from files import parse_json
 from json_fields import strings
 from features import FeatureRequest
-from incan_units import format_unit
+from unit_compiler import crate_name, write_unit
 from intake import intake
 from toolchain import Toolchain, load_toolchain
 from unit import UnitDescription, describe
 from unit_rust import prepare_native
 from cli_help import render
 
-pub const USAGE: str = "incan fmt [--check] PATH..."
+pub const USAGE: str = "incan fmt [--check] [--diff] [PATH...]"
 
 
 pub model FormatRequest:
-    """What `incan fmt` was asked to do: the paths to format, and whether to only check them."""
+    """What `incan fmt` was asked to do: the paths to format, and whether to only check them or show their changes."""
 
     pub check: bool
     pub paths: list[str]
+    pub diff: bool = false
 
 
 pub def help_text() -> str:
@@ -30,6 +34,7 @@ pub def help_text() -> str:
         USAGE,
         [
             "  --check  Report changes without writing; exit 1 when a file would change.",
+            "  --diff   Show each change without writing; exit 1 when a file would change.",
             "  --       End option parsing.",
         ],
         "incan fmt --check src",
@@ -38,7 +43,8 @@ pub def help_text() -> str:
 
 pub def format_paths(request: FormatRequest) -> Result[i32, str]:
     """
-    Format every `.incn` file in the given files and trees, or with `--check` report the files that would change.
+    Format every `.incn` file in the given files and trees, or with `--check` report the files that would change, or
+    with `--diff` show each change.
 
     A file that cannot be described or formatted is reported and the others still run. The exit code is 1 when any
     file failed or, with `--check`, would change.
@@ -51,22 +57,82 @@ pub def format_paths(request: FormatRequest) -> Result[i32, str]:
     toolchain = load_toolchain()?
     # 2. The compiler owns hidden-directory and symbolic-link policy for every client.
     files = discover(request.paths, toolchain)?
-    mut code: i32 = 0
+    if request.diff:
+        return show_changes(files, toolchain)
     # 3. One failed file does not prevent the remaining files from being processed.
+    return format_files(files, toolchain, request.check)
+
+
+def format_files(files: list[str], toolchain: Toolchain, check: bool) -> Result[i32, str]:
+    """
+    Format every file, or with `--check` name each one formatting would change, then print one summary for the
+    whole invocation, as 0.5.1 did: `Would reformat: FILE` or `Formatted: FILE` for each changed file, then
+    `✓ N file(s) already formatted`, `N file(s) would be reformatted` on stderr, or `✓ N file(s) formatted, E error(s)`.
+    The compiler formats a private copy of each file, as for `--diff`, so its own report never reaches the output.
+    The exit code is 1 when a file failed or, with `--check`, would change.
+    """
+    mut changed = 0
+    mut errors = 0
     for file in files:
-        if format_file(file, toolchain, request.check)? != 0:
-            code = 1
-    return Ok(code)
+        match reformatted(file, toolchain):
+            Err(reason) =>
+                complain(f"Error formatting {file}: {reason}\n")
+                errors += 1
+            Ok(None) => pass
+            Ok(Some(formatted)) =>
+                if check:
+                    println(f"Would reformat: {displayed(file)}")
+                    changed += 1
+                    continue
+                match Path(file).write_bytes(RustString.from(formatted).into_bytes()):
+                    Ok(_) =>
+                        println(f"Formatted: {displayed(file)}")
+                        changed += 1
+                    Err(error) =>
+                        complain(f"Error writing {file}: {error.message()}\n")
+                        errors += 1
+    if check:
+        if changed > 0:
+            complain(f"\n{changed} file(s) would be reformatted\n")
+            return Ok(1)
+        if errors == 0:
+            println(f"✓ {len(files)} file(s) already formatted")
+    else:
+        println(f"\n✓ {changed} file(s) formatted, {errors} error(s)")
+    if errors > 0:
+        return Ok(1)
+    return Ok(0)
+
+
+def reformatted(file: str, toolchain: Toolchain) -> Result[Option[str], str]:
+    """What formatting changes `file` to, or `None` when it is already formatted."""
+    original = Path(file).read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    formatted = formatted_text(file, original, toolchain)?
+    if formatted == original:
+        return Ok(None)
+    return Ok(Some(formatted))
+
+
+def complain(text: str) -> None:
+    """Write `text` to standard error; a closed stream cannot be told about, so a failed write is ignored."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(text).into_bytes())
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
-    """Read `--check` and the paths; `--` ends the options, so a path after it may start with `-`."""
+    """
+    Read `--check`, `--diff` and the paths; `--` ends the options, so a path after it may start with `-`. Without a
+    path, the current directory is formatted, as in 0.5.1.
+    """
     mut check = false
+    mut diff = false
     mut paths: list[str] = []
     mut options = true
     for argument in arguments:
         if options and argument == "--":
             options = false
+        elif options and argument == "--diff":
+            diff = true
         elif options and argument == "--check":
             check = true
         elif options and argument.startswith("-"):
@@ -74,8 +140,8 @@ pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
         else:
             paths.append(argument)
     if len(paths) == 0:
-        return Err("a PATH is required")
-    return Ok(FormatRequest(check=check, paths=paths))
+        paths.append(".")
+    return Ok(FormatRequest(check=check, paths=paths, diff=diff))
 
 
 def discover(paths: list[str], toolchain: Toolchain) -> Result[list[str], str]:
@@ -88,15 +154,6 @@ def discover(paths: list[str], toolchain: Toolchain) -> Result[list[str], str]:
     if len(files) == 0:
         return Err("no .incn files found")
     return Ok(files)
-
-
-def format_file(file: str, toolchain: Toolchain, check: bool) -> Result[i32, str]:
-    """Format or check one file with its own unit's vocabulary; a file whose unit cannot be described reports why."""
-    match describe_formatting(file, toolchain):
-        Err(reason) =>
-            println(f"Error formatting {file}: {reason}")
-            return Ok(1)
-        Ok(unit) => return format_unit(unit, toolchain, file, check)
 
 
 def describe_formatting(file: str, toolchain: Toolchain) -> Result[UnitDescription, str]:
@@ -153,3 +210,122 @@ def decode(value: bytes) -> Result[str, str]:
     match RustString.from_utf8(value):
         Ok(text) => return Ok(str(text))
         Err(error) => return Err(str(error))
+
+
+def show_changes(files: list[str], toolchain: Toolchain) -> Result[i32, str]:
+    """
+    Print the changes formatting would make to each file, as 0.5.1's `--diff` does, without writing any file.
+    The exit code is 1 when a file would change or could not be formatted.
+    """
+    mut changed = 0
+    mut failed = false
+    for file in files:
+        match changes(file, toolchain):
+            Err(reason) =>
+                println(f"Error formatting {file}: {reason}")
+                failed = true
+            Ok(lines) =>
+                if len(lines) > 0:
+                    changed += 1
+                    println("\n".join([f"--- {displayed(file)}", "--- original", "+++ formatted"] + lines + [""]))
+    if changed > 0:
+        println(f"\n{changed} file(s) need formatting")
+        return Ok(1)
+    if failed:
+        return Ok(1)
+    println(f"✓ {len(files)} file(s) already formatted")
+    return Ok(0)
+
+
+def displayed(file: str) -> str:
+    """A file as `--diff` names it: relative to the working directory when it is below it."""
+    match Path.cwd():
+        Ok(here) =>
+            prefix = here.0 + "/"
+            if file.startswith(prefix):
+                return file[len(prefix):]
+        Err(_) => pass
+    return file
+
+
+def changes(file: str, toolchain: Toolchain) -> Result[list[str], str]:
+    """The numbered lines formatting removes from and adds to `file`, or none when it is already formatted."""
+    original = Path(file).read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    formatted = formatted_text(file, original, toolchain)?
+    if formatted == original:
+        return Ok([])
+    return Ok(line_changes(original.split("\n"), formatted.split("\n")))
+
+
+def formatted_text(file: str, original: str, toolchain: Toolchain) -> Result[str, str]:
+    """What the compiler formats `file` to, read from a private copy so the file itself never changes."""
+    unit = describe_formatting(file, toolchain)?
+    directory = Path(str(temp_dir().display())).joinpath(f"incan-fmt-diff-{process_id()}")
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
+    copy = directory.joinpath(Path(file).name())
+    copy.write_bytes(RustString.from(original).into_bytes()).map_err((error) => error.message())?
+    arguments = ["--fmt", write_unit(unit, crate_name(unit))?.0, copy.0]
+    mut code: i32 = 0
+    mut complaint = ""
+    match captured_resident(toolchain, arguments)?:
+        Some(found) =>
+            code = found.code
+            complaint = decode(found.error)?
+        None =>
+            mut command = driver_command(toolchain)?
+            for argument in arguments:
+                command.arg(argument)
+            output = command.output().map_err((error) => f"{file}: {error}")?
+            if not output.status.success():
+                code = 1
+            complaint = decode(output.stderr)?
+    formatted = copy.read_text("utf-8", "strict").map_err((error) => error.message())
+    _ = directory.remove_tree()
+    if code != 0:
+        return Err(complaint.strip())
+    return formatted
+
+
+pub def line_changes(original: list[str], formatted: list[str]) -> list[str]:
+    """
+    The lines a longest-common-subsequence comparison removes and adds, as `-   N | TEXT` and `+   N | TEXT` with each
+    line's number in its own text.
+    """
+    rows = len(original) + 1
+    columns = len(formatted) + 1
+    # common[i * columns + j] is the length of the longest common subsequence of original[i:] and formatted[j:].
+    mut common: list[int] = [0 for _ in range(rows * columns)]
+    mut i = len(original) - 1
+    while i >= 0:
+        mut j = len(formatted) - 1
+        while j >= 0:
+            if original[i] == formatted[j]:
+                common[i * columns + j] = common[(i + 1) * columns + j + 1] + 1
+            elif common[(i + 1) * columns + j] >= common[i * columns + j + 1]:
+                common[i * columns + j] = common[(i + 1) * columns + j]
+            else:
+                common[i * columns + j] = common[i * columns + j + 1]
+            j -= 1
+        i -= 1
+    mut lines: list[str] = []
+    mut a = 0
+    mut b = 0
+    while a < len(original) or b < len(formatted):
+        if a < len(original) and b < len(formatted) and original[a] == formatted[b]:
+            a += 1
+            b += 1
+        elif b >= len(formatted) or (a < len(original) and common[(a + 1) * columns + b] >= common[a * columns + b + 1]):
+            lines.append(f"-{numbered(a + 1)} | {original[a]}")
+            a += 1
+        else:
+            lines.append(f"+{numbered(b + 1)} | {formatted[b]}")
+            b += 1
+    return lines
+
+
+def numbered(line: int) -> str:
+    """A line number right-aligned in four columns."""
+    mut text = str(line)
+    while len(text) < 4:
+        text = " " + text
+    return text

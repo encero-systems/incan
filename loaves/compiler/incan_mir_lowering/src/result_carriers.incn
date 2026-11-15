@@ -1,5 +1,6 @@
 """Lower `?` propagation, result and option construction, carrier methods, and retained references."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     Carrier,
     Operand,
@@ -88,7 +89,7 @@ pub def lower_result_construction(
     owner = enum_owner(place_type(builder.locals, target))?
     if owner < len(builder.enums):
         return Err("invalid Body IR Result destination")
-    declaration = builder.intrinsics[owner - len(builder.enums)]
+    declaration = builder.intrinsics[carrier_position(owner)]
     if declaration.carrier != Carrier.Result or not variant.has_complete_canonical_types():
         return Err("invalid Body IR Result payload identity")
     mut slot = 0
@@ -109,13 +110,13 @@ pub def lower_option_construction(
     owner = enum_owner(place_type(builder.locals, target))?
     if (
         owner < len(builder.enums)
-        or builder.intrinsics[owner - len(builder.enums)].carrier != Carrier.Option
+        or builder.intrinsics[carrier_position(owner)].carrier != Carrier.Option
         or len(elements) != 1
     ):
         return Err("invalid Body IR Some destination or payload")
     match elements[0].as_one():
         Some(payload) =>
-            ty = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
+            ty = builder.intrinsics[carrier_position(owner)].variants[1].fields[0]
             value = carrier_payload(builder, payload, ty, span)?
             assign_carrier(builder, target, owner, 1, [value], span)
             return Ok(None)

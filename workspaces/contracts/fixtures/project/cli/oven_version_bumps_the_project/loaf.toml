@@ -1,0 +1,7 @@
+[project]
+name = "oven_version_bumps_the_project"
+# The version `oven version` reads and, without `--dry-run`, rewrites in place.
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

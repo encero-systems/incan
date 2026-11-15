@@ -1,0 +1,10 @@
+# behavior: `incan test --list` prints the tests a `-k` keyword expression selects, named below the selected directory, and runs none, as 0.5.1 does (#3138).
+# cli-commands:
+#   test --list -k alpha
+#   test . --list -k alpha
+#   oven test --list -k alpha
+# expect-stdout:
+#   tests/test_runner.incn::test_alpha
+
+def main() -> None:
+    println("main")

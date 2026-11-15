@@ -96,16 +96,16 @@ pub def selected(index: CellIndex, position: int, mut budget: Budget) -> Result[
 
 
 pub def read_record_index(
-    fields: list[StoredField],
+    fields: &list[StoredField],
     mut cursor: EncodingCursor,
     mut budget: Budget,
 ) -> Result[RecordIndex, BinaryError]:
     """Only absent-policy fields consume bitmap bits; required fields always have a physical cell."""
     mut eligible = 0
     mut required = 0
-    for field in fields:
+    for at in range(len(fields)):
         budget.charge_elements(1).map_err((e) => primitive(e, cursor.absolute()))?
-        if field.shape.absent == AbsentPolicy.Required:
+        if fields[at].shape.absent == AbsentPolicy.Required:
             required += 1
         else:
             eligible += 1

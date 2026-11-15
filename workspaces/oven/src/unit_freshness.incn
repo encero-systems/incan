@@ -19,16 +19,26 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
+from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
-from unit_publication import published_identity, record_payload
-from source_identity import entry_scope, source_inputs
+from unit_publication import (
+    admitted_identity as admitted_payload_identity,
+    published_facts,
+    published_identity,
+    publication,
+    record_payload,
+)
+from frozen_inputs import observation as frozen_observation
+from source_identity import absent_inputs, entry_scope, source_inputs
+from standard_producers import stale_standard_refusal
+from unit_sources import SourceGraph, recorded_imports, source_graph
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from rust::std::env::consts import OS
 
-const UNIT_DOMAIN: str = "incan.oven.unit/3"
+const UNIT_DOMAIN: str = "incan.oven.unit/4"
 const CODEGEN_DOMAIN: str = "incan.oven.codegen/2"
 
 
@@ -39,14 +49,23 @@ pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]
     described = [f"{artifact_stem(package)}.native.json"]
     mut artifacts = [directory.joinpath(name) for name in compiled + described]
     cache = directory.joinpath(f"{artifact_stem(package)}.rustabi")
-    if cache.is_file():
+    if artifact_available(cache):
         artifacts.append(cache)
+    # The semantic facts a library's compiler published travel with its manifest when it published them.
+    facts = directory.joinpath(f"{artifact_stem(package)}.incnfacts")
+    if artifact_available(facts):
+        artifacts.append(facts)
     manifest = directory.joinpath(f"{artifact_stem(package)}.incnlib")
-    if manifest.is_file():
+    if artifact_available(manifest):
         declared = manifest_vocabulary(manifest)?
         if not declared.desugarer.is_null():
             artifacts.append(directory.joinpath("vocab-worker"))
     return Ok(artifacts)
+
+
+pub def artifact_available(path: Path) -> bool:
+    """Whether a frozen installation payload was admitted or an editable project artifact exists now."""
+    return frozen_observation(path).is_some() or path.is_file()
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
@@ -57,6 +76,10 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
+    if let Some(stamp) = frozen_observation(path):
+        return Ok(stamp)
+    if let Some(identity) = admitted_payload_identity(path)?:
+        return Ok(identity)
     clock = begin()
     result = observe(path)
     record_work(Operation.ArtifactIdentity, path.0, clock)
@@ -97,6 +120,10 @@ def retained_artifact_identity(path: Path, mut state: &mut ArtifactIdentityState
 def verify_artifact_identities(state: &ArtifactIdentityState) -> Result[None, str]:
     """Reconcile retained generations once after every checked-context consumer has finished."""
     for path in sorted([key for key in state.files.keys()]):
+        if frozen_observation(Path(path)) == Some(state.files[path]):
+            continue
+        if admitted_payload_identity(Path(path))? == Some(state.files[path]):
+            continue
         if observe(Path(path))?.stamp != state.files[path]:
             return Err(f"artifact changed while preparing request: {path}")
     return Ok(None)
@@ -118,6 +145,15 @@ pub model Key:
     pub descriptor: str = ""
     # The admitted compiler input for revalidation; an opaque caller-owned key may omit its derivation context.
     pub compiler: str = ""
+    # The identity over every authored byte, comments included, for outcomes that show source text or byte offsets:
+    # replayed check reports and refusals, and codegraph exports. Empty when it equals `digest`.
+    pub replay: str = ""
+
+    pub def replayed(self) -> str:
+        """The identity of an outcome that renders source: the raw identity, or `digest` when they agree."""
+        if self.replay != "":
+            return self.replay
+        return self.digest
 
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
@@ -144,14 +180,53 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     mut base_compiler = compiler
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
+    refuse_stale_standard(unit, toolchain)?
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
-    mut key = reconciled_key(unit, selected_compiler, description_digest(unit)?, project)?
+    described = description_digest(unit)?
+    # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
+    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", project)?
+    mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
 
 
-pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def graph_imports(unit: UnitDescription, toolchain: Toolchain) -> Result[Option[list[JsonValue]], str]:
+    """
+    The Rust crate requests recorded with the unit's current source graph under the scope `unit_key` reads, when the
+    compiler reported them: the requests `--rust-imports` prints for the same files, compiler and description.
+    """
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    selected_compiler = selected_unit_compiler(unit, toolchain, compiler_fingerprint(toolchain)?)?
+    return recorded_imports(unit, f"{selected_compiler} {description_digest(unit)?}", project)
+
+
+def refuse_stale_standard(unit: UnitDescription, toolchain: Toolchain) -> Result[None, str]:
+    """
+    Refuse a linked standard Loaf of this toolchain that another compiler produced.
+
+    A relink keeps the Loaves but replaces the compiler, and its new compiler may not read their records.
+    """
+    standard = Path(toolchain.driver).parent().parent().joinpath("loaves").0 + "/"
+    mut current = ""
+    for loaf in unit.loaves:
+        if not loaf.dir.startswith(standard):
+            continue
+        if current == "":
+            current = compiler_fingerprint(toolchain)?
+        match stale_standard_refusal(loaf.name, Path(loaf.dir), current)?:
+            Some(message) => return Err(message)
+            None => pass
+    return Ok(None)
+
+
+pub def reconciled_key(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     The key of a unit against a ledger that may already hold what earlier requests observed.
 
@@ -159,7 +234,7 @@ pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut
     """
     hashed = project.hashed
     listed = project.listed
-    key = unit_key_with(unit, compiler, described, project)?
+    key = unit_key_with(unit, compiler, described, project, graph)?
     project.save()?
     work = f"hashed {project.hashed - hashed} files, listed {project.listed - listed} directories"
     trace(f"{ledger_name(unit)}: key {key.digest[:12]}, {work}")
@@ -182,32 +257,48 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     2. Read the identities the linked native units were produced under.
     3. Bind the target and deployment selection without including installation paths. SDK contents belong only to
        units that read or link them, through `selected_unit_compiler`.
+    4. Bind the native-closure schemas the compiler and Oven publish, so records from an earlier closure form are
+       misses rather than closures this generation cannot resolve.
+
+    The compiler-record pin stays out: it selects how the compiler reads the standard Loaves, whose own identities key
+    each unit that links them, and every pack seals a set of its own, so a home installed from a pack would otherwise
+    reuse nothing its builder compiled.
     """
-    # 1. Metadata avoids reading unchanged compiler facts but never enters the compiler identity.
-    mut facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
-    match toolchain.compiler_records:
-        Some(pin) => facts.append(f"compiler-records {pin.digest}")
-        None => pass
+    # 1. Installed selections carry the identities admitted with their immutable page. Synthetic and staged
+    # toolchains without a page retain the direct fact lookup used by installation preparation and focused tests.
+    mut facts: list[str] = []
+    if len(toolchain.compiler_facts) == len(toolchain.rust_abi) + 1:
+        facts = [toolchain.compiler_facts[0]] + toolchain_cache_identities(toolchain)?
+    else:
+        facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
     # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
     natives = native_identities(toolchain.externs)?
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.
     #    The compiler's own answers are probed once per rustc installation and deployment selection.
     target = compiler_target(toolchain)?
-    facts.extend([target, deployment_target(rust_compiler(toolchain), target, inherited_deployment_selection()?)?])
+    selection = inherited_deployment_selection()?
+    mut deployment = toolchain.default_deployment_target
+    if len(selection) > 0 or toolchain.rust_version == "":
+        deployment = deployment_target(rust_compiler(toolchain), target, selection)?
+    facts.extend([target, deployment])
+    # 4. The schemas name the reference form of every native closure a unit of this compiler publishes or reads.
+    facts.extend([NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA])
     return fingerprint(facts + natives)
 
 
 pub def unit_compiler_identity(unit: UnitDescription, compiler: str, sdk: str) -> Result[str, str]:
     """Bind SDK contents only to unit kinds whose compiler invocation can read them."""
-    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0 and len(unit.cloves) == 0:
         return Ok(compiler)
     return fingerprint([compiler, sdk])
 
 
 pub def selected_unit_compiler(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[str, str]:
-    """Read SDK identity only for a final link or C-ABI unit, then derive that unit's compiler input."""
-    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+    """Use the admitted default SDK identity for a final link or C-ABI unit."""
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0 and len(unit.cloves) == 0:
         return Ok(compiler)
+    if toolchain.default_sdk_identity != "":
+        return unit_compiler_identity(unit, compiler, toolchain.default_sdk_identity)
     return unit_compiler_identity(unit, compiler, sdk_content_identity(toolchain.sysroot)?)
 
 
@@ -231,14 +322,26 @@ def compiler_target(toolchain: Toolchain) -> Result[str, str]:
     """Read the installed compiler's version and host without retaining its physical sysroot location."""
     if toolchain.target != "":
         return Ok(toolchain.target)
+    if toolchain.rust_version != "":
+        return Ok(toolchain.rust_version)
     return compiler_version(rust_compiler(toolchain))
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
-    """Canonical native aliases and the identities their producers recorded, without reading artifact bytes."""
+    """
+    Canonical native aliases and the content their producers published, without reading artifact bytes.
+
+    A linked dependency is identified by the digest of the bytes its publication recorded, not by its producer
+    identity, so a rebuild that produced the same native code, such as a documentation edit, rekeys none of its
+    consumers. A toolchain native keeps the identity it was admitted under.
+    """
     mut inputs: list[str] = []
     for native in externs:
-        inputs.append(f"{native.name} {published_identity(Path(native.path))?}")
+        mut identity = native.identity
+        if identity == "":
+            _, content = publication(Path(native.path))?
+            identity = f"content {content}"
+        inputs.append(f"{native.name} {identity}")
     return Ok(sorted(inputs))
 
 
@@ -248,6 +351,13 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
     for path in caches:
         inputs.append(fact_identity(Path(path))?)
     return Ok(sorted(inputs))
+
+
+pub def toolchain_cache_identities(toolchain: Toolchain) -> Result[list[str], str]:
+    """Use Rust ABI identities sealed into an installed page, retaining direct lookup for staged toolchains."""
+    if len(toolchain.compiler_facts) == len(toolchain.rust_abi) + 1:
+        return Ok(sorted(toolchain.compiler_facts[1:]))
+    return cache_identities(toolchain.rust_abi)
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
@@ -275,11 +385,39 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     mut record_identity: list[str] = []
     if let Some(registry) = unit.registry_id:
         record_identity.append(f"registry-id={registry}")
+    # A project's shared library is checked as a program, and a test unit linking it reads its imports through it;
+    # the modules it leaves out are source inputs. A unit with neither keeps the identity it had before them.
+    if let Some(library) = unit.project_library:
+        record_identity.append(f"project-library={library}")
+    if unit.program_checks:
+        record_identity.append("program-checks")
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
-        ) + access_facts(unit) + record_identity,
+        ) + access_facts(unit) + record_identity + clove_facts(unit),
     )
+
+
+def clove_facts(unit: UnitDescription) -> list[str]:
+    """
+    Each Clove the unit reaches, by its library, compiler and every configuration's definitions and archive bytes, so
+    a rebuilt archive rekeys the units that link it, each declared static archive it links, and the declared target its
+    bindings verify against when `--interop-target` selects one. Locations are provenance. A unit that reaches none
+    has none.
+    """
+    mut facts: list[str] = []
+    for clove in unit.cloves:
+        facts.append(f"clove={clove.name}:{clove.library}:{clove.cplusplus}:{clove.compiler}")
+        facts.extend([f"clove-header={clove.name}:{header}" for header in clove.public_headers])
+        for configuration in clove.configurations:
+            definitions = ",".join(configuration.definitions)
+            facts.append(f"clove-configuration={clove.name}:{configuration.name}:{definitions}:{configuration.identity}")
+    # Declared static archives link in order, so their order is identity too.
+    for archive in unit.c_archives:
+        facts.append(f"static-archive={archive.name}:{archive.link_name}:{archive.identity}")
+    if let Some(target) = unit.c_abi_target:
+        facts.append(target.fact())
+    return facts
 
 
 def access_facts(unit: UnitDescription) -> list[str]:
@@ -298,7 +436,13 @@ pub def linked_natives(unit: UnitDescription) -> list[NativeCrate]:
     return [native for native in unit.externs if native.name not in unit.toolchain_access.sysroot_dependencies]
 
 
-pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def unit_key_with(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     Digest compiled source contents and fold the recorded identities of the units it links.
 
@@ -311,11 +455,18 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     3. Combine them with the compiler and the description into the key.
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
-    sources = source_contents(unit, project)?
-    # 2. A rebuilt library, native crate or ABI cache the unit links changes the key of the unit linking it.
-    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))? + cache_identities(unit.rust_abi)?
+    # A program or test unit's native code reads only positioned code, so comments that move no code are not its inputs.
+    native = unit.kind in ["program", "test"]
+    sources = source_contents(unit, project, graph, native)?
+    # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
+    # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
+    # frozen installation inputs after admission.
+    artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
+    mut replay = ""
+    if native:
+        replay = assembled(compiler, described, source_contents(unit, project, graph, false)?, artifacts)?.digest
     return Ok(
         Key(
             digest=key.digest,
@@ -324,25 +475,59 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
             provenance=[unit.project_root, unit.source],
             descriptor=fingerprint([json_text(unit.to_json())?])?,
             compiler=key.compiler,
+            replay=replay,
         ),
     )
 
 
-def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
-    """Resolve declared entries from their project and identify their roles without physical source locations."""
+def source_contents(
+    unit: UnitDescription,
+    mut project: Ledger,
+    graph: Option[SourceGraph],
+    code: bool,
+) -> Result[list[str], str]:
+    """
+    Resolve declared entries from their project and identify their roles without physical source locations.
+
+    A unit with a source graph reads exactly its graph's files, and the graph's absent paths are inputs too: a file
+    created at one changes what collection reads. Any other unit reads every source under its roots.
+    With `code`, an Incan source counts by its positioned code (`Ledger.code_digest`) instead of its bytes.
+    """
     root = Path(unit.source_root)
     declared = Path(unit.project_root)
-    mut contents = ["entry", entry_scope(Path(unit.source), root), project.digest(Path(unit.source))?]
-    modules = [path for path in unit_files(unit, project)? if path != unit.source]
-    contents.extend(source_inputs(modules, root, project)?)
+    mut entry_digest = ""
+    if code:
+        entry_digest = project.code_digest(Path(unit.source))?
+    else:
+        entry_digest = project.digest(Path(unit.source))?
+    mut contents = ["entry", entry_scope(Path(unit.source), root), entry_digest]
+    match graph:
+        Some(collected) =>
+            # The collection's own paths are physical; bind them under the physical root.
+            physical = root.resolve().unwrap_or(root)
+            entry = Path(unit.source).resolve().unwrap_or(Path(unit.source)).0
+            modules = [path for path in collected.read if path != entry and path != unit.source]
+            contents.extend(source_inputs(modules, physical, project, code)?)
+            contents.extend(["absent"] + absent_inputs(collected.absent, physical))
+        None =>
+            # A project's shared library reads no test module, so editing a test never rebuilds it.
+            modules = [path for path in unit_files(unit, project)? if path != unit.source and path not in unit.excluded_sources]
+            contents.extend(source_inputs(modules, root, project, code)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
+    # A batch unit's further test modules are entries of their own, in run order.
+    for entry in unit.test_batch:
+        contents.extend(["test-batch"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     if let Some(entry) = unit.vocab_entry:
         contents.extend(["vocabulary-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     for schema in unit.contract_models:
         contents.extend(["contract-model", project.digest(Path(unit.project_root).joinpath(schema))?])
     for header in unit.c_headers:
         contents.extend(["c-header", project.digest(Path(unit.project_root).joinpath(header))?])
+    # A Clove's public headers are verification inputs even when an edit leaves its archive bytes unchanged.
+    for clove in unit.cloves:
+        for header in clove.public_headers:
+            contents.extend(["clove-header", project.digest(Path(clove.root).joinpath(header))?])
     if let Some(vocab) = unit.vocab:
         contents.extend(["vocabulary", vocabulary_facts(Path(vocab))?])
     return Ok(contents)
@@ -370,11 +555,20 @@ pub def vocabulary_facts(path: Path) -> Result[str, str]:
 
 
 def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
-    """Canonical Loaf bindings and their published producer identities; absent producer evidence refuses."""
+    """
+    Canonical Loaf bindings and the identities their consumer is keyed on; absent producer evidence refuses.
+
+    A unit is keyed on the semantic facts the Loaf's publication recorded, so a documentation edit in the Loaf leaves
+    it alone (RFC 179); what a program or test links is identified by its content in `native_identities`. A Loaf
+    whose publication recorded no facts keys its consumers on its producer identity.
+    """
     mut inputs: list[str] = []
     for loaf in unit.loaves:
         path = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-        inputs.append(f"{loaf.key}={loaf.name} {published_identity(path)?}")
+        mut identity = published_identity(path)?
+        if let Some(facts) = published_facts(path)?:
+            identity = f"facts {facts}"
+        inputs.append(f"{loaf.key}={loaf.name} {identity}")
     return Ok(sorted(inputs))
 
 
@@ -469,7 +663,7 @@ pub def record(stamp: Path, key: Key, outputs: list[Path], borrowed: list[Path] 
     borrowed_paths = [artifact.0 for artifact in borrowed]
     if key.refusal != "":
         if stamp.is_file():
-            stamp.unlink().map_err((error) => f"cannot remove file {error.message()}")?
+            stamp.unlink().map_err((error) => f"cannot {error.message()}")?
         for output in outputs:
             if output.0 not in borrowed_paths:
                 record_payload(output, "", key.provenance, key.refusal)?
@@ -494,3 +688,11 @@ pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Ke
     for index in range(len(staged)):
         place(staged[index], finals[index])?
     return record(stamp, key, finals)
+
+
+pub def replay_key(key: Key) -> Key:
+    """`key` under its raw identity, for an output that shows source text or positions, such as a codegraph export."""
+    mut raw = key
+    raw.digest = key.replayed()
+    raw.replay = ""
+    return raw

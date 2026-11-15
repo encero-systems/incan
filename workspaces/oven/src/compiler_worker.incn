@@ -3,7 +3,7 @@ Submit unit compilations, checks and formatting runs to one serial compiler work
 inherited environment.
 """
 
-from rust::std::env import current_dir, vars_os
+from rust::std::env import vars_os
 from rust::std::ffi import OsString
 from rust::std::io import Error as IoError, Write, stderr, stdout
 from rust::std::os::unix::process import CommandExt
@@ -15,9 +15,9 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
 from pub::incan_platform.ipc import Connection, Listener, listen
-from files import discard_file
+from files import discard_file, open_stream
 from home import owners_dir
-from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
+from pub::incan_worker_host.protocol import SCHEMA, completion, handoff, ready, request_document, retired
 from pub::incan_worker_host.record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
@@ -31,6 +31,7 @@ from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket
 from decimal_text import digits_only
 from owner_protocol import receive_document, send_document
 from toolchain import Toolchain
+from request_directory import working_directory
 from unit_freshness import compiler_fingerprint, fingerprint
 from driver_command import driver_command
 from pub::incan_platform.trace import Operation
@@ -58,7 +59,7 @@ pub def served_resident(arguments: list[str]) -> bool:
     if len(arguments) == 0:
         return false
     command = arguments[0]
-    return command == "--unit" or command == "--check" or command == "--fmt"
+    return command == "--unit" or command == "--check" or command == "--fmt" or command == "--rust-imports"
 
 
 pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
@@ -73,6 +74,7 @@ pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[O
     match capture_for(toolchain):
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(toolchain, reason)?
             return Ok(None)
         Ok(capturing) =>
             # 2. Only a failure before submission permits the original single-process path.
@@ -98,6 +100,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
     match capture_for(foreground):
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(foreground, reason)?
             return Ok(None)
         Ok(capturing) =>
             # 2. Only a failure before submission permits the original single-process path.
@@ -157,6 +160,15 @@ pub def relay_console(prefix: str) -> Result[None, str]:
     return Ok(None)
 
 
+pub def collect_console(prefix: str) -> Result[list[str], str]:
+    """A completed request's output and error text, withdrawn instead of relayed; invalid UTF-8 is replaced."""
+    mut streams: list[str] = []
+    for stream in ["out", "err"]:
+        contents = collected(Path(f"{prefix}.{stream}"))?
+        streams.append(str(RustString.from_utf8_lossy(contents).into_owned()))
+    return Ok(streams)
+
+
 def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
     """Copy a completed compiler stream without changing its encoding or adding a newline."""
     contents = collected(path)?
@@ -175,7 +187,7 @@ def collected(path: Path) -> Result[bytes, str]:
     """The exact bytes a request wrote to one console sink, which is then withdrawn; an absent sink holds none."""
     if not path.is_file():
         return Ok(b"")
-    contents = path.read_bytes().map_err((error) => f"cannot read {error.message()}")?
+    contents = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
     discard_file(path)
     return Ok(contents)
 
@@ -183,6 +195,16 @@ def collected(path: Path) -> Result[bytes, str]:
 def console_result(result: Result[None, IoError]) -> Result[None, str]:
     """Report a standard-stream write or flush failure through the command's existing error boundary."""
     return result.map_err((error) => f"cannot relay compiler console: {error}")
+
+
+def report_cold(toolchain: Toolchain, reason: str) -> Result[None, str]:
+    """Tell this request's client why no resident worker could start before using a cold compiler process."""
+    message = RustString.from(f"compiler worker unavailable: {reason}; using a cold compiler process\n").into_bytes()
+    if toolchain.console != "":
+        mut stream = open_stream(f"{toolchain.console}.err")?
+        return console_result(stream.write_all(message))
+    mut stream = stderr()
+    return console_result(stream.write_all(message))
 
 
 def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
@@ -193,6 +215,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     2. Submit the ordinary compiler arguments and this request's console paths and working directory.
     3. Read its completion; a submitted request is never replayed after a transport failure.
     4. A worker that retired with this reply is not dialed again: the next request starts a fresh one.
+    5. A worker over its footprint ceiling answered with its rustc handoff instead; rustc runs here, in a fresh process.
     """
     # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
     connecting = begin()
@@ -201,6 +224,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     match found_connection:
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(toolchain, reason)?
             return Ok(None)
         Ok(found) =>
             # The slot stays held until this request completes, so no other caller queues behind it.
@@ -208,11 +232,11 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             mut connected = connected_socket
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             clock = begin()
-            directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
+            directory = working_directory()?
             document = request_document(
                 generation,
                 arguments,
-                directory.to_string_lossy().into_owned(),
+                directory,
                 f"{toolchain.console}.out",
                 f"{toolchain.console}.err",
                 toolchain.retire_worker,
@@ -226,7 +250,32 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
                 trace("compiler worker: retired after its request")
             elif toolchain.retire_worker:
                 return Err("compiler worker did not honor the requested activation lifetime")
+            # 5. The handoff is this request's native compilation, so it runs exactly once, after the worker's heap is gone.
+            if let Some(path) = handoff(reply):
+                trace("compiler worker: rustc handed to a fresh process")
+                return Ok(Some(rustc_from_handoff(toolchain, path)?))
             return Ok(Some(status_code(completion(reply)?)))
+
+
+def rustc_from_handoff(toolchain: Toolchain, path: str) -> Result[i32, str]:
+    """
+    Run native compilation from the handoff a retired worker wrote, in a fresh driver process that appends to this
+    request's console sinks, and return the status it exits with; a process ended by a signal has status one. The
+    handoff is removed even when that process could not start.
+    """
+    mut command = driver_command(toolchain)?
+    command.arg("--rustc-handoff").arg(path)
+    command.stdin(Stdio.null())
+    command.stdout(open_stream(f"{toolchain.console}.out")?)
+    command.stderr(open_stream(f"{toolchain.console}.err")?)
+    clock = begin()
+    ended = command.status()
+    record(Operation.DriverSpawn, path, clock)
+    discard_file(Path(path))
+    status = ended.map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    match status.code():
+        Some(code) => return Ok(code)
+        None => return Ok(1)
 
 
 def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str, FileLock], str]:
@@ -266,14 +315,14 @@ def take_slot(directory: Path, generation: str) -> Result[tuple[int, FileLock], 
     own = int(id()) % size
     lock = Path(slot_endpoint(directory, generation, own)?.lock)
         .lock_exclusive()
-        .map_err((error) => f"cannot lock {error.message()}")?
+        .map_err((error) => f"cannot {error.message()}")?
     return Ok((own, lock))
 
 
 def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileLock], str]:
     """The lock of one slot when nobody holds it."""
     path = Path(slot_endpoint(directory, generation, slot)?.lock)
-    return path.try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")
+    return path.try_lock_exclusive().map_err((error) => f"cannot {error.message()}")
 
 
 def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
@@ -291,7 +340,7 @@ def generation_of(toolchain: Toolchain) -> Result[str, str]:
     """The generation a resident owner retained, or the one this invocation's compiler and environment select."""
     if toolchain.worker_generation != "":
         return Ok(toolchain.worker_generation)
-    return generation_for(compiler_fingerprint(toolchain)?)
+    return generation_for(toolchain, compiler_fingerprint(toolchain)?)
 
 
 pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[Endpoint, str]:
@@ -300,15 +349,18 @@ pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[End
     nonincidental environment. Its lock stays beside the console sinks; its sockets go to the user's endpoint
     directory, so their path does not grow with the home's depth.
     """
-    sockets = f"{socket_prefix(directory.0)?}c-{generation}-{slot}"
-    ready = f"{sockets}.{id()}.ready"
-    bindable(f"{sockets}.sock")?
+    prefix = socket_prefix(directory.0)?
+    worker = fingerprint([generation, str(slot)])?[0:16]
+    readiness = fingerprint([generation, str(slot), str(id())])?[0:16]
+    socket = f"{prefix}c-{worker}.sock"
+    ready = f"{prefix}r-{readiness}.ready"
+    bindable(socket)?
     bindable(ready)?
     return Ok(
         Endpoint(
             generation=generation,
             directory=directory.0,
-            socket=f"{sockets}.sock",
+            socket=socket,
             lock=directory.joinpath(f"c-{generation}-{slot}.lock").0,
             ready=ready,
             mailbox="",
@@ -352,14 +404,20 @@ def memory_workers() -> int:
                     return int(text) // WORKER_CEILING_BYTES
 
 
-pub def generation_for(compiler: str) -> Result[str, str]:
+pub def generation_for(toolchain: Toolchain, compiler: str) -> Result[str, str]:
     """
-    Bind a worker to the complete observed compiler identity and this process's inherited configuration.
+    Bind a worker to the complete observed compiler identity, the compiler-record set its launch selects and this
+    process's inherited configuration.
 
-    A resident owner may retain this digest only while it watches all compiler inputs and its environment remains
-    unchanged. Every other caller derives it for the request; source, checking and compilation are never retained.
+    The record set is no unit input, but a worker keeps reading the set it was launched with, so another set needs
+    another worker. A resident owner may retain this digest only while it watches all compiler inputs and its
+    environment remains unchanged. Every other caller derives it for the request; source, checking and compilation are
+    never retained.
     """
-    return Ok(fingerprint([SCHEMA, RECORD_SCHEMA, compiler] + environment()?)?[0:16])
+    mut selected = [SCHEMA, RECORD_SCHEMA, compiler]
+    if let Some(pin) = toolchain.compiler_records:
+        selected.append(f"compiler-records {pin.digest}")
+    return Ok(fingerprint(selected + environment()?)?[0:16])
 
 
 def environment() -> Result[list[str], str]:

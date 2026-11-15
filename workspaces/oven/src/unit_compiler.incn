@@ -7,6 +7,7 @@ from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
 from codegen import compiled_arguments
+from c_interop import archive_arguments
 from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import compile_or_replay
@@ -17,6 +18,7 @@ from publication import publish, publish_binary
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
+from native_references import anchor_arguments
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
@@ -32,6 +34,31 @@ pub model PlanRecordCounts:
     pub native_interface_evaluations: int = 0
 
 
+pub model CheckerRecordCounts:
+    """Permanent checker-record admission counts emitted by one compiler activation."""
+
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub summary: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
+    # Owners whose checked bodies the compiler restored from the selected records instead of checking them. A
+    # selected record the compiler refused is not here: that body was checked afresh.
+    pub restored: list[str] = []
+
+
+# The schema of the sidecar a check writes with `--checked-bodies`.
+const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
+
+
+pub model CheckedBodyCounts:
+    """One check's top-level function bodies: checked afresh, and restored from the engine's selected records."""
+
+    pub checked: int = 0
+    pub reused: int = 0
+    # Restored bodies whose pages the compiler decoded itself, rather than found decoded by an earlier check.
+    pub decoded: int = 0
+
+
 pub def compile_prepared_unit(
     unit: UnitDescription,
     toolchain: Toolchain,
@@ -45,7 +72,8 @@ pub def compile_prepared_unit(
     Compile one prepared unit without dependency selection or recursive preparation.
 
     1. Publish the description under its reconciled identity and prepare the output directory.
-    2. Select profile flags and any requested shared development linkage.
+    2. Select profile flags, the native-closure anchors a capable driver takes and any requested shared development
+       linkage.
     3. Compile or replay a certified refusal under the complete source identity.
     """
     # 1. The compiler reads the selected inputs and a generation-witnessed description.
@@ -58,7 +86,7 @@ pub def compile_prepared_unit(
     path = write_unit(unit, compiled, None, described_by(key), true)?
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    # 2. Native flags match the profile and the caller's explicit linkage request.
+    # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
     executable = unit.kind in ["program", "test"]
     mut native = compiled_arguments(
         unit.profile,
@@ -67,30 +95,24 @@ pub def compile_prepared_unit(
         executable,
         dependency_source_roots(unit),
         toolchain.sysroot,
-    )? + shared_arguments(unit, development)?
+    )? + anchor_arguments(toolchain.closure_anchors)? + shared_arguments(unit, development)? + archive_arguments(
+        unit.c_archives,
+    )
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
         records_path = Path(f"{path.0}.graph-body-records")
-        if records_path.exists():
-            remove_dir_all(records_path.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
-        records_path.mkdir(true, true).map_err((error) => f"{records_path.0}: {error.message()}")?
-        generation = match unit.checked_context:
-            Some(value) => value
-            None => return Err("records lowering requires the complete compiler context")
-
-        publish_binary(records_path.joinpath("producer-profile"), generation.encode("utf-8"))?
-        for page in records:
-            publish_binary(records_path.joinpath(page.key), page.value)?
+        write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
         output_path = Path(f"{path.0}.graph-body-output")
         discard_file(output_path)
+        discard_file(checker_record_report_path(output_path))
         native += ["--graph-body-output", output_path.0]
         report = Path(f"{path.0}.graph-plan-report")
         if report.exists():
             remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
-        report.mkdir(true, true).map_err((error) => f"cannot create plan record report {report.0}: {error.message()}")?
+        report.mkdir(true, true).map_err((error) => f"plan record report: cannot {error.message()}")?
         native += ["--plan-record-report", report.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
@@ -101,10 +123,101 @@ pub def compile_prepared_unit(
     return Ok(code)
 
 
+pub def write_selected_records(directory: Path, unit: UnitDescription, records: list[SelectedBodyPage]) -> Result[None, str]:
+    """
+    Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
+    compiler context they were selected under. Builds and checks read their records from this one writer.
+    """
+    if directory.exists():
+        remove_dir_all(directory.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    generation = match unit.checked_context:
+        Some(value) => value
+        None => return Err("records lowering requires the complete compiler context")
+
+    publish_binary(directory.joinpath("producer-profile"), generation.encode("utf-8"))?
+    for page in records:
+        publish_binary(directory.joinpath(page.key), page.value)?
+    return Ok(None)
+
+
+pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
+    """
+    Read a check's `incan.checked-bodies/1` sidecar: how many top-level function bodies it checked and how many it
+    restored from selected records. A replayed check runs no compiler, writes none, and checked nothing.
+    """
+    if not report.is_file():
+        return Ok(CheckedBodyCounts())
+    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => f"cannot decode checked bodies report {report.0}: {error.message()}",
+    )?
+    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    if schema != CHECKED_BODIES_SCHEMA:
+        return Err(f"unsupported checked bodies report {schema}")
+    checked = value.require("checked").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    reused = value.require("reused").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    # A compiler that reports no decode count decoded every page it restored.
+    mut decoded = reused
+    if let Some(field) = value.get("decoded"):
+        decoded = field.expect_int().map_err((error) => error.message())?
+    discard_file(report)
+    return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
+
+
 pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
     return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
+
+
+pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[CheckerRecordCounts, str]:
+    """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
+    report = checker_record_report_path(graph_body_output_path(unit, key))
+    if not report.is_file():
+        return Ok(CheckerRecordCounts())
+    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => f"cannot decode checker record report {report.0}: {error.message()}",
+    )?
+    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    if schema != "incan.checker-reuse/1":
+        return Err("unsupported checker record report")
+    fields = value
+        .require("artifact_refusals")
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
+    mut refusals: Dict[str, int] = {}
+    for name in fields.keys():
+        refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
+    # A compiler that names no restored owner restored none.
+    mut restored: list[str] = []
+    if let Some(owners) = value.get("restored"):
+        for owner in owners.expect_array().map_err((error) => error.message())?:
+            restored.append(owner.expect_str().map_err((error) => error.message())?)
+    counts = CheckerRecordCounts(
+        reusable_declarations=value
+            .require("reusable_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
+        all_declarations=value
+            .require("all_declarations")
+            .map_err((error) => error.message())?
+            .expect_int()
+            .map_err((error) => error.message())?,
+        summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )?,
+        artifact_refusals=refusals,
+        restored=restored,
+    )
+    discard_file(report)
+    return Ok(counts)
+
+
+def checker_record_report_path(output: Path) -> Path:
+    """Name the compiler-owned report paired with one graph-body output generation."""
+    return Path(f"{output.0}.checker-report.json")
 
 
 pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:
@@ -113,12 +226,12 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
     mut counts = PlanRecordCounts()
     if not report.is_dir():
         return Ok(counts)
-    for entry in report.iterdir().map_err((error) => f"cannot read plan record report {report.0}: {error.message()}")?:
+    for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
         text = entry
             .read_text("utf-8", "strict")
-            .map_err((error) => f"cannot read plan record event {entry.0}: {error.message()}")?
+            .map_err((error) => f"plan record event: cannot {error.message()}")?
         event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
         reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
             (error) => error.message(),

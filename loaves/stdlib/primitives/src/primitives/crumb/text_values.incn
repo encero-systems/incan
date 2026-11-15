@@ -1,7 +1,10 @@
 """Typed COMIC value reading through document-owned descriptions."""
 
-from rust::std::primitive import f32 as RustF32, f64 as RustF64, i128 as RustI128, u128 as RustU128
-from rust::std::str import FromStr
+from rust::incan_std_primitives::crumb import (
+    parse_decimal as native_parse_decimal,
+    parse_float as native_parse_float,
+    parse_integer as native_parse_integer,
+)
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.native_numbers import integer_compare, integer_spelling
 from crate.primitives.crumb.text_names import require_name, require_path
@@ -250,62 +253,49 @@ def parse_scalar(kind: ScalarKind, mut tokens: TextTokens, mut budget: Budget) -
 
 
 def parse_integer(kind: ScalarKind, value: str, position: TextPosition) -> Result[Value, TextError]:
-    """Validate canonical decimal spelling and the declared exact storage range."""
-    if not canonical_integer(value):
-        return Err(TextError(kind=TextFailure.InvalidInteger, position=position))
+    """Map one native canonical integer parse to the public typed value or text failure."""
     match kind.integer_facts():
         Some((true, bits)) =>
-            match RustI128.from_str(value):
-                Ok(number) =>
-                    if signed_in_width(number, bits):
-                        return Ok(Value.Integer(IntegerValue.Signed(number)))
-                Err(_) => pass
+            parsed = native_parse_integer(value, true, bits.saturating_resize[u8]())
+            if parsed.kind == 0u8:
+                return Ok(Value.Integer(IntegerValue.Signed(parsed.signed)))
+            if parsed.kind == 1u8:
+                return Err(TextError(kind=TextFailure.InvalidInteger, position=position))
         Some((false, bits)) =>
-            match RustU128.from_str(value):
-                Ok(number) =>
-                    if unsigned_in_width(number, bits):
-                        return Ok(Value.Integer(IntegerValue.Unsigned(number)))
-                Err(_) => pass
+            parsed = native_parse_integer(value, false, bits.saturating_resize[u8]())
+            if parsed.kind == 0u8:
+                return Ok(Value.Integer(IntegerValue.Unsigned(parsed.unsigned)))
+            if parsed.kind == 1u8:
+                return Err(TextError(kind=TextFailure.InvalidInteger, position=position))
         None => pass
     return Err(TextError(kind=TextFailure.IntegerOutOfRange, position=position))
 
 
 def parse_float(kind: ScalarKind, spelling: str, position: TextPosition) -> Result[Value, TextError]:
-    """Parse through Rust's exact-width scalar and retain canonical IEEE bits."""
-    if spelling not in NONFINITE_SPELLINGS and not valid_finite_float(spelling):
-        return Err(TextError(kind=TextFailure.InvalidFloat, position=position))
+    """Map one native exact-width float parse to the public typed value or text failure."""
+    mut width = 64
     if kind == ScalarKind.Fp32:
-        match RustF32.from_str(spelling):
-            Ok(value) => return Ok(Value.Float(32, u32_bytes(value.to_bits())))
-            Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=position))
-    match RustF64.from_str(spelling):
-        Ok(value) => return Ok(Value.Float(64, u64_bytes(value.to_bits())))
-        Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=position))
+        width = 32
+    parsed = native_parse_float(spelling, width.saturating_resize[u8]())
+    if parsed.kind == 1u8:
+        return Err(TextError(kind=TextFailure.InvalidFloat, position=position))
+    if parsed.kind != 0u8:
+        return Err(TextError(kind=TextFailure.TypeMismatch, position=position))
+    return Ok(Value.Float(width, parsed.data))
 
 
 def parse_decimal(precision: int, scale: int, mut tokens: TextTokens) -> Result[Value, TextError]:
-    """Require exactly the declared fractional scale and retain an exact coefficient string."""
+    """Map one native fixed-scale decimal parse to the public typed value or text failure."""
     token = tokens.take()?
     spelling = tokens.text(token)?
-    if not spelling.endswith("d"):
+    parsed = native_parse_decimal(spelling, precision.saturating_resize[u8](), scale.saturating_resize[u8]())
+    if parsed.kind == 1u8:
         return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
-    number = spelling[0:len(spelling) - 1]
-    parts = number.split(".")
-    if (
-        len(parts) != 2
-        or len(parts[1]) != scale
-        or not decimal_digits(parts[0], true)
-        or not decimal_digits(parts[1], false)
-    ):
+    if parsed.kind == 2u8:
         return Err(TextError(kind=TextFailure.DecimalScaleMismatch, position=token.position))
-    mut coefficient = parts[0] + parts[1]
-    if coefficient.startswith("-") and coefficient[1:2] == "0" and all_zero(coefficient[1:]):
-        coefficient = "0"
-    if len(coefficient.replace("-", "")) > precision:
+    if parsed.kind != 0u8:
         return Err(TextError(kind=TextFailure.DecimalPrecision, position=token.position))
-    match RustI128.from_str(coefficient):
-        Ok(value) => return Ok(Value.Decimal(value, scale))
-        Err(_) => return Err(TextError(kind=TextFailure.DecimalPrecision, position=token.position))
+    return Ok(Value.Decimal(parsed.coefficient, scale))
 
 
 def parse_optional(
@@ -531,18 +521,6 @@ def enum_has_variant(descriptions: list[TextDescription], path: str, name: str) 
     return false
 
 
-def canonical_integer(value: str) -> bool:
-    """Accept decimal digits with an optional minus and no leading zeros or negative zero."""
-    if value == "" or value.startswith("+") or "_" in value:
-        return false
-    mut digits = value
-    if value.startswith("-"):
-        digits = value[1:]
-        if digits == "0":
-            return false
-    return canonical_unsigned(digits)
-
-
 def canonical_unsigned(value: str) -> bool:
     """Return whether text is nonempty decimal digits without leading zeros."""
     if value == "" or (len(value) > 1 and value.startswith("0")):
@@ -551,98 +529,6 @@ def canonical_unsigned(value: str) -> bool:
         if digit < "0" or digit > "9":
             return false
     return true
-
-
-def signed_in_width(value: i128, bits: int) -> bool:
-    """Check one parsed signed value against its declared storage width."""
-    if bits == 128:
-        return true
-    limit: i128 = 1i128 << (bits - 1)
-    return value >= 0i128 - limit and value < limit
-
-
-def unsigned_in_width(value: u128, bits: int) -> bool:
-    """Check one parsed unsigned value against its declared storage width."""
-    if bits == 128:
-        return true
-    limit: u128 = 1u128 << bits
-    return value < limit
-
-
-def valid_finite_float(value: str) -> bool:
-    """Refuse integer spellings, separators, plus signs and malformed decimal exponents."""
-    if value == "" or value.startswith("+") or "_" in value:
-        return false
-    if "." not in value and "e" not in value:
-        return false
-    mut exponent_parts = value.split("e")
-    if len(exponent_parts) > 2:
-        return false
-    base = exponent_parts[0]
-    if not decimal_float_base(base):
-        return false
-    if len(exponent_parts) == 2:
-        exponent = exponent_parts[1]
-        if exponent.startswith("+") or not decimal_digits(exponent, true):
-            return false
-    return true
-
-
-def decimal_float_base(value: str) -> bool:
-    """Validate digits around an optional point, retaining a leading minus only."""
-    parts = value.split(".")
-    if len(parts) > 2:
-        return false
-    if not decimal_digits(parts[0], true):
-        return false
-    if len(parts) == 2 and not decimal_digits(parts[1], false):
-        return false
-    return true
-
-
-def decimal_digits(value: str, signed: bool) -> bool:
-    """Return whether text is a nonempty decimal digit run with an optional leading minus."""
-    mut digits = value
-    if signed and digits.startswith("-"):
-        digits = digits[1:]
-    if digits == "":
-        return false
-    for digit in digits:
-        if digit < "0" or digit > "9":
-            return false
-    return true
-
-
-def all_zero(value: str) -> bool:
-    """Return whether every scalar is the decimal zero digit."""
-    for digit in value:
-        if digit != "0":
-            return false
-    return true
-
-
-def u32_bytes(value: u32) -> bytes:
-    """Write one IEEE binary32 bit pattern in network order."""
-    return [
-        ((value >> 24) & 255u32).saturating_resize[u8](),
-        ((value >> 16) & 255u32).saturating_resize[u8](),
-        ((value >> 8) & 255u32).saturating_resize[u8](),
-        (value & 255u32).saturating_resize[u8](),
-    ]
-
-
-def u64_bytes(value: u64) -> bytes:
-    """Write one IEEE binary64 bit pattern in network order."""
-    return [
-        ((value >> 56) & 255u64).saturating_resize[u8](),
-        ((value >> 48) & 255u64).saturating_resize[u8](),
-        ((value >> 40) & 255u64).saturating_resize[u8](),
-        ((value >> 32) & 255u64).saturating_resize[u8](),
-        ((value >> 24) & 255u64).saturating_resize[u8](),
-        ((value >> 16) & 255u64).saturating_resize[u8](),
-        ((value >> 8) & 255u64).saturating_resize[u8](),
-        (value & 255u64).saturating_resize[u8](),
-    ]
 
 
 def value_index(items: list[Value], candidate: Value) -> int:

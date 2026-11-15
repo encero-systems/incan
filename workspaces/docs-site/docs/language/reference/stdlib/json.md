@@ -40,7 +40,7 @@ Common imports: `from std.json import JsonValue, JsonError, parse_jsonl`. For ta
 | `JsonValue.array(values: list[JsonValue])` | array |
 | `JsonValue.object(entries: Dict[str, JsonValue])` | object |
 
-`JsonValue.float(...)` returns an error for NaN and infinities because JSON has no spelling for those values.
+`JsonValue.float(...)` returns an error for NaN and infinities.
 
 ## Serialization
 

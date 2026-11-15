@@ -425,7 +425,7 @@ impl<'a> PublicationAudit<'a> {
             }
             Rvalue::IsInstance(payload) => {
                 self.operand(&mut payload.value)?;
-                self.ty(&mut payload.value_ty)?;
+                self.ty(&payload.value_ty)?;
                 self.ty(&payload.target.ty)?;
                 if let Some(identity) = &mut payload.target.canonical {
                     self.identity(identity, true)?;

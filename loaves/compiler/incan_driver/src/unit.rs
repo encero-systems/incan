@@ -56,6 +56,24 @@ pub struct UnitDescription {
     /// Additional program entry sources, in selector order. Each must be a collected source module with a main.
     #[serde(default)]
     pub program_entries: Vec<PathBuf>,
+    /// Further test modules a test unit compiles beside its entry module, in run order: the modules that share a plain
+    /// session-scoped `conftest.incn` fixture with it, whose tests run in one process so the fixture is set up once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_batch: Vec<PathBuf>,
+    /// The dependency key under which a test unit's `loaves` bind its project's shared library unit. That library
+    /// holds every module of the source root but `excluded_sources` and the root entry files, so a project-local
+    /// import of any of them names the library: the test unit compiles only its own modules, and the rest compile
+    /// once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_library: Option<String>,
+    /// Source files the project's shared library leaves out: its test modules. The library unit omits them from its
+    /// module set, and a test unit naming `project_library` compiles them as its own modules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_sources: Vec<PathBuf>,
+    /// Check a library unit as its project's program is checked: a project's shared library is no published API, so
+    /// it skips the publication-only API docstring check.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub program_checks: bool,
     /// The package's root directory, which package-relative paths are spelled against.
     pub project_root: PathBuf,
     /// The package's source root, which module paths are spelled against.
@@ -87,6 +105,14 @@ pub struct UnitDescription {
     pub contract_models: Vec<String>,
     /// The C headers the package declares, package-relative, which checked C bindings may name.
     pub c_headers: Vec<String>,
+    /// The Cloves (C-library Loaves, RFC 159) the unit reaches, each configuration compiled by Oven; a
+    /// `c.loaf_library` binding verifies against one and links its archive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloves: Vec<UnitClove>,
+    /// The declared `[[interop.c.targets]]` entry checked C bindings verify against instead of the host
+    /// (`--interop-target`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c_abi_target: Option<UnitCAbiTarget>,
     /// Producer registration prepared by Oven, in the existing versioned vocabulary descriptor format.
     #[serde(default)]
     pub vocab: Option<PathBuf>,
@@ -198,6 +224,78 @@ pub struct UnitNativeCrate {
     pub name: String,
     /// The library artifact; the compiler never chooses it from a directory.
     pub path: PathBuf,
+}
+
+/// One Clove a unit reaches: its library, the headers it exposes and its compiled configurations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitClove {
+    /// The Clove's Loaf name, which `c.loaf_library` names.
+    pub name: String,
+    /// The Clove's root directory, which its public headers and include roots are relative to.
+    pub root: PathBuf,
+    /// The archive's link name: `lib<library>.a`.
+    pub library: String,
+    /// The headers a binding may name, Clove-relative.
+    pub public_headers: Vec<String>,
+    /// The Clove's include roots, absolute.
+    pub include: Vec<PathBuf>,
+    /// Whether the archive holds C++ objects, whose runtime library the final link adds.
+    pub cplusplus: bool,
+    /// The compiler identity that built the archives; `host:` marks the non-portable local override.
+    pub compiler: String,
+    /// Every compiled configuration.
+    pub configurations: Vec<UnitCloveConfiguration>,
+}
+
+/// One compiled configuration of a Clove.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCloveConfiguration {
+    /// The configuration name.
+    pub name: String,
+    /// Its resolved preprocessor definitions, `NAME=VALUE`.
+    pub definitions: Vec<String>,
+    /// The static archive Oven compiled for it.
+    pub archive: PathBuf,
+    /// The archive's content identity.
+    pub identity: String,
+}
+
+/// The declared `[[interop.c.targets]]` entry a unit's checked C bindings verify against instead of the host
+/// (`--interop-target`): its ABI facts, definitions and capability requirements. Verification only; nothing is
+/// cross-compiled for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCAbiTarget {
+    /// The declared target triple.
+    pub target: String,
+    /// An Android target's API level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_level: Option<u32>,
+    /// An iOS target's minimum deployment target, `major.minor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_target: Option<String>,
+    /// The target's preprocessor definitions, `NAME` or `NAME=VALUE`.
+    #[serde(default)]
+    pub definitions: Vec<String>,
+    /// The compatible toolchain capability the selected compiler must provide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain: Option<UnitCapabilityRequirement>,
+    /// The compatible SDK capability the selected SDK must provide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk: Option<UnitCapabilityRequirement>,
+}
+
+/// A declared toolchain or SDK capability and its semantic-version requirement, empty for any version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCapabilityRequirement {
+    /// The capability's name.
+    pub capability: String,
+    /// The compatible versions, empty for any.
+    #[serde(default)]
+    pub version: String,
 }
 
 /// One Loaf a unit reaches.

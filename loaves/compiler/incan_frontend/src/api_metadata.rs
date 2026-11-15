@@ -40,6 +40,7 @@ mod checked_collection;
 mod declaration_builders;
 mod decorator_metadata;
 mod docstrings;
+mod documentation;
 mod export_conversion;
 mod member_metadata;
 mod partial_defaults;
@@ -49,6 +50,7 @@ pub use checked_collection::*;
 use declaration_builders::*;
 use decorator_metadata::*;
 pub use docstrings::*;
+pub use documentation::ApiDocumentation;
 pub use export_conversion::*;
 use member_metadata::*;
 pub use partial_defaults::{manifest_partial_with_target_defaults, partial_export_with_target_defaults};
@@ -159,6 +161,25 @@ pub enum ApiDeclaration {
     Static(ApiStatic),
     Alias(ApiAlias),
     Partial(ApiPartial),
+}
+
+impl ApiDeclaration {
+    /// The declaration's source spelling.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Function(item) => &item.name,
+            Self::Model(item) => &item.name,
+            Self::Class(item) => &item.name,
+            Self::Trait(item) => &item.name,
+            Self::Enum(item) => &item.name,
+            Self::Newtype(item) => &item.name,
+            Self::TypeAlias(item) => &item.name,
+            Self::Const(item) => &item.name,
+            Self::Static(item) => &item.name,
+            Self::Alias(item) => &item.name,
+            Self::Partial(item) => &item.name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

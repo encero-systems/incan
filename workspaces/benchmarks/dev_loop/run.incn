@@ -96,7 +96,7 @@ pub def run(settings: Settings) -> Result[Path, str]:
     environment = toolchain_environment(settings)
 
     # 1. Retain the measured manifest and harness sources beside the raw samples.
-    manifest = settings.home.joinpath("toolchains/0.6.0-dev.8/toolchain.json")
+    manifest = settings.home.joinpath("toolchains/0.6.0-dev.9/toolchain.json")
     _ = manifest.copy(output.joinpath("toolchain.json"), true, true).map_err((error) => error.message())?
     _ = directory
         .joinpath("run.incn")

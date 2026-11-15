@@ -1,0 +1,9 @@
+"""Refuse if unattended preparation executes this deliberately untrusted registration."""
+
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Fail if the trust cut does not precede registration execution."""
+    assert false, "unattended preparation ran untrusted registration v2"
+    return VocabRegistration.new()

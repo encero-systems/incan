@@ -57,15 +57,37 @@ pub enum SourceModuleImportResolution {
     ///
     /// `module_path` is the module the import names, a namespace's `prelude` path resolved to the namespace.
     Stdlib { module_path: Vec<String> },
-    /// Import is not a source-backed Incan module, or no matching local source file exists.
+    /// Import names a source module, but no file the path can name exists in any directory it resolves from.
+    ///
+    /// Source-graph consumers must refuse this before typechecking: no other provider serves a source module path,
+    /// so the import would bind a name nothing declares and fail only later in compilation.
+    Missing(MissingSourceModule),
+    /// Import is not a source-backed Incan module: a `rust::`, `pub::` or `python` import, or `import this`.
     External,
+}
+
+/// A source module import whose path names no file, with what a refusal needs to name the fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingSourceModule {
+    /// The module path as written, in dotted form: `helpers`, `db.models`, `..common`, `crate.config`.
+    pub spelling: String,
+    /// The standard-library module a bare path names under the `std` root, when there is one: `from json import ...`
+    /// most likely means `std.json`.
+    pub standard_module: Option<String>,
+    /// The file each directory the import resolves from would hold for the module, in resolution order:
+    /// `<path>.incn`, or `<path>/mod.incn` when `<path>` is already a directory.
+    pub module_files: Vec<PathBuf>,
 }
 
 /// One resolved import declaration inside a parsed program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedProgramSourceImport {
+    /// The import declaration's span.
     pub span: Span,
+    /// What the import names.
     pub resolution: SourceModuleImportResolution,
+    /// Every path the resolution looked for and found absent, in lookup order.
+    pub probed: Vec<PathBuf>,
 }
 
 /// Kind of declaration surfaced by [`exported_type_like_docs`].

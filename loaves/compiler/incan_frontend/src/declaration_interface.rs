@@ -557,7 +557,7 @@ mod tests {
                     &["lib".to_owned()],
                     checker.type_info(),
                     &crate::body_ir::BodyIrContext {
-                        modules: &[],
+                        modules: crate::body_ir::ContextModules::default(),
                         provider_operations: &providers,
                         registry_package: None,
                         library_package: Some("interface_test"),
@@ -634,6 +634,11 @@ mod tests {
         warm.set_current_package_identity(Some("interface_test".to_owned()));
         warm.set_callable_body_reuse(selection);
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            warm.body_check_trace_count(),
+            3,
+            "reused and freshly checked bodies must enter the same physical checking scope"
+        );
         assert_eq!(
             warm.check_work().declaration_local_checks,
             0,
@@ -1052,7 +1057,7 @@ mod tests {
             &["lib".to_owned()],
             checker.type_info(),
             &crate::body_ir::BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: Some("interface_test"),

@@ -1,0 +1,11 @@
+# behavior: a configuration that redefines a definition it inherits through `extends` is refused rather than overriding it (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `R_VALUE` is inherited from configuration `default`; an inherited definition is never redefined
+
+def main() -> None:
+    println("unreachable")

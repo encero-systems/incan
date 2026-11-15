@@ -34,6 +34,7 @@ Incan is a Python-like language that compiles to native code through the pinned 
 | Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
 | Implementation learnings | [`.agents/learnings.md`]                                                             |
+| Anti-pattern inventory   | [`.agents/anti-patterns.md`]                                                         |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-incan.md`]: workspaces/docs-site/docs/contributing/explanation/readable-incan.md
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
@@ -43,6 +44,7 @@ Incan is a Python-like language that compiles to native code through the pinned 
 [`CONTRIBUTING.md`]: CONTRIBUTING.md
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
 [`.agents/learnings.md`]: .agents/learnings.md
+[`.agents/anti-patterns.md`]: .agents/anti-patterns.md
 
 Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **this repository’s** `.agents/` directory and are committed here. Working state and review-run artifacts (`.agents/state/`) live in the same directory but are **not** committed — they're gitignored, per-machine scratch, except `.agents/state/findings-ledger.md` which is a symlink into a private workspace-level log (see `.agents/skills/review/SKILL.md` and `.agents/skills/ralph-loop/SKILL.md` for how it's used).
 
@@ -111,6 +113,7 @@ The compiler is built and run through Oven: `incan run`, `check`, `build`, `test
 | `make examples`      | Run the repository examples through installed Incan                                    |
 | `make test`       | Run all eight contract families                                                             |
 | `make fmt`     | Format the workspace's Rust sources with nightly rustfmt (file-scoped)                      |
+| `make lint`    | Check every Rust library facet with clippy through `incan lint`, at each Loaf's `[rust.lints]` levels |
 | `make docs`       | Generate and strictly build the documentation site                                          |
 | `make pre-commit` | Check formatting, spelling, rustdoc, agent docs, contributor paths and reference contracts |
 | `incan inspect codegraph PATH --query defs\|refs\|callers\|callees\|imports TERM` | Find declarations and their relationships across Incan and Rust (RFC 106) before reaching for grep |
@@ -248,7 +251,7 @@ fn my_test() -> Result<(), Box<dyn std::error::Error>> {
 
 ### No Cargo tools
 
-The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo fmt` do not apply. Format Rust with `make fmt`, which runs nightly rustfmt file by file. Prove behavior with the contract families.
+The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo fmt` do not apply. Format Rust with `make fmt`, which runs nightly rustfmt file by file, and lint it with `make lint`, which runs clippy through `incan lint`. Prove behavior with the contract families.
 
 ## Compiler Pipeline
 

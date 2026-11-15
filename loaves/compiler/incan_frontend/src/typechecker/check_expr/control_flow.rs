@@ -400,14 +400,13 @@ impl TypeChecker {
             self.check_statement(stmt);
         }
 
-        let arm_ty = match &last.node {
+        match &last.node {
             Statement::Expr(expr) => self.check_expr(expr),
             _ => {
                 self.check_statement(last);
                 ResolvedType::Unit
             }
-        };
-        arm_ty
+        }
     }
 
     /// Validate the `?` (try) operator.

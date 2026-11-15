@@ -10,7 +10,7 @@ impl TypeChecker {
         let Some(span) = declarations_may_contain_testing_fixture(&program.declarations, &self.symbols) else {
             return;
         };
-        let Some(semantics) = self.testing_marker_semantics.clone() else {
+        let Some(semantics) = self.testing_marker_semantics_on_demand(span) else {
             self.errors.push(errors::invalid_std_testing_marker_metadata(
                 "the active std.testing provider did not supply checked marker metadata",
                 span,
@@ -54,14 +54,14 @@ impl TypeChecker {
             return None;
         }
 
-        let Some(semantics) = self.testing_marker_semantics.as_ref() else {
+        let Some(semantics) = self.testing_marker_semantics_on_demand(span) else {
             self.errors.push(errors::invalid_std_testing_marker_metadata(
                 "the active std.testing provider did not supply checked marker metadata",
                 span,
             ));
             return None;
         };
-        resolve_testing_fixture_marker_args(decorators, &self.symbols, semantics)
+        resolve_testing_fixture_marker_args(decorators, &self.symbols, &semantics)
     }
 
     /// Enforce source-language ordering and default rules for `*args` / `**kwargs` declarations.
@@ -367,8 +367,9 @@ impl TypeChecker {
         self.enter_annotation_owner(&func.name, &func.type_params)
     }
 
-    /// Consume a completed function declaration's lexical frame exactly once. Decoration is separate post-body work;
-    /// no declaration validation or default expression is repeated by this consumer.
+    /// Consume a completed function declaration's lexical frame exactly once and trace its stable owner until
+    /// checker-record publication classifies it. Decoration is separate post-body work; no declaration validation or
+    /// default expression is repeated by this consumer.
     pub(in crate::typechecker) fn check_prepared_function(
         &mut self,
         func: &FunctionDecl,
@@ -376,6 +377,8 @@ impl TypeChecker {
         prepared: PreparedFunctionCheck,
         record_program: Option<&Program>,
     ) {
+        let body_trace = self.owner_body_trace(span);
+        let _trace = body_trace.enter();
         let previous_function = std::mem::replace(&mut self.receiver_plan_inputs.current_function, prepared.function);
         let previous_raw_owner =
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
@@ -405,6 +408,25 @@ impl TypeChecker {
         if let (Some(program), Some(index)) = (record_program, local_index) {
             self.produce_local_record(program, span, index);
         }
+    }
+
+    /// Enter one physical callable owner in checking scope whether its statements are restored or evaluated freshly.
+    pub(in crate::typechecker) fn owner_body_trace(&mut self, span: Span) -> tracing::Span {
+        let trace_identity = self
+            .declaration_view()
+            .function(span)
+            .and_then(|binding| binding.identity.as_ref())
+            .and_then(|canonical| self.type_info.declarations.source_identities.get(canonical))
+            .map(incan_semantics_core::stable_identity::StableDeclarationId::render_compact)
+            .unwrap_or_else(|| "<unavailable>".into());
+        let body_trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_owner_body",
+            identity = %trace_identity,
+            outcome = tracing::field::Empty,
+        );
+        self.body_check_traces.insert(span, body_trace.clone());
+        body_trace
     }
 
     /// Preserve function decorator application after statement checking while retaining its facts and diagnostics

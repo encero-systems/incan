@@ -27,6 +27,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
+from semantic_text import positioned_code
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from trace_adapter import reason, relay as relay_observations
@@ -103,10 +104,14 @@ pub model Observation:
 
 
 model FileEntry:
-    """A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled."""
+    """
+    A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled. `code` is
+    the digest of the file's text without comments, every position kept, once something asked for it.
+    """
 
     stamp: str
     digest: str
+    code: str = ""
 
 
 model DirectoryEntry:
@@ -142,6 +147,26 @@ pub model Ledger:
         self.changed = true
         self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content)
         return Ok(content)
+
+    pub def code_digest(mut self, path: Path) -> Result[str, str]:
+        """
+        The digest of `path`'s text without its comments, every line and column of code kept; read only when its
+        metadata differs from the retained observation or no code digest was retained. A comment edit that moves no
+        code leaves it unchanged.
+        """
+        observed = observe(path)?
+        if path.0 in self.files and self.files[path.0].stamp == observed.stamp and self.files[path.0].code != "":
+            return Ok(self.files[path.0].code)
+        trace(f"hashing {path.0}")
+        content = file_digest(path)?
+        mut code = content
+        match path.read_text("utf-8", "strict"):
+            Ok(text) => code = hexlify(sha256.digest(positioned_code(text).encode("utf-8")))
+            Err(_) => pass
+        self.hashed += 1
+        self.changed = true
+        self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content, code=code)
+        return Ok(code)
 
     pub def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
         """
@@ -194,7 +219,7 @@ pub model Ledger:
         2. Each file row and each directory row is read in full.
         """
         # 1. Only a ledger of this version, for the same kind of files, can vouch for the files it names.
-        text = self.location.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
+        text = self.location.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
         document = parse(text).map_err((error) => error.message())?
         if text_of(document, "schema")? != LEDGER_SCHEMA:
             return Err("not a ledger of this version")
@@ -202,7 +227,11 @@ pub model Ledger:
             return Err("a ledger of other files")
         # 2. Every row is read in full, so a ledger with one malformed row retains nothing.
         for row in rows(document, "files")?:
-            self.files[text_of(row, "path")?] = FileEntry(stamp=text_of(row, "stamp")?, digest=text_of(row, "digest")?)
+            self.files[text_of(row, "path")?] = FileEntry(
+                stamp=text_of(row, "stamp")?,
+                digest=text_of(row, "digest")?,
+                code=text_of(row, "code").unwrap_or(""),
+            )
         for row in rows(document, "directories")?:
             self.directories[text_of(row, "path")?] = DirectoryEntry(
                 stamp=text_of(row, "stamp")?,
@@ -248,6 +277,15 @@ pub model Ledger:
         )
 
 
+pub def entered(directory: Path) -> bool:
+    """
+    Whether a walk of a project's sources enters a directory. It never enters a hidden directory, build output or
+    vendored packages (see `skipped_directory`), and never a nested project, a directory with its own `loaf.toml`:
+    that project's sources are its own, compiled against its own dependencies, as the compiler's collection has it.
+    """
+    return not skipped_directory(directory.name()) and not directory.joinpath("loaf.toml").is_file()
+
+
 pub def skipped_directory(name: str) -> bool:
     """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
     return name.startswith(".") or name == "target" or name == "node_modules"
@@ -256,7 +294,7 @@ pub def skipped_directory(name: str) -> bool:
 pub def children(directory: Path, extension: str) -> Result[Children, str]:
     """
     List a directory once: the files whose names end with `extension` (every file when it is empty) and the
-    subdirectories worth entering (see `skipped_directory`).
+    subdirectories worth entering (see `entered`).
     """
     mut files: list[str] = []
     mut directories: list[str] = []
@@ -265,7 +303,8 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
         name = child.name()
         checked += 1
         if child.is_dir():
-            if not skipped_directory(name):
+            checked += 1
+            if entered(child):
                 directories.append(name)
             continue
         checked += 1
@@ -277,7 +316,9 @@ pub def children(directory: Path, extension: str) -> Result[Children, str]:
 def file_row(path: str, entry: FileEntry) -> JsonValue:
     """One file of the saved document."""
     return JsonValue.object(
-        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest)},
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest), "code": JsonValue.string(
+            entry.code,
+        )},
     )
 
 
@@ -297,7 +338,7 @@ def texts(items: list[str]) -> JsonValue:
 
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    content = path.read_bytes().map_err((error) => f"cannot {error.message()}")?
     clock = begin()
     result = hexlify(sha256.digest(content))
     record(Operation.FileHash, path.0, clock, len(content))
@@ -311,6 +352,7 @@ pub def observe(path: Path) -> Result[Observation, str]:
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     info = described(found.map_err((error) => f"{prefix}{error}")?)
+    WATCHED.note(path.0, Some(info))
     return Ok(Observation(stamp=info.stamp(), newest=info.newest_second()))
 
 
@@ -320,11 +362,103 @@ pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
     found = metadata(path.0)
     record(Operation.FileStat, path.0, clock)
     match found:
-        Ok(info) => return Ok(Some(described(info)))
+        Ok(info) =>
+            described_info = described(info)
+            WATCHED.note(path.0, Some(described_info))
+            return Ok(Some(described_info))
         Err(error) =>
             if error.kind() == ErrorKind.NotFound:
+                WATCHED.note(path.0, None)
                 return Ok(None)
             return Err(f"{path.0}: {error}")
+
+
+model Watched:
+    """
+    The files and directories this process observed while a request watched its inputs, each with the metadata it
+    had when first observed (empty when nothing was there), and the environment variables it read, each by an
+    observation of its value.
+    """
+
+    active: bool = false
+    seen: Dict[str, str] = {}
+    variables: Dict[str, str] = {}
+    fresh: list[str] = []
+
+    def start(mut self) -> None:
+        """Watch from now, forgetting any earlier watch."""
+        self.active = true
+        self.seen = {}
+        self.variables = {}
+        self.fresh = []
+
+    def watching(self) -> bool:
+        """Whether a request is watching its inputs."""
+        return self.active
+
+    def note(mut self, path: str, info: Option[FileMetadata]) -> None:
+        """
+        Remember a path's first observation while watching: its metadata, empty when nothing was there, and whether it
+        was a file changed too recently for its metadata to vouch for its bytes.
+        """
+        if not self.active or path in self.seen:
+            return
+        match info:
+            Some(found) =>
+                self.seen[path] = found.stamp()
+                if found.is_file() and not found.settled(SETTLE_SECONDS):
+                    self.fresh.append(path)
+            None => self.seen[path] = ""
+
+    def note_variable(mut self, name: str, observed: str) -> None:
+        """Remember an environment variable's first observation while watching."""
+        if self.active and name not in self.variables:
+            self.variables[name] = observed
+
+    def finish(mut self) -> WatchedInputs:
+        """Stop watching and return what was observed."""
+        self.active = false
+        found = WatchedInputs(
+            stamps={path: self.seen[path] for path in self.seen.keys()},
+            variables={name: self.variables[name] for name in self.variables.keys()},
+            fresh=[path for path in self.fresh],
+        )
+        self.seen = {}
+        self.variables = {}
+        self.fresh = []
+        return found
+
+
+pub model WatchedInputs:
+    """
+    The paths a watch observed, each with its first metadata (empty when nothing was there), and the environment
+    variables, each with an observation of its value that names no value.
+    """
+
+    pub stamps: Dict[str, str]
+    pub variables: Dict[str, str] = {}
+    # The observed files whose last change was too recent for their metadata to vouch for their bytes.
+    pub fresh: list[str] = []
+
+
+static WATCHED: Watched = Watched()
+
+
+pub def watch_inputs() -> None:
+    """Record every file and directory observed from now on, until `watched_inputs`."""
+    WATCHED.start()
+
+
+pub def watched_inputs() -> WatchedInputs:
+    """End the watch: each path observed since `watch_inputs`, with its first metadata (empty when absent)."""
+    return WATCHED.finish()
+
+
+pub def note_directory(path: Path) -> Result[None, str]:
+    """Observe a directory whose entries a reading selected, while a watch is on; otherwise do nothing."""
+    if WATCHED.watching():
+        _ = file_metadata(path)?
+    return Ok(None)
 
 
 def described(info: Metadata) -> FileMetadata:
@@ -390,7 +524,7 @@ def refusal(failed: list[str]) -> str:
 
 pub def trace_boundary(boundary: str) -> None:
     """Record an opt-in preparation boundary on the launch clock; ordinary invocations read no clock here."""
-    if get_optional("INCAN_NATIVE_TIMING") is None or get_or("OVEN_TRACE", "") == "":
+    if get_optional("INCAN_NATIVE_TIMING") is None or not reasoning_traced():
         return
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => trace(f"prepare epoch={now.as_secs_f64()} boundary={boundary}")
@@ -399,7 +533,7 @@ pub def trace_boundary(boundary: str) -> None:
 
 pub def trace_launch(program: str) -> None:
     """Record a pre-launch Unix timestamp only when tracing is enabled, naming an unavailable clock explicitly."""
-    if get_or("OVEN_TRACE", "") == "":
+    if not reasoning_traced():
         return
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => trace(f"launch epoch={now.as_secs_f64()} program={program}")
@@ -421,3 +555,13 @@ pub def now_seconds() -> int:
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => return int(now.as_secs())
         Err(_) => return 0
+
+
+pub def note_variable(name: str, observed: str) -> None:
+    """Record, while a watch is on, an environment variable a request read, by an observation of its value."""
+    WATCHED.note_variable(name, observed)
+
+
+def reasoning_traced() -> bool:
+    """Whether this command records Oven's reasoning: the channel is on, or `OVEN_TRACE` for one more release."""
+    return get_or("INCAN_ENGINE_TRACE", "") != "" or get_or("OVEN_TRACE", "") != ""

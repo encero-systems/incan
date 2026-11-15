@@ -1,0 +1,11 @@
+# behavior: a model reached through a re-export keeps its fields when another module imports the model and declares an enum variant of the same name
+# expect-stdout:
+#   base base
+
+from settings import load
+from gate import gate
+
+
+def main() -> None:
+    settings = load()
+    println(f"{settings.name} {gate(settings)}")
