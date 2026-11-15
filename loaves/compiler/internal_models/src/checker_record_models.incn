@@ -1,6 +1,27 @@
 """Checker, graph and compiled-body values shared by the canonical checker-record codecs."""
 
-from checker_field_grammar import CanonicalField, CodecFault
+
+@derive(Eq)
+pub model CanonicalField:
+    """A schema-owned field: node is a structural role or stable binding reference; values follow its typed grammar."""
+
+    pub family: str
+    pub node: str
+    pub selector: str
+    pub values: list[str]
+
+
+@derive(Eq)
+pub enum CodecFault:
+    """Infrastructure/capability refusals; none is a source-language diagnostic or a legacy fallback request."""
+
+    Malformed
+    ProfileMismatch
+    OwnerMismatch
+    BodyChanged
+    Unsupported(str)
+    Limit
+    LimitExceeded(str, int, int)
 
 
 @derive(Eq)
