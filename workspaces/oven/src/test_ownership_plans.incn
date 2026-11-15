@@ -1,4 +1,4 @@
-"""The copies a native plan holds for values the source never asked to copy, counted from the driver's plan report."""
+"""What a native plan holds that the source never asked for, copies and initializers, read from its plan report."""
 
 from rust::std::process import Command
 from rust::std::str import from_utf8
@@ -501,6 +501,73 @@ pub def test_a_value_built_to_decide_a_condition_is_dropped_before_the_branch() 
     before = returning_drops(report, "before_condition")?
     assert inside == before, f"in_condition holds {inside} drops on returning paths and before_condition holds {before}"
     return Ok(None)
+
+
+const RUST_CONSTANTS: str = """from rust::std::f64::consts import PI as RUST_PI, TAU as RUST_TAU
+
+const HALF_TURN: float = RUST_PI
+pub const TURN: float = RUST_TAU
+
+
+def scaled(value: float) -> float:
+    return value * HALF_TURN
+
+
+def main() -> None:
+    println(scaled(2.0) == TURN)
+"""
+
+
+const COMPUTED_CONSTANT: str = """model Point:
+    x: int
+
+
+const ORIGINS: FrozenList[Point] = [Point(x=1), Point(x=2)]
+
+
+def count() -> int:
+    return len(ORIGINS)
+
+
+def main() -> None:
+    println(count())
+"""
+
+
+pub def test_a_module_whose_consts_are_rust_constants_has_no_initializer() -> Result[None, str]:
+    """
+    A `const` whose initializer is a Rust constant is that constant: it has no storage to initialize.
+
+    A module whose only module-level values are such consts therefore has no initializer, and a function that reads
+    one calls nothing on entry.
+    """
+    report = plan_report("rust_constants", RUST_CONSTANTS, "true")?
+    found = initializers(report)
+    assert len(found) == 0, f"the plan holds initializers: {found}"
+    calls = plan_counts(report, "scaled", ["calls"])?
+    assert calls == 0, f"scaled holds {calls} calls"
+    return Ok(None)
+
+
+pub def test_a_const_with_a_computed_initializer_keeps_its_module_initializer() -> Result[None, str]:
+    """A `const` whose value is built at run time, a list of models here, is still initialized on entry."""
+    report = plan_report("computed_constant", COMPUTED_CONSTANT, "2")?
+    found = initializers(report)
+    assert "__incan_init_module_statics_0" in found, f"the plan holds only these initializers: {found}"
+    return Ok(None)
+
+
+def initializers(report: str) -> list[str]:
+    """The module and static initializer functions the plan report names."""
+    mut found: list[str] = []
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) < 2 or fields[0] != "plan-function":
+            continue
+        name = fields[len(fields) - 1]
+        if name.startswith("__incan_init_module_statics_") or name.startswith("__incan_static_init_"):
+            found.append(name)
+    return found
 
 
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
