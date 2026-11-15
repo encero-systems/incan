@@ -349,3 +349,25 @@ pub def test_a_substituted_registry_edge_compiles_its_loaf_from_the_substitute_d
         Err(reason) =>
             assert "does not satisfy" in reason, reason
     return Ok(None)
+
+
+pub def test_a_versioned_substitute_serves_the_registry_edge_its_requirement_admits() -> Result[None, str]:
+    """
+    A closure can hold two versions of one Loaf, so a substitute may name its version: `NAME@VERSION` serves a registry
+    edge whose requirement admits that version, the newest admitted one when several do; a version no requirement
+    admits serves no edge.
+    """
+    app = Path("tests/fixtures/registry-substitute/app").resolve().map_err((error) => error.message())?
+    leaf = Path("tests/fixtures/registry-substitute/leaf").resolve().map_err((error) => error.message())?
+    old = Path("tests/fixtures/registry-substitute/old-leaf").resolve().map_err((error) => error.message())?
+    demand = LocalDemand(project=app.0, domain=DependencyDomain.Target, features=[], defaults=true)
+    both = {"crates-io/sub-leaf@1.0.0": old.0, "crates-io/sub-leaf@1.2.0": leaf.0}
+    facets = local_facets(demand, configuration(), both)?
+    assert len(facets) == 2
+    for facet in facets:
+        if facet.project == app.0:
+            assert [edge.project for edge in facet.local] == [leaf.0], f"{facet.local}"
+            assert len(facet.registry) == 0
+    only_old = local_facets(demand, configuration(), {"crates-io/sub-leaf@1.0.0": old.0})?
+    assert len(only_old) == 1 and len(only_old[0].registry) == 1, "a version the requirement refuses served the edge"
+    return Ok(None)
