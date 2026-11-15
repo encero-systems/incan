@@ -174,8 +174,11 @@ fn require_sealed(document: &Json) -> bool {
 
 /// The row decoder's one allowance, tightened by the case's limits.
 fn row_budget(document: &Json) -> Option<Budget> {
-    let (mut elements, mut depth) = (1_048_576, 128);
+    let (mut bytes, mut elements, mut depth) = (16_777_216, 1_048_576, 128);
     if let Some(limits) = document.get("limits") {
+        if let Some(value) = limits.get("bytes") {
+            bytes = value.as_u64()?;
+        }
         if let Some(value) = limits.get("elements") {
             elements = value.as_u64()?;
         }
@@ -183,7 +186,7 @@ fn row_budget(document: &Json) -> Option<Budget> {
             depth = value.as_u64()?;
         }
     }
-    Some(Budget::new(16_777_216, elements, depth))
+    Some(Budget::new(bytes, elements, depth))
 }
 
 /// Translate tagged metadata notation into a D tree.

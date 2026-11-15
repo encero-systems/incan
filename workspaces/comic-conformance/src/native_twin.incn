@@ -610,15 +610,18 @@ def row_require_sealed(document: JsonValue) -> Result[bool, str]:
 
 
 def row_budget(document: JsonValue) -> Result[Budget, str]:
-    """The row decoder's one allowance, tightened by the case's element and depth limits."""
+    """The row decoder's one allowance, tightened by the case's byte, element and depth limits."""
+    mut bytes = 16777216
     mut elements = 1048576
     mut depth = 128
     if let Some(limits) = document.get("limits"):
+        if let Some(value) = limits.get("bytes"):
+            bytes = value.expect_int().map_err((e) => e.message())?
         if let Some(value) = limits.get("elements"):
             elements = value.expect_int().map_err((e) => e.message())?
         if let Some(value) = limits.get("depth"):
             depth = value.expect_int().map_err((e) => e.message())?
-    return Budget.create(bytes=16777216, elements=elements, depth=depth).map_err((e) => e.message())
+    return Budget.create(bytes=bytes, elements=elements, depth=depth).map_err((e) => e.message())
 
 
 def envelope_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:

@@ -53,8 +53,8 @@
     {
       "path": "binary-row.json",
       "operation": "binary_decode",
-      "cases": 81,
-      "sha256": "3b2e858e1d4a0c7d15ca72688aa938008cd2733817734cf5ba81bd9725a3a502"
+      "cases": 84,
+      "sha256": "bc4ccfd5b385af58e0014be23f067223fb091e22799d004a56151f626e716c64"
     },
     {
       "path": "type-selectors.json",
