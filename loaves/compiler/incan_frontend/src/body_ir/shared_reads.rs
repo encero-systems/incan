@@ -13,6 +13,7 @@ mod closure_reads;
 mod consumed_reads;
 mod cursor_reads;
 mod derived_reads;
+mod ended_loans;
 mod loop_reads;
 mod match_reads;
 mod published_reads;
@@ -109,6 +110,9 @@ struct SignatureParameter {
     access: incan_semantics_core::IncanInputAccess,
     candidate: Option<Candidate>,
     callback_does_not_escape: bool,
+    /// Whether the callable's result may hold a loan of this input: a declared returned view or result dependency
+    /// names it, the callable is deferred, or no checked frame says otherwise.
+    result_holds_loan: bool,
 }
 
 impl SignatureParameter {
@@ -396,10 +400,16 @@ fn retain_body_calls(
     closure_reads::retain(body, signatures, field_types, candidates);
     retain_shared_call_temporaries(body, signatures, field_types, candidates);
     let locals = &body.locals;
+    let mut visited = 0;
+    let mut ended = Vec::new();
     walk_calls_mut(&mut body.block.stmts, &mut |statement| {
         retain_function_item_adapter(statement, signatures, candidates);
-        retain_call_loans(statement, locals, signatures, field_types, candidates);
+        for local in retain_call_loans(statement, locals, signatures, field_types, candidates) {
+            ended.push((visited, local));
+        }
+        visited += 1;
     });
+    ended_loans::drop_after_last_loans(body, signatures, candidates, &ended);
 }
 
 /// Keep a named function's declared by-value callable shape by lowering its forwarding closure as an adapter when
@@ -494,6 +504,7 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
                     access: parameter.input_access,
                     candidate: None,
                     callback_does_not_escape: only_called_parameter(frame, parameter),
+                    result_holds_loan: result_holds_loan(frame, index),
                 })
                 .collect()
         })
@@ -506,6 +517,7 @@ fn loaf_signature(callable: &bir::LoafCallable) -> Signature {
                     access: incan_semantics_core::IncanInputAccess::Inferred,
                     candidate: None,
                     callback_does_not_escape: false,
+                    result_holds_loan: true,
                 })
                 .collect()
         });
@@ -549,9 +561,25 @@ fn body_signature(
                     .contains(&(module_index, body_index, parameter_index))
                     .then_some((module_index, body_index, parameter_index)),
                 callback_does_not_escape: only_called_parameter(body, parameter),
+                result_holds_loan: result_holds_loan(body, parameter_index),
             })
             .collect(),
     })
+}
+
+/// Whether a callable's result may hold a loan of its input `index`. A returned view and an owned result's dependency
+/// are declared, and each names its one source input (a method's receiver is input 0), so every other input of a
+/// plain callable is free again when the call returns. A deferred callable's result holds its inputs until it runs,
+/// and a generic one's result obligations are only settled per instantiation.
+fn result_holds_loan(body: &bir::Body, index: usize) -> bool {
+    body.is_async
+        || body.is_generator()
+        || !body.type_parameters.is_empty()
+        || body.returned_view.as_ref().is_some_and(|view| view.slot == index)
+        || body
+            .checked_input_profile
+            .as_ref()
+            .is_some_and(|profile| !profile.result_requirements.is_empty())
 }
 
 /// Concrete function-typed slots retain the checker's `body_only_calls` proof. Generic closure-storage slots do not
@@ -967,6 +995,7 @@ fn same_parameters(left: &[SignatureParameter], right: &[SignatureParameter], ca
             left.ty == right.ty
                 && left.access(candidates) == right.access(candidates)
                 && left.callback_does_not_escape == right.callback_does_not_escape
+                && left.result_holds_loan == right.result_holds_loan
         })
 }
 
@@ -1023,18 +1052,20 @@ fn retain_call_loans(
     signatures: &Signatures,
     field_types: &FieldTypes,
     candidates: &HashSet<Candidate>,
-) {
+) -> Vec<bir::LocalId> {
     let bir::StatementKind::Call { callee, args, .. } = &mut statement.kind else {
-        return;
+        return Vec::new();
     };
     let mut lent = Vec::new();
+    let mut ended = Vec::new();
     for (index, argument) in args.iter_mut().enumerate() {
         let bir::ArgumentElement::One(bir::Operand::Place(read)) = argument else {
             continue;
         };
-        let Some(owner) = call_parameter(callee, index, signatures, candidates)
-            .and_then(|parameter| parameter.shared_owner(candidates))
-        else {
+        let Some(parameter) = call_parameter(callee, index, signatures, candidates) else {
+            continue;
+        };
+        let Some(owner) = parameter.shared_owner(candidates) else {
             continue;
         };
         lent.push((index, read.place.clone()));
@@ -1051,6 +1082,9 @@ fn retain_call_loans(
                 actual == *owner || matches!(actual, IncanType::Ref(referent) if referent.as_ref() == owner)
             })
         {
+            if !parameter.result_holds_loan && ended_loans::replaces_last_transfer(read, locals, owner) {
+                ended.extend(read.place.local_id());
+            }
             read.fact = bir::OwnershipFact::Borrow;
             read.last_use = false;
         }
@@ -1066,6 +1100,7 @@ fn retain_call_loans(
             read.last_use = false;
         }
     }
+    ended
 }
 
 /// Whether two reads reach shared storage: the same root, with one projection path a prefix of the other.
