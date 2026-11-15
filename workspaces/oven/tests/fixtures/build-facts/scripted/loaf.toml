@@ -1,0 +1,28 @@
+[project]
+name = "crates-io/scripted"
+version = "1.0.0"
+
+[project.features]
+default = ["std"]
+std = []
+
+[rust]
+type = "lib"
+build-script = true
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = ["default", "std"]
+cfg = ["fast_arithmetic=\"64\"", "has_neon"]
+out = "out"
+environment = { SCRIPTED_TABLE = "crc32" }
+harvested-from = "evidence only"
+
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "debug"
+features = ["default", "std"]
+cfg = ["fast_arithmetic=\"64\""]
