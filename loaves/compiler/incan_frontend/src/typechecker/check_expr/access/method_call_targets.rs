@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::typechecker::ResolvedNamespaceMemberKind;
+use incan_lang::interop::{compiler_owned_function_signature, metadata_free_function_signature};
 
 impl TypeChecker {
     /// Check compiler-known receiver forms before the general receiver and argument passes.
@@ -468,8 +469,36 @@ impl TypeChecker {
                     call.span,
                 )
             }
+            (SymbolKind::RustItem(info), _) => self.check_module_rust_function_call(&info, call),
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Check a module member that re-exports a Rust function (`pub from rust::... import f`, called `module.f(...)`)
+    /// against the same Rust signature a call of the imported name selects, so its arguments are checked and its
+    /// result type and checked Rust call reach lowering. Any other Rust item keeps its unchecked `Unknown` result.
+    fn check_module_rust_function_call(&mut self, info: &RustItemInfo, call: &MethodCallSite<'_>) -> ResolvedType {
+        let path = info.path.as_str();
+        let metadata = info.metadata.clone().or_else(|| self.rust_item_metadata_for_path(path));
+        let signature = match (compiler_owned_function_signature(path), metadata.as_deref()) {
+            (Some(signature), _) => Some(signature),
+            (None, Some(metadata)) => match &metadata.kind {
+                RustItemKind::Function(signature) => Some(signature.clone()),
+                _ => None,
+            },
+            (None, None) => metadata_free_function_signature(path),
+        };
+        let Some(signature) = signature else {
+            return ResolvedType::Unknown;
+        };
+        self.validate_rust_function_call_with_type_arguments(
+            path,
+            &signature,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        )
     }
 
     /// Resolve a native array/slice method or an already selected Rust receiver without repeating source dispatch.
