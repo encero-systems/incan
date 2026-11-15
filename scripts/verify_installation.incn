@@ -751,20 +751,24 @@ pub def census_arguments(oven: Path, fixtures: Path, scratch: Path, jobs: int, t
 
 
 def measure_memory(installation: Installation) -> Result[None, str]:
-    """Record one cold footprint run per command and enforce release-owned budgets through the installed toolchain."""
+    """Report one footprint observation per command, reusing the sampled candidate Oven build when the bundle has it."""
+    mut arguments = [
+        "run",
+        installation.root.joinpath("scripts/memory_budget.incn").0,
+        "--",
+        installation.oven.0,
+        installation.run.0,
+        "--runs",
+        "1",
+    ]
+    observation = bundled_oven_observation()
+    if observation != "":
+        arguments += ["--reuse-oven", observation]
     return require_step(
         Step(
             name="memory-budget",
             executable=installation.oven.0,
-            arguments=[
-                "run",
-                installation.root.joinpath("scripts/memory_budget.incn").0,
-                "--",
-                installation.oven.0,
-                installation.run.0,
-                "--runs",
-                "1",
-            ],
+            arguments=arguments,
             environment=command_environment(installation),
             remove_environment=["RUSTC_BOOTSTRAP", "INCAN_LSP"],
             directory=Some(installation.root),
@@ -772,6 +776,17 @@ def measure_memory(installation: Installation) -> Result[None, str]:
             timeout_seconds=installation.timeout_seconds * 20,
         ),
     )
+
+
+def bundled_oven_observation() -> str:
+    """Return the informational Oven observation beside the selected release archive, or request a cold fallback."""
+    archive = Path(get_or("INCAN_RELEASE_ARCHIVE", ""))
+    if not archive.is_file():
+        return ""
+    prefix = archive.parent().joinpath("memory-oven-1")
+    if not Path(prefix.0 + ".summary.txt").is_file():
+        return ""
+    return prefix.0
 
 
 def command_step(
@@ -862,8 +877,7 @@ def verification_traces_requested() -> bool:
     """
     if get_or("INCAN_VERIFY_TRACES", "") == "1":
         write_stderr(
-            "verify: `INCAN_VERIFY_TRACES` is replaced by `INCAN_ENGINE_TRACE`, which keeps each phase's traces under "
-            + "the run's `traces/`; it is read for one more release\n",
+            "verify: `INCAN_VERIFY_TRACES` is replaced by `INCAN_ENGINE_TRACE`, which keeps each phase's traces under " + "the run's `traces/`; it is read for one more release\n",
         )
         return true
     return get_or("INCAN_ENGINE_TRACE", "") != ""

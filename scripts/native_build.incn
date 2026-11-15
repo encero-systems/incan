@@ -32,6 +32,7 @@ pub const STANDARD_RESERVATION_BYTES: int = 2 * GIB
 const SUPPORT_PROGRAM: str = "workspaces/oven/src/toolchain_native.incn"
 const RUNTIME_NAME: str = "incan_native_runtime"
 const RUNTIME_PROJECT: str = "loaves/compiler/incan_native_runtime"
+const OVEN_OBSERVATION: str = "bundle/memory-oven-1"
 
 
 pub model NativeContext:
@@ -190,15 +191,7 @@ pub def build_runtime(
     )?
     write_json(unit, runtime_unit(prepared, source_interfaces)?)?
     identify(context, helper, unit, false, f"{phase_prefix}runtime-identify")?
-    compile_library(
-        context,
-        driver,
-        sysroot,
-        unit,
-        RUNTIME_NAME,
-        output,
-        f"{phase_prefix}runtime-build",
-    )?
+    compile_library(context, driver, sysroot, unit, RUNTIME_NAME, output, f"{phase_prefix}runtime-build")?
     publish(context, helper, unit, output, false, f"{phase_prefix}runtime-publish")?
     require_requested_codegraph(requested_graph, output, RUNTIME_NAME)?
     if not install:
@@ -259,6 +252,7 @@ pub def build_candidate_standard_with_lsp(
                 None =>
                     _ = cancel_background_step(started.worker)
                     return Err("project capacity disappeared before candidate standard production")
+
             reserved = reserve_project_capacity(context, jobs, memory)
             match build_standard_packages(reserved, helper, phase_prefix, [StandardProfile.Release]):
                 Ok(_) => pass
@@ -907,22 +901,48 @@ def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str
             stamp.unlink().map_err((error) => error.message())?
     mut environment = common_environment(context)
     environment["OVEN_TRACE"] = "-"
+    child = tool_build_step(context, project, environment, phase)
     return Ok(
         NativeBuildPlan(
             name=name,
             output=output,
             destination=destination,
-            child=step(
-                context,
-                phase,
-                context.builder,
-                ["build", project.0, "--profile", "release"],
-                environment,
-                context.repo,
-                context.evidence.joinpath(f"{phase}.log"),
-            ),
+            child=child,
             reservation=PROJECT_RESERVATION_BYTES,
         ),
+    )
+
+
+def tool_build_step(context: NativeContext, project: Path, environment: Dict[str, str], phase: str) -> Step:
+    """Build an ordinary tool directly, or sample the shipped Oven build the release already requires."""
+    if phase != "oven-build":
+        return step(
+            context,
+            phase,
+            context.builder,
+            ["build", project.0, "--profile", "release"],
+            environment,
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
+        )
+    return step(
+        context,
+        phase,
+        context.builder,
+        [
+            "run",
+            context.repo.joinpath("scripts/memory_budget.incn").0,
+            "--",
+            "--observe-oven",
+            context.builder,
+            project.0,
+            context.repo.0,
+            context.evidence.joinpath("oven-build.log").0,
+            context.evidence.joinpath(OVEN_OBSERVATION).0,
+        ],
+        environment,
+        context.repo,
+        context.evidence.joinpath("oven-build-observer.log"),
     )
 
 
