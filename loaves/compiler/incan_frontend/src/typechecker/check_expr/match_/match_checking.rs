@@ -225,7 +225,7 @@ impl TypeChecker {
         remaining: &[ResolvedType],
     ) -> Option<ResolvedType> {
         match &pattern.node {
-            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => {
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::MutBinding(_) if !remaining.is_empty() => {
                 Some(Self::localize_union_member(union_ty(remaining.to_vec())))
             }
             Pattern::Group(inner) => self.match_arm_remainder_type(inner, remaining),
@@ -316,7 +316,7 @@ impl TypeChecker {
                 }
             }
             Pattern::Group(inner) => self.remove_covered_union_members(remaining, inner, subject_ty),
-            Pattern::Wildcard | Pattern::Binding(_) => remaining.clear(),
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::MutBinding(_) => remaining.clear(),
             _ => {}
         }
     }
@@ -452,7 +452,7 @@ impl TypeChecker {
         has_wildcard: &mut bool,
     ) {
         match pattern {
-            Pattern::Wildcard | Pattern::Binding(_) => {
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::MutBinding(_) => {
                 *has_wildcard = true;
             }
             Pattern::Literal(Literal::None) if subject_ty.is_option() => {

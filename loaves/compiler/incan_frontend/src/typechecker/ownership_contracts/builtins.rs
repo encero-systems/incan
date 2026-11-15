@@ -108,7 +108,7 @@ pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>, payload: usize) -
         return None;
     };
     match &payload.node {
-        Pattern::Binding(binding) => Some((binding.as_str(), payload.span)),
+        Pattern::Binding(binding) | Pattern::MutBinding(binding) => Some((binding.as_str(), payload.span)),
         _ => None,
     }
 }

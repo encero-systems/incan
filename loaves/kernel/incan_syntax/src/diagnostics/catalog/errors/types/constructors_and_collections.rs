@@ -113,6 +113,16 @@ pub fn pattern_alternation_binding_type_mismatch(name: &str, expected: &str, fou
     .with_hint("Use separate branches when alternatives bind the same name with different types")
 }
 
+/// Refuse an alternation whose alternatives disagree on whether a shared binding is written `mut` (RFC 129): the arm
+/// sees one binding, which is either writable or read-only.
+pub fn pattern_alternation_binding_mutability_mismatch(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Pattern alternation binding '{name}' is written `mut` in one alternative and plain in another"),
+        span,
+    )
+    .with_hint(format!("Write `mut {name}` in every alternative, or in none"))
+}
+
 pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(

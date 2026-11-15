@@ -744,8 +744,11 @@ pub enum MatchBody {
 pub enum Pattern {
     /// Wildcard: `_`
     Wildcard,
-    /// Binding: `x`
+    /// Read-only binding: `x`
     Binding(Ident),
+    /// Writable binding: `mut x`. It owns the payload of an owned subject and writably borrows the payload of a
+    /// place, which must permit mutation; the payload is never copied to make the binding legal (RFC 129).
+    MutBinding(Ident),
     /// Literal: `42`, `"hello"`, `true`
     Literal(Literal),
     /// Constructor: `Some(x)`, `Ok(value)`, `Type(name=pat)`

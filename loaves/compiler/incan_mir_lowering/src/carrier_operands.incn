@@ -574,12 +574,18 @@ pub def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, 
     Bind a name its arm changes as an exclusive reference to the payload it names, as legacy matches `&mut`.
 
     The change then lands in the scrutinee itself. The reference owns nothing, so the binding never enters the drop
-    ledger. Tuple payloads retain their complete layout behind that reference; scalar payloads keep copy bindings.
+    ledger. Tuple payloads retain their complete layout behind that reference. A scalar payload reaches here only for a
+    name written `mut`, which changes the scalar where it is stored, so it binds a scalar reference; every read and
+    assignment of the name then goes through that reference.
     """
     mut reference = PlanType.Unit
-    match exclusive_reference(place_type(builder.locals, payload)):
+    payload_type = place_type(builder.locals, payload)
+    match exclusive_reference(payload_type):
         Some(exclusive) => reference = exclusive
-        None => return Err("unsupported Body IR in-place pattern payload without an exclusive reference")
+        None =>
+            if not numeric_carrier(payload_type) and payload_type != PlanType.Bool:
+                return Err("unsupported Body IR in-place pattern payload without an exclusive reference")
+            reference = PlanType.ScalarMutRef([payload_type])
     builder.locals[local].ty = reference
     builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(payload), span))
     return Ok(None)

@@ -1,5 +1,4 @@
 # behavior: a binding pattern written `mut name` keeps its `mut` through formatting, in a constructor, a tuple and an `if let` pattern (RFC 129 writable alias rule 8, #1846).
-# pending: a pattern does not accept `mut name`; formatting refuses the source with "Expected pattern, found Keyword(Mut)".
 # expect-formatted:
 #   def grow(found: Result[list[int], str]) -> int:
 #       """Change the payload a `mut` binding owns."""

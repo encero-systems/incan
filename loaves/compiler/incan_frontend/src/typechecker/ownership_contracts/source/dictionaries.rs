@@ -149,7 +149,7 @@ impl Builder<'_> {
         bindings: &mut Vec<CanonicalSymbolId>,
     ) -> Result<(), Unavailable> {
         match &pattern.node {
-            Pattern::Binding(name) => {
+            Pattern::Binding(name) | Pattern::MutBinding(name) => {
                 let identity = self
                     .checker
                     .type_info

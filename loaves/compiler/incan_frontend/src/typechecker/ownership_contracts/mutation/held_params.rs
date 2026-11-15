@@ -39,18 +39,7 @@ impl TypeChecker {
                 }
             }
             ViewAccess::ReadOnly(place) if certain => {
-                let place = match &place {
-                    ReadOnlyPlace::Binding(name) => ReadOnlyScrutinee::Binding(name),
-                    ReadOnlyPlace::Parameter(name) => ReadOnlyScrutinee::Parameter(name),
-                    ReadOnlyPlace::Static(name) => ReadOnlyScrutinee::Static(name),
-                    ReadOnlyPlace::StaticAlias(alias, static_name) => {
-                        ReadOnlyScrutinee::StaticAlias { alias, static_name }
-                    }
-                    ReadOnlyPlace::GeneratorItems(place) => ReadOnlyScrutinee::GeneratorItems(place),
-                    ReadOnlyPlace::Captured(name) => ReadOnlyScrutinee::Captured(name),
-                    ReadOnlyPlace::SelfReceiver => ReadOnlyScrutinee::SelfReceiver,
-                    ReadOnlyPlace::DictValue => ReadOnlyScrutinee::DictValue,
-                };
+                let place = place.as_scrutinee();
                 let error = errors::change_through_binding_of_read_only_place(binding, place, span);
                 let already_reported = self
                     .errors

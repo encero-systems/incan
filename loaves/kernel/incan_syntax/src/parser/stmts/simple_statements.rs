@@ -236,7 +236,7 @@ impl<'a> Parser<'a> {
                 PatternArg::Positional(pattern) => Self::pattern_contains_alternation(&pattern.node),
                 PatternArg::Named(_, pattern) => Self::pattern_contains_alternation(&pattern.node),
             }),
-            Pattern::Binding(_) | Pattern::Wildcard | Pattern::Literal(_) => false,
+            Pattern::Binding(_) | Pattern::MutBinding(_) | Pattern::Wildcard | Pattern::Literal(_) => false,
         }
     }
 
