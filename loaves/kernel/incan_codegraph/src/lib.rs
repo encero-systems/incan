@@ -10,6 +10,10 @@ use serde_json::Value;
 #[path = "../../../stdlib/primitives/rust/src/unicode_names.rs"]
 mod unicode_names;
 
+/// Crumb's native encoders, at the path the standard library's row sources name them by (`artifact::crumb`).
+#[path = "../../../stdlib/primitives/rust/src/crumb/encoders.rs"]
+mod crumb;
+
 pub mod artifact;
 
 /// Current codegraph JSONL schema version.
