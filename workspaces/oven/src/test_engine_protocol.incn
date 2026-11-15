@@ -112,12 +112,13 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
         .arg(source.0)
         .arg("--format")
         .arg("json")
-        .env("INCAN_ENGINE", "records")
+        .env("INCAN_ENGINE", "legacy")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
     expected = b"{\x0a  \"schema_version\": 2,\x0a  \"ok\": true,\x0a  \"diagnostics\": []\x0a}\x0a"
     assert accepted.status.success() and accepted.stdout == expected and accepted.stderr == b""
+    assert store.joinpath("CURRENT").is_file(), "the default check route did not enter the records engine"
     assert not project.joinpath("target/incan/debug/bin").exists(), "records check generated a native binary directory"
     write(
         source,
@@ -129,7 +130,7 @@ def exercise_records_check(binary: str, source: Path, store: Path, project: Path
         .arg(source.0)
         .arg("--format")
         .arg("json")
-        .env("INCAN_ENGINE", "records")
+        .env("INCAN_ENGINE", "legacy")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
