@@ -1,6 +1,6 @@
 """Write one finite, bounded Crumb row envelope with complete descriptions and an optional logical seal."""
 
-from rust::incan_std_primitives::crumb import row_envelope as native_row_envelope
+from rust::incan_std_primitives::crumb import count_twin_row_write, row_envelope as native_row_envelope
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
@@ -26,6 +26,7 @@ pub def write_rows(
     order. The optional seal hashes logical values, not physical rows. This finite owned API is
     bounded by the caller's budget; it does not promise a spooled or streaming output sink.
     """
+    count_twin_row_write()
     dictionary = admit_dictionary(descriptions, registry, budget)?
     mut entries: list[bytes] = []
     for description in dictionary.entries:
