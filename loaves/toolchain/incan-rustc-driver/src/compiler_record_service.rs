@@ -47,7 +47,7 @@ fn evaluate_local(
     snapshot: String,
     home: &str,
 ) -> Result<RecordMessage, String> {
-    let inputs = incan_worker_host::read_local_activation(activation).map_err(|error| error.to_string())?;
+    let inputs = incan_worker_host::read_local_activation(&activation).map_err(|error| error.to_string())?;
     let environment = environment_values(
         inputs.environment,
         inputs.environment_names,
@@ -63,10 +63,11 @@ fn evaluate_local(
     let record = internal_models::from_native_local_fields(&rows)
         .map_err(|error| format!("local record codec refused: {error:?}"))?;
     let encoded =
-        internal_models::encode_record(record).map_err(|error| format!("local record encoding refused: {error:?}"))?;
+        internal_models::encode_record(&record).map_err(|error| format!("local record encoding refused: {error:?}"))?;
     let semantic = format!("sha256:{}", digest(&encoded));
-    let produced = incan_worker_host::stage_local_result(home.to_owned(), snapshot, &encoded, inputs.receipt, semantic)
-        .map_err(|error| error.to_string())?;
+    let produced =
+        incan_worker_host::stage_local_result(home.to_owned(), snapshot, &encoded, &inputs.receipt, &semantic)
+            .map_err(|error| error.to_string())?;
     Ok(RecordMessage::Produced(produced))
 }
 
@@ -76,7 +77,7 @@ fn evaluate_final(
     snapshot: String,
     home: &str,
 ) -> Result<RecordMessage, String> {
-    let inputs = incan_worker_host::read_final_activation(activation).map_err(|error| error.to_string())?;
+    let inputs = incan_worker_host::read_final_activation(&activation).map_err(|error| error.to_string())?;
     let environment = environment_values(
         inputs.environment,
         inputs.environment_names,
@@ -88,10 +89,10 @@ fn evaluate_final(
     let record = internal_models::from_native_final_fields(&rows)
         .map_err(|error| format!("final record codec refused: {error:?}"))?;
     let encoded =
-        internal_models::encode_record(record).map_err(|error| format!("final record encoding refused: {error:?}"))?;
+        internal_models::encode_record(&record).map_err(|error| format!("final record encoding refused: {error:?}"))?;
     let semantic = format!("sha256:{}", digest(&encoded));
     let produced =
-        incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, inputs.receipt, &semantic)
+        incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, &inputs.receipt, &semantic)
             .map_err(|error| error.to_string())?;
     Ok(RecordMessage::Produced(produced))
 }
