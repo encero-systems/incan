@@ -172,6 +172,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         CompiledBodyOutput.Fallback(decoded) =>
             assert decoded == identityless
         _ => return Err("identityless fallback decoded as another output kind")
+    compiled_fallback_reason_controls()?
     compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
 
@@ -256,6 +257,32 @@ def owner_record(record: CheckedRecord, identity: str) -> Result[bytes, str]:
             fields=record.fields,
         ),
     ).map_err((_) => "owner record encode")
+
+
+def compiled_fallback_reason_controls() -> Result[None, str]:
+    """A fallback whose reason outgrows the metadata bound still publishes, keeping the reason's start and its size."""
+    # Oven's `dispatch` fell back with a 96,710-byte reason, and that one row refused every owner's publication.
+    long_reason = "local record output refused: " + "".join(["x" for _ in range(96681)])
+    assert len(long_reason.encode()) == 96710
+    fallback = CompiledBodyFallback(
+        module="src/main.incn",
+        name="dispatch",
+        identity=Some("function:main::dispatch|incan.source-signature/2:sha256:fixture"),
+        reason=long_reason,
+    )
+    rows = encode_compiled_body_rows(CompiledBodyOutputs(values=[], fallbacks=[fallback])).map_err(
+        (_) => "a fallback with a long reason refused the compiled output",
+    )?
+    assert len(rows) == 1
+    match decode_compiled_body_row(rows[0]).map_err((_) => "long-reason fallback decode")?:
+        CompiledBodyOutput.Fallback(decoded) =>
+            assert decoded.module == fallback.module and decoded.name == fallback.name
+            assert decoded.identity == fallback.identity
+            assert len(decoded.reason.encode()) <= 65536
+            assert decoded.reason.startswith("local record output refused: xxxx")
+            assert decoded.reason.endswith("[reason cut from 96710 bytes]")
+        _ => return Err("long-reason fallback decoded as another output kind")
+    return Ok(None)
 
 
 def projected_owner_controls() -> Result[None, str]:
