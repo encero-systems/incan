@@ -1,29 +1,22 @@
 """The grammar each checker record field's values follow, family by family; native objects never enter it."""
 
 from call_artifact_codecs import CallArtifactCodec, call_artifact_codec
+pub from checker_record_models import CanonicalField, CodecFault
+from checker_record_rust_calls import rust_artifact_end
 
 
 @derive(Eq)
-pub model CanonicalField:
-    """A schema-owned field: node is a structural role or stable binding reference; values follow its typed grammar."""
+enum IdentifierKind(str):
+    """The complete checked identifier classification shared with native record restoration."""
 
-    pub family: str
-    pub node: str
-    pub selector: str
-    pub values: list[str]
-
-
-@derive(Eq)
-pub enum CodecFault:
-    """Infrastructure/capability refusals; none is a source-language diagnostic or a legacy fallback request."""
-
-    Malformed
-    ProfileMismatch
-    OwnerMismatch
-    BodyChanged
-    Unsupported(str)
-    Limit
-    LimitExceeded(str, int, int)
+    Value = "value"
+    Static = "static"
+    TypeName = "type-name"
+    Variant = "variant"
+    Module = "module"
+    RustImport = "rust-import"
+    RustValue = "rust-value"
+    Trait = "trait"
 
 
 pub def decimal(text: str) -> Result[int, CodecFault]:
@@ -157,10 +150,13 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     # A parameter's type.
     elif field.family == "parameter":
         end = type_end(values, 0, 0)?
-    # An identifier's kind; plain values and type names, such as a constructor's nominal, are recorded.
+    # An identifier's complete checked kind.
     elif field.family == "identifier":
-        if field.selector != "kind" or len(values) != 1 or values[0] not in ["value", "type-name"]:
+        if field.selector != "kind" or len(values) != 1:
             return Err(CodecFault.Unsupported("identifier"))
+        match IdentifierKind.from_value(values[0]):
+            Some(_) => pass
+            None => return Err(CodecFault.Unsupported("identifier"))
         end = 1
     # Generated protocol artifact rows retain one checked receiver identity at its source node.
     elif field.family == "artifact-protocol":
@@ -219,6 +215,11 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             end = 1
         else:
             return Err(CodecFault.Unsupported("native-call"))
+    # A Rust-derived local value keeps its stable declaration identity and checked native carrier type.
+    elif field.family == "native-value":
+        if field.node == "" or field.selector != "type" or len(values) < 2 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        end = type_end(values, 1, 0)?
     # Final types: an empty marker, or the type of an expression or a binding.
     elif field.family == "final-type":
         if field.selector == "empty" and values == ["true"]:
@@ -232,6 +233,8 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     # A diagnostic the body reported.
     elif field.family == "diagnostic":
         end = diagnostic_end(values)?
+    elif field.family == "artifact-rust":
+        end = rust_artifact_end(field)?
     else:
         return Err(CodecFault.Unsupported(field.family))
     if end != len(values):

@@ -1,0 +1,197 @@
+"""Validate checked Rust-call record primitives without reconstructing native compiler objects."""
+
+from checker_record_models import CanonicalField, CodecFault
+from checker_record_types import canonical_decimal, checked_type_end, parameters_end
+
+
+pub def rust_artifact_end(field: CanonicalField) -> Result[int, CodecFault]:
+    """Return the complete admitted Rust artifact length or refuse an unknown selector."""
+    if field.node == "":
+        return Err(CodecFault.Malformed)
+    if field.selector == "checked_constants":
+        if len(field.values) != 1 or field.values[0] == "":
+            return Err(CodecFault.Malformed)
+        return Ok(1)
+    if field.selector == "checked_calls":
+        return RustCallFields.validate(field.values, 1)
+    if field.selector == "iteration_hooks":
+        return RustCallFields.validate(field.values, 2)
+    return Err(CodecFault.Unsupported(field.selector))
+
+
+class RustCallFields:
+    """Advance through bounded structural Rust-call fields while retaining one shared cursor."""
+
+    values: list[str]
+    offset: int = 0
+
+    @staticmethod
+    pub def validate(values: list[str], calls: int) -> Result[int, CodecFault]:
+        """Validate a fixed number of calls and return the consumed field count."""
+        mut reader = RustCallFields(values=values)
+        for _ in range(calls):
+            reader.call(0)?
+        return Ok(reader.offset)
+
+    def call(mut self, depth: int) -> Result[None, CodecFault]:
+        """Read one checked Rust call and its recursively adjusted receivers."""
+        if depth > 16:
+            return Err(CodecFault.Limit)
+        if self.tag(["none", "some"])? == "some":
+            self.signature()?
+        self.strings()?
+        loans = self.count()?
+        for _ in range(loans):
+            self.strings()?
+        adjustments = self.count()?
+        for _ in range(adjustments):
+            self.call(depth + 1)?
+        self.handle()?
+        arguments = self.count()?
+        for _ in range(arguments):
+            self.checked_type()?
+        self.parameters()?
+        self.checked_type()?
+        if self.tag(["none", "some"])? == "some":
+            self.handle()?
+        self.boolean()?
+        return Ok(None)
+
+    def signature(mut self) -> Result[None, CodecFault]:
+        """Read native parameters, result, arguments and canonical identity bindings."""
+        parameters = self.count()?
+        for _ in range(parameters):
+            self.native_type(0)?
+        self.native_type(0)?
+        arguments = self.count()?
+        for _ in range(arguments):
+            self.native_type(0)?
+        identities = self.count()?
+        mut previous = ""
+        for _ in range(identities):
+            name = self.handle()?
+            if name <= previous:
+                return Err(CodecFault.Malformed)
+            previous = name
+            self.handle()?
+        return Ok(None)
+
+    def native_type(mut self, depth: int) -> Result[None, CodecFault]:
+        """Read one closed native storage type using the frontend codec's structural tags."""
+        if depth > 32:
+            return Err(CodecFault.Limit)
+        tag = self.token()?
+        if tag in ["never", "self-type", "infer", "unknown", "native-c-char"]:
+            return Ok(None)
+        if tag == "primitive":
+            primitive = self.tag(
+                ["int", "float", "numeric", "bool", "str", "bytes", "frozen-str", "frozen-bytes", "unit"],
+            )?
+            if primitive == "numeric":
+                self.handle()?
+            return Ok(None)
+        if tag in ["named", "type-var", "rust-path", "unsupported", "trait"]:
+            self.handle()?
+            return Ok(None)
+        if tag == "generic":
+            self.handle()?
+            count = self.count()?
+            for _ in range(count):
+                self.native_type(depth + 1)?
+            return Ok(None)
+        if tag == "decimal":
+            self.number()?
+            self.number()?
+            return Ok(None)
+        if tag == "function":
+            count = self.count()?
+            for _ in range(count):
+                self.native_parameter(depth + 1)?
+            return self.native_type(depth + 1)
+        if tag in ["type-token", "ref", "ref-mut"]:
+            return self.native_type(depth + 1)
+        if tag == "tuple":
+            count = self.count()?
+            for _ in range(count):
+                self.native_type(depth + 1)?
+            return Ok(None)
+        if tag == "native-builtin":
+            self.tag(["validation-error"])?
+            return Ok(None)
+        if tag == "native-array":
+            self.number()?
+            return self.native_type(depth + 1)
+        if tag == "native-trait-object":
+            self.handle()?
+            self.boolean()?
+            self.boolean()?
+            return Ok(None)
+        if tag == "native-pointer":
+            self.boolean()?
+            return self.native_type(depth + 1)
+        return Err(CodecFault.Unsupported("native-type:" + tag))
+
+    def native_parameter(mut self, depth: int) -> Result[None, CodecFault]:
+        """Read one native callable parameter and its storage type."""
+        if self.tag(["none", "some"])? == "some":
+            self.handle()?
+        self.tag(["normal", "rest", "keywords"])?
+        for _ in range(4):
+            self.boolean()?
+        self.tag(["inferred", "shared", "exclusive", "owned", "inferred-shared"])?
+        return self.native_type(depth)
+
+    def checked_type(mut self) -> Result[None, CodecFault]:
+        """Advance through one ordinary source type with the shared canonical grammar."""
+        self.offset = checked_type_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def parameters(mut self) -> Result[None, CodecFault]:
+        """Advance through ordinary callable parameters with the shared canonical grammar."""
+        self.offset = parameters_end(self.values, self.offset, 0)?
+        return Ok(None)
+
+    def strings(mut self) -> Result[None, CodecFault]:
+        """Read one count-prefixed string list."""
+        count = self.count()?
+        for _ in range(count):
+            self.handle()?
+        return Ok(None)
+
+    def boolean(mut self) -> Result[None, CodecFault]:
+        """Read one canonical Boolean token."""
+        self.tag(["false", "true"])?
+        return Ok(None)
+
+    def tag(mut self, allowed: list[str]) -> Result[str, CodecFault]:
+        """Read one token admitted by a closed set."""
+        value = self.token()?
+        if value not in allowed:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def handle(mut self) -> Result[str, CodecFault]:
+        """Read one nonempty opaque handle."""
+        value = self.token()?
+        if value == "":
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def number(mut self) -> Result[int, CodecFault]:
+        """Read one canonical decimal field."""
+        return canonical_decimal(self.token()?)
+
+    def count(mut self) -> Result[int, CodecFault]:
+        """Read one collection count bounded by the remaining field inventory."""
+        value = self.number()?
+        if value > len(self.values) - self.offset:
+            return Err(CodecFault.Malformed)
+        return Ok(value)
+
+    def token(mut self) -> Result[str, CodecFault]:
+        """Read the next field without permitting an out-of-bounds cursor."""
+        if self.offset >= len(self.values):
+            return Err(CodecFault.Malformed)
+        value = self.values[self.offset]
+        self.offset += 1
+        return Ok(value)
