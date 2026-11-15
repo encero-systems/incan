@@ -478,6 +478,29 @@ impl TypeChecker {
             ResolvedNamespaceMemberKind::Method(info) => {
                 Some(ResolvedType::Function(info.params, Box::new(info.return_type)))
             }
+            ResolvedNamespaceMemberKind::Symbol(SymbolKind::RustItem(info)) => {
+                // A re-exported Rust function read through its module is the function value a read of the imported
+                // name is; any other Rust item stays outside value position here.
+                let metadata = info
+                    .metadata
+                    .clone()
+                    .or_else(|| self.rust_item_metadata_for_path(&info.path));
+                if let Some(metadata) = metadata
+                    && let RustItemKind::Function(signature) = &metadata.kind
+                {
+                    let declared =
+                        self.resolved_function_type_from_rust_sig_for_owner_path(signature, false, &info.path);
+                    return Some(
+                        self.retain_rust_function_value(&info.path, signature, span)
+                            .unwrap_or(declared),
+                    );
+                }
+                self.errors.push(CompileError::type_error(
+                    format!("Qualified member '{callable}' is not a value"),
+                    span,
+                ));
+                Some(ResolvedType::Unknown)
+            }
             ResolvedNamespaceMemberKind::Symbol(_) => {
                 self.errors.push(CompileError::type_error(
                     format!("Qualified member '{callable}' is not a value"),
