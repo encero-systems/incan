@@ -84,6 +84,8 @@ pub def lower_enum_match(
     owner = enum_owner(place_type(builder.locals, source))?
     join = builder.new_block(span)
     mut owners = builder.owned
+    incoming = builder.owned
+    mark = len(builder.released)
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
     for arm in arms:
@@ -107,10 +109,7 @@ pub def lower_enum_match(
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
             # Pattern-bound owners are branch locals; release them before the arm's owners meet the others at the join.
-            mut branch_owners = builder.owned
-            for local in branch_owners:
-                if local not in owners:
-                    drop_owned(builder, local, span)
+            release_arm_bindings(builder, owners, mark, span)
             arm_ends.append(builder.current)
             arm_owners.append(builder.owned)
         owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
@@ -118,7 +117,8 @@ pub def lower_enum_match(
         if slot == -1 and arm.guard.is_none():
             break
     builder.finish(TerminatorKind.Unreachable, span)
-    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
+    ends, kept = release_unshared_replacements(builder, incoming, mark, arm_ends, arm_owners, span)
+    join_owners = join_branch_owners(builder, join, ends, kept, span)?
     reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
@@ -456,6 +456,8 @@ def lower_structural_match(
     result_type = place_type(builder.locals, target)
     join = builder.new_block(span)
     mut owners = builder.owned
+    incoming = builder.owned
+    mark = len(builder.released)
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
     for arm in arms:
@@ -476,13 +478,14 @@ def lower_structural_match(
             value = boundary_operand(builder, arm.result, result_type, span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
-            release_match_scratch(builder, owners, span)
+            release_arm_bindings(builder, owners, mark, span)
             arm_ends.append(builder.current)
             arm_owners.append(builder.owned)
         owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
     builder.finish(TerminatorKind.Unreachable, span)
+    ends, kept = release_unshared_replacements(builder, incoming, mark, arm_ends, arm_owners, span)
     # An arm or its guard may move an incoming owner the other arms keep; the join keeps only what every arm kept.
-    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
+    join_owners = join_branch_owners(builder, join, ends, kept, span)?
     reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
@@ -585,6 +588,54 @@ def release_match_scratch(mut builder: Builder, incoming: list[int], span: Sourc
     for local in owners:
         if local not in incoming:
             drop_owned(builder, local, span)
+
+
+def release_arm_bindings(mut builder: Builder, owners: list[int], mark: int, span: SourceSpan) -> None:
+    """
+    Release what an arm bound or built for itself when the arm ends, keeping a value it gave an enclosing local.
+
+    An owner the match did not start with is the arm's own, unless it moved or dropped before the match: that one was
+    declared outside, held no value when the match started, and the arm gave it a new one that later statements read.
+    """
+    held = builder.owned
+    for local in held:
+        if local not in owners and not released_before(builder, local, mark):
+            drop_owned(builder, local, span)
+
+
+def released_before(mut builder: Builder, local: int, mark: int) -> bool:
+    """Report whether `local` moved or dropped among the first `mark` releases of this frame."""
+    for position in range(mark):
+        if builder.released[position] == local:
+            return true
+    return false
+
+
+def release_unshared_replacements(
+    mut builder: Builder,
+    incoming: list[int],
+    mark: int,
+    ends: list[int],
+    arm_owners: list[list[int]],
+    span: SourceSpan,
+) -> tuple[list[int], list[list[int]]]:
+    """
+    Drop a value an arm gave an enclosing local that held none when the match started, unless every arm reaching the
+    join gave it one: only then does the local hold a value on every path after the match.
+    """
+    mut settled_ends: list[int] = []
+    mut settled_owners: list[list[int]] = []
+    for index in range(len(ends)):
+        builder.current = ends[index]
+        builder.owned = arm_owners[index]
+        for local in arm_owners[index]:
+            if local in incoming or kept_by_every_arm(local, arm_owners):
+                continue
+            if released_before(builder, local, mark):
+                drop_owned(builder, local, span)
+        settled_ends.append(builder.current)
+        settled_owners.append(builder.owned)
+    return (settled_ends, settled_owners)
 
 
 pub def bind_structural_pattern(
