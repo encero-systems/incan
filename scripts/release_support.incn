@@ -45,7 +45,9 @@ pub model ReleaseOptions:
     Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout.
 
     `seed_source` names the commit the seed's installed native generation was built from; empty means the qualified
-    source still carries those sources unchanged.
+    source still carries those sources unchanged. `stamp_signer` selects the release workflow's first invocation, which
+    stamps the signer into the shipped `incan`, packs, and leaves installed verification to the second; `signed_bundle`
+    selects that second invocation, on the bundle the workflow signed in between. A local qualification sets neither.
     """
 
     pub source_sha: str
@@ -55,6 +57,8 @@ pub model ReleaseOptions:
     pub jobs: int
     pub timeout_seconds: int
     pub seed_source: str = ""
+    pub stamp_signer: bool = false
+    pub signed_bundle: str = ""
 
 
 pub model VerificationOptions:
@@ -275,6 +279,8 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
     mut jobs = 4
     mut timeout = 600
     mut seed_source = ""
+    mut stamp_signer = false
+    mut signed_bundle = ""
     mut index = 0
     while index < len(arguments):
         argument = str(arguments[index])
@@ -288,6 +294,14 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             if index + 1 >= len(arguments) or not full_sha(arguments[index + 1]):
                 return Err("--seed-source needs a full lowercase source commit")
             seed_source = str(arguments[index + 1])
+            index += 2
+        elif argument == "--stamp-signer":
+            stamp_signer = true
+            index += 1
+        elif argument == "--verify-installed":
+            if index + 1 >= len(arguments) or arguments[index + 1] == "":
+                return Err("--verify-installed needs the directory of the signed bundle")
+            signed_bundle = str(arguments[index + 1])
             index += 2
         elif argument == "--jobs" or argument == "--timeout":
             if index + 1 >= len(arguments):
@@ -306,8 +320,10 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
     if len(positional) != 2:
         return Err(
             "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] "
-            + "[--timeout SECONDS]",
+            + "[--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]",
         )
+    if stamp_signer and signed_bundle != "":
+        return Err("--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one")
     if not full_sha(positional[0]):
         return Err("SHA must be a full lowercase source commit")
     return Ok(
@@ -319,6 +335,8 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             jobs=jobs,
             timeout_seconds=timeout,
             seed_source=seed_source,
+            stamp_signer=stamp_signer,
+            signed_bundle=signed_bundle,
         ),
     )
 
