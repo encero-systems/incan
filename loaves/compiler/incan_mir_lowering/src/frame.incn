@@ -155,6 +155,9 @@ pub model Builder:
     pub carries_view: bool = false
     # Storage materialized only to lend it to one call, each paired with the reference that call receives.
     pub invocation_storage: list[tuple[int, int]] = []
+    # Every owner that has moved or dropped so far. One that holds no value when a match starts was declared before
+    # the match, so a value an arm gives it belongs to the enclosing scope, not to the arm.
+    pub released: list[int] = []
 
     property nominals -> &list[RustNominalDeclaration]:
         """Borrow the module's specialized nominal table without retaining a frame-local copy."""
@@ -210,6 +213,8 @@ pub def forget_owned(mut builder: Builder, index: int) -> None:
     for live in builder.owned:
         if live != index:
             retained.append(live)
+    if len(retained) != len(builder.owned):
+        builder.released.append(index)
     builder.owned = retained
     builder.moved_tuple_fields = [(local, slot) for local, slot in builder.moved_tuple_fields if local != index]
 
