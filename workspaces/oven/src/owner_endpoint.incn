@@ -127,7 +127,7 @@ def endpoint_root(uid: u32) -> str:
 
 def without_trailing_slashes(path: str) -> str:
     """Remove incidental trailing separators without changing the filesystem location."""
-    mut normalized = path
+    mut normalized = path.clone()
     while len(normalized) > 1 and normalized.endswith("/"):
         normalized = normalized[:-1]
     return normalized
@@ -382,16 +382,15 @@ def owner_command(exe: str, endpoint: Endpoint) -> Command:
     return command
 
 
-def await_greeting(mut listener: Listener, child: Child, endpoint: Endpoint) -> Result[None, str]:
+def await_greeting(mut listener: Listener, mut child: Child, endpoint: Endpoint) -> Result[None, str]:
     """Poll the readiness socket until the started owner greets, exits, or the polls run out (it is then killed)."""
-    mut started = child
     for poll in range(READINESS_POLLS):
         match listener.poll()?:
             Some(waiting) => return read_greeting(waiting, endpoint)
             None => pass
         # An owner that cannot be asked counts as still starting.
         mut ended = false
-        match started.try_wait():
+        match child.try_wait():
             Ok(finished) => ended = finished is not None
             Err(_) => pass
         if ended:
@@ -399,7 +398,7 @@ def await_greeting(mut listener: Listener, child: Child, endpoint: Endpoint) -> 
             return Err("the owner exited before it was ready")
         sleep(Duration.from_millis(2))
     # An owner that never greeted is killed; one that already exited needs no killing, so the outcome is ignored.
-    _ = started.kill()
+    _ = child.kill()
     discard_ready(endpoint)
     return Err("the owner was not ready in time")
 

@@ -57,7 +57,6 @@ def append(destination: str, text: str) -> None:
     mut options = OpenOptions.new()
     options.create(true).append(true)
     match options.open(destination):
-        Ok(file) =>
-            mut trace = file
+        Ok(mut trace) =>
             _ = trace.write_all(RustString.from(text).into_bytes())
         Err(_) => pass

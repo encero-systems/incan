@@ -347,7 +347,7 @@ pub model Regex:
         Returns:
             A `SplitIterator` that yields at most `limit` fields.
         """
-        mut normalized = limit
+        mut normalized = limit.clone()
         if normalized < 0:
             normalized = 0
         return SplitIterator(
@@ -418,7 +418,7 @@ pub model Regex:
         Returns:
             Rewritten text after applying at most `limit` replacements.
         """
-        mut normalized = limit
+        mut normalized = limit.clone()
         if normalized < 0:
             normalized = 0
         if isinstance(repl, str):
@@ -486,7 +486,7 @@ pub model Regex:
         Returns:
             Rewritten text after applying at most `limit` replacements.
         """
-        mut normalized = limit
+        mut normalized = limit.clone()
         if normalized < 0:
             normalized = 0
         return self._replacen_literal(text, normalized, repl)

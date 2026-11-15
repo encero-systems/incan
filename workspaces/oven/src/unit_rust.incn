@@ -114,7 +114,7 @@ def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) ->
     """Preserve declared aliases while binding every selected source provider to the graph's single artifact."""
     mut result: list[UnitLoaf] = []
     for loaf in declared:
-        mut directory = loaf.dir
+        mut directory = loaf.dir.clone()
         if loaf.is_dependency():
             for name, prepared in providers:
                 if name == loaf.name:

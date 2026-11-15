@@ -582,7 +582,7 @@ pub def byte_text(bytes: int) -> str:
     """A byte count in the largest binary unit that keeps it at least one, with one decimal; small counts in bytes."""
     if bytes < KIB:
         return f"{bytes} B"
-    mut unit = KIB
+    mut unit = KIB.clone()
     mut name = "KiB"
     for next in ["MiB", "GiB", "TiB"]:
         if bytes < unit * KIB:

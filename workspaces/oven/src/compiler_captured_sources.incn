@@ -40,7 +40,7 @@ pub def prepare_captured_source_inputs(
     inputs: list[CapturedInput],
 ) -> Result[PreparedSourceInputs, str]:
     """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     mut changed: list[RecordKey] = []
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
@@ -88,7 +88,7 @@ def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
 
 def logical_module(relative: str) -> str:
     """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
-    mut without_extension = relative
+    mut without_extension = relative.clone()
     if without_extension.endswith(".incn"):
         without_extension = without_extension[:len(without_extension) - len(".incn")]
     mut parts = without_extension.split("/")

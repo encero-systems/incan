@@ -271,7 +271,7 @@ pub type Path = newtype str:
         Returns:
             `Ok(None)` after writing all text, or `Err(IoError)` for I/O or encoding failures.
         """
-        mut out = data
+        mut out = data.clone()
         if let Some(line_ending) = newline:
             out = out.replace("\n", line_ending)
         bytes_out = _encode_text(self, out, encoding, errors)?

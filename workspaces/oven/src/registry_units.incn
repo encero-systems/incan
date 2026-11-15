@@ -185,7 +185,7 @@ def resolve(
             match extend(unit, entries, chosen, demand.domain):
                 Err(reason) => refusals.append(reason)
                 Ok(next) =>
-                    mut linked = bindings
+                    mut linked = bindings.clone()
                     linked[demand.key()] = identity(unit)
                     match resolve(
                         roots,
@@ -217,8 +217,8 @@ def extend(
     domain: str,
 ) -> Result[Dict[str, str], str]:
     """Pin the producer and every transitive entry, refusing missing evidence and conflicting identities."""
-    mut chosen = selected
-    mut root_domain = domain
+    mut chosen = selected.clone()
+    mut root_domain = domain.clone()
     if root.kind == "proc-macro":
         root_domain = "host"
     mut pending = [(identity(root), root_domain)]
@@ -238,7 +238,7 @@ def extend(
             return Err(f"registry producer {unit.loaf} {entry} has no recorded dependency identities")
         chosen[key] = entry
         for dependency in unit.dependencies:
-            mut child_role = role
+            mut child_role = role.clone()
             if dependency in entries and entries[dependency].kind == "proc-macro":
                 child_role = "host"
             pending.append((dependency, child_role))

@@ -63,7 +63,7 @@ pub def compile_binary(
     # 1. The binary is named after its `[[rust.bin]]` and compiled from its root file, into the profile's `bin`.
     directory = output.joinpath("bin")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
-    mut output_name = name
+    mut output_name = name.clone()
     if testing:
         output_name = f"{test_role}-{name}-tests"
     binary = directory.joinpath(output_name)
@@ -182,7 +182,7 @@ pub def binary_arguments(
         selected = library_arguments(declared)
     if testing:
         selected.append("--test")
-    mut library = root_library_key
+    mut library = root_library_key.clone()
     if library == "":
         library = facet.key()
     elif library not in built:

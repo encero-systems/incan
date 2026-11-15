@@ -391,7 +391,7 @@ pub def reduce_int_generator(values: Generator[int], initial: int, combine: (int
     return native.fold(initial, combine)
 
 
-pub def any_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
+pub def any_int_generator(mut values: Owned[Generator[int]], predicate: (int) -> bool) -> bool:
     """Stop at the first accepted item: 1. Retain the mutable native source. 2. Test its remaining items."""
     # 1. Retain the mutable native source.
     mut native: NativeGenerator[int] = values
@@ -399,7 +399,7 @@ pub def any_int_generator(values: Generator[int], predicate: (int) -> bool) -> b
     return native.any(predicate)
 
 
-pub def all_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
+pub def all_int_generator(mut values: Owned[Generator[int]], predicate: (int) -> bool) -> bool:
     """Stop at the first rejected item: 1. Retain the mutable native source. 2. Test its remaining items."""
     # 1. Retain the mutable native source.
     mut native: NativeGenerator[int] = values

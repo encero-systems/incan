@@ -95,7 +95,7 @@ def split_version(value: str) -> Result[Version, str]:
     if len(build_parts) == 2:
         build = identifiers(build_parts[1], false)?
     core_and_pre = build_parts[0]
-    mut core = core_and_pre
+    mut core = core_and_pre.clone()
     mut pre: list[str] = []
     for index in range(len(core_and_pre)):
         if core_and_pre[index] == "-":

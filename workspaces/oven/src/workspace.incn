@@ -250,7 +250,7 @@ def segments_match(parts: list[str], patterns: list[str]) -> bool:
 
 def normalized(path: str) -> str:
     """A member path without a leading `./` or a trailing `/`; the root itself is `.`."""
-    mut text = path
+    mut text = path.clone()
     while text.startswith("./"):
         text = text[2:]
     while text.endswith("/") and len(text) > 1:

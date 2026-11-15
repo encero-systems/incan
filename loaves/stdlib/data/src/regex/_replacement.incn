@@ -80,7 +80,7 @@ def _numeric_piece(repl: str, caps: Captures, dollar_index: int) -> _Replacement
     Expand `$1`, `$12`, and other unbraced numeric groups.
     """
     start = dollar_index + 1
-    mut end = start
+    mut end = start.clone()
     while end < len(repl) and _is_ascii_digit(repl[end:end + 1]):
         end += 1
     return _literal_piece(_replacement_group(caps, repl[start:end]), end)
@@ -91,7 +91,7 @@ def _named_piece(repl: str, caps: Captures, dollar_index: int) -> _ReplacementPi
     Expand `$name` using the unbraced replacement-name character rules.
     """
     start = dollar_index + 1
-    mut end = start
+    mut end = start.clone()
     while end < len(repl) and _is_name_continue(repl[end:end + 1]):
         end += 1
     return _literal_piece(_replacement_group(caps, repl[start:end]), end)
@@ -136,7 +136,7 @@ def _find_char(value: str, needle: str, start: int) -> int:
     """
     Return the next index of `needle` at or after `start`, or `-1` when absent.
     """
-    mut index = start
+    mut index = start.clone()
     while index < len(value):
         if value[index:index + 1] == needle:
             return index

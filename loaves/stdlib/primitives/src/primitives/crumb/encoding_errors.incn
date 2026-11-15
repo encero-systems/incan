@@ -65,7 +65,7 @@ pub def failure(kind: BinaryFailure, offset: int) -> BinaryError:
 
 pub def primitive(error: CrumbError, offset: int, fallback: BinaryFailure = BinaryFailure.InvalidCell) -> BinaryError:
     """Preserve budget/framing categories and the original cause when crossing the primitive boundary."""
-    mut kind = fallback
+    mut kind = fallback.clone()
     match error.kind:
         CrumbFailure.Limit => kind = BinaryFailure.LimitExceeded
         CrumbFailure.Truncated => kind = BinaryFailure.Truncated

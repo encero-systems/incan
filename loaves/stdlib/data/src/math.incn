@@ -139,13 +139,13 @@ pub def is_float_like(value: str) -> bool:
 
 def _is_float_like_after_integer(value: str, start: int) -> bool:
     """Return whether `value[start:]` is a JSON float suffix."""
-    mut index = start
+    mut index = start.clone()
     mut saw_float_marker = false
 
     if index < len(value) and value[index] == str("."):
         saw_float_marker = true
         index = index + 1
-        digits_start = index
+        digits_start = index.clone()
         while index < len(value) and _is_json_digit(value[index]):
             index = index + 1
         if index == digits_start:
@@ -156,7 +156,7 @@ def _is_float_like_after_integer(value: str, start: int) -> bool:
         index = index + 1
         if index < len(value) and (value[index] == str("+") or value[index] == str("-")):
             index = index + 1
-        digits_start = index
+        digits_start = index.clone()
         while index < len(value) and _is_json_digit(value[index]):
             index = index + 1
         if index == digits_start:

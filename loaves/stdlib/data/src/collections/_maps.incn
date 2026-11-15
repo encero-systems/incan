@@ -843,7 +843,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         return -1
 
     pub def bubble_entry_left(mut self, start: int) -> None:
-        mut index = start
+        mut index = start.clone()
         while index > 0 and self.entries[index].key < self.entries[index - 1].key:
             self.entries.swap(index, index - 1)
             index -= 1
@@ -851,7 +851,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
 
 def _highest_count_index[T with (Clone, Eq)](entries: list[_MapEntry[T, int]]) -> int:
     mut best_index = 0
-    mut best_count = entries[0].value
+    mut best_count = entries[0].value.clone()
     for index in range(len(entries)):
         if entries[index].value > best_count:
             best_count = entries[index].value
@@ -868,16 +868,16 @@ def _counter_elements[T with (Clone, Eq)](entries: list[_MapEntry[T, int]]) -> l
 
 
 def _counter_most_common[T with (Clone, Eq)](source: list[_MapEntry[T, int]], n: int) -> list[Tuple[T, int]]:
-    mut entries: list[_MapEntry[T, int]] = source
+    mut entries: list[_MapEntry[T, int]] = source.clone()
     mut out: list[Tuple[T, int]] = []
     while len(entries) > 0 and (n < 0 or len(out) < n):
         mut best_index = 0
-        mut best_count = entries[0].value
+        mut best_count = entries[0].value.clone()
         for index in range(len(entries)):
             if entries[index].value > best_count:
                 best_count = entries[index].value
                 best_index = index
-        best = entries[best_index]
+        best = entries[best_index].clone()
         entries.remove(best_index)
         out.append((best.key, best.value))
     return out

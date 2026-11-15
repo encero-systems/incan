@@ -32,7 +32,7 @@ pub def normalized_macho(contents: bytes) -> Result[bytes, str]:
     if len(contents) < MACH_HEADER_64_SIZE or little_u32(contents, 0)? != MACH_HEADER_64_MAGIC:
         return Err("release executable is not a little-endian 64-bit Mach-O file")
     commands = little_u32(contents, 16)?
-    mut offset = MACH_HEADER_64_SIZE
+    mut offset = MACH_HEADER_64_SIZE.clone()
     mut uuid_offset = -1
     mut signature_offset = -1
     mut signature_size = 0

@@ -108,7 +108,7 @@ pub def _parse_offset(value: str, start: int) -> Result[_ParsedOffset, DateTimeE
     if sign != "+" and sign != "-":
         return Err(DateTimeError(detail="expected fixed offset sign"))
     hour = _parse_number(value, start + 1, 2, 2)?
-    mut index = hour.next
+    mut index = hour.next.clone()
     if value[index:index + 1] == ":":
         index += 1
     minute = _parse_number(value, index, 2, 2)?
@@ -123,7 +123,7 @@ pub def _parse_offset(value: str, start: int) -> Result[_ParsedOffset, DateTimeE
 pub def _format_offset(offset: FixedOffset, colon: bool, use_z: bool) -> str:
     if offset.seconds == 0 and use_z:
         return "Z"
-    mut value = offset.seconds
+    mut value = offset.seconds.clone()
     mut sign = "+"
     if value < 0:
         sign = "-".to_string()

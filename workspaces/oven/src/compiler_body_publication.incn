@@ -228,8 +228,8 @@ pub def prepare_compiled_bodies(
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
     staged = stage_compiled_body_sources(transaction, unit, origin, outputs)?
-    mut prepared = staged.transaction
-    mut source = staged.source
+    mut prepared = staged.transaction.clone()
+    mut source = staged.source.clone()
     scope = staged.scope
     projections = staged.projections
     editable_packages = staged.editable_packages
@@ -439,7 +439,7 @@ def stage_compiled_body_sources(
     """Stage source, dependency, declaration and eligibility records that authenticate compiler output rows."""
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     projections = projection_cache(unit, origin, outputs)?
     rechecked = stage_compiled_projection_sources(prepared, source, projections, outputs, origin, unit)?
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
@@ -811,7 +811,7 @@ def prepare_lowering_records(
         return Err("successful records compile did not publish lowering outputs")
     scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
     mut staged_source = source.for_profile(LOWERING_PROFILE)
-    mut prepared = transaction
+    mut prepared = transaction.clone()
     mut bodies: Dict[str, LoweringBody] = {}
     for value in values:
         if value.symbol == "":
@@ -845,7 +845,7 @@ def prepare_lowering_records(
         key = required_event_text(event, "key")?
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
-        mut identity = event_identity
+        mut identity = event_identity.clone()
         mut signature_reads: list[RecordRequest] = []
         mut body_reads: list[RecordRequest] = []
         if not runtime:

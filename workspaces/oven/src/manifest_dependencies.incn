@@ -25,7 +25,7 @@ from workspace_inheritance import inherited
 
 pub def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
     """Render the Loaf dependency form used by a retired-table or retired-key refusal hint."""
-    mut package = alias
+    mut package = alias.clone()
     mut version = "*"
     if value.kind() == TomlKind.String:
         version = text(value, manifest, field)?

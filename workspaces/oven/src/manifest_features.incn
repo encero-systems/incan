@@ -72,7 +72,7 @@ def check_feature_names(
             detail = f"activates `dep:{alias}`, which is not an optional dependency"
             return Err(refusal(manifest, field, IntakeErrorKind.Invalid, detail))
     for alias in sorted([key for key in declaration.dependency_features.keys()]):
-        mut dependency = alias
+        mut dependency = alias.clone()
         if dependency.endswith("?"):
             dependency = dependency[:-1]
         if dependency not in aliases:

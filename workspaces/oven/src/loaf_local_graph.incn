@@ -85,7 +85,7 @@ def environment_features(
                 promoted.append(base.alias)
     if len(promoted) == 0:
         return features
-    mut result = features
+    mut result = features.clone()
     mut tokens: set[str] = set()
     for alias in promoted:
         tokens.add(f"dep:{alias}")
@@ -116,7 +116,7 @@ def key(demand: LocalDemand) -> str:
 
 def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, LocalDemand]:
     """Merge incoming local features and defaults monotonically; the caller observes whether another round is needed."""
-    mut result = demands
+    mut result = demands.clone()
     identity = key(demand)
     mut selected = canonical_demand(demand)
     if identity in result:

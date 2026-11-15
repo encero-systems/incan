@@ -527,7 +527,7 @@ def presentation_inputs(
     portable: bool,
 ) -> Result[Option[list[str]], str]:
     """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
-    mut key_root = root
+    mut key_root = root.clone()
     mut anchors = ""
     if portable:
         anchors = anchor_root(Path(root)).0
@@ -751,7 +751,7 @@ def provider_keys(paths: list[GraphUnit], toolchain: Toolchain) -> Result[list[J
     fields = json_text(JsonValue.object({"declaration": JsonValue.array(columns)}))?
     mut records: list[JsonValue] = []
     for unit in paths:
-        mut package = unit.package
+        mut package = unit.package.clone()
         for line in read_graph(unit, toolchain, "declaration", fields)?.split("\n"):
             if line == "":
                 continue
@@ -915,7 +915,7 @@ def read_records(
         started = Instant.now()
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain, group)?
-        mut package_name = unit.package
+        mut package_name = unit.package.clone()
         for line in document.split("\n"):
             if line.strip() == "":
                 continue

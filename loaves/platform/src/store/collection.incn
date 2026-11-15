@@ -215,7 +215,7 @@ def mark_snapshot(
     mut pending: list[str] = [view.index]
     mut index = 0
     while index < len(pending):
-        name = pending[index]
+        name = pending[index].clone()
         index += 1
         if name == "" or name in marked.pages:
             continue

@@ -258,7 +258,7 @@ pub def search(root: Path, top: str, key: str) -> Result[SearchResult, IndexErro
     """Find one location and bind the answer to every authenticated page examined on its search path."""
     if top == "":
         return Ok(SearchResult(location=None, path_digest=search_digest([], key)))
-    mut name = top
+    mut name = top.clone()
     mut names: list[str] = []
     loop:
         names.append(page_digest(name))
@@ -453,7 +453,7 @@ def layout(view: MappedView, pack: str) -> Result[Layout, str]:
         field = offset + 8 + size
         if field > view.len():
             return Err("key runs past the page")
-        mut width = NAME_BYTES
+        mut width = NAME_BYTES.clone()
         if level == 0:
             width = NAME_BYTES + 17 + DIGEST_BYTES
         elif version == 2:
@@ -765,7 +765,7 @@ def tree_order(root: Path, tops: list[str]) -> Result[TreeOrder, IndexError]:
     mut pending = tops.clone()
     mut position = 0
     while position < len(pending):
-        reference = pending[position]
+        reference = pending[position].clone()
         position += 1
         if reference == "" or reference in tree.pages:
             continue

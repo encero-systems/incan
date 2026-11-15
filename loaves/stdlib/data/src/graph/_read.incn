@@ -579,7 +579,7 @@ pub model _GraphStore[T]:
         mut values: list[ScopedNodeId] = []
         mut examined = 0
         mut tombstones = 0
-        mut next_position = position
+        mut next_position = position.clone()
         while next_position < self.node_slot_count() and not budget.is_full(len(values)):
             match self.node_at(next_position):
                 Some(node) => values.append(issue_node(scope, node))

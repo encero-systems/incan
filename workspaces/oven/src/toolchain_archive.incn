@@ -576,7 +576,7 @@ def stage_native(source: Path, destination: Path, stage: Path, prefix: str) -> R
     # 4. Everything else the document says is kept as it was.
     sibling = f"{NativeAnchor.Sibling.value()}:"
     rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(sibling + path) for path in search]))?
-    mut schema = NATIVE_CLOSURE_SCHEMA
+    mut schema = NATIVE_CLOSURE_SCHEMA.clone()
     if destination.name() == "native.json":
         schema = RUST_NATIVE_SCHEMA
     write_json(destination, replaced(rewritten, "schema", JsonValue.string(schema))?)?

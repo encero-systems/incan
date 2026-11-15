@@ -70,7 +70,7 @@ class Index:
             return []
         if kind == "callers" and self.names_selection(record, term):
             owner = text(record, "owner_id")
-            mut label = owner
+            mut label = owner.clone()
             if owner in self.by_id:
                 label = display(self.by_id[owner])
             return [f"{record_kind} {label} {where}"]

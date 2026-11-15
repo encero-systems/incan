@@ -331,7 +331,7 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         return self.items
 
     pub def bubble_value_left(mut self, start: int) -> None:
-        mut index = start
+        mut index = start.clone()
         while index > 0 and self.higher_priority(self.items[index], self.items[index - 1]):
             self.items.swap(index, index - 1)
             index -= 1

@@ -55,7 +55,7 @@ def ordered_descriptions(descriptions: list[TextDescription]) -> list[TextDescri
         result.append(description)
         mut current = len(result) - 1
         while current > selected:
-            previous = result[current - 1]
+            previous = result[current - 1].clone()
             result[current - 1] = result[current]
             result[current] = previous
             current -= 1
@@ -109,7 +109,7 @@ def ordered_properties(properties: list[MetadataEntry], order: Option[list[str]]
 
 def render_variant(value: VariantShape, registration: Option[KindRegistration]) -> Result[str, TextError]:
     """Render one enum variant, its complete metadata and its named payload description."""
-    mut result = value.name
+    mut result = value.name.clone()
     mut metadata: list[MetadataEntry] = []
     if len(value.renamed_from) > 0:
         metadata.append(
@@ -133,7 +133,7 @@ def render_variant(value: VariantShape, registration: Option[KindRegistration]) 
 
 def render_field(value: FieldShape, registration: Option[KindRegistration]) -> Result[str, TextError]:
     """Render field metadata, storage type and explicit absent value."""
-    mut result = value.name
+    mut result = value.name.clone()
     mut metadata: list[MetadataEntry] = []
     if len(value.renamed_from) > 0:
         metadata.append(
@@ -335,7 +335,7 @@ def render_enum(
     storage_type = type_spelling(slot_type)
     description = description_at(descriptions, storage_type, print_position())?
     variant = variant_at(description, variant_identity)?
-    mut name = variant.name
+    mut name = variant.name.clone()
     if ambiguous_variant(ambiguity_slot, variant.name, descriptions):
         name = last_segment(storage_type) + "." + variant.name
     if len(variant.fields) == 0:
@@ -569,7 +569,7 @@ def map_types(slot_type: TypeNode) -> Result[tuple[TypeNode, TypeNode], TextErro
 def decimal_spelling(coefficient: str, scale: int) -> str:
     """Insert the declared decimal point and retain every required fractional zero."""
     mut sign = ""
-    mut digits = coefficient
+    mut digits = coefficient.clone()
     if digits.startswith("-"):
         sign = "-"
         digits = digits[1:]
@@ -587,7 +587,7 @@ def normalize_float(spelling: str) -> str:
         return "nan"
     if "e" in spelling:
         parts = spelling.split("e")
-        mut exponent = parts[1]
+        mut exponent = parts[1].clone()
         mut sign = ""
         if exponent.startswith("+"):
             exponent = exponent[1:]

@@ -102,7 +102,7 @@ pub class File with BinaryReader:
         Returns:
             Number of characters accepted for writing, or `Err(IoError)`.
         """
-        mut out = data
+        mut out = data.clone()
         if let Some(line_ending) = self.newline:
             out = out.replace("\n", line_ending)
         encoding = _option_or_str(self.encoding, "utf-8")

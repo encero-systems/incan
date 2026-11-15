@@ -403,7 +403,7 @@ def compiled_archive(
             arguments.append(f"-I{include}")
         for definition in definition_texts(resolved.defines) + definition_texts(source.defines):
             arguments.append(f"-D{definition}")
-        mut program = compiler.c
+        mut program = compiler.c.clone()
         if source.kind == CSourceKind.CPlusPlus:
             program = compiler.cplusplus
         run(program, arguments, root).map_err((error) => f"Clove `{name}` configuration `{resolved.name}`: {error}")?

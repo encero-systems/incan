@@ -472,7 +472,7 @@ def overview_document(document: TomlValue, declared: Dict[str, TomlValue]) -> Re
 
 def pad(text: str, width: int) -> str:
     """Left-aligned text in a column of at least `width` characters."""
-    mut padded = text
+    mut padded = text.clone()
     while len(padded) < width:
         padded += " "
     return padded

@@ -350,7 +350,7 @@ def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, le
         return Err(_error(codec, "invalid_length", "base85 trailing quantum cannot contain exactly one character", len(clean) - 1))
     if len(block) > 1:
         block_len = len(block)
-        mut padded = block
+        mut padded = block.clone()
         while len(padded) < 5:
             padded += alphabet[84:85]
         # RFC-style partial quanta are decoded by padding with the largest digit and emitting only the real bytes.

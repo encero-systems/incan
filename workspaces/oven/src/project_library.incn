@@ -52,7 +52,7 @@ pub def with_testing_features(unit: UnitDescription, features: list[str]) -> Uni
     A test unit with each `--feature NAME` testing feature active, so its collection observes it. A name the unit
     does not already have active is recorded as a testing feature, which its shared library does not take.
     """
-    mut tested = unit
+    mut tested = unit.clone()
     for feature in features:
         if feature not in tested.active_features:
             tested.active_features.append(feature)

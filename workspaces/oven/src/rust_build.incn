@@ -45,7 +45,7 @@ pub def facet_slot(facet: LocalFacet, profile: str) -> str:
     sufficient to distinguish real build units without leaking a checkout path into linker input names. Synthetic
     facets without a declaration retain the project path as a compatibility fallback. This slot is never an identity.
     """
-    mut owner = facet.project
+    mut owner = facet.project.clone()
     if facet.package != "" and facet.version != "":
         owner = f"{facet.package}\n{facet.version}"
     text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
@@ -359,7 +359,7 @@ pub def materialized_arguments(arguments: list[str], key: Key) -> list[str]:
     A refused reusable identity can retain deterministic code-generation inputs without authorizing publication. Only
     an opaque key with neither identity receives an ephemeral local disambiguator.
     """
-    mut identity = key.codegen
+    mut identity = key.codegen.clone()
     if identity == "":
         identity = key.digest
     metadata = unit_metadata(identity)

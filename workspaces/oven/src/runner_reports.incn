@@ -179,7 +179,7 @@ pub def summary_line(outcomes: list[Outcome], duration_ms: int) -> str:
 
 def padded(text: str, width: int, fill: str) -> str:
     """`text` right-aligned in `width` characters with `fill`."""
-    mut result = text
+    mut result = text.clone()
     while len(result) < width:
         result = fill + result
     return result

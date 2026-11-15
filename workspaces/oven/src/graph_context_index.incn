@@ -187,7 +187,7 @@ pub class ContextIndex:
                 reasons[identifier] = "session feedback for this task and snapshot"
         # 3. Later edges may improve a score, but ties keep the first edge's reason.
         for wave in range(2):
-            before = scores
+            before = scores.clone()
             mut next_scores = {key: scores[key] for key in scores.keys()}
             for link in self.links:
                 source, target, kind = link.source, link.target, link.kind
@@ -322,7 +322,7 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     # 1. A changed export, package or anchor selects another immutable index.
     anchors = anchor_root(owner).0
     author = unit.author(anchors).json()
-    mut projection_root = anchors
+    mut projection_root = anchors.clone()
     # Virtual package anchors are independent of the project requesting their records.
     if unit.root.0.startswith("@"):
         projection_root = ""
@@ -343,7 +343,7 @@ def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, 
     document = read_graph(unit, toolchain, "", context_fields()?)?
     mut rows: list[str] = []
     mut vocabulary: Dict[str, list[str]] = {}
-    mut package = unit.package
+    mut package = unit.package.clone()
     mut offset = 0
     mut count = 0
     for line in document.split("\n"):

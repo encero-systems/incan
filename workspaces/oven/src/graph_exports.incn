@@ -44,7 +44,7 @@ pub def pending_export(identity: str, provenance: Path, claimed: str = "") -> Re
     export identity unless named, which proves the staging alive.
     """
     pending = fingerprint([identity, provenance.0])?
-    mut owner = claimed
+    mut owner = claimed.clone()
     if owner == "":
         owner = identity
     return Ok(staging(bakery()?, pending, 0, owner)?.joinpath(ENTRY))
@@ -53,7 +53,7 @@ pub def pending_export(identity: str, provenance: Path, claimed: str = "") -> Re
 pub def publish_export(identity: str, pending: Path, name: str = "") -> Result[Path, str]:
     """Admit a complete checked graph and its interface, and return the graph where the bakery binds it."""
     store = bakery()?
-    mut binding = name
+    mut binding = name.clone()
     if binding == "":
         binding = f"graph\t{identity}"
     fact = seal(store, identity, pending.parent(), "graph", binding, [], "checked graph export")?
