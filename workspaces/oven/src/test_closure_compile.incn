@@ -1,0 +1,133 @@
+"""`oven compile-closure` compiles a lock's registry Loaves from their admitted archives into a closure document."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from std.testing import fail
+from closure_compile import ClosureOptions, compile_closure
+from files import make_directory, read, write
+from lock_format import LockDependency, LockFeatures, LockLoaf, LockToolchain, OvenLock, graph_identity, write_lock
+from observation import file_digest
+from scratch import scratch_directory
+
+const TARGET: str = "aarch64-apple-darwin"
+
+
+def archived(name: str, sources: Path) -> Result[str, str]:
+    """Archive one fixture Loaf's source into `sources/blobs/sha256/<hex>.tar` and return its `sha256:` digest."""
+    fixture = Path(f"tests/fixtures/compile-closure/{name}").resolve().map_err((error) => error.message())?
+    staging = sources.joinpath(f"{name}.tar")
+    output = Command.new("tar").arg("-cf").arg(staging.0).arg("-C").arg(fixture.0).arg(".").output().map_err(
+        (error) => error.to_string(),
+    )?
+    assert output.status.success(), f"cannot archive {name}"
+    digest = file_digest(staging)?
+    blobs = sources.joinpath("blobs/sha256")
+    make_directory(blobs)?
+    staging.rename(blobs.joinpath(f"{digest}.tar")).map_err((error) => error.message())?
+    return Ok(f"sha256:{digest}")
+
+
+def indexed(index: Path, name: str, checksum: str) -> Result[None, str]:
+    """Publish one fixture Loaf's index line and manifest at revision 1."""
+    manifest = Path(f"tests/fixtures/compile-closure/{name}/loaf.toml").resolve().map_err((error) => error.message())?
+    write(index.joinpath(f"crates-io/{name}/1.0.0/loaf.toml"), read(manifest)?)?
+    line = "{\"adopted\": {\"revision\": 1}, \"cksum\": \"" + checksum + "\", \"vers\": \"1.0.0\"}\n"
+    return write(index.joinpath(f"index/crates-io/{name}"), line)
+
+
+def registry_entry(name: str, checksum: str, enabled: list[str], dependencies: list[LockDependency]) -> LockLoaf:
+    """A toolchain-origin lock entry for one fixture Loaf at version 1.0.0."""
+    return LockLoaf(
+        name=f"crates-io/{name}",
+        version="1.0.0",
+        origin="toolchain",
+        registry="loaves.pub",
+        revision=1,
+        checksum=checksum,
+        entry=f"sha256:{name}",
+        dependencies=dependencies,
+        features=[LockFeatures(target=TARGET, domain="target", requested=enabled, enabled=enabled)],
+    )
+
+
+def fixture_lock(path: Path, first: str, second: str) -> Result[None, str]:
+    """A lock whose root links tiny-b, which links tiny-a with its `wide` feature."""
+    edge_a = LockDependency(key="tiny-a", loaf="crates-io/tiny-a", version="1.0.0", entry="sha256:tiny-a")
+    edge_b = LockDependency(key="tiny-b", loaf="crates-io/tiny-b", version="1.0.0", entry="sha256:tiny-b")
+    root = LockLoaf(name="app", version="0.1.0", origin="root", dependencies=[edge_b])
+    mut lock = OvenLock(
+        format=1,
+        mode="lowest",
+        graph="",
+        toolchain=LockToolchain(version="0.6.0-dev.9", identity="fixture"),
+        loaves=[root, registry_entry("tiny-a", first, ["wide"], []), registry_entry("tiny-b", second, [], [edge_a])],
+    )
+    lock.graph = graph_identity(lock)?
+    return write_lock(path, lock)
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """One required JSON string."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+pub def test_a_lock_s_registry_loaves_compile_from_their_archives_into_a_closure_document() -> Result[None, str]:
+    """
+    Each registry Loaf the lock names is admitted from the archive its digest names, given the index's manifest and
+    compiled at the profile asked for, with its locked features. The closure document names each unit by the identity
+    this Oven computed, with its payload digest, its lock's registry, revision and archive digest, and the entries it
+    links; its entry holds `artifact.json` and the library. A lock entry whose archive is absent refuses the command.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    sources = root.joinpath("sources")
+    index = root.joinpath("index")
+    first = archived("tiny-a", sources)?
+    second = archived("tiny-b", sources)?
+    indexed(index, "tiny-a", first)?
+    indexed(index, "tiny-b", second)?
+    lock = root.joinpath("app.oven.lock")
+    fixture_lock(lock, first, second)?
+    result = root.joinpath("result")
+    options = ClosureOptions(locks=[lock.0], profile="release", sources=sources.0, index=index.0, out=result.0)
+    _ = compile_closure(options)?
+    document = JsonValue.parse(read(result.joinpath("closure.json"))?).map_err((error) => error.message())?
+    assert text(document, "schema")? == "incan.oven.closure/1"
+    units = document.require("units").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    assert len(units) == 2, f"{len(units)} units"
+    mut entries: Dict[str, str] = {}
+    for unit in units:
+        entries[text(unit, "loaf")?] = text(unit, "entry")?
+    for unit in units:
+        loaf = text(unit, "loaf")?
+        entry = text(unit, "entry")?
+        assert entry == text(unit, "unit")? and entry.startswith("sha256:"), f"{loaf}: {entry}"
+        assert text(unit, "registry")? == "loaves.pub" and text(unit, "profile")? == "release", loaf
+        stored = result.joinpath(text(unit, "artifact")?)
+        assert stored.is_file(), stored.0
+        assert f"sha256:{file_digest(stored)?}" == text(unit, "payload_digest")?, loaf
+        assert result.joinpath(f"entries/sha256-{entry[7:]}/artifact.json").is_file(), loaf
+        dependencies = unit.require("dependencies").and_then((value) => value.expect_array()).map_err(
+            (error) => error.message(),
+        )?
+        linked = [text(dependency, "entry")? for dependency in dependencies]
+        if loaf == "crates-io/tiny-b":
+            assert text(unit, "checksum")? == second
+            assert linked == [entries["crates-io/tiny-a"]], f"{linked}"
+        else:
+            assert text(unit, "checksum")? == first
+            assert linked == [], f"{linked}"
+    refused = document.require("refused").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    assert len(refused) == 0, f"{len(refused)} refused"
+    # A lock entry whose archive the sources do not hold refuses the command, naming the Loaf.
+    absent = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    missing = root.joinpath("missing.oven.lock")
+    fixture_lock(missing, absent, second)?
+    other_out = root.joinpath("other").0
+    other = ClosureOptions(locks=[missing.0], profile="release", sources=sources.0, index=index.0, out=other_out)
+    match compile_closure(other):
+        Ok(_) => fail("a lock entry with no archive was compiled")
+        Err(reason) =>
+            assert "crates-io/tiny-a 1.0.0" in reason and "no source archive" in reason, reason
+    return Ok(None)
