@@ -1,0 +1,17 @@
+# behavior: A shared input passed by value to a generic native parameter is the native reference it is, so the parameter instantiates with `&str` and borrows the input for the call (RFC 164, one type).
+# expect-stdout:
+#   5
+
+from rust::std::mem import drop
+
+
+def size(text: Borrowed[str]) -> int:
+    """Release a by-value copy of the reference, then read the text again."""
+    drop(text)
+    return len(text)
+
+
+def main() -> None:
+    """A shared input reaches a by-value generic native parameter as its reference."""
+    word = "hello"
+    println(size(word))
