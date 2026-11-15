@@ -402,17 +402,11 @@ pub struct LoafIndex {
 }
 
 impl LoafIndex {
-    /// Read an immutable Rust ABI index under current file-generation guards. The returned index owns no session or
+    /// Read an immutable Rust ABI index under current file-generation guards, opening an unchanged file once per
+    /// process: records mode included, since the index is one file whose generation is observed around every
+    /// request, whatever names the Loaves beside it. The returned index owns no session or
     /// resolved source state; each compilation installs it into its own fresh lookup environment.
     pub fn read_rust_abi_cache(path: &Path) -> Result<Arc<RustAbiCache>, LoafIndexError> {
-        if compiler_record_set::configured() {
-            return RustAbiCache::open(path)
-                .map(Arc::new)
-                .map_err(|reason| LoafIndexError::Unreadable {
-                    path: path.to_owned(),
-                    reason,
-                });
-        }
         retained::abi(path).map_err(|reason| LoafIndexError::Unreadable {
             path: path.to_owned(),
             reason,
