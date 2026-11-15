@@ -32,8 +32,18 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing selected loan identity")?;
     let mut partially_selected = candidate.clone();
     let selected = std::collections::HashSet::from([selected_identity]);
-    super::retain_module_representations(&mut partially_selected, &program, &facts, &[], &selected);
-    super::shared_reads::retain_modules_with_selected(std::slice::from_mut(&mut partially_selected), &[], &selected);
+    super::retain_module_representations(
+        &mut partially_selected,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
+    super::shared_reads::retain_modules_with_selected(
+        std::slice::from_mut(&mut partially_selected),
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     let retained_selected_leaf = partially_selected
         .bodies
         .iter()
@@ -53,7 +63,10 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing explicit loan control")?;
         parameter.params[0].input_access = access;
         let original_type = parameter.params[0].ty.clone();
-        super::shared_reads::retain_modules(std::slice::from_mut(&mut explicit), &[]);
+        super::shared_reads::retain_modules(
+            std::slice::from_mut(&mut explicit),
+            crate::body_ir::ContextModules::default(),
+        );
         let parameter = explicit
             .bodies
             .iter()
@@ -63,7 +76,10 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(parameter.params[0].ty, original_type);
         assert_eq!(parameter.locals[parameter.params[0].local.index()].ty, original_type);
     }
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut candidate), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut candidate),
+        crate::body_ir::ContextModules::default(),
+    );
     for name in ["leaf", "forward", "explicit_forward", "left", "right", "escaped"] {
         let body = candidate
             .bodies
@@ -207,7 +223,10 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
 pub(super) fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\ndef observe(item: Native) -> int:\n    return item.value\ndef projected(wrapper: Wrapper) -> int:\n    return observe(wrapper.item)\ndef take(item: Native) -> Native:\n    return item\ndef projected_take(wrapper: Wrapper) -> Native:\n    return take(wrapper.item)\n";
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
 
     for name in ["observe", "projected"] {
         let body = module
@@ -250,7 +269,10 @@ pub(super) fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::
     let conversion_source =
         "def count(values: list[int]) -> int:\n    return 42\ndef ranged() -> int:\n    return count(range(1, 3))\n";
     let (_, _, mut conversions) = checked_seed(conversion_source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut conversions), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut conversions),
+        crate::body_ir::ContextModules::default(),
+    );
     let ranged = conversions
         .bodies
         .iter()
@@ -273,7 +295,10 @@ pub(super) fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::
 pub(super) fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\ndef narrowed(value: str | None) -> str:\n    if value is not None:\n        return value.upper()\n    return \"missing\"\ndef discarded(item: Native) -> int:\n    _ = item\n    return 1\ndef formatted(item: Native) -> str:\n    return f\"{item:?}\"\ndef stored(item: Native) -> list[Native]:\n    return [item]\ndef compared(value: str) -> bool:\n    return value == \"chosen\"\ndef returned(value: str) -> str:\n    return value\ndef matched(item: Result[Native, str]) -> int:\n    match item:\n        Ok(_) => return 1\n        Err(_) => return 0\ndef match_take(item: Result[Native, str]) -> Native:\n    match item:\n        Ok(value) => return value\n        Err(_) => return Native(value=0)\ndef indexed(items: list[Native]) -> int:\n    return items[0].value\ndef index_take(items: list[Native]) -> Native:\n    return items[0]\ndef iterated(items: list[Native]) -> int:\n    mut total = 0\n    for item in items:\n        total += item.value\n    return total\ndef loop_take(items: list[Native]) -> Native:\n    for item in items:\n        return item\n    return Native(value=0)\ndef unrelated(item: Native) -> int:\n    values = [1, 2]\n    callback: Callable[int, int] = (value) => value + 1\n    result: Result[int, str] = Ok(callback(values[0]))\n    match result:\n        Ok(_) => pass\n        Err(_) => pass\n    return item.value\ndef captured(item: Native) -> int:\n    callback: () -> int = () => item.value\n    return callback()\n";
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
 
     for (name, access) in [
         ("formatted", incan_semantics_core::IncanInputAccess::InferredShared),
@@ -389,7 +414,10 @@ def mutated(mut text: str) -> int:
     return len(text)
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
 
     for name in ["ignored", "length", "sliced", "compared"] {
         let body = module
@@ -588,7 +616,10 @@ def mutated(mut text: str) -> int:
 pub(super) fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Item:\n    count: int\ndef both(kept: Item, taken: Item) -> Item:\n    total = kept.count\n    return taken\ndef caller(item: Item) -> Item:\n    return both(item, item)\n";
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     let both = module
         .bodies
         .iter()

@@ -3,6 +3,7 @@
 //! "never consumed" rule. An input of a published callable borrows only when its whole body reads it, settled under
 //! the same hypothesis the base settled every callable with, so the published signature is the base's.
 
+use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{Candidate, FieldTypes, ReadContext, bir, closure_reads, collect_signatures, readonly};
@@ -11,7 +12,7 @@ use super::{Candidate, FieldTypes, ReadContext, bir, closure_reads, collect_sign
 /// a callee input that loses shared access refuses every candidate that forwards to it.
 pub(super) fn read_only_parameters(
     modules: &[bir::BodyIrModule],
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     field_types: &FieldTypes,
     mut candidates: HashSet<Candidate>,
 ) -> HashSet<Candidate> {

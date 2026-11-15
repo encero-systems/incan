@@ -764,26 +764,26 @@ pub(super) fn prepare_runtime_layouts(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<(), String> {
-    if requirements.is_empty() {
-        return Err("runtime layout preparation requested an empty declaration set".to_owned());
-    }
     let requested = requirements
         .into_iter()
         .map(|requirement| requirement.canonical)
         .collect::<BTreeSet<_>>();
-    let resolved = load_loaf_modules(
-        &program.dependencies.loaves,
-        &requested,
-        &program.dependencies.checked_local,
-    )?;
-    program.dependencies.package_versions.extend(resolved.package_versions);
+    // A program without layout requirements reads no layout module, but still installs the dependencies it reached.
     let mut layouts = Vec::new();
-    for mut module in resolved.modules {
-        let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
-        layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
-        layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
-        if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
-            layouts.push(layout);
+    if !requested.is_empty() {
+        let resolved = load_loaf_modules(
+            &program.dependencies.loaves,
+            &requested,
+            &program.dependencies.checked_local,
+        )?;
+        program.dependencies.package_versions.extend(resolved.package_versions);
+        for mut module in resolved.modules {
+            let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
+            layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
+            layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
+            if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
+                layouts.push(layout);
+            }
         }
     }
     program.dependencies.layout_modules = layouts;

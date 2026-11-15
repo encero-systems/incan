@@ -28,14 +28,14 @@ Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origi
 | `registry` | String | Registry identity. Until a registry has a content-derived id, its configured name is recorded. |
 | `protocol` | String | Registry provider protocol. Reserved in format 1. |
 | `revision` | Integer | Exact registry record revision. Zero when absent. |
-| `checksum` | String | Immutable registry source digest. |
+| `checksum` | String | Immutable registry source digest. A toolchain-origin Loaf records the source digest the toolchain's registry closure records for its unit, and none when the closure records none. |
 | `source` | String | Immutable registry source reference. |
 | `trust` | String | Trust outcome reached for the selected content. |
 | `adopted` | Boolean | Whether the registry version was adopted locally. False when absent. |
 | `entry` | String | Exact compiled producer identity for a toolchain-origin Loaf. |
 | `dependencies` | Array of inline tables | Exact outgoing edges. Empty when the entry has no dependencies. |
 
-An edge requires `key`, `loaf` and `version`. `domain` defaults to `target`; `target` records a target predicate or triple; `entry` disambiguates a compiled producer. Two entries may have the same Loaf name when their exact versions differ. A `name` or edge `loaf` with a capital letter is refused, never folded. An edge must resolve to exactly one entry in its domain.
+An edge requires `key`, `loaf` and `version`. `domain` defaults to `target`; `target` records a target predicate or triple; `entry` disambiguates a compiled producer. Two entries may have the same Loaf name when their exact versions differ. A refresh keeps each recorded producer that still satisfies its requirement. A requirement that no recorded version of its Loaf satisfies is resolved as a fresh lock would resolve it, and its version is locked beside the recorded ones; another producer of a recorded version is refused. A `name` or edge `loaf` with a capital letter is refused, never folded. An edge must resolve to exactly one entry in its domain.
 
 Each `[[loaf.features]]` table requires `target` and `domain`. `requested`, `enabled` and `predicates` are arrays of strings and default to empty. Host and target feature closures are separate entries.
 

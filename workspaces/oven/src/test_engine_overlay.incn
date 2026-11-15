@@ -39,6 +39,30 @@ pub def test_the_overlay_root_mirrors_the_program_and_places_the_buffer() -> Res
     return Ok(None)
 
 
+pub def test_the_overlay_root_keeps_its_own_build_output() -> Result[None, str]:
+    """
+    Mirroring again leaves the overlay's own build output under `target/` as it is, whether or not the program has
+    build output of its own: a keystroke's check keeps what an earlier keystroke's check kept there.
+    """
+    scratch = scratch_directory()?
+    program = scratch.path().joinpath("program")
+    program.joinpath("target").mkdir(true, true).map_err((error) => error.message())?
+    write(program.joinpath("main.incn"), "def main() -> None:\n    pass\n")?
+    write(program.joinpath("target/stale.incn"), "stale\n")?
+    overlay = scratch.path().joinpath("overlay")
+    buffer = "def main() -> None:\n    println(\"edited\")\n"
+    _ = mirror_overlay(program, overlay, "main.incn", buffer)?
+    kept = overlay.joinpath("target/incan/check-pages/kept.selection")
+    kept.parent().mkdir(true, true).map_err((error) => error.message())?
+    write(kept, "{}\n")?
+    _ = mirror_overlay(program, overlay, "main.incn", buffer)?
+    assert kept.is_file(), "mirroring removed the overlay's build output beside the program's"
+    program.joinpath("target").remove_tree().map_err((error) => error.message())?
+    _ = mirror_overlay(program, overlay, "main.incn", buffer)?
+    assert kept.is_file(), "mirroring removed the overlay's build output when the program had none"
+    return Ok(None)
+
+
 pub def test_diagnostics_are_projected_into_document_coordinates() -> Result[None, str]:
     """A check report's diagnostics keep message, code, start and end, and name the editor's document paths."""
     first = "{\"code\": \"INCAN-T0001\", \"severity\": \"error\", \"message\": \"Type 'Point' has no field 'z'\", "

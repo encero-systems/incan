@@ -95,7 +95,11 @@ pub from nominal_identities import (
     describe_nominals,
     resolve_nominals,
     unit_nominals,
+    carrier_index,
+    carrier_position,
+    is_carrier_index,
 )
+pub from carrier_positions import fold_carrier_positions, fold_inventories
 pub from record_codec import (
     encode_record_plan,
     encode_record_plan_products,

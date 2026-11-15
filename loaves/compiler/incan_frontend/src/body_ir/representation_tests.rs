@@ -53,7 +53,13 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     let mut expected = seed.clone();
     super::legacy_trait_values::retain_inputs(&mut expected, &program, &facts, &[]);
     let selected = std::collections::HashSet::new();
-    super::trait_values::retain_inputs(&mut seed, &program, &facts, &[], &selected);
+    super::trait_values::retain_inputs(
+        &mut seed,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     assert_same_module(&expected, &seed)?;
     let through = seed
         .bodies
@@ -63,7 +69,13 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_eq!(through.type_parameters.len(), 1);
     assert!(matches!(through.params[0].ty, super::IncanType::TypeVar(_)));
     super::legacy_trait_returns::retain_returns(&mut expected, &program, &facts, &[]);
-    super::trait_returns::retain_returns(&mut seed, &program, &facts, &[], &selected);
+    super::trait_returns::retain_returns(
+        &mut seed,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     assert_same_module(&expected, &seed)?;
     let forward = seed
         .bodies

@@ -82,6 +82,7 @@ struct Clock {
 impl Timing {
     /// Start observing only when the existing native phase diagnostic has been requested.
     pub(crate) fn requested() -> Self {
+        sample_heap();
         Self(requested().then(|| {
             let now = Instant::now();
             Clock {
@@ -101,7 +102,8 @@ impl Timing {
 
     /// Record a named boundary in seconds; durations include preceding diagnostic writes and must not be summed
     /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents. Each
-    /// record names the driver process that reached the boundary, so a trace shows which process ran which phase.
+    /// record names the driver process that reached the boundary, so a trace shows which process ran which phase, and
+    /// its physical footprint and live heap there (each -1 when unknown), so a trace shows which phase holds memory.
     pub(crate) fn mark(&mut self, boundary: &'static str) {
         let Some(clock) = &mut self.0 else {
             return;
@@ -117,6 +119,8 @@ impl Timing {
             "interval": now.duration_since(clock.previous).as_secs_f64(),
             "ended_ns": ended_ns,
             "process": std::process::id(),
+            "footprint": crate::worker::footprint(),
+            "live": crate::worker::live_heap(),
         });
         write_trace(format!("native-time: {record}\n").as_bytes());
         clock.previous = now;
@@ -126,6 +130,40 @@ impl Timing {
 /// Whether this invocation asked for native phase timing.
 fn requested() -> bool {
     std::env::var_os("INCAN_NATIVE_TIMING").is_some()
+}
+
+/// How often the heap sampler reads the process's memory.
+const HEAP_SAMPLE_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Start the heap sampler once per process when the timing request is `INCAN_NATIVE_TIMING=heap`. Its thread records
+/// the physical footprint and the live heap every [`HEAP_SAMPLE_INTERVAL`] until the process ends, so a trace shows
+/// the peaks between two boundaries as well as the readings at them. Reading the live heap walks every malloc zone and
+/// takes milliseconds on a large heap, so no other timing request samples.
+fn sample_heap() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    if std::env::var_os("INCAN_NATIVE_TIMING").is_none_or(|value| value != "heap") {
+        return;
+    }
+    STARTED.call_once(|| {
+        let sampler = std::thread::Builder::new().name("incan-heap-sampler".into()).spawn(|| {
+            loop {
+                std::thread::sleep(HEAP_SAMPLE_INTERVAL);
+                let ended_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .map(|value| value.as_nanos());
+                let record = serde_json::json!({
+                    "ended_ns": ended_ns,
+                    "process": std::process::id(),
+                    "footprint": crate::worker::footprint(),
+                    "live": crate::worker::live_heap(),
+                });
+                write_trace(format!("heap-sample: {record}\n").as_bytes());
+            }
+        });
+        // A sampler that cannot start loses the samples, never the compilation.
+        drop(sampler);
+    });
 }
 
 /// Append timing records to the trace sink; a sink that cannot be written loses the records, never the compilation.

@@ -91,6 +91,29 @@ class ThreadEntry:
     pub value: int
 
 
+enum ThreadState:
+    """One closed source result retained by a Rust thread callback."""
+
+    Ready
+    Failed(str)
+
+
+type ThreadGuard = newtype RustString:
+    """One native owner retained through a source newtype on a Rust thread."""
+
+
+model ThreadResult:
+    """A source model whose enum payloads must retain native auto-trait evidence."""
+
+    state: ThreadState
+
+
+model GuardedThreadResult:
+    """A source result whose generic enum payload contains a native-backed newtype."""
+
+    state: Result[ThreadGuard, str]
+
+
 model NestedGenericCache:
     """Hold a source-keyed native map behind nested synchronization constructors."""
 
@@ -201,6 +224,20 @@ def retained_entry_count(entries: Arc[Mutex[list[Entry]]]) -> int:
         Err(_) => return 0
 
 
+def thread_result_size(result: ThreadResult) -> int:
+    """Read an enum payload after its enclosing model crosses a native thread boundary."""
+    match result.state:
+        ThreadState.Ready => return 0
+        ThreadState.Failed(reason) => return len(reason)
+
+
+def guarded_thread_result_size(result: GuardedThreadResult) -> int:
+    """Read a newtype payload after its enclosing result crosses a native thread boundary."""
+    match result.state:
+        Ok(_guard) => return 8
+        Err(reason) => return len(reason)
+
+
 def show_thread_capture() -> None:
     """Join direct and locally retained Rust callbacks that own scalar, byte and model captures."""
     number = 42
@@ -226,6 +263,18 @@ def show_thread_capture() -> None:
     class_worker = spawn(() => class_entry.value)
     match class_worker.join():
         Ok(value) => assert value == 9
+        Err(_) =>
+            assert false
+    result = ThreadResult(state=ThreadState.Failed("expected"))
+    enum_worker = spawn(() => thread_result_size(result))
+    match enum_worker.join():
+        Ok(value) => assert value == 8
+        Err(_) =>
+            assert false
+    guarded = GuardedThreadResult(state=Ok(ThreadGuard(RustString.from("expected"))))
+    guarded_worker = spawn(() => guarded_thread_result_size(guarded))
+    match guarded_worker.join():
+        Ok(value) => assert value == 8
         Err(_) =>
             assert false
     count = 3

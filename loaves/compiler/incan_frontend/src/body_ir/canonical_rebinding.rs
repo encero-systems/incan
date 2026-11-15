@@ -1,5 +1,6 @@
 //! Refresh edit-unstable dependency call locators in retained whole-module Body IR.
 
+use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet};
 
 use super::bir;
@@ -12,7 +13,7 @@ use incan_semantics_core::stable_identity::StableDeclarationId;
 /// namespace may keep its Body IR when an imported callable's signature is unchanged, while that callable's edited
 /// body changes its current canonical span. This boundary replaces only the retained call locator; declaration
 /// selection remains keyed by the compiler's span-free stable identity and ambiguous candidates remain untouched.
-pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependencies: &[bir::BodyIrModule]) {
+pub fn refresh_dependency_call_targets(module: &mut bir::BodyIrModule, dependencies: ContextModules<'_>) {
     let mut exact = HashSet::new();
     let mut current: HashMap<StableDeclarationId, Option<CanonicalSymbolId>> = HashMap::new();
     for identity in dependencies.iter().flat_map(dependency_callable_identities) {
@@ -128,7 +129,7 @@ mod tests {
             .bodies
             .push(body(identity("main", "main", 0, 40), Some(previous)));
 
-        refresh_dependency_call_targets(&mut importer, &[dependency]);
+        refresh_dependency_call_targets(&mut importer, (&[dependency]).into());
 
         let Some(statement) = importer.bodies.first().and_then(|body| body.block.stmts.first()) else {
             return Err("retained importer has no call statement".to_owned());

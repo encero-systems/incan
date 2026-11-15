@@ -168,3 +168,112 @@ def test_a_refused_group_is_retried_before_the_commands_queued_behind_it() -> No
     assert commands.index("run behavior-area-d") < commands.index("slow build"), ", ".join(commands)
     assert stdout_of(batch.outcomes, "a") == "case 0\n"
     assert stdout_of(batch.outcomes, "x4") == "own command\n"
+
+
+def unnamed_refusal_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records the size of each group it builds. A build that holds case `e` is refused with an error that
+    names no case; any other build succeeds quietly. A case's own command prints `own command`.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    log = scratch.joinpath("commands").0
+    mut script = "#!/bin/sh\nif [ \"$1\" != build ]; then\n  echo 'own command'\n  exit 0\nfi\n"
+    script += f"dir=$(dirname \"$2\")\necho \"build $(ls \"$dir\" | grep -c '^case_')\" >> '{log}'\n"
+    script += "if grep -q '\"e\"' \"$dir\"/case_*.incn; then\n"
+    script += "  echo 'error: invalid governed runtime intrinsic enum owner' >&2\n  exit 1\nfi\n"
+    script += f"mkdir -p target/incan/debug/bin\ncp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def test_a_group_refused_without_naming_a_case_splits_into_a_job_s_worth_of_parts() -> None:
+    """
+    A refusal that names no case says nothing about where its cause is, so the group is split at once into as many
+    parts as there are jobs, not halved again and again: each part builds beside the others, and only the refused
+    part's cases are left to run alone.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    names = ["a", "b", "c", "d", "e", "f", "g", "h"]
+    fixtures = [behavior_case(root, name) for name in names]
+    work = scratch.path().joinpath("work")
+    make_directory(work).unwrap()
+    # One partition row holds every case, so the first build is the whole group.
+    row = "\t".join([f"behavior/area/{name}" for name in names])
+    write(work.joinpath("batch-behavior-groups.tsv"), row + "\n").unwrap()
+    incan = unnamed_refusal_incan(scratch.path())
+    batch = run_batches(incan.0, work, fixtures, 4)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["build 8", "build 2", "build 2", "build 2", "build 2"], ", ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "e") == "own command\n"
+    assert stdout_of(batch.outcomes, "f") == "own command\n"
+    assert stdout_of(batch.outcomes, "h") == "case 1\n"
+
+
+def root_import_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records the size of each group it builds. Like Oven, a build refuses a module case whose nested
+    file imports a module only the case's own source root defines, naming that file; any other build succeeds quietly.
+    A case's own command prints `own command`.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    log = scratch.joinpath("commands").0
+    mut script = "#!/bin/sh\nif [ \"$1\" != build ]; then\n  echo 'own command'\n  exit 0\nfi\n"
+    script += f"dir=$(dirname \"$2\")\necho \"build $(ls \"$dir\" | grep -c '^case_')\" >> '{log}'\n"
+    script += "for case in \"$dir\"/case_*; do\n  if [ -d \"$case/nested\" ]; then\n"
+    script += "    echo 'error[INCAN-I0001]: Module `helpers` does not exist' >&2\n"
+    script += "    echo \" --> $case/nested/user.incn:1:1\" >&2\n    exit 1\n  fi\ndone\n"
+    script += f"mkdir -p target/incan/debug/bin\ncp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def nested_import_case(root: Path, name: str) -> Fixture:
+    """A behavior module program `name` whose nested module imports a module of the program's source root."""
+    directory = root.joinpath(name)
+    make_directory(directory.joinpath("nested")).unwrap()
+    header = f"# behavior: a nested module imports a root module\n# expect-stdout:\n#   {name}\n\n"
+    main = header + "from nested.user import shout\n\n\ndef main() -> None:\n    shout()\n"
+    write(directory.joinpath("main.incn"), main).unwrap()
+    write(directory.joinpath("helpers.incn"), f"pub def label() -> str:\n    return \"{name}\"\n").unwrap()
+    user = "from helpers import label\n\n\npub def shout() -> None:\n    println(label())\n"
+    write(directory.joinpath("nested/user.incn"), user).unwrap()
+    program = directory.joinpath("main.incn")
+    return Fixture(family="behavior", area="area", name=name, shape="module", entry=directory, program=program)
+
+
+def test_a_module_case_whose_nested_import_only_its_root_resolves_keeps_its_own_command() -> None:
+    """
+    In a group, a module case's sources sit under their own directory, so a nested file's import that only the case's
+    source root defines names no module there. The case keeps its own command from admission on instead of costing its
+    group a refused build.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    mut fixtures = [behavior_case(root, name) for name in ["a", "b", "c"]]
+    fixtures.append(nested_import_case(root, "m"))
+    incan = root_import_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 1)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["build 3"], ", ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "m") == "own command\n"
+
+
+def test_a_large_family_starts_from_groups_of_at_most_seventeen_cases() -> None:
+    """
+    A group's build takes longer per case the more cases it holds, and the longest first build bounds the family, so a
+    family with more cases than its jobs' groups of seventeen can hold starts from balanced groups of at most seventeen.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    # The fake refuses only a build holding case `e`, which these names leave out: every build succeeds quietly.
+    fixtures = [behavior_case(root, f"c{index}") for index in range(30)]
+    incan = unnamed_refusal_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 1)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["build 15", "build 15"], ", ".join(commands)
+    assert stdout_of(batch.outcomes, "c0") == "case 0\n"
+    assert stdout_of(batch.outcomes, "c29") == "case 14\n"

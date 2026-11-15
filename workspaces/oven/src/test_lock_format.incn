@@ -4,7 +4,16 @@ from rust::std::fs import OpenOptions, metadata
 from std.fs import Path
 from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
-from dependency_plans import plan_add, plan_update
+from dependency_commands import DependencyVerb, parse_dependency_command
+from dependency_plans import (
+    chosen_name,
+    listed_dependencies,
+    name_question,
+    plan_add,
+    plan_remove,
+    plan_update,
+    short_name_matches,
+)
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
@@ -21,7 +30,7 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop, selected_mode, untested_bounds
+from project_lock import ensure_project_lock, local_interop, selected_mode, toolchain_entry, untested_bounds
 from registry_units import RegistryUnit, RegistryUnits
 from rust_activation import DependencyDomain
 from rust_registry import resolve_registry
@@ -368,11 +377,16 @@ def versioned_unit(name: str, version: str) -> RegistryUnit:
     )
 
 
+def registry_request(loaf: str, requirement: str) -> JsonValue:
+    """One registry requirement of a local facet, without features."""
+    return JsonValue.object(
+        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
+    )
+
+
 def requesting_facet(project: str, loaves: list[str], requirement: str = "1") -> LocalFacet:
     """A local target facet that requests each of `loaves` at `requirement`."""
-    requests = [JsonValue.object(
-        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
-    ) for loaf in loaves]
+    requests = [registry_request(loaf, requirement) for loaf in loaves]
     return LocalFacet(
         project=project,
         domain=DependencyDomain.Target,
@@ -394,7 +408,11 @@ def published_pairs() -> list[RegistryUnit]:
 
 def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
     """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
-    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
+    return resolved_versions(RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode), facets)
+
+
+def resolved_versions(registry: RegistryUnits, facets: list[LocalFacet]) -> Result[list[str], str]:
+    """Each Loaf `registry` selects for `facets` under the root `/app`, as `NAME@VERSION`."""
     selected = resolve_registry(registry, facets, "release", "/app")?
     return Ok(sorted([f"{unit.loaf}@{unit.version}" for unit in selected.units]))
 
@@ -543,4 +561,133 @@ pub def test_oven_update_raises_a_requirement_within_its_bounds_and_changes_noth
         Ok(_) => return Err("a short name was resolved")
         Err(reason) =>
             assert "name one of: crates-io/serde" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_second_version_of_a_locked_loaf_locks_beside_it() -> Result[None, str]:
+    """
+    RFC 125: versions of one Loaf coexist. A requirement that the version the lock records cannot satisfy takes a
+    version of its own beside it, as it would in a fresh lock, and the recorded version stays.
+
+    1. The lock records getrandom 0.3.4 for the requirement `0.3.4`; a second key asks for `0.2`.
+    2. A fresh lock selects the same two versions.
+    """
+    app = LocalFacet(
+        project="/app",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[registry_request("crates-io/getrandom", "0.3.4"), registry_request("crates-io/getrandom", "0.2")],
+        registry_aliases=["getrandom", "random_2"],
+    )
+    # 1. `oven lock` retains the existing lock's producer of 0.3.4, which `0.2` does not admit.
+    recorded = RegistryUnits(
+        units=published_units(),
+        search=[],
+        recorded_bindings=[("target", "getrandom-0.3.4")],
+        resolution_mode="lowest",
+    )
+    locked = resolved_versions(recorded, [app])?
+    assert locked == ["crates-io/getrandom@0.2.3", "crates-io/getrandom@0.3.4"], f"locked {locked}"
+    # 2. The existing lock changes nothing a fresh lock would select.
+    fresh = resolved_versions(RegistryUnits(units=published_units(), search=[], resolution_mode="lowest"), [app])?
+    assert fresh == locked, f"a fresh lock selected {fresh}"
+    return Ok(None)
+
+
+pub def test_oven_dependency_lists_and_removes_dependencies_and_oven_add_is_its_add() -> Result[None, str]:
+    """
+    RFC 118: `oven add` is the shorthand of `oven dependency add`, and `oven dependency list` and `remove` complete
+    the family.
+
+    1. Both spellings of `add` parse to one request; `list` takes no NAME, and `update` is not in the family.
+    2. `list` gives one line per `[dependencies]` entry, by key.
+    3. `remove` takes out every entry naming the Loaf, a line or a table, and nothing else; a short name lists the
+       project's dependencies that end in it.
+    """
+    # 1. One operation, two spellings.
+    shorthand = parse_dependency_command("add", ["crates-io/serde", "--version", "1"])?
+    explicit = parse_dependency_command("dependency", ["add", "crates-io/serde", "--version", "1"])?
+    assert explicit.verb == DependencyVerb.Add and shorthand.verb == DependencyVerb.Add
+    assert explicit.name == shorthand.name and explicit.version == "1" and shorthand.version == "1"
+    listing = parse_dependency_command("dependency", ["list", "--project", "app"])?
+    assert listing.verb == DependencyVerb.List and listing.project == "app"
+    refused: list[list[str]] = [[], ["list", "crates-io/serde"], ["remove"], ["update"], ["remove", "--key", "k"]]
+    for arguments in refused:
+        match parse_dependency_command("dependency", arguments):
+            Ok(_) => return Err(f"`oven dependency {arguments}` was accepted")
+            Err(_) => pass
+    # 2. Registry and local entries, inline and in their own table.
+    head = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
+    random = "getrandom = { loaf = \"crates-io/getrandom\", version = \"0.3.4\" }\n"
+    older = "random_2 = { loaf = \"crates-io/getrandom\", version = \"0.2\" }\n"
+    helper = "helper = { path = \"../helper\" }\n"
+    tilde = "\n[dependencies.tilde]\nloaf = \"crates-io/tilde\"\nversion = \"~1\"\n"
+    manifest = head + random + older + helper + tilde
+    listed = listed_dependencies(manifest, "loaf.toml")?
+    assert listed == [
+        "getrandom: crates-io/getrandom 0.3.4",
+        "helper: path ../helper",
+        "random_2: crates-io/getrandom 0.2",
+        "tilde: crates-io/tilde ~1",
+    ], f"{listed}"
+    assert listed_dependencies(head, "loaf.toml")? == ["no dependencies"]
+    # 3. Both keys of one Loaf go; a table goes with its lines.
+    removed = plan_remove("crates-io/getrandom", manifest, "loaf.toml")?
+    assert removed.text == head + helper + tilde, removed.text
+    expected = ["removed getrandom: crates-io/getrandom 0.3.4", "removed random_2: crates-io/getrandom 0.2"]
+    assert removed.report == expected, f"{removed.report}"
+    table = plan_remove("crates-io/tilde", manifest, "loaf.toml")?
+    assert table.text == head + random + older + helper, table.text
+    match plan_remove("getrandom", manifest, "loaf.toml"):
+        Ok(_) => return Err("a short name was removed")
+        Err(reason) =>
+            assert "name one of: crates-io/getrandom" in reason, reason
+    match plan_remove("crates-io/serde", manifest, "loaf.toml"):
+        Ok(_) => return Err("a Loaf that is not a dependency was removed")
+        Err(reason) =>
+            assert "crates-io/serde is not a dependency in loaf.toml" in reason, reason
+    return Ok(None)
+
+
+pub def test_oven_add_asks_which_loaf_a_short_name_means_on_a_terminal() -> Result[None, str]:
+    """
+    RFC 125: `oven add tokio` lists every match, asks which one, and records the full name; without a terminal it
+    refuses and prints the full names.
+
+    1. The question numbers every published full name the short name ends; a full name asks nothing.
+    2. A listed number or full name is the answer; anything else adds nothing and names the choices.
+    """
+    # 1. One numbered line per match.
+    matches = short_name_matches("getrandom", [unit.loaf for unit in published_units()])
+    assert matches == ["acme/getrandom", "crates-io/getrandom"], f"{matches}"
+    assert short_name_matches("crates-io/getrandom", ["crates-io/getrandom"]) == []
+    question = name_question("getrandom", matches)
+    mut expected = "`getrandom` is not a full Loaf name; it is the last part of:\n  1. acme/getrandom\n"
+    expected += "  2. crates-io/getrandom\n"
+    assert question == expected + "Which one? Its number or full name: ", question
+    # 2. The answer, as typed.
+    assert chosen_name("2\n", matches)? == "crates-io/getrandom"
+    assert chosen_name(" acme/getrandom \n", matches)? == "acme/getrandom"
+    for answer in ["", "\n", "0", "3", "getrandom", "crates-io/serde"]:
+        match chosen_name(answer, matches):
+            Ok(chosen) => return Err(f"the answer `{answer}` chose {chosen}")
+            Err(reason) =>
+                assert "name one of: acme/getrandom, crates-io/getrandom" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_toolchain_loaf_s_lock_entry_carries_its_source_digest() -> Result[None, str]:
+    """
+    RFC 117 and RFC 125: the lock records each Loaf's immutable source digest, which an advisory against an adopted
+    source is keyed on. A toolchain-origin entry carries the digest its registry closure records for the unit; a unit
+    the closure gives no digest records none.
+    """
+    digest = "sha256:5d3c46a4b2b3c4a8f6b9fd9e5a0f0b8a1f7cbbd7f4d3c1c0e2b8c7f6a5d4e3b2"
+    mut unit = versioned_unit("getrandom", "0.3.4")
+    unit.source_digest = digest
+    entry = toolchain_entry(unit, [unit], [], {}, "aarch64-apple-darwin")?
+    assert entry.checksum == digest, f"the lock entry's checksum is `{entry.checksum}`"
+    bare = toolchain_entry(versioned_unit("getrandom", "0.3.4"), [], [], {}, "aarch64-apple-darwin")?
+    assert bare.checksum == "", bare.checksum
     return Ok(None)

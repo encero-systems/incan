@@ -2,7 +2,7 @@
 
 use crate::session::{CompilationAnalysis, CompilationSession};
 use crate::unit::UnitKind;
-use incan_frontend::body_ir::ProviderOperationCatalog;
+use incan_frontend::body_ir::{ContextModules, ProviderOperationCatalog};
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeCheckInfo;
@@ -13,8 +13,9 @@ use std::thread;
 
 /// Maximum source components lowered at once inside one compiler invocation.
 ///
-/// Each worker owns a cloned dependency context and a compiler-sized stack. Four workers bound those temporary
-/// graphs and stacks conservatively inside the 6 GiB lowering reservation while still using independent cores.
+/// Each worker reads the dependency context in place and owns its component's modules and a compiler-sized stack. Four
+/// workers bound those temporary graphs and stacks conservatively inside the 6 GiB lowering reservation while still
+/// using independent cores.
 const MAX_BODY_IR_WORKERS: usize = 4;
 
 /// One strongly connected source component and the completed source modules it imports.
@@ -194,6 +195,26 @@ mod tests {
         assert_eq!(component_waves(&components, 2)?, vec![vec![1], vec![0]]);
         Ok(())
     }
+
+    #[test]
+    fn a_component_reads_the_modules_it_imports_where_they_are_kept() -> Result<(), String> {
+        let authored = vec![
+            Some(BodyIrModule::declarations_only("pub::app::models".to_string())),
+            None,
+        ];
+        let component = AuthoredComponent {
+            members: vec![1],
+            dependencies: vec![0],
+        };
+        let imported = imported_modules(&component, &authored)?;
+        let read: &BodyIrModule = &imported[0];
+        let kept = authored[0].as_ref().ok_or("the imported module is missing")?;
+        assert!(
+            std::ptr::eq(read, kept),
+            "a component must read an imported module in place, not a copy of it"
+        );
+        Ok(())
+    }
 }
 
 /// Lower one dependency-ready wave with bounded scoped threads and return results in component order.
@@ -280,65 +301,87 @@ fn lower_component(
     library_package: Option<&str>,
     include_inline_tests: bool,
 ) -> Result<Vec<(usize, BodyIrModule)>, String> {
-    let mut context_modules = Vec::with_capacity(dependency_bodies.len() + component.dependencies.len());
-    context_modules.extend_from_slice(dependency_bodies);
-    for &dependency in &component.dependencies {
-        context_modules.push(
-            authored[dependency]
-                .as_ref()
-                .ok_or("Body IR source dependency is incomplete")?
-                .clone(),
-        );
-    }
-    let context_len = context_modules.len();
+    // The context is read in place: the dependency Loaves' modules, the imported source modules, this component's
+    // completed members and, while a cycle member is lowered, the declarations of the peers that follow it.
+    let imported = imported_modules(component, authored)?;
+    let mut completed: Vec<BodyIrModule> = Vec::with_capacity(component.members.len());
     for &index in &component.members {
         let module = &modules[index];
         if let Some(restored) = namespace_bodies[index] {
             let mut restored = restored.clone();
-            incan_frontend::body_ir::refresh_dependency_call_targets(&mut restored, &context_modules);
-            context_modules.push(restored);
+            let borrowed = imported.iter().copied().chain(&completed).collect::<Vec<_>>();
+            incan_frontend::body_ir::refresh_dependency_call_targets(
+                &mut restored,
+                ContextModules::new(dependency_bodies, &borrowed),
+            );
+            completed.push(restored);
             continue;
         }
-        let completed = context_modules.len();
-        for &peer in cycle_peers[index].iter().filter(|&&peer| peer > index) {
-            context_modules.push(incan_frontend::body_ir::build_cycle_declarations(
-                &modules[peer].ast,
-                &modules[peer].path_segments,
-                type_infos[peer],
+        let peers = cycle_peers[index]
+            .iter()
+            .filter(|&&peer| peer > index)
+            .map(|&peer| {
+                incan_frontend::body_ir::build_cycle_declarations(
+                    &modules[peer].ast,
+                    &modules[peer].path_segments,
+                    type_infos[peer],
+                    library_package,
+                )
+            })
+            .collect::<Vec<_>>();
+        let lowered = {
+            let borrowed = imported
+                .iter()
+                .copied()
+                .chain(&completed)
+                .chain(&peers)
+                .collect::<Vec<_>>();
+            let context = incan_frontend::body_ir::BodyIrContext {
+                modules: ContextModules::new(dependency_bodies, &borrowed),
+                provider_operations,
+                registry_package: Some(registry_package),
                 library_package,
-            ));
-        }
-        let context = incan_frontend::body_ir::BodyIrContext {
-            modules: &context_modules,
-            provider_operations,
-            registry_package: Some(registry_package),
-            library_package,
-            include_inline_tests,
-        };
-        if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
-            incan_frontend::body_ir::verify_free_function_inputs(
+                include_inline_tests,
+            };
+            if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
+                incan_frontend::body_ir::verify_free_function_inputs(
+                    &module.ast,
+                    &module.path_segments,
+                    type_infos[index],
+                    &context,
+                    std::path::Path::new(&directory),
+                )
+                .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
+            }
+            let _invocation =
+                tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
+                    .entered();
+            incan_frontend::body_ir::build_body_ir_module_unsettled(
                 &module.ast,
                 &module.path_segments,
                 type_infos[index],
                 &context,
-                std::path::Path::new(&directory),
             )
-            .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
-        }
-        let _invocation =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
-                .entered();
-        let lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
-            &module.ast,
-            &module.path_segments,
-            type_infos[index],
-            &context,
-        );
-        context_modules.truncate(completed);
-        context_modules.push(lowered);
+        };
+        completed.push(lowered);
     }
-    let lowered = context_modules.split_off(context_len);
-    Ok(component.members.iter().copied().zip(lowered).collect())
+    Ok(component.members.iter().copied().zip(completed).collect())
+}
+
+/// The completed source modules `component` imports, in import order, read where `authored` keeps them.
+fn imported_modules<'a>(
+    component: &AuthoredComponent,
+    authored: &'a [Option<BodyIrModule>],
+) -> Result<Vec<&'a BodyIrModule>, String> {
+    component
+        .dependencies
+        .iter()
+        .map(|&dependency| {
+            authored[dependency]
+                .as_ref()
+                .ok_or_else(|| "Body IR source dependency is incomplete".to_string())
+        })
+        .collect()
 }
 
 /// Construct authored source bodies through compilation's sequential module boundary.

@@ -28,6 +28,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 mod callable_products;
 mod checked_program;
 mod declaration_validation;
+pub(crate) mod decoded_pages;
 mod graph_body_output;
 
 use checked_program::*;
@@ -47,14 +48,14 @@ const REFUSAL_CERTIFICATE: &str = "incan.compiler-refusal/1\n";
 
 /// Where a compilation certifies a known deterministic refusal, which permits Oven to retain it; never an arbitrary
 /// failure. Without `--certify PATH` it certifies nothing. The path travels with the request, so a short-lived process
-/// and the resident worker certify the same outcomes.
-#[derive(Clone)]
-struct RefusalReceipt(Option<PathBuf>);
+/// and the resident worker certify the same outcomes, and it crosses a rustc handoff to the process that runs rustc.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct RefusalReceipt(Option<PathBuf>);
 
 impl RefusalReceipt {
     /// Certify a refusal that unchanged inputs reproduce. A receipt that cannot be written only means the next
     /// unchanged compilation runs again.
-    fn deterministic(&self) {
+    pub(crate) fn deterministic(&self) {
         if let Some(path) = &self.0 {
             let _ = std::fs::write(path, REFUSAL_CERTIFICATE);
         }
@@ -203,6 +204,11 @@ impl Dependencies {
             })),
         }
     }
+
+    /// The engine's graph-selected checker values, which a check installs exactly as a build does.
+    pub(crate) fn graph_body_records(&self) -> incan_frontend::checker_records::GraphBodyRecords {
+        self.graph_body_records.clone()
+    }
 }
 
 /// Read exact artifacts from Oven's unit description and parse compilation options. Native inputs cannot be
@@ -290,74 +296,6 @@ struct GraphBodyRecordPages {
     root: PathBuf,
 }
 
-/// Raw values from one graph body transport page after bounded native framing and hex decoding.
-struct EncodedGraphBodyPage {
-    identity: String,
-    local: Vec<u8>,
-    final_value: Vec<u8>,
-    body_ir: Vec<u8>,
-}
-
-/// Decode the outer page framing natively until #3036 permits the canonical Incan bytes decoder to handle dynamic
-/// slices without making a retained owner take seconds. The Incan codec still authenticates both checker records.
-fn decode_graph_body_page_transport(encoded: &[u8]) -> Result<EncodedGraphBodyPage, String> {
-    let frames = graph_body_page_frames(encoded)?;
-    if frames.len() != 6 || frames[0] != b"incan.checker-graph-transport/2" || frames[1] != b"1" {
-        return Err("graph body page has an unsupported transport header".into());
-    }
-    let identity = std::str::from_utf8(frames[2])
-        .map_err(|error| format!("graph body page identity is not UTF-8: {error}"))?
-        .to_owned();
-    let local = hex::decode(frames[3]).map_err(|error| format!("graph body local record is not hex: {error}"))?;
-    let final_value = hex::decode(frames[4]).map_err(|error| format!("graph body final record is not hex: {error}"))?;
-    let body_ir = hex::decode(frames[5]).map_err(|error| format!("graph Body IR frame is not hex: {error}"))?;
-    Ok(EncodedGraphBodyPage {
-        identity,
-        local,
-        final_value,
-        body_ir,
-    })
-}
-
-/// Split canonical byte-length frames in one bounded page without interpreting their schema-owned payloads.
-fn graph_body_page_frames(encoded: &[u8]) -> Result<Vec<&[u8]>, String> {
-    const MAX_PAGE_BYTES: usize = 64 * 1024 * 1024;
-    if encoded.len() > MAX_PAGE_BYTES {
-        return Err("graph body page exceeds its transport bound".into());
-    }
-    let mut frames = Vec::new();
-    let mut offset = 0;
-    while offset < encoded.len() {
-        let relative_end = encoded[offset..]
-            .iter()
-            .position(|byte| *byte == b':')
-            .ok_or_else(|| "graph body page has an unterminated frame length".to_string())?;
-        let end = offset + relative_end;
-        let prefix = &encoded[offset..end];
-        if prefix.is_empty() || prefix.len() > 8 || (prefix.len() > 1 && prefix[0] == b'0') {
-            return Err("graph body page has a noncanonical frame length".into());
-        }
-        let mut size = 0usize;
-        for digit in prefix {
-            if !digit.is_ascii_digit() {
-                return Err("graph body page has a nondecimal frame length".into());
-            }
-            size = size
-                .checked_mul(10)
-                .and_then(|value| value.checked_add(usize::from(*digit - b'0')))
-                .ok_or_else(|| "graph body page frame length overflowed".to_string())?;
-        }
-        offset = end + 1;
-        let frame_end = offset
-            .checked_add(size)
-            .filter(|frame_end| *frame_end <= encoded.len())
-            .ok_or_else(|| "graph body page has a truncated frame".to_string())?;
-        frames.push(&encoded[offset..frame_end]);
-        offset = frame_end;
-    }
-    Ok(frames)
-}
-
 impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
     /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
     fn read(
@@ -389,23 +327,26 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 path.display()
             ))
         })?;
-        let page = decode_graph_body_page_transport(&encoded).map_err(|error| {
+        // The same bytes decode to the same record: a page this process decoded before is not decoded again.
+        let digest: [u8; 32] = Sha256::digest(&encoded).into();
+        if let Some(record) = decoded_pages::decoded(&digest, identity) {
+            return Ok(Some(record));
+        }
+        // Oven writes each page as one owner's Crumb row (`encode_graph_body_values`); the shared codec decodes and
+        // authenticates it, both checker records included.
+        let mut records = internal_models::decode_graph_body_values(&encoded).map_err(|error| {
             incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "graph body page refused: {error}"
+                "graph body page refused: {error:?}"
             ))
         })?;
-        if page.identity != identity {
-            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
-                "graph body page disagrees with its requested identity".into(),
-            ));
-        }
-        let record =
-            internal_models::decode_graph_body_page(page.identity, &page.local, &page.final_value, &page.body_ir)
-                .map_err(|error| {
-                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                        "graph body page refused: {error:?}"
-                    ))
-                })?;
+        let record = match (records.pop(), records.is_empty()) {
+            (Some(record), true) if record.identity == identity => record,
+            _ => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph body page disagrees with its requested identity".into(),
+                ));
+            }
+        };
         let frame =
             incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
                 incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
@@ -417,12 +358,14 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph Body IR owner frame disagrees with its selected identity".into(),
             ));
         }
-        Ok(Some(incan_frontend::checker_records::GraphBodyRecord {
+        let record = incan_frontend::checker_records::GraphBodyRecord {
             identity: record.identity,
             local: record.local,
             final_value: record.final_fields,
             body_ir: Some(frame),
-        }))
+        };
+        decoded_pages::remember(digest, &record);
+        Ok(Some(record))
     }
 
     /// Read one engine-selected namespace page and decode both compiler-owned payloads before exposing it.
@@ -527,7 +470,15 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
 /// refusal classification instead of appearing as debug-form plan errors.
 /// An exact-body census selection reports only that diagnostic lowering pass and returns without compiling an artifact.
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    compile_unit(arguments, false)
+    compile_unit(arguments, false, None).map(|_| ())
+}
+
+/// Where a compiled unit's native compilation ran.
+pub(crate) enum UnitCompiled {
+    /// rustc ran in this process, or the unit needed no native compilation.
+    InProcess,
+    /// This worker wrote the rustc handoff at this path for its caller to run in a fresh process.
+    HandedOff(PathBuf),
 }
 
 /// Print the unit's settled dependency closure. Checking and planning run exactly as for compilation, so the report
@@ -646,16 +597,26 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
 }
 
 /// Compile through the same native pipeline with a full canonical session, borrowing only generation-guarded
-/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint.
-pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    compile_unit(arguments, true)
+/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint. After lowering,
+/// `hands_off` decides whether this worker writes the rustc handoff for its caller instead of running rustc.
+pub(crate) fn compile_resident(
+    arguments: &[String],
+    hands_off: &dyn Fn() -> bool,
+) -> Result<UnitCompiled, Box<dyn std::error::Error>> {
+    compile_unit(arguments, true, Some(hands_off))
 }
 
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
 /// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
-/// separate refusal boundaries; only successful compilation publishes library artifacts.
-fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
+/// separate refusal boundaries; only successful compilation publishes library artifacts. Native compilation runs in
+/// this process unless `hands_off` answers yes after lowering, when the unit's handoff goes to the caller instead
+/// (`crate::rustc_process`).
+fn compile_unit(
+    arguments: &[String],
+    resident: bool,
+    hands_off: Option<&dyn Fn() -> bool>,
+) -> Result<UnitCompiled, Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
             "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--toolchain-root DIR] [--bakery-root DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
@@ -707,13 +668,13 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         dependencies.collect_codegraph,
     )?;
     if census_complete(&mut program, kind, overflow_checks)? {
-        return Ok(());
+        return Ok(UnitCompiled::InProcess);
     }
     // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
     // resolution, so release the items rather than carry them through lowering and rustc.
     program.dependencies.loaves.release_resolved_rust_items();
     // Checking freed its analysis and the session; return those pages before lowering allocates its contexts.
-    crate::heap::release_free_memory();
+    incan_platform::release_free_heap();
     timing.mark("checked_heap_released");
     let mut published_unions = Vec::new();
     let plan = lower_compilation_plan(
@@ -729,6 +690,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
     )?;
+    timing.mark("plan_lowered");
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
     if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
         incan_mir_lowering::publish_plan_records(
@@ -768,47 +730,45 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     } else {
         None
     };
+    timing.mark("native_inputs_prepared");
     drop(program);
-    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc's
-    // analysis and LLVM allocate, so the back end's peak does not stack on the frontend's freed heap.
-    crate::heap::release_free_memory();
+    drop(dependencies.graph_body_records);
+    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
+    // here or the footprint that decides a handoff is read, so neither counts the frontend's freed heap.
+    incan_platform::release_free_heap();
     timing.mark("frontend_heap_released");
     // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
-    let mut rustc_args = dependencies.rustc_args.clone();
+    let mut rustc_args = dependencies.rustc_args;
     rustc_args.extend(crate::foreign::clove_link_arguments(&plan, &cloves).map_err(|error| {
         receipt.deterministic();
         error.to_string()
     })?);
-    crate::adapter::compile(
+    let handoff = crate::rustc_process::RustcHandoff {
         plan,
-        &arguments[1],
-        Path::new(&arguments[2]),
-        &identity,
-        &native_externs,
-        &dependencies.directories,
-        &rustc_args,
-        &access,
-        dependencies.shared_native.as_deref(),
+        crate_name: arguments[1].clone(),
+        output: output.to_path_buf(),
+        sysroot: PathBuf::from(&arguments[3]),
+        externs: native_externs,
+        dependency_search_paths: dependencies.directories,
+        rustc_args,
+        access,
+        shared_store: dependencies.shared_native,
         kind,
         overflow_checks,
         library_facades,
-        dependencies.plan_record_report.as_deref(),
-    )
-    .map_err(|error| {
-        if matches!(error, crate::adapter::DriverError::Plan(_)) {
-            receipt.deterministic();
-        }
-        error.to_string()
-    })?;
-    if kind == UnitKind::Test {
-        std::fs::write(output.with_extension("tests.json"), serde_json::to_vec(&tests)?)?;
+        plan_record_report: dependencies.plan_record_report,
+        tests: (kind == UnitKind::Test)
+            .then(|| serde_json::to_vec(&tests))
+            .transpose()?,
+        publication,
+        receipt,
+    };
+    // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
+    if hands_off.is_some_and(|hands_off| hands_off()) {
+        return Ok(UnitCompiled::HandedOff(handoff.hand_off(&mut timing)?));
     }
-
-    // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some((directory, publication)) = publication {
-        publication.write(&directory).map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    handoff.compile(&identity)?;
+    Ok(UnitCompiled::InProcess)
 }
 
 /// Check owned invocation inputs on the compiler stack and preserve the source refusal report on failure. The
@@ -865,10 +825,9 @@ fn lower_compilation_plan(
         .files
         .get(program.entry)
         .ok_or("selected Body IR entry source is missing")?;
+    // Install the reached dependencies before the first attempt, with the binding layouts only a decorated unit needs.
     let layout_requirements = layout_runtime_requirements(&program.modules, file.clone());
-    if !layout_requirements.is_empty() {
-        prepare_runtime_layouts(program, layout_requirements)?;
-    }
+    prepare_runtime_layouts(program, layout_requirements)?;
     let mut timing = crate::native_timing::Timing::requested();
     let mut continuation = None;
     let mut retry_indices: Option<Vec<usize>> = None;
@@ -927,7 +886,7 @@ fn lower_compilation_plan(
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
                 // The attempt's worker contexts and temporaries are freed; return their pages before runtime
                 // resolution and the resumed attempt allocate.
-                crate::heap::release_free_memory();
+                incan_platform::release_free_heap();
                 timing.mark("lowering_attempt_heap_released");
                 retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
                 continuation = Some(preserved);
@@ -1120,7 +1079,7 @@ fn macro_externs(
 
 #[cfg(test)]
 mod graph_body_page_tests {
-    use super::{GraphBodyRecordPages, decode_graph_body_page_transport};
+    use super::GraphBodyRecordPages;
     use incan_frontend::checker_records::GraphBodyRecordSource;
     use sha2::{Digest, Sha256};
 
@@ -1139,23 +1098,6 @@ mod graph_body_page_tests {
         assert!(source.read("unrelated-owner").is_err());
 
         std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn native_page_framing_preserves_each_schema_owned_value() -> Result<(), Box<dyn std::error::Error>> {
-        let tokens = ["incan.checker-graph-transport/2", "1", "owner", "00", "ff", "6162"];
-        let encoded = tokens
-            .iter()
-            .map(|token| format!("{}:{token}", token.len()))
-            .collect::<String>();
-
-        let page = decode_graph_body_page_transport(encoded.as_bytes())?;
-
-        assert_eq!(page.identity, "owner");
-        assert_eq!(page.local, [0]);
-        assert_eq!(page.final_value, [255]);
-        assert_eq!(page.body_ir, b"ab");
         Ok(())
     }
 }

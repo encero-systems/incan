@@ -89,13 +89,15 @@ pub def check_or_replay(
     format: str,
     store: Path,
     key: Key,
+    options: list[str] = [],
 ) -> Result[i32, str]:
     """
     Replay the report of an unchanged check, or check and retain a certified report under the same identity rules.
 
     The record's identity is content alone: the unit's key, which covers its inputs, their project-relative names, the
     toolchain and the configuration, and the report format. No location enters it, so a copy of the project at another
-    path, in the same home, replays the report in its own paths.
+    path, in the same home, replays the report in its own paths. `options` reach the compiler unchanged: selected
+    checked-body records change how much a check checks, never its report.
 
     1. Replay a complete record of this identity unless a caller requested compiler side channels.
     2. Check through the resident worker, or one compiler process, with a fresh certification path.
@@ -113,7 +115,7 @@ pub def check_or_replay(
     # 2. The compiler certifies only a pass or a refusal by source diagnostics.
     trace(f"{label}: checked ({check_reason(store, outcome_name(unit, format))})")
     certificate = fresh_certificate(store, identity)?
-    report = completed(toolchain, arguments + ["--certify", certificate.0])?
+    report = completed(toolchain, arguments + ["--certify", certificate.0] + options)?
     # 3. A crash, a signal, an uncertified failure or an edit made meanwhile is checked again next time.
     if cacheable and reported(report) and certified(certificate, CHECK_RECEIPT):
         if still_keyed(unit, toolchain, key):

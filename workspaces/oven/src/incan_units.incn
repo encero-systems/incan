@@ -45,7 +45,16 @@ from observation import trace, trace_launch
 from project_library import library_loaf, library_output, shared_library
 from toolchain import Toolchain
 from unit import UnitDescription
-from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
+from unit_compiler import (
+    CheckedBodyCounts,
+    checked_body_counts,
+    compile_prepared_unit,
+    crate_name,
+    described_by,
+    run_compiler,
+    write_unit,
+)
+from files import discard_file
 from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
 from shared_link import carriers_present, development_link, library_witness, linkage_key
@@ -53,23 +62,54 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
 
+pub model CheckedUnit:
+    """One check's exit code and the top-level function bodies it checked or restored from selected records."""
+
+    pub code: i32
+    pub bodies: CheckedBodyCounts = CheckedBodyCounts()
+
+
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
     """
     Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code.
 
     A unit whose key is unchanged replays the report and status of its last certified check (see `check_or_replay`).
+    A dependency whose sources changed is compiled again first, which changes the key of the unit checked against it.
+    """
+    return Ok(check_prepared(prepare_native(unit, toolchain)?, toolchain, format)?.code)
 
-    1. Prepare the dependencies and exact native inputs, and key the prepared unit.
-    2. Publish its description under that key.
+
+pub def check_prepared(
+    ready: UnitDescription,
+    toolchain: Toolchain,
+    format: str,
+    pages: Option[Path] = None,
+) -> Result[CheckedUnit, str]:
+    """
+    Check a prepared unit. With a directory of the engine's selected checked-body pages, the compiler restores each
+    owner they hold instead of checking it, exactly as a build does, and reports which bodies it checked and restored.
+
+    1. Key the prepared unit and publish its description under that key.
+    2. Name the page directory and the sidecar the compiler reports its bodies in.
     3. Replay the stored report for this key and format, or check and retain a certified report.
     """
-    # 1. A dependency whose sources changed is compiled again, which changes the key of the unit checked against it.
-    ready = prepare_native(unit, toolchain)?
+    # 1. An unchanged description is kept as it is.
     key = unit_key(ready, toolchain)?
-    # 2. An unchanged description is kept as it is.
     path = write_unit(ready, crate_name(ready), None, described_by(key), true)?
+    # 2. The engine keeps a check's pages apart from a build's, which may be selected for the same unit.
+    mut options: list[str] = []
+    mut sidecar: Option[Path] = None
+    if let Some(directory) = pages:
+        report = Path(f"{path.0}.checked-bodies")
+        discard_file(report)
+        options = ["--checked-bodies", report.0, "--graph-body-records", directory.0]
+        sidecar = Some(report)
     # 3. The record's identity covers the key and the report format, so text and JSON reports are kept apart.
-    return check_or_replay(ready, toolchain, path, format, bakery()?, key)
+    code = check_or_replay(ready, toolchain, path, format, bakery()?, key, options)?
+    mut bodies = CheckedBodyCounts()
+    if let Some(report) = sidecar:
+        bodies = checked_body_counts(report)?
+    return Ok(CheckedUnit(code=code, bodies=bodies))
 
 
 pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:

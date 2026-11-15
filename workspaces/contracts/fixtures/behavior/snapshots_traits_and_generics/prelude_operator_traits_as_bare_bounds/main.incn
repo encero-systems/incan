@@ -1,0 +1,16 @@
+# behavior: Add, Sub, Mul, Div, Neg and Mod bound a generic function without an import, as the standard prelude publishes them and 0.5.1 accepted
+# expect-stdout:
+#   5 1 6 3 -3 1
+
+from bounds import minus, modulo, negated, over, plus, times
+from money import Cents
+
+
+def main() -> None:
+    a = Cents(value=3)
+    b = Cents(value=2)
+    six = Cents(value=6)
+    println(
+        f"{plus(a, b).value} {minus(a, b).value} {times(a, b).value} {over(six, b).value} {negated(a).value} "
+        + f"{modulo(a, b).value}",
+    )

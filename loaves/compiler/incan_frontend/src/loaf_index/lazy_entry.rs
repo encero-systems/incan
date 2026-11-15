@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
+use crate::library_manifest::compiler_records::RecordFamily;
+use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
@@ -276,6 +278,50 @@ impl IndexedLoaf {
             .as_ref()
             .map(Arc::clone)
             .map_err(Clone::clone)
+    }
+
+    /// One declaration's signature, layout or defaults, by its module-qualified name: its own records when the
+    /// installed set publishes them, otherwise projected from the executable projection's checked API. An overloaded
+    /// name has one value per overload.
+    pub fn declaration_facts(
+        &self,
+        facet: DeclarationFacet,
+        declaration: &str,
+    ) -> Result<Vec<serde_json::Value>, LoafIndexError> {
+        let family = RecordFamily::of_declaration(facet).as_str();
+        if super::compiler_record_set::configured()
+            && let Some((values, digest)) = super::compiler_record_set::read_declaration(
+                &self.dir,
+                &self.summary.identity.name,
+                family,
+                declaration,
+            )?
+        {
+            if digest != self.summary.identity.digest {
+                return Err(LoafIndexError::Unreadable {
+                    path: self
+                        .dir
+                        .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                    reason: "declaration records differ from their admitted inventory".to_owned(),
+                });
+            }
+            return Ok(values);
+        }
+        let manifest = self.execution_manifest()?;
+        let Some(api) = manifest.contract_metadata.split_documentation().0.api else {
+            return Ok(Vec::new());
+        };
+        let facts = declaration_facts(&api).map_err(|error| LoafIndexError::Unreadable {
+            path: self
+                .dir
+                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            reason: format!("cannot project its declarations: {error}"),
+        })?;
+        Ok(facts
+            .into_iter()
+            .filter(|fact| fact.facet == facet && fact.name == declaration)
+            .map(|fact| fact.value)
+            .collect())
     }
 
     /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.

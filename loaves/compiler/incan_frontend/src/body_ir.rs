@@ -59,6 +59,7 @@
 use std::collections::{HashMap, HashSet};
 
 pub use canonical_rebinding::refresh_dependency_call_targets;
+pub use context_modules::{ContextModules, ContextModulesIter};
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
@@ -87,7 +88,7 @@ use crate::typechecker::{
 pub struct BodyIrContext<'a> {
     /// Body IR of the declarations a module reaches outside itself: the program's other modules and the declaration
     /// records of the Loaves the program links (DD-0007).
-    pub modules: &'a [bir::BodyIrModule],
+    pub modules: ContextModules<'a>,
     /// The provider operations the linked Loaves admit.
     pub provider_operations: &'a ProviderOperationCatalog,
     /// The compilation's package identity, which explicit registry subjects are keyed by.
@@ -176,7 +177,7 @@ pub fn build_body_ir_module_unsettled(
 /// Settle inferred shared parameters and their call operands across every authored module simultaneously. Dependency
 /// modules are immutable context whose already-published signatures may participate but cannot be refined here.
 pub fn settle_shared_reads(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
-    shared_reads::retain_modules(modules, context);
+    shared_reads::retain_modules(modules, context.into());
 }
 
 /// Settle shared reads for freshly lowered owners while treating graph-selected owners as immutable final Body IR.
@@ -186,7 +187,7 @@ pub fn settle_shared_reads_with_selected(
     context: &[bir::BodyIrModule],
     selected: &HashSet<CanonicalSymbolId>,
 ) {
-    shared_reads::retain_modules_with_selected(modules, context, selected);
+    shared_reads::retain_modules_with_selected(modules, context.into(), selected);
 }
 
 /// Return the canonical owners whose final Body IR was selected from the graph for this checked module.
@@ -643,6 +644,7 @@ mod canonical_rebinding;
 mod carrier_projection;
 mod collect;
 mod collection_context;
+mod context_modules;
 mod decorated_bindings;
 mod entrypoint_effects;
 mod free_function_baseline;

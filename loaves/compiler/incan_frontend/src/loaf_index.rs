@@ -490,6 +490,20 @@ impl LoafIndex {
         Ok(Some(indexed.runtime_bindings()?))
     }
 
+    /// Read one declaration's signature, layout or defaults in one Loaf by its module-qualified name, without the rest
+    /// of its checked API.
+    pub fn declaration_facts(
+        &self,
+        key: &str,
+        facet: crate::library_manifest::declaration_records::DeclarationFacet,
+        declaration: &str,
+    ) -> Result<Option<Vec<serde_json::Value>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(indexed.declaration_facts(facet, declaration)?))
+    }
+
     /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be
     /// accepted. Untouched entries stay lazy.
     pub fn validate_demands(&self) -> Result<(), LoafIndexError> {

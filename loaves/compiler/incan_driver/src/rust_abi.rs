@@ -114,9 +114,10 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
 ///
 /// A path rooted in `std`, `core` or `alloc`, or in a crate whose artifact the installed toolchain holds (its registry
 /// entries), describes the same items for every unit: its facts depend on the toolchain and that artifact, never on a
-/// unit's own dependencies. Those paths are extracted together once per toolchain and stored in its content store,
-/// where every unit and test case that reaches them reads them. The paths rooted in a unit's own crates keep the
-/// unit's indexed bakery extraction.
+/// unit's own dependencies. A unit whose paths are all such paths extracts them once per toolchain, stored in its
+/// content store, where every unit and test case that reaches the same paths reads them. An extraction describes the
+/// types a signature names only for the crates it names itself, so a unit that also reaches one of its own crates keeps
+/// all of its paths in one extraction: the unit's indexed bakery extraction.
 pub fn cached_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
@@ -125,28 +126,22 @@ pub fn cached_path_facts(
     let Ok((directory, toolchain)) = installed_toolchain(unit) else {
         return unit_path_facts(unit, paths, &extract);
     };
-    let (installed, own): (BTreeSet<String>, BTreeSet<String>) = paths
+    if paths
         .iter()
-        .cloned()
-        .partition(|path| installed_artifact(unit, &directory, path).is_some());
-    let mut facts = RustFacts::new();
-    if !installed.is_empty() {
-        let rust_abi = directory.join("rust-abi");
-        let shared = match installed_identity(unit, &directory, &toolchain, &installed) {
-            Ok(identity) => shared_extraction(
-                &rust_abi.join("paths"),
-                &rust_abi.join(CONTENT_STORE),
-                &identity,
-                || extract(&installed),
-            )?,
-            Err(_) => extract(&installed).map_err(CliError::failure)?,
-        };
-        facts.extend(shared);
+        .any(|path| installed_artifact(unit, &directory, path).is_none())
+    {
+        return unit_path_facts(unit, paths, &extract);
     }
-    if !own.is_empty() {
-        facts.extend(unit_path_facts(unit, &own, &extract)?);
+    let rust_abi = directory.join("rust-abi");
+    match installed_identity(unit, &directory, &toolchain, paths) {
+        Ok(identity) => shared_extraction(
+            &rust_abi.join("paths"),
+            &rust_abi.join(CONTENT_STORE),
+            &identity,
+            || extract(paths),
+        ),
+        Err(_) => extract(paths).map_err(CliError::failure),
     }
-    Ok(facts)
 }
 
 /// The installed artifact a path's root crate is, when the toolchain holds it: `None` for a unit's own crate, and the
@@ -784,6 +779,27 @@ mod tests {
             extractions.get(),
             1,
             "a second unit extracted the same standard path again"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_reaching_its_own_crate_and_a_standard_path_extracts_them_together() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let shipped = installed(root.path())?;
+        // An extraction describes the types a signature names only for the crates the same extraction names, so a
+        // unit's paths are extracted in one session whenever one of them is rooted in the unit's own crate.
+        let paths = BTreeSet::from(["first::Carrier".to_owned(), "std::net::Ipv4Addr".to_owned()]);
+        let requests = std::cell::RefCell::new(Vec::new());
+        let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
+            requests.borrow_mut().push(requested.clone());
+            Ok(RustFacts::new())
+        };
+        cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
+        assert_eq!(
+            requests.into_inner(),
+            vec![paths],
+            "the unit's paths were split between extractions"
         );
         Ok(())
     }

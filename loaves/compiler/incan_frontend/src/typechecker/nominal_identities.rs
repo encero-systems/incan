@@ -186,7 +186,7 @@ mod tests {
                 .map_err(|errors| format!("{errors:?}"))?;
             let operations = Default::default();
             let context = crate::body_ir::BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &operations,
                 registry_package: None,
                 library_package: None,

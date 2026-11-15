@@ -60,7 +60,15 @@ pub model InstanceProduct:
 
 
 pub def request_identity(request: &Instance) -> Result[InstanceRequest, str]:
-    """Name one request without source positions; a generic or argument only a position names is refused."""
+    """
+    Name one request without source positions; a generic or argument only a position names is refused.
+
+    A member's request is refused too. Its instance is named for the receiver it was requested on, such as each model
+    that adopts one trait default method, and this identity names no receiver, so a restored request could select
+    another receiver's instance.
+    """
+    if not graph_owner(request.body):
+        return Err("generic instance of a member is named for its receiver")
     mut declaration = ""
     match request.body.canonical:
         None => return Err("generic instance has no declaration identity")

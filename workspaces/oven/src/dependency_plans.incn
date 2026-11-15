@@ -1,7 +1,7 @@
 """
 Plan the `loaf.toml` changes of the dependency commands from the manifest's text and the published registry
-units, without writing a file (RFC 125). One line of `[dependencies]` is added or changed, and a planned text must read
-back as planned.
+units, without writing a file (RFC 118, RFC 125). An entry is added, changed or removed, nothing else changes, and a
+planned text must read back as planned.
 """
 
 from std.toml import TomlValue
@@ -127,16 +127,47 @@ pub def full_name(name: str, candidates: list[str], noun: str) -> Result[str, st
     """
     refuse_capitals(name)?
     if "/" not in name:
-        mut matches: list[str] = []
-        for candidate in candidates:
-            if candidate.split("/")[-1] == name and candidate not in matches:
-                matches.append(candidate)
+        matches = short_name_matches(name, candidates)
         if len(matches) == 0:
             return Err(f"`{name}` is not a full Loaf name, and no {noun} is named `SCOPE/{name}`")
-        listed = ", ".join(sorted(matches))
+        listed = ", ".join(matches)
         return Err(f"`{name}` is not a full Loaf name, and Oven never guesses one; name one of: {listed}")
     validate_loaf_identity(name).map_err((reason) => f"`{name}`: {reason}")?
     return Ok(name)
+
+
+pub def short_name_matches(name: str, candidates: list[str]) -> list[str]:
+    """Every candidate whose last part is `name`, sorted once each; none for a full name."""
+    mut matches: list[str] = []
+    if "/" in name:
+        return matches
+    for candidate in candidates:
+        if candidate.split("/")[-1] == name and candidate not in matches:
+            matches.append(candidate)
+    return sorted(matches)
+
+
+pub def name_question(name: str, matches: list[str]) -> str:
+    """The question `oven add` asks on a terminal when `name` is the last part of several full names (RFC 125)."""
+    mut lines = [f"`{name}` is not a full Loaf name; it is the last part of:"]
+    for index in range(len(matches)):
+        lines.append(f"  {index + 1}. {matches[index]}")
+    lines.append("Which one? Its number or full name: ")
+    return "\n".join(lines)
+
+
+pub def chosen_name(answer: str, matches: list[str]) -> Result[str, str]:
+    """The full name an answer to `name_question` chooses, a listed number or name; anything else adds nothing."""
+    chosen = answer.strip()
+    if chosen in matches:
+        return Ok(chosen)
+    for index in range(len(matches)):
+        if chosen == str(index + 1):
+            return Ok(matches[index])
+    listed = ", ".join(matches)
+    if chosen == "":
+        return Err(f"no Loaf was chosen; name one of: {listed}")
+    return Err(f"`{chosen}` is not one of the listed Loaves; name one of: {listed}")
 
 
 pub def newest_published(units: list[RegistryUnit], loaf: str, requirement: str) -> Result[Option[Version], str]:
@@ -363,3 +394,85 @@ def requirement_line(lines: list[str], key: str) -> int:
 def assigns(line: str, key: str) -> bool:
     """Whether `line` assigns the bare key `key`."""
     return line.startswith(key) and line[len(key):].strip().startswith("=")
+
+
+pub def listed_dependencies(text: str, manifest: str) -> Result[list[str], str]:
+    """One line per `[dependencies]` entry, by key (RFC 118), or `no dependencies`."""
+    entries = dependency_tables(text, manifest)?
+    lines = [entry_line(key, entries[key]) for key in sorted([name for name in entries.keys()])]
+    if len(lines) == 0:
+        return Ok(["no dependencies"])
+    return Ok(lines)
+
+
+pub def plan_remove(name: str, text: str, manifest: str) -> Result[ManifestChange, str]:
+    """
+    Remove every `[dependencies]` entry that names one Loaf (RFC 118).
+
+    1. The name is a full Loaf name; a short one is refused with the project's dependencies that end in it.
+    2. Each entry's line, or its own `[dependencies.KEY]` table, goes; nothing else changes.
+    3. The result must read back with exactly those keys gone.
+    """
+    # 1. Oven never guesses a full name.
+    declared = declared_keys(text, manifest)?
+    loaf = full_name(name, [named for named in declared.values() if named != ""], "dependency")?
+    keys = sorted([key for key in declared.keys() if declared[key] == loaf])
+    if len(keys) == 0:
+        return Err(f"{loaf} is not a dependency in {manifest}")
+    # 2. One line or one table per key.
+    entries = dependency_tables(text, manifest)?
+    mut changed = text
+    mut report: list[str] = []
+    for key in keys:
+        changed = without_entry(changed, manifest, key)?
+        report.append(f"removed {entry_line(key, entries[key])}")
+    # 3. Every other key keeps the Loaf it named.
+    remaining = declared_keys(changed, manifest)?
+    mut intact = len(remaining) == len(declared) - len(keys)
+    for key in declared.keys():
+        if key not in keys and (key not in remaining or remaining[key] != declared[key]):
+            intact = false
+    if not intact:
+        return Err(f"{manifest}: the edit would not read back without {loaf}; edit it by hand")
+    return Ok(ManifestChange(text=changed, report=report))
+
+
+def entry_line(key: str, entry: Dict[str, TomlValue]) -> str:
+    """
+    `KEY: NAME REQUIREMENT` for a registry entry; `KEY: path DIR` for a local one, after its Loaf name when it has
+    one.
+    """
+    mut loaf = ""
+    if "loaf" in entry:
+        loaf = entry["loaf"].as_str().unwrap_or("")
+    if "path" in entry:
+        path = entry["path"].as_str().unwrap_or("")
+        if loaf == "":
+            return f"{key}: path {path}"
+        return f"{key}: {loaf}, path {path}"
+    mut requirement = ""
+    if "version" in entry:
+        requirement = entry["version"].as_str().unwrap_or("")
+    return f"{key}: {loaf} {requirement}".strip()
+
+
+def without_entry(text: str, manifest: str, key: str) -> Result[str, str]:
+    """`text` without `key`'s line in `[dependencies]`, or without its `[dependencies.KEY]` table up to the next one."""
+    lines = text.split("\n")
+    mut section = ""
+    for index in range(len(lines)):
+        header = section_of(lines[index])
+        if header != "":
+            section = header
+            if header == f"[dependencies.{key}]":
+                mut end = index + 1
+                while end < len(lines) and not lines[end].strip().startswith("["):
+                    end += 1
+                mut changed = "\n".join(lines[:index] + lines[end:])
+                if text.endswith("\n") and not changed.endswith("\n"):
+                    changed += "\n"
+                return Ok(changed)
+            continue
+        if section == DEPENDENCIES and assigns(lines[index].strip(), key):
+            return Ok("\n".join(lines[:index] + lines[index + 1:]))
+    return Err(f"{manifest}: no one line or table declares `{key}`; edit it by hand")

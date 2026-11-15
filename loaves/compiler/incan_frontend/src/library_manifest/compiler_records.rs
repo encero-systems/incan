@@ -3,7 +3,8 @@
 //! The toolchain's driver exports these records once at installation: one record per exported declaration and
 //! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation, its
 //! Rust ABI, its executable descriptor and public executable identities (all executable resolution reads besides the
-//! metadata), its runtime callable bindings (all native lowering reads of it), and the Loaf's metadata record, which
+//! metadata), its runtime callable bindings (all native lowering reads of it), each checked declaration's signature,
+//! layout and defaults (what a consumer reads of one declaration), and the Loaf's metadata record, which
 //! carries the digests.
 //!
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
@@ -22,6 +23,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::declaration_records::{DeclarationFacet, declaration_facts};
 use super::executable_surface::{own_public_identities, runtime_bindings};
 use super::{LibraryManifest, LibraryManifestError};
 
@@ -63,6 +65,12 @@ pub enum RecordFamily {
     PublicIdentities,
     /// The runtime callables native lowering binds by their public path.
     RuntimeBindings,
+    /// One declaration's signature: what a caller checks a use against.
+    DeclarationSignature,
+    /// One nominal declaration's fields or variants.
+    Layout,
+    /// Which parameters and fields of one declaration have a default, and the defaults.
+    Default,
     RustAbi,
 }
 
@@ -90,7 +98,19 @@ impl RecordFamily {
             Self::ExecutableDescriptor => "executable-descriptor",
             Self::PublicIdentities => "public-identities",
             Self::RuntimeBindings => "runtime-bindings",
+            Self::DeclarationSignature => "declaration-signature",
+            Self::Layout => "layout",
+            Self::Default => "default",
             Self::RustAbi => "rust-abi",
+        }
+    }
+
+    /// The family holding one declaration fact.
+    pub fn of_declaration(facet: DeclarationFacet) -> Self {
+        match facet {
+            DeclarationFacet::Signature => Self::DeclarationSignature,
+            DeclarationFacet::Layout => Self::Layout,
+            DeclarationFacet::Defaults => Self::Default,
         }
     }
 
@@ -147,6 +167,10 @@ impl LibraryManifest {
         let mut records = self.declaration_records()?;
         let (contract_facts, documentation) = self.contract_metadata.split_documentation();
         records.push(record(RecordFamily::ContractMetadata, 0, &self.name, &contract_facts)?);
+        // A consumer reads one declaration's signature, layout or defaults by name, never the whole checked API.
+        if let Some(api) = &contract_facts.api {
+            records.extend(declaration_fact_records(api)?);
+        }
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
         }
@@ -267,6 +291,22 @@ fn named<T: Serialize>(
         records.push(record(family, index, name(value), value)?);
     }
     Ok(())
+}
+
+/// One record per declaration fact of the documentation-free `api`, numbered within its family in declaration order.
+fn declaration_fact_records(
+    api: &crate::api_metadata::CheckedApiMetadataPackage,
+) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+    let facts = declaration_facts(api).map_err(|error| LibraryManifestError::Serialize(error.to_string()))?;
+    let mut ordinals = std::collections::BTreeMap::new();
+    let mut records = Vec::with_capacity(facts.len());
+    for fact in facts {
+        let family = RecordFamily::of_declaration(fact.facet);
+        let ordinal = ordinals.entry(family.as_str()).or_insert(0usize);
+        records.push(record(family, *ordinal, &fact.name, &fact.value)?);
+        *ordinal += 1;
+    }
+    Ok(records)
 }
 
 /// Encode one record value with the compiler-record codec.

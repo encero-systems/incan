@@ -1,5 +1,6 @@
 """Lower checked operators: arithmetic and bit operations, and equality and ordering comparisons."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import (
     Carrier,
     BinaryOp,
@@ -147,7 +148,7 @@ def external_enum_comparison_kind(
     if owner < 0:
         return Err("invalid Body IR enum comparison owner")
     if owner >= len(builder.enums):
-        index = owner - len(builder.enums)
+        index = carrier_position(owner)
         if index >= len(builder.intrinsics):
             return Err("invalid Body IR intrinsic enum comparison owner")
         carrier = builder.intrinsics[index].carrier

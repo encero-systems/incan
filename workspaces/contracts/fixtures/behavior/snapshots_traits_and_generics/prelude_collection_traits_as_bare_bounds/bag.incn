@@ -1,0 +1,11 @@
+from std.derives.collection import Contains, Len
+
+
+pub model Bag with Contains[int], Len:
+    pub items: list[int]
+
+    def __contains__(self, item: int) -> bool:
+        return item in self.items
+
+    def __len__(self) -> int:
+        return len(self.items)

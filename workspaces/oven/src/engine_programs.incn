@@ -4,13 +4,20 @@ from std.fs import Path
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from engine_capture import BuildEpoch, InputRole, SelectedHome
+from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
 from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
-from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies, source_origin
+from check_pages import check_page_directory, keep_check_pages
+from compiler_body_publication import (
+    PreparedSourceInputs,
+    prepare_captured_source_inputs,
+    prepare_compiled_bodies,
+    source_origin,
+)
 from compiler_body_values import (
+    SelectedBodyRecord,
     body_owners_reading,
     encode_body_inventory,
     invalid_namespace_modules,
@@ -23,13 +30,13 @@ from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
 from home import StandardPackage
-from incan_units import check_unit, obtain_executable, program_binary, executable_view, view_executable
+from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from pub::incan_platform.store import EXPECT_ABSENT, HOME_VIEW, Snapshot, Transaction, begin, commit, put
+from pub::incan_platform.store import EXPECT_REPAIR, HOME_VIEW, Snapshot, Transaction, begin, commit, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
-from unit import describe
+from unit import UnitDescription, describe
 from unit_compiler import (
     CheckerRecordCounts,
     PlanRecordCounts,
@@ -77,6 +84,9 @@ pub model ProgramOutcome:
     pub body_evaluations: int = 0
     # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
     pub body_reuses: int = 0
+    # Checked-body pages the request selected, encoded and wrote; and restored pages the compiler had to decode.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
@@ -104,6 +114,30 @@ pub model CheckOutcome:
 
     pub code: i32
     pub console: str
+    # Top-level function bodies the check checked, and those it restored from the request view's records.
+    pub body_evaluations: int = 0
+    pub body_reuses: int = 0
+    # Pages the check wrote for its view, and restored pages the compiler decoded itself.
+    pub body_page_writes: int = 0
+    pub body_page_decodes: int = 0
+
+
+pub model BodyReading:
+    """A request view's graph, the request's source projections, and the owners whose bodies those changed."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
+    pub invalid: list[str]
+
+
+pub model BodySelection:
+    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    pub invalid: list[str]
+    pub retained: list[SelectedBodyRecord]
 
 
 model ProgramHome:
@@ -129,8 +163,12 @@ pub def check_program(
     format: str,
     captured: Option[BuildEpoch] = None,
     selected_home: Option[SelectedHome] = None,
+    view: str = "",
 ) -> Result[CheckOutcome, str]:
-    """Describe and check one captured build reach without requesting code generation or a native selection."""
+    """
+    Describe and check one captured build reach without requesting code generation or a native selection. The check
+    restores each unchanged checked body from the request view's records, from pages the view keeps between requests.
+    """
     epoch = request_epoch(store, revision, captured, "check")?
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
@@ -151,8 +189,59 @@ pub def check_program(
         or len(described.c_headers) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    code = check_unit(described, toolchain, format)?
-    return Ok(CheckOutcome(code=code, console=console))
+    ready = prepare_native(described, toolchain)?
+    # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
+    reading = body_reading(store, view, ready, epoch.inputs)?
+    directory = check_page_directory(store, view, ready)
+    pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory))?
+    return Ok(
+        CheckOutcome(
+            code=checked.code,
+            console=console,
+            body_evaluations=checked.bodies.checked,
+            body_reuses=checked.bodies.reused,
+            body_page_writes=pages.written,
+            body_page_decodes=checked.bodies.decoded,
+        ),
+    )
+
+
+def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+    """
+    Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
+    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    return Ok(BodyReading(graph=graph, projected=projected, invalid=invalid))
+
+
+def select_bodies(
+    store: Path,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    listing_refusals: bool,
+) -> Result[BodySelection, str]:
+    """
+    Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
+    refusals checks every owner afresh.
+    """
+    reading = body_reading(store, view, ready, inputs)?
+    origin = source_origin(ready)
+    mut invalid = reading.invalid
+    if listing_refusals:
+        invalid = [
+            record.identity
+            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
+        ]
+    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid)?
+    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
 
 
 pub def obtain(
@@ -232,17 +321,13 @@ pub def obtain(
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    mut graph_view = str(HOME_VIEW)
-    if editor:
-        graph_view = request_view
-    graph = snapshot(store, graph_view).map_err((error) => error.message())?
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
-    mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
+    graph = selection.graph
+    projected = selection.projected
+    invalid = selection.invalid
     origin = source_origin(ready)
-    if listing_refusals:
-        invalid = [record.identity for record in select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?]
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
-    retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, origin, invalid)?
+    retained_bodies = selection.retained
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
@@ -265,6 +350,7 @@ pub def obtain(
                 code=produced.code,
                 evaluations=produced.evaluations,
                 body_evaluations=len(invalid),
+                body_page_writes=len(retained_bodies),
                 console=console,
                 epoch_reads=epoch_reads,
                 plan_function_evaluations=plan_counts.plan_evaluations,
@@ -333,6 +419,7 @@ pub def obtain(
             evaluations=produced.evaluations,
             body_evaluations=body_evaluations,
             body_reuses=body_reuses,
+            body_page_writes=len(retained_bodies),
             body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
@@ -456,22 +543,28 @@ def decoded_program(text: str) -> Result[NativeUnit, str]:
 
 pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
     """
-    Validate the selected immutable unit and restore only missing or changed derived executable views. A unit whose
-    executable loads a shared carrier that is gone is not restored: false tells the caller to link it again.
+    Validate the selected immutable unit and restore only missing or changed derived executable views. False tells the
+    caller to resolve the unit again: its executable loads a shared carrier that is gone, or its record was sealed again
+    since this selection, when the unit was linked again to different bytes.
     """
-    fact = unit_record(store, unit)?
-    if not carriers_present(store, fact, Path(unit.binary))?:
-        return Ok(false)
-    view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
-    return Ok(true)
+    match unit_record(store, unit)?:
+        None => return Ok(false)
+        Some(fact) =>
+            if not carriers_present(store, fact, Path(unit.binary))?:
+                return Ok(false)
+            view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
+            return Ok(true)
 
 
-def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
-    """Verify the exact executable payload; its immutable record already admitted native loader generations."""
+def unit_record(store: Path, unit: NativeUnit) -> Result[Option[Fact], str]:
+    """
+    The unit's record while it holds the selected executable payload; its immutable record already admitted native
+    loader generations. A record holding other bytes was sealed again after the unit was linked again.
+    """
     fact = required_unit(store, unit.identity)?
     if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
-        return Err("selected native payload disagrees with its unit record")
-    return Ok(fact)
+        return Ok(None)
+    return Ok(Some(fact))
 
 
 def loader_witness(store: Path, fact: Fact, unit: NativeUnit) -> Option[Path]:
@@ -576,13 +669,17 @@ def indexed_program(store: Path, epoch: BuildEpoch, selector: Option[str]) -> Re
                     return Ok(Some(NativeUnit(identity=unit.identity, payload=unit.payload, binary=binary.0)))
 
 
-def index_program(
+pub def index_program(
     store: Path,
     selector: Option[str],
     unit: NativeUnit,
     native: Option[Transaction],
 ) -> Result[Option[Transaction], str]:
-    """Add a path-independent finalized-unit index to the same atomic request, never a second publication."""
+    """
+    Add a path-independent finalized-unit index to the same atomic request, never a second publication. The index names
+    the unit's sealed record, so it is written under the record's own expectation: a unit linked again to different
+    bytes replaces its record, and its index with it.
+    """
     match selector:
         None => return Ok(native)
         Some(key) =>
@@ -590,4 +687,4 @@ def index_program(
             if let Some(prepared) = native:
                 transaction = prepared
             descriptor = NativeUnit(identity=unit.identity, payload=unit.payload, binary=Path(unit.binary).name())
-            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_ABSENT)))
+            return Ok(Some(put(transaction, key, descriptor.encoded()?.encode("utf-8"), EXPECT_REPAIR)))

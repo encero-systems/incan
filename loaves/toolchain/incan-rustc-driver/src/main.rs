@@ -47,7 +47,6 @@ mod futures;
 mod generic_enums;
 mod generic_layouts;
 mod generic_loans;
-mod heap;
 mod identity;
 mod library_exports;
 mod model_debug;
@@ -69,6 +68,7 @@ mod rust_facts;
 mod rust_graph_bodies;
 mod rust_graph_records;
 mod rust_imports;
+mod rustc_process;
 mod shared_callables;
 mod signature_lifetimes;
 mod spans;
@@ -97,12 +97,13 @@ use incan_driver::unit::UnitDescription;
 /// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
-const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | --rustc-handoff PATH | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
-/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
+/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker, with rustc in a fresh driver process that
+/// reads the unit's handoff, `--rustc-handoff`) or check one (`--check`), each from the
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
 /// settled dependency closure (`--dependencies`), or write the ABI cache of Rust crates (`--rust-abi`), format source
 /// with the unit's vocabulary (`--fmt`), discover authored files (`--source-files`), explain a stable diagnostic
@@ -132,6 +133,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
+        Some("--rustc-handoff") => rustc_process::serve(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),
@@ -255,12 +257,27 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The check's `incan.checked-bodies/1` report, with `decoded`: how many of the pages it restored from it decoded
+/// itself rather than found decoded by an earlier check in this process.
+fn checked_bodies_report(
+    bodies: &incan_driver::check::CheckedBodies,
+    decoded: usize,
+) -> Result<String, incan_driver::error::CliError> {
+    let failure = |error: serde_json::Error| incan_driver::error::CliError::failure(error.to_string());
+    let mut report: serde_json::Value = serde_json::from_str(&bodies.to_json()?).map_err(failure)?;
+    report["decoded"] = serde_json::json!(decoded);
+    serde_json::to_string(&report).map_err(failure)
+}
+
 /// Check one unit and return the check's status; the report goes to stdout, a refusal's message to stderr. The
 /// unit's crates and their ABI caches supply its Rust facts, as for `--unit`. A short-lived process and the resident
 /// worker share this exact path.
 ///
 /// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
 /// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
+///
+/// A check reuses the `--graph-body-records` it is given exactly as a build does. With `--checked-bodies PATH` it
+/// writes there which top-level function bodies it restored from them and which it checked afresh.
 pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     native_timing::observe_frontend(false);
     let [path, sysroot, rest @ ..] = arguments else {
@@ -275,9 +292,24 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
         rest => (DiagnosticOutputFormat::Text, rest),
     };
     let (certificate, options) = certified_options(rest);
+    let (bodies_report, options) = match options {
+        [flag, report, options @ ..] if flag == "--checked-bodies" => (Some(Path::new(report)), options),
+        options => (None, options),
+    };
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
-    let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
-    let checked = incan_driver::check::check_unit(&unit, &rust);
+    let dependencies = frontend::dependencies(&unit, options)?;
+    let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let decoded_before = frontend::decoded_pages::decodes();
+    let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
+    let decoded = frontend::decoded_pages::decodes() - decoded_before;
+    let checked = checked.and_then(|(output, bodies)| {
+        if let Some(report) = bodies_report {
+            std::fs::write(report, checked_bodies_report(&bodies, decoded)?).map_err(|error| {
+                incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
+            })?;
+        }
+        Ok(output)
+    });
     let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
     let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
     if reproducible && let Some(certificate) = certificate {

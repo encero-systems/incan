@@ -55,7 +55,9 @@ use incan_semantics_core::executable_representation::{
 /// Encoded Loaf artifacts retained across native compilation without retaining checked modules or Body IR.
 ///
 /// Writing remains a separate operation so a failed native compilation cannot publish a partial library. The
-/// manifest is written last, preserving its role as the completeness marker for the sibling artifact set.
+/// manifest is written last, preserving its role as the completeness marker for the sibling artifact set. It
+/// serializes, so a fresh rustc process can publish it once native compilation succeeds there.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct PreparedLoafPublication {
     name: String,
     surface: Vec<u8>,

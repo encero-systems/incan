@@ -40,6 +40,57 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
     return Ok(None)
 
 
+def test_the_compiler_home_reads_its_registry_through_its_own_link() -> Result[None, str]:
+    """
+    The compiler home names the installed registry through its own `registry` link, the spelling a Loaf's native
+    closure names registry artifacts by, so its re-admission admits each artifact where its builds read it.
+
+    1. The closure and lock an installed manifest names inside `registry/` resolve under the compiler home's link.
+    2. The closure read there is the installed one.
+    3. A registry the installation names by an absolute path elsewhere stays as written.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("home")
+    compiler = installed.joinpath("compiler-build")
+    toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("registry/closure.json").write_bytes(b"installed closure").map_err((error) => error.message())?
+    head = "{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[],"
+    registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry/selected.json\"}"
+    write_manifest(toolchain, head + registry)?
+    _ = prepare_compiler_home(installed, compiler)?
+    # 1. Both resolve against the compiler home's own toolchain directory, inside its `registry` link.
+    selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    units = manifest_path(selected, "registry_units")?
+    assert units == selected.joinpath("registry/closure.json").0, units
+    lock = manifest_path(selected, "registry_lock")?
+    assert lock == selected.joinpath("registry/selected.json").0, lock
+    # 2. The link selects the installed tree, not a copy.
+    assert Path(units).read_bytes().map_err((error) => error.message())? == b"installed closure"
+    # 3. An absolute registry outside the installation is not the compiler home's to rename.
+    write_manifest(toolchain, head + "\"registry_units\":\"/elsewhere/closure.json\"}")?
+    _ = prepare_compiler_home(installed, compiler)?
+    elsewhere = manifest_path(selected, "registry_units")?
+    assert elsewhere == "/elsewhere/closure.json", elsewhere
+    return Ok(None)
+
+
+def write_manifest(toolchain: Path, text: str) -> Result[None, str]:
+    """Write an installed toolchain's `toolchain.json`."""
+    manifest = toolchain.joinpath("toolchain.json")
+    return manifest.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def manifest_path(toolchain: Path, key: str) -> Result[str, str]:
+    """A path the manifest in `toolchain` names, as a builder selecting that directory reads it."""
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    path: str = manifest.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    if path.startswith("/"):
+        return Ok(path)
+    return Ok(toolchain.joinpath(path).0)
+
+
 def test_readmission_asks_the_builder_for_the_rewritten_home() -> Result[None, str]:
     """
     Re-admission runs the builder's explicit entry with the rewritten home selected, and reports its refusal.

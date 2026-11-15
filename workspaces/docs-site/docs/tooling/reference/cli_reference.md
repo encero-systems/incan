@@ -9,6 +9,7 @@ oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
+oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]
 oven update [NAME] [--project PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
@@ -22,6 +23,8 @@ oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-p
 oven inspect dependencies PATH [UNIT OPTIONS]
 oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]
 oven inspect run ID --proofs
+oven workspace inspect [--format text|json] [MEMBER SELECTION]
+oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]
 
 incan --help | -h | help
 incan --version
@@ -65,6 +68,47 @@ Unknown features, invalid feature edges and unknown options fail the command. Fe
 
 `incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--interop-target`, `--locked` and `--engine-report`.
 
+## Member selection
+
+`run`, `check`, `test` and `build` on either name, `incan fmt`, `oven version` and `oven workspace inspect` accept a member selection inside a workspace, a `loaf.toml` with a [`[workspace]`](project_configuration.md#workspace) table at or above the current directory:
+
+| Option | Contract |
+| --- | --- |
+| `--workspace` | Selects every member. |
+| `--member NAME_OR_PATH`, `-p NAME_OR_PATH` | Selects a member by its project name or root-relative path. Repeatable. |
+| `--exclude NAME_OR_PATH` | Removes a member from the selection. Repeatable. |
+
+Without `--workspace` or `--member`, the selection is the implicit scope, reported by `oven workspace inspect` as its origin:
+
+| Working directory | Scope | Origin |
+| --- | --- | --- |
+| Inside a member other than the root project | That member | `current_member` |
+| A workspace root with `default-members` | The default members | `default_members` |
+| A rooted workspace's root without `default-members` | The root project | `implicit_root_member` |
+| A virtual workspace's root without `default-members` | Every member | `workspace` |
+
+`--workspace` reports `workspace` and `--member` reports `explicit_members`. A command with a member selection, or at a workspace root whose implicit scope is its default members or every member, runs once per selected member in declaration order. Before each it prints `workspace member NAME: PATH`; it exits with the first failing member's status. A command that names a `PATH` at such a root acts on that `PATH`. `run` and `oven version` act on one project: a selection of more than one member exits `1` with `requires exactly one workspace member; select one with --member NAME_OR_PATH`. A selector that names no member, a selection outside a workspace and a member without a `loaf.toml` exit `1` before any member runs.
+
+## `oven workspace inspect`
+
+Reports the workspace at or above the current directory and the members a [member selection](#member-selection) selects. The text report is `Workspace: ROOT`, `Manifest: PATH`, `Selected scope (ORIGIN)`, one `  - NAME (PATH)` line per selected member with its root-relative path, and `Canonical lock: ROOT/oven.lock`. `--format json` prints an object with `schema_version` `1`, `workspace` (`root`, `manifest_path`), `members`, `default_members`, `exclusions` (the declared `exclude`), `invocation` (`current_dir`), `selected_scope` (`origin` and its `members`, each `name` and `path`), `lock` (`canonical_path`, `exists`) and the root's shared tables `shared_dependencies`, `shared_environments`, `shared_policy` and `shared_sources` ([`[workspace]`](project_configuration.md#workspace)). Each entry of `members` has `name`, `path`, `root`, `manifest_path`, `is_root_member`, `effective_dependencies` and `workspace_environment_extends`:
+
+- `effective_dependencies` splits the member's `[dependencies]` as `shared_dependencies` does: `libraries` holds each local `path` entry as its `origin` and absolute `path`; `rust` holds each registry Loaf with `crate_name`, `default_features`, `features`, `loaf`, `optional`, `package`, `source`, `version`, `origin`, `member_features` and `workspace_features`; `rust_dev` is empty. `origin` is `workspace` for an entry inherited with `workspace = true`, whose fields and path come from the root's entry, and `member` otherwise. `features` is the union of the member's and the workspace's features.
+- `workspace_environment_extends` maps each of the member's environments that extends a `[workspace.envs.NAME]` fragment to its `workspace:NAME` parents.
+
+Outside a workspace it exits `1`.
+
+## `oven env`
+
+Acts on the environments of the project at or above the current directory, or of `--project PATH`: the standard `dev`, `test`, `lint` and `docs`, then each one [`[envs.NAME]`](project_configuration.md#envsname) declares.
+
+- `oven env list` prints each environment's name, one per line; `--format json` prints them as a JSON array of strings.
+- `oven env show` prints one row per environment: its name, effective `requires-incan`, whether the active toolchain satisfies it, its `cwd` and its numbers of variables, scripts and dependencies. `--format json` prints an array with one object per environment, with `name`, `requires_incan`, `toolchain_status`, `cwd`, and the counts `env_vars`, `scripts` and `dependencies`.
+- `oven env show ENV` prints the resolved environment: its overlay chain, effective `requires-incan`, the active toolchain and whether it satisfies the requirement, `cwd`, numbers of variables, scripts and dependencies, then each variable and script. `--format json` prints an object with `env`; `overlay_chain`, starting at `project`; `requires_incan`; `cwd` as an absolute path; `env_vars`; `scripts`, each an argument array; and `dependencies`, each declared entry by alias. `requires_incan` has `active_version`, `effective`, which is null when nothing constrains the toolchain, `layers`, each a `source` and `requirement`, and Boolean `satisfied`.
+- `oven env run ENV SCRIPT [-- ARGS...]` runs the script with `ARGS` appended, in the environment's `cwd` with its variables set, and exits with the script's status. It first requires the active toolchain to satisfy every `requires-incan` along the overlay chain. `--dry-run` prints the environment, requirement, `cwd`, variables and command instead of running it.
+
+An unknown environment or script exits `1` before anything runs.
+
 ## `oven lock`
 
 Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. After that line, it prints one `untested lower bound: LOAF BOUND is not published; locked VERSION` line for each local requirement whose lower bound names a version the registry does not publish, because the bound itself was not tested. A requirement's lower bound is the version its `^`, `~`, `>=`, `=` or partial wildcard comparator names, with a missing minor or patch as `0`. A generated write adds no other stdout or stderr.
@@ -75,13 +119,23 @@ This command is available only as `oven lock`. `incan lock` is an unknown comman
 
 ## `oven add`
 
-Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. A name without a scope is refused with every published full name that ends in it, since several Loaves can share a short name.
+Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. Several Loaves can share a short name, so a name without a scope is never guessed. When standard input and standard error are both terminals and the toolchain's registry publishes full names that end in it, `oven add` prints each of them, numbered, on standard error, asks `Which one? Its number or full name: `, and reads one line: a listed number or full name is the `NAME` it adds, and any other answer, an empty one included, adds nothing and exits `1` with the full names. Otherwise a name without a scope is refused with every published full name that ends in it.
 
 The requirement is `--version REQUIREMENT`, or else the newest version the toolchain's registry publishes, spelled in full. The key is `--key KEY`, or else the name's last part with `-` as `_`. A key the table already has is refused. When that key names the same Loaf, the refusal names `oven update`; when it names another Loaf, it names `--key`.
 
 One line, `KEY = { loaf = "NAME", version = "REQUIREMENT" }`, is written after the table's last entry. A manifest without the table gains it at its end. Nothing else in `loaf.toml` changes. Success prints `added NAME, version = "REQUIREMENT"`, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
 
-It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven add`.
+`oven add` is the shorthand of `oven dependency add`: the two spellings take the same operands and options and perform the same operation. It runs only on a toolchain the project's `requires-incan` admits. Neither spelling is available on `incan`.
+
+## `oven dependency`
+
+`oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]` is [`oven add`](#oven-add).
+
+`oven dependency list [--project PATH]` prints one line per entry of the `[dependencies]` table of the root project at or above `PATH`, which defaults to the current directory, in key order. A registry entry prints `KEY: NAME REQUIREMENT`. A local entry prints `KEY: path DIR`, or `KEY: NAME, path DIR` when it names a Loaf. A project without entries prints `no dependencies`. It reads only `loaf.toml` and exits `0`.
+
+`oven dependency remove NAME [--project PATH]` removes every `[dependencies]` entry whose `loaf` is `NAME`, then locks the project as `oven lock` does. `NAME` is a full Loaf name. A name with a capital letter is refused, and a name without a scope is refused with the project's dependencies that end in it. A name no entry has is refused. An inline entry loses its one line, and a `[dependencies.KEY]` table loses its header and its lines up to the next table. Nothing else in `loaf.toml` changes. Success prints one `removed KEY: NAME REQUIREMENT` line per entry, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+`oven dependency` without a subcommand, or with one other than `add`, `list` and `remove`, exits `2`. Each subcommand runs only on a toolchain the project's `requires-incan` admits.
 
 ## `oven update`
 

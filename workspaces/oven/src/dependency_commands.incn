@@ -1,11 +1,23 @@
 """
-The dependency commands (RFC 118, RFC 125): change the root project's `[dependencies]` as `dependency_plans` plans,
-then lock the project. A lock that fails restores the manifest's exact text.
+The dependency commands (RFC 118, RFC 125): `oven dependency add|list|remove`, with `oven add` as the shorthand of
+`oven dependency add`, and `oven update`. A command that changes the root project's `[dependencies]` as
+`dependency_plans` plans then locks the project; a lock that fails restores the manifest's exact text.
 """
 
+from rust::std::io import IsTerminal, Write, stderr, stdin
+from rust::std::string import String as RustString
 from std.fs import Path
 from cli_help import refused_option
-from dependency_plans import ManifestChange, plan_add, plan_update
+from dependency_plans import (
+    ManifestChange,
+    chosen_name,
+    listed_dependencies,
+    name_question,
+    plan_add,
+    plan_remove,
+    plan_update,
+    short_name_matches,
+)
 from files import read, write
 from intake import ManifestReader
 from project_lock import LockCommand, lock_project, locked_report, root_project
@@ -14,9 +26,11 @@ from toolchain import load_toolchain
 
 
 pub enum DependencyVerb(str):
-    """The commands that change a project's registry dependencies."""
+    """The commands that read or change a project's dependencies."""
 
     Add = "add"
+    List = "list"
+    Remove = "remove"
     Update = "update"
 
 
@@ -30,11 +44,28 @@ pub model DependencyRequest:
     pub project: str = "."
 
 
-pub def parse_dependency_command(verb: DependencyVerb, arguments: list[str]) -> Result[DependencyRequest, str]:
+pub def parse_dependency_command(command: str, arguments: list[str]) -> Result[DependencyRequest, str]:
     """
-    Parse `oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]` or
+    Parse `oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]`, its shorthand `oven add`,
+    `oven dependency list [--project PATH]`, `oven dependency remove NAME [--project PATH]` and
     `oven update [NAME] [--project PATH]`.
     """
+    if command == "update":
+        return parse_operands(DependencyVerb.Update, arguments)
+    if command != "dependency":
+        return parse_operands(DependencyVerb.Add, arguments)
+    if len(arguments) == 0:
+        return Err("expected `add`, `list` or `remove`")
+    match DependencyVerb.from_value(arguments[0]):
+        None => return Err(f"unknown command `{arguments[0]}`")
+        Some(verb) =>
+            if verb == DependencyVerb.Update:
+                return Err(f"unknown command `{arguments[0]}`: run `oven update`")
+            return parse_operands(verb, arguments[1:])
+
+
+def parse_operands(verb: DependencyVerb, arguments: list[str]) -> Result[DependencyRequest, str]:
+    """A dependency command's NAME and options; only `add` takes `--version` and `--key`."""
     mut request = DependencyRequest(verb=verb)
     mut index = 0
     while index < len(arguments):
@@ -53,20 +84,22 @@ pub def parse_dependency_command(verb: DependencyVerb, arguments: list[str]) -> 
             continue
         if argument.startswith("-"):
             return Err(refused_option(argument))
+        if verb == DependencyVerb.List:
+            return Err(f"`list` takes no NAME; `{argument}` is one")
         if request.name != "":
             return Err(f"one NAME at a time; `{argument}` is a second")
         request.name = argument
         index += 1
-    if verb == DependencyVerb.Add and request.name == "":
+    if (verb == DependencyVerb.Add or verb == DependencyVerb.Remove) and request.name == "":
         return Err("a NAME is required, as SCOPE/NAME")
     return Ok(request)
 
 
 pub def dependency_command(request: DependencyRequest) -> Result[list[str], str]:
     """
-    Change the root project's `loaf.toml` as planned, then lock it; return the lines to print.
+    List the root project's dependencies, or change its `loaf.toml` as planned and lock it; return the lines to print.
 
-    1. Find the root project, its manifest's text, and the toolchain's published registry units.
+    1. Find the root project and its manifest's text; a list reads nothing else.
     2. Plan the change; an unchanged manifest is reported and neither written nor locked.
     3. Write it and lock; a failed lock restores the manifest's exact text and refuses with the lock's reason.
     """
@@ -76,14 +109,10 @@ pub def dependency_command(request: DependencyRequest) -> Result[list[str], str]
         Some(root) =>
             manifest = root.joinpath("loaf.toml")
             original = read(manifest)?
-            toolchain = load_toolchain()?
-            units = read_registry_units(Path(toolchain.registry_units), "", ManifestReader(), false)?.units
+            if request.verb == DependencyVerb.List:
+                return listed_dependencies(original, manifest.0)
             # 2. Only a changed text is written.
-            mut planned = ManifestChange(text=original, report=[])
-            if request.verb == DependencyVerb.Add:
-                planned = plan_add(request.name, request.version, request.key, original, manifest.0, units)?
-            else:
-                planned = plan_update(request.name, original, manifest.0, units)?
+            planned = planned_change(request, original, manifest.0)?
             if planned.text == original:
                 return Ok(planned.report)
             # 3. The lock decides; a refused lock leaves the manifest as it was.
@@ -93,3 +122,31 @@ pub def dependency_command(request: DependencyRequest) -> Result[list[str], str]
                 Err(reason) =>
                     write(manifest, original)?
                     return Err(f"{reason}\n{manifest.0} is unchanged")
+
+
+def planned_change(request: DependencyRequest, original: str, manifest: str) -> Result[ManifestChange, str]:
+    """The manifest text `request` asks for, planned against the toolchain's published registry units."""
+    if request.verb == DependencyVerb.Remove:
+        return plan_remove(request.name, original, manifest)
+    toolchain = load_toolchain()?
+    units = read_registry_units(Path(toolchain.registry_units), "", ManifestReader(), false)?.units
+    if request.verb == DependencyVerb.Add:
+        name = asked_name(request.name, [unit.loaf for unit in units if unit.refusal == ""])?
+        return plan_add(name, request.version, request.key, original, manifest, units)
+    return plan_update(request.name, original, manifest, units)
+
+
+def asked_name(name: str, published: list[str]) -> Result[str, str]:
+    """
+    RFC 125: on a terminal, `oven add` lists every published full name a short name ends, asks which one, and records
+    the answer. Without one, or for a full name, the name stays as given, and a short one is refused with the list.
+    """
+    matches = short_name_matches(name, published)
+    if len(matches) == 0 or not stdin().is_terminal() or not stderr().is_terminal():
+        return Ok(name)
+    mut err = stderr()
+    _ = err.write_all(RustString.from(name_question(name, matches)).into_bytes())
+    mut answer = RustString.new()
+    match stdin().read_line(answer):
+        Err(error) => return Err(f"cannot read the answer: {error}")
+        Ok(_) => return chosen_name(str(answer), matches)

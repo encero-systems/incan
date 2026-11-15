@@ -5,6 +5,8 @@ A workspace root's shared tables as `oven workspace inspect --format json` repor
    because 0.6 declares test dependencies per environment.
 2. `shared_environments`, `shared_policy` and `shared_sources`: `[workspace.envs]`, `[workspace.policy]` and
    `[workspace.sources]` as declared.
+3. Per member, `effective_dependencies` in the same split, each entry with its `origin`, and
+   `workspace_environment_extends`, the `workspace:NAME` fragments each environment extends.
 """
 
 from std import toml
@@ -58,28 +60,22 @@ def shared_dependencies(root: Path, workspace: Dict[str, TomlValue]) -> JsonValu
 
 def registry_entry(entry: Dict[str, TomlValue]) -> JsonValue:
     """One shared registry Loaf with 0.5.1's fields, and the Loaf identity 0.6 names it by."""
+    return JsonValue.object(registry_fields(entry))
+
+
+def registry_fields(entry: Dict[str, TomlValue]) -> Dict[str, JsonValue]:
+    """A registry Loaf entry's fields as 0.5.1 reported a registry crate, with the Loaf identity 0.6 names it by."""
     loaf = text_of(entry, "loaf")
-    mut features: list[str] = []
-    if "features" in entry:
-        match entry["features"].as_array():
-            Ok(items) =>
-                for item in items:
-                    match item.as_str():
-                        Ok(name) => features.append(name)
-                        Err(_) => pass
-            Err(_) => pass
-    return JsonValue.object(
-        {
-            "crate_name": JsonValue.string(crate_name(loaf)),
-            "default_features": JsonValue.bool(flag_of(entry, "default-features", true)),
-            "features": JsonValue.array([JsonValue.string(name) for name in sorted(features)]),
-            "loaf": JsonValue.string(loaf),
-            "optional": JsonValue.bool(flag_of(entry, "optional", false)),
-            "package": JsonValue.null(),
-            "source": JsonValue.object({"kind": JsonValue.string("registry")}),
-            "version": JsonValue.string(text_of(entry, "version")),
-        },
-    )
+    mut fields: Dict[str, JsonValue] = {}
+    fields["crate_name"] = JsonValue.string(crate_name(loaf))
+    fields["default_features"] = JsonValue.bool(flag_of(entry, "default-features", true))
+    fields["features"] = names(sorted(features_of(entry)))
+    fields["loaf"] = JsonValue.string(loaf)
+    fields["optional"] = JsonValue.bool(flag_of(entry, "optional", false))
+    fields["package"] = JsonValue.null()
+    fields["source"] = JsonValue.object({"kind": JsonValue.string("registry")})
+    fields["version"] = JsonValue.string(text_of(entry, "version"))
+    return fields
 
 
 def raw_table(workspace: Dict[str, TomlValue], key: str) -> JsonValue:
@@ -130,6 +126,121 @@ pub def toml_json(value: TomlValue) -> JsonValue:
     match value.as_str():
         Ok(text) => return JsonValue.string(text)
         Err(_) => return JsonValue.null()
+
+
+pub def member_tables(root: Path, member: Path) -> Result[Dict[str, JsonValue], str]:
+    """
+    A member's `effective_dependencies` and `workspace_environment_extends`, in 0.5.1's shape: each `[dependencies]`
+    entry with its `origin`, `workspace` when it inherits a `[workspace.dependencies]` entry and `member` otherwise, and
+    each environment's `workspace:NAME` parents.
+    """
+    shared = table_of(table_of(manifest_table(root.joinpath("loaf.toml"))?, "workspace"), "dependencies")
+    declared = manifest_table(member.joinpath("loaf.toml"))?
+    mut libraries: Dict[str, JsonValue] = {}
+    mut registry: Dict[str, JsonValue] = {}
+    entries = table_of(declared, "dependencies")
+    for alias in sorted([alias for alias in entries.keys()]):
+        entry = entry_table(entries[alias])
+        mut origin = "member"
+        mut base = member
+        mut source = entry
+        if flag_of(entry, "workspace", false) and alias in shared:
+            origin = "workspace"
+            base = root
+            source = entry_table(shared[alias])
+        if "path" in source:
+            path = JsonValue.string(f"{base.0}/{text_of(source, "path")}")
+            libraries[alias] = JsonValue.object({"origin": JsonValue.string(origin), "path": path})
+            continue
+        mut fields = registry_fields(source)
+        if "optional" in entry:
+            fields["optional"] = JsonValue.bool(flag_of(entry, "optional", false))
+        member_features = features_of(entry)
+        mut inherited: list[str] = []
+        if origin == "workspace":
+            inherited = features_of(source)
+        mut combined: list[str] = []
+        for name in inherited + member_features:
+            if name not in combined:
+                combined.append(name)
+        fields["features"] = names(sorted(combined))
+        fields["member_features"] = names(member_features)
+        fields["workspace_features"] = names(inherited)
+        fields["origin"] = JsonValue.string(origin)
+        registry[alias] = JsonValue.object(fields)
+    mut tables: Dict[str, JsonValue] = {}
+    tables["effective_dependencies"] = JsonValue.object(
+        {"libraries": JsonValue.object(libraries), "rust": JsonValue.object(registry), "rust_dev": JsonValue.object({})},
+    )
+    tables["workspace_environment_extends"] = environment_extends(table_of(declared, "envs"))
+    return Ok(tables)
+
+
+def environment_extends(environments: Dict[str, TomlValue]) -> JsonValue:
+    """Each environment that extends a workspace fragment, with its `workspace:NAME` parents in declared order."""
+    mut extended: Dict[str, JsonValue] = {}
+    for name in sorted([name for name in environments.keys()]):
+        environment = table_of(environments, name)
+        if "extends" not in environment:
+            continue
+        mut parents: list[str] = []
+        match environment["extends"].as_str():
+            Ok(single) => parents.append(single)
+            Err(_) => parents = strings_of(environment["extends"])
+        fragments = [parent for parent in parents if parent.startswith("workspace:")]
+        if len(fragments) > 0:
+            extended[name] = names(fragments)
+    return JsonValue.object(extended)
+
+
+def manifest_table(manifest: Path) -> Result[Dict[str, TomlValue], str]:
+    """A manifest's root table."""
+    document = toml.parse(read(manifest)?).map_err((error) => f"{manifest.0}: {error.message()}")?
+    return document.as_table().map_err((error) => f"{manifest.0}: {error.message()}")
+
+
+def table_of(table: Dict[str, TomlValue], key: str) -> Dict[str, TomlValue]:
+    """`table[key]` as a table, empty when absent or not a table (intake refuses a malformed one)."""
+    if key not in table:
+        return {}
+    match table[key].as_table():
+        Ok(found) => return found
+        Err(_) => return {}
+
+
+def entry_table(value: TomlValue) -> Dict[str, TomlValue]:
+    """A dependency entry as a table; a bare string is its `version`."""
+    match value.as_str():
+        Ok(_) => return {"version": value}
+        Err(_) => pass
+    match value.as_table():
+        Ok(entry) => return entry
+        Err(_) => return {}
+
+
+def features_of(entry: Dict[str, TomlValue]) -> list[str]:
+    """An entry's `features`, empty when absent."""
+    if "features" not in entry:
+        return []
+    return strings_of(entry["features"])
+
+
+def strings_of(value: TomlValue) -> list[str]:
+    """The strings of an array, skipping any other item (intake refuses a malformed one)."""
+    mut found: list[str] = []
+    match value.as_array():
+        Ok(items) =>
+            for item in items:
+                match item.as_str():
+                    Ok(text) => found.append(text)
+                    Err(_) => pass
+        Err(_) => pass
+    return found
+
+
+def names(items: list[str]) -> JsonValue:
+    """A JSON array of strings."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
 
 
 def text_of(entry: Dict[str, TomlValue], key: str) -> str:
