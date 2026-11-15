@@ -88,9 +88,9 @@ def positioned(name: str, owner: SourceSpan, statement_line: int, exit_line: int
     )
 
 
-def only_product(products: Path) -> Result[str, str]:
-    """Read the single retained product record."""
+def only_product(products: Path) -> Result[bytes, str]:
+    """Read the single retained product record as its binary Crumb envelope."""
     for path in products.iterdir().map_err((error) => error.message())?:
         if path.name().endswith(".incnfunction"):
-            return path.read_text("utf-8", "strict").map_err((error) => error.message())
+            return path.read_bytes().map_err((error) => error.message())
     return Err("no plan product was retained")
