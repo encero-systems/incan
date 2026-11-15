@@ -78,6 +78,12 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
         documents[lock.0] = Document(path=lock.0, stamp=before, value=read_json(lock)?)
         if observe(lock)?.stamp != before:
             return Err(f"{lock.0}: installed registry selection changed during admission")
+    if toolchain.registry_units != "":
+        closure = Path(toolchain.registry_units)
+        before = observe(closure)?.stamp
+        documents[closure.0] = Document(path=closure.0, stamp=before, value=read_json(closure)?)
+        if observe(closure)?.stamp != before:
+            return Err(f"{closure.0}: installed registry closure changed during admission")
     paths = sorted([path for path in directories.keys()])
     return Ok(
         Captured(
