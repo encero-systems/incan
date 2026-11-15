@@ -20,6 +20,8 @@ impl TypeChecker {
         } else {
             ResolvedType::Unit
         };
+        // A native reference is the view a declaration with a direct returned view returns (RFC 164).
+        let return_ty = self.returned_view_value(&return_ty).unwrap_or(return_ty);
 
         if let Some(expected) = self.symbols.current_return_type().cloned()
             && !self.types_compatible(&return_ty, &expected)

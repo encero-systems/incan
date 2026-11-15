@@ -27,6 +27,7 @@ mod view_arguments;
 pub(super) use admission::{direct_function_boundary, method_input_header};
 pub(crate) use builtins::carried_view_binding;
 pub(super) use source::{CallableSource, Unavailable};
+pub(super) use view_arguments::native_view_value;
 
 use super::{TypeCheckInfo, TypeChecker};
 use crate::ast::{AssignmentStmt, BindingKind, Expr, Span, Spanned, Statement, Type};
