@@ -62,7 +62,8 @@ pub def test_a_release_closure_takes_registry_revision_and_archive_digest_from_t
     1. The pins generated from an index checkout name the registry, the line's manifest revision and its archive
        digest (`cksum`), never the upstream crate digest, at the named index commit; a Loaf version the index has no
        line for is refused by name.
-    2. The candidate home's closure carries each unit's pin, and the seed's closure stays as it was.
+    2. The candidate home's closure carries each unit's pin, its revision a decimal string because installed records
+       carry no numbers, and the seed's closure stays as it was.
     3. An unpinned Loaf version, and a recorded checksum that is not the pin, are refused.
     4. The release's own pin file names an index commit and pins `sha256:` archive digests of loaves.pub.
     """
@@ -105,7 +106,7 @@ pub def test_a_release_closure_takes_registry_revision_and_archive_digest_from_t
     units = written.require("units").and_then((value) => value.expect_array()).map_err((error) => error.message())?
     mut recorded: list[str] = []
     for unit in units:
-        revision = int_field(unit, "revision")?
+        revision = text_field(unit, "revision")?
         recorded.append(f"{text_field(unit, "registry")?} {revision} {text_field(unit, "checksum")?}")
     expected = [f"loaves.pub 2 {HEX_ARCHIVE}", f"loaves.pub 2 {HEX_ARCHIVE}", f"loaves.pub 1 {LIBC_ARCHIVE}"]
     assert recorded == expected, f"the candidate closure records {recorded}"
