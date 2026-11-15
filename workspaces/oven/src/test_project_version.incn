@@ -1,0 +1,22 @@
+"""Project version changes write the selected manifest, preserving every byte outside its version value."""
+
+from files import read, write
+from project_version import Bump, VersionRequest, change_version
+from scratch import scratch_directory
+
+
+pub def test_a_non_dry_run_version_bump_writes_the_manifest() -> Result[None, str]:
+    """A patch bump reports the change and leaves the selected loaf.toml with its new version on disk."""
+    scratch = scratch_directory()?
+    manifest = scratch.path().joinpath("loaf.toml")
+    before = ("[project]\n" + "name = \"version-proof\"\n" + "# Keep this comment and every byte around the value.\n" + "version = \"1.2.3\"\n" + "\n" + "[project.scripts]\n" + "main = \"src/main.incn\"\n")
+    write(manifest, before)?
+
+    report = change_version(VersionRequest(bump=Some(Bump.Patch), project=Some(scratch.path().0)))?
+
+    assert "old version: 1.2.3" in report
+    assert "new version: 1.2.4" in report
+    assert "dry-run: true" not in report
+    after = before.replace("version = \"1.2.3\"", "version = \"1.2.4\"")
+    assert read(manifest)? == after
+    return Ok(None)
