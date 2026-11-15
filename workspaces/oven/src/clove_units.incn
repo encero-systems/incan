@@ -423,13 +423,27 @@ def compiled_archive(
                 read_files.append(relative)
         objects.append(object.0)
     # 3. Fixed member order, names, owners, modes and timestamps make identical inputs give identical bytes.
+    archive_objects(compiler.archiver, archive, objects, root)?
+    return Ok(sorted(read_files))
+
+
+pub def static_archive(archive: Path, objects: list[str], root: str) -> Result[None, str]:
+    """Archive objects with the host's archiver, as a Clove's are, for a unit that names none of its own."""
+    mut archiver = "ar"
+    if OS == "macos":
+        archiver = run("xcrun", ["--find", "libtool"], ".")?
+    return archive_objects(archiver, archive, objects, root)
+
+
+def archive_objects(archiver: str, archive: Path, objects: list[str], root: str) -> Result[None, str]:
+    """Archive objects in their given order with fixed member metadata, so identical objects give identical bytes."""
     if archive.is_file():
         archive.unlink().map_err((error) => f"{archive.0}: {error.message()}")?
     if OS == "macos":
-        run(compiler.archiver, ["-static", "-D", "-no_warning_for_no_symbols", "-o", archive.0] + objects, root)?
+        run(archiver, ["-static", "-D", "-no_warning_for_no_symbols", "-o", archive.0] + objects, root)?
     else:
-        run(compiler.archiver, ["rcsD", archive.0] + objects, root)?
-    return Ok(sorted(read_files))
+        run(archiver, ["rcsD", archive.0] + objects, root)?
+    return Ok(None)
 
 
 def depended(text: str) -> list[str]:
