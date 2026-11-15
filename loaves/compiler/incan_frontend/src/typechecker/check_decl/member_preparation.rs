@@ -126,6 +126,10 @@ impl TypeChecker {
         }
         let return_type = self.resolve_type_checked(&property.return_type);
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+        // A `Borrowed[T]` result is a receiver-tied view: the body returns the value it views, as a method's does.
+        let effective_return_type = self
+            .explicit_ownership_value_type(&effective_return_type)
+            .unwrap_or(effective_return_type);
         self.symbols.set_return_type(effective_return_type);
         self.current_return_error_type = return_type.result_err_type().cloned();
 
