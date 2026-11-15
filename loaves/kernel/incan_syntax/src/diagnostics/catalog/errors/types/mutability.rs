@@ -92,7 +92,35 @@ pub fn change_through_binding_of_read_only_place(
     place: ReadOnlyScrutinee<'_>,
     span: Span,
 ) -> CompileError {
-    let (source, hint) = match place {
+    let (source, hint) = read_only_scrutinee_parts(binding, place);
+    CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
+        .with_hint(hint)
+        .with_note(
+            "A name a pattern or a `for` loop binds from a place is part of that place, so a change through the name changes the place",
+        )
+}
+
+/// Refuse a pattern or `for` binding written `mut name` whose subject is a place that does not permit mutation (RFC
+/// 129).
+///
+/// A `mut` binding borrows the payload of a place writably, so the place must already permit the change: the binding
+/// never copies or moves the payload to become writable. `binding` is the name written `mut`.
+pub fn writable_binding_of_read_only_place(binding: &str, place: ReadOnlyScrutinee<'_>, span: Span) -> CompileError {
+    let (source, hint) = read_only_scrutinee_parts(binding, place);
+    CompileError::type_error(
+        format!("Cannot bind '{binding}' as `mut` - it is bound from {source}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0126")
+    .with_hint(hint)
+    .with_note(
+        "A `mut` binding of a place borrows that place writably; it never copies the value to become writable. A plain binding reads it, and `.clone()` on the subject gives the arm a value of its own",
+    )
+}
+
+/// Describe a place that does not permit a change through `binding`, and say what would permit it.
+fn read_only_scrutinee_parts(binding: &str, place: ReadOnlyScrutinee<'_>) -> (String, String) {
+    match place {
         ReadOnlyScrutinee::Binding(name) => (
             format!("'{name}', which is immutable"),
             format!("Declare '{name}' with 'mut' to change it through '{binding}': mut {name} = ..."),
@@ -125,12 +153,7 @@ pub fn change_through_binding_of_read_only_place(
             "a dict value, which a pattern binds as a copy".to_string(),
             "Bind the value to a 'mut' variable, change it, and store it back into the dict".to_string(),
         ),
-    };
-    CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
-        .with_hint(hint)
-        .with_note(
-            "A name a pattern or a `for` loop binds from a place is part of that place, so a change through the name changes the place",
-        )
+    }
 }
 
 /// How a method body changes the object its plain `self` receiver names (#1723).

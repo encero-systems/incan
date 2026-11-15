@@ -1,5 +1,4 @@
 # behavior: a payload bound `mut name` from a call result is the arm's own writable value, so a Rust `&mut self` method is called on it directly, with no second `mut` local to take it over (RFC 129 writable alias rule 8, #1846).
-# pending: a pattern does not accept `mut name`; the program is refused with "Expected pattern, found Keyword(Mut)".
 # expect-stdout:
 #   wrote 5
 

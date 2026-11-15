@@ -245,7 +245,9 @@ pub(super) fn tuple_type_elements(ty: &IncanType) -> Option<&[IncanType]> {
 pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
     match pattern {
         ast::Pattern::Literal(ast::Literal::Bytes(_)) => false,
-        ast::Pattern::Literal(_) | ast::Pattern::Wildcard | ast::Pattern::Binding(_) => true,
+        ast::Pattern::Literal(_) | ast::Pattern::Wildcard | ast::Pattern::Binding(_) | ast::Pattern::MutBinding(_) => {
+            true
+        }
         ast::Pattern::Tuple(items) => items.iter().all(|item| match_pattern_is_supported(&item.node)),
         ast::Pattern::Constructor(_, args) => args.iter().all(|arg| match arg {
             ast::PatternArg::Positional(pat) | ast::PatternArg::Named(_, pat) => match_pattern_is_supported(&pat.node),
@@ -281,7 +283,7 @@ pub(super) fn match_pattern_is_supported(pattern: &ast::Pattern) -> bool {
 /// tuple whose *elements* are type variables.
 pub(super) fn unsupported_for_pattern(pattern: &ast::Pattern, item_ty: &IncanType) -> Option<String> {
     match pattern {
-        ast::Pattern::Binding(_) | ast::Pattern::Wildcard => None,
+        ast::Pattern::Binding(_) | ast::Pattern::MutBinding(_) | ast::Pattern::Wildcard => None,
         ast::Pattern::Tuple(items) => {
             if matches!(item_ty, IncanType::Unknown | IncanType::Never) {
                 return items

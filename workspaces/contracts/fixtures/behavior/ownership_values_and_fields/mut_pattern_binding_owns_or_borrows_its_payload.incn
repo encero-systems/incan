@@ -1,5 +1,4 @@
 # behavior: a binding pattern written `mut name` is writable: it owns the payload of an owned subject such as a call result, and borrows the payload of a place writably, so a change, a replacement and a scalar compound assignment through it reach the place; nothing is copied to make the binding legal (RFC 129 writable alias rule 8, #1846).
-# pending: a pattern does not accept `mut name`; the program is refused with "Expected pattern, found Keyword(Mut)".
 # expect-stdout:
 #   [1, 2]
 #   [9]

@@ -678,7 +678,7 @@ impl Builder<'_> {
         };
         match &pattern.node {
             Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
-            Pattern::Binding(name) if independent => {
+            Pattern::Binding(name) | Pattern::MutBinding(name) if independent => {
                 let identity = self
                     .checker
                     .type_info
@@ -717,7 +717,12 @@ impl Builder<'_> {
                     let PatternArg::Positional(payload) = argument else {
                         return Err(unsupported());
                     };
-                    if !independent && !matches!(payload.node, Pattern::Binding(_) | Pattern::Wildcard) {
+                    if !independent
+                        && !matches!(
+                            payload.node,
+                            Pattern::Binding(_) | Pattern::MutBinding(_) | Pattern::Wildcard
+                        )
+                    {
                         return Err(unsupported());
                     }
                     self.arm_binding(payload, true)?;

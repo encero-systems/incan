@@ -171,6 +171,22 @@ enum ReadOnlyPlace {
     DictValue,
 }
 
+impl ReadOnlyPlace {
+    /// The place as a refusal names it.
+    fn as_scrutinee(&self) -> ReadOnlyScrutinee<'_> {
+        match self {
+            Self::Binding(name) => ReadOnlyScrutinee::Binding(name),
+            Self::Parameter(name) => ReadOnlyScrutinee::Parameter(name),
+            Self::Static(name) => ReadOnlyScrutinee::Static(name),
+            Self::StaticAlias(alias, static_name) => ReadOnlyScrutinee::StaticAlias { alias, static_name },
+            Self::GeneratorItems(place) => ReadOnlyScrutinee::GeneratorItems(place),
+            Self::Captured(name) => ReadOnlyScrutinee::Captured(name),
+            Self::SelfReceiver => ReadOnlyScrutinee::SelfReceiver,
+            Self::DictValue => ReadOnlyScrutinee::DictValue,
+        }
+    }
+}
+
 impl ViewSource {
     /// A view of a place the body may change, with no scrutinee in between yet.
     fn writable(param: Option<String>) -> Self {
@@ -309,7 +325,7 @@ pub(crate) struct MutParamBodyState(Option<MutParamBody>);
 /// Return whether a `match` arm pattern binds the whole matched value to a name (`xs => ...`).
 fn pattern_binds_whole_value(pattern: &Pattern) -> bool {
     match pattern {
-        Pattern::Binding(_) => true,
+        Pattern::Binding(_) | Pattern::MutBinding(_) => true,
         Pattern::Group(inner) => pattern_binds_whole_value(&inner.node),
         Pattern::Or(alternatives) => alternatives
             .iter()
@@ -361,7 +377,7 @@ fn advances_when_read(ty: &ResolvedType) -> bool {
 /// Collect every name a pattern binds.
 fn collect_pattern_bindings(pattern: &Pattern, names: &mut Vec<String>) {
     match pattern {
-        Pattern::Binding(name) => names.push(name.clone()),
+        Pattern::Binding(name) | Pattern::MutBinding(name) => names.push(name.clone()),
         Pattern::Constructor(_, args) => {
             for arg in args {
                 match arg {
@@ -378,6 +394,29 @@ fn collect_pattern_bindings(pattern: &Pattern, names: &mut Vec<String>) {
         }
         Pattern::Group(inner) => collect_pattern_bindings(&inner.node, names),
         Pattern::Wildcard | Pattern::Literal(_) => {}
+    }
+}
+
+/// Collect every name a pattern binds `mut name`.
+fn collect_mut_pattern_bindings(pattern: &Pattern, names: &mut Vec<String>) {
+    match pattern {
+        Pattern::MutBinding(name) => names.push(name.clone()),
+        Pattern::Constructor(_, args) => {
+            for arg in args {
+                match arg {
+                    PatternArg::Positional(inner) | PatternArg::Named(_, inner) => {
+                        collect_mut_pattern_bindings(&inner.node, names);
+                    }
+                }
+            }
+        }
+        Pattern::Tuple(items) | Pattern::Or(items) => {
+            for item in items {
+                collect_mut_pattern_bindings(&item.node, names);
+            }
+        }
+        Pattern::Group(inner) => collect_mut_pattern_bindings(&inner.node, names),
+        Pattern::Binding(_) | Pattern::Wildcard | Pattern::Literal(_) => {}
     }
 }
 
@@ -432,7 +471,7 @@ fn bare_name(value: &Spanned<Expr>) -> Option<&str> {
 /// Return whether a pattern binds `name` anywhere inside it.
 fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
     match pattern {
-        Pattern::Binding(bound) => bound == name,
+        Pattern::Binding(bound) | Pattern::MutBinding(bound) => bound == name,
         Pattern::Constructor(_, args) => args.iter().any(|arg| match arg {
             PatternArg::Positional(inner) | PatternArg::Named(_, inner) => pattern_binds_name(&inner.node, name),
         }),

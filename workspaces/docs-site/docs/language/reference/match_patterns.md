@@ -18,7 +18,8 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 | Form | Syntax | Matches | Binds |
 | --- | --- | --- | --- |
 | Wildcard | `_` | Any value | Nothing |
-| Binding | `name` | Any value | `name`, to the value |
+| Binding | `name` | Any value | `name`, read-only, to the value |
+| Writable binding | `mut name` | Any value | `name`, writable, to the value |
 | Literal | `0`, `1.5`, `"a"`, `true`, `None` | The value equal to the literal | Nothing |
 | Tuple | `(p,)`, `(p1, p2, …)` | A tuple with one element per sub-pattern, each matching its sub-pattern | The names its sub-patterns bind |
 | Group | `(p)` | The values `p` matches | The names `p` binds |
@@ -30,10 +31,19 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 
 ## Binding and tuple patterns
 
-- A binding pattern binds its name to the matched value as an immutable binding.
+- A binding pattern `name` binds its name to the matched value as an immutable binding: the name is not assigned to.
+- A writable binding pattern `mut name` binds a name that is assigned to, changed in place, and passed where a mutable value is required. `mut` is followed by a plain name.
+- A writable binding whose subject is a value of its own (a call result, a literal, a constructed value) owns the matched value.
+- A writable binding whose subject is a place (a binding, or a field or list element of one) borrows the matched part of that place writably: an in-place change, an assignment and a compound assignment through the name change the place. The place permits mutation: a `mut` binding or parameter, `self` in a `mut self` method, or a field or list element of one.
+- A writable binding never copies the matched value.
+- Each alternative of an alternation writes a name they share the same way, `mut` or plain.
 - A tuple pattern has one sub-pattern per element of the subject's tuple type, in order.
 
-Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, and a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements.
+Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements, an assignment to a name bound without `mut`, and an alternation whose alternatives write a shared name `mut` in one and plain in another.
+
+Refused (`INCAN-T0126`): a writable binding whose subject is a place that does not permit mutation.
+
+Refused (`INCAN-P0001`): `mut` followed by anything other than a plain name, such as `mut _` or `mut Some(value)`.
 
 ```incan
 def first(pair: tuple[int, str]) -> str:
@@ -42,6 +52,27 @@ def first(pair: tuple[int, str]) -> str:
         (0, text, _) => return text     # refused: the tuple has two elements
         print => return "other"         # refused: print is a protected builtin name
         _ => return "none"
+```
+
+```incan
+model Cart:
+    items: Option[list[str]]
+
+
+def load() -> Result[list[str], str]:
+    return Ok(["apple"])
+
+
+def fill(mut cart: Cart, fixed: Cart) -> None:
+    match load():
+        Ok(mut items) => items.append("plum")     # accepted: items owns the call result's payload
+        Err(_) => pass
+    match cart.items:
+        Some(mut items) => items.append("plum")   # accepted: changes cart.items in place
+        None => pass
+    match fixed.items:
+        Some(mut items) => pass                   # refused: fixed is not declared mut
+        None => pass
 ```
 
 ## Literal patterns
