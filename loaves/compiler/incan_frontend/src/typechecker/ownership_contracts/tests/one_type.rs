@@ -66,3 +66,32 @@ fn imported_explicit_result_reads_as_its_value_type() -> Result<(), Box<dyn std:
     }
     Ok(())
 }
+
+/// A native `&mut T` value is a `BorrowedMut[T]` value and lends shared access as a `Borrowed[T]` value, so it passes
+/// to either explicit parameter, of a function or a method, with no adjustment. A native `&T` grants no exclusive
+/// access, so passing it for `BorrowedMut[T]` is refused (shape A).
+#[test]
+fn native_reference_is_an_explicit_view_value() -> Result<(), Box<dyn std::error::Error>> {
+    let declarations = "model State:\n    count: int\n\n    def bump(self, mut state: BorrowedMut[State]) -> int:\n        state.count += self.count\n        return state.count\n\ndef bump(mut state: BorrowedMut[State]) -> int:\n    state.count += 1\n    return state.count\n\ndef peek(state: Borrowed[State]) -> int:\n    return state.count\n\n";
+    let admitted = format!(
+        "{declarations}def exclusive(state: &mut State, step: State) -> int:\n    return bump(state) + peek(state) + step.bump(state)\n\ndef shared(state: &State) -> int:\n    return peek(state)\n"
+    );
+    let checker = checked(&admitted)?;
+    let mismatches: Vec<_> = checker
+        .errors
+        .iter()
+        .filter(|error| error.message.contains("type mismatch"))
+        .collect();
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+    let refused = format!("{declarations}def shared(state: &State) -> int:\n    return bump(state)\n");
+    let checker = checked(&refused)?;
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
