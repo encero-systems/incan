@@ -413,12 +413,19 @@ impl Builder<'_> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
+        // A unit variant and a native constant are values with no stored place behind them.
         if matches!(expression.node, Expr::Field(_, _))
-            && self
+            && (self
                 .checker
                 .type_info
                 .resolved_identity(expression.span)
                 .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                || self
+                    .checker
+                    .type_info
+                    .rust
+                    .checked_constants
+                    .contains_key(&expression.span))
         {
             return Ok(incoming);
         }
