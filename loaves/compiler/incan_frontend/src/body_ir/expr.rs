@@ -324,6 +324,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Keep a frozen byte const's checked carrier in a typed temporary. The byte literal vocabulary alone does not
     /// distinguish mutable bytes from static storage, so flattening this read to a bare constant would lose that fact.
+    /// A const that is a Rust constant is read the way the Rust item itself is: assigned to a temporary first, which
+    /// is where the driver finds the crate the item needs.
     pub(super) fn checked_constant_operand(
         &mut self,
         constant: bir::Constant,
@@ -332,9 +334,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if ty != IncanType::Primitive(IncanPrimitiveType::FrozenBytes) {
-            return bir::Operand::Constant(constant);
-        }
+        let ty = match &constant {
+            bir::Constant::RustItem(_, carrier) => carrier.clone(),
+            _ if ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes) => ty,
+            _ => return bir::Operand::Constant(constant),
+        };
         let local = self.new_temp(ty, scope, span);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {

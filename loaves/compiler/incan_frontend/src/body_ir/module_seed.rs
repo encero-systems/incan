@@ -277,6 +277,7 @@ pub(super) fn collect_published_constants(
                     | bir::Constant::TypedNumeric(_)
                     | bir::Constant::FrozenAggregate(..)
                     | bir::Constant::NumericNewtype(_)
+                    | bir::Constant::RustItem(..)
             )
         }))
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
