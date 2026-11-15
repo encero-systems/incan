@@ -1,6 +1,7 @@
 """Verify memory-budget option, process-table, tree-walk, budget and report contracts without compiling projects."""
 
 from pub::incan_platform.probes import ProcessResource, parse_process_table
+from check_support import repository_root
 from memory_budget import (
     MIB,
     Measurement,
@@ -40,6 +41,17 @@ def test_process_rows_and_tree_keep_only_current_descendants() -> Result[None, s
     assert [row.pid for row in tree] == [30, 10, 20]
     assert tree[0].footprint == 300
     assert tree[0].lifetime_peak == 330
+    return Ok(None)
+
+
+def test_a_completed_plan_folds_carrier_positions_in_place() -> Result[None, str]:
+    """The final carrier fold constructs from its owned plan instead of cloning a second complete plan at lowering's peak."""
+    source = repository_root()?.joinpath(
+        "loaves/compiler/incan_mir_plan/src/carrier_positions.incn",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert "pub def fold_carrier_positions(plan: Plan" in source, "the carrier fold does not own one input plan"
+    assert "mut folded = plan.clone()" not in source, "the carrier fold keeps a second complete plan beside lowering state"
+    assert "return Ok(\n        Plan(" in source, "the carrier fold does not construct its result directly from the input plan"
     return Ok(None)
 
 
