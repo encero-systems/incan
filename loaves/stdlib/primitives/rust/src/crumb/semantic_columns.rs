@@ -76,6 +76,16 @@ impl<'a> Cursor<'a> {
         self.data.len() - self.position
     }
 
+    /// The unread rest of this frame, for a reader that continues it with its own cursor.
+    pub(super) fn unread(&self) -> &'a [u8] {
+        &self.data[self.position..]
+    }
+
+    /// Advance past bytes another reader consumed from `unread`.
+    pub(super) fn skip(&mut self, count: usize) {
+        self.position += count;
+    }
+
     pub(super) fn byte(&mut self, budget: &mut Budget) -> Result<u8, Refused> {
         let value = *self.data.get(self.position).ok_or("truncated")?;
         budget.bytes(1)?;
