@@ -1,5 +1,5 @@
 # behavior: A native `&mut State` from a RefCell borrow is a `BorrowedMut[State]` value: one type, so it is passed with no adjustment (RFC 164).
-# pending: the checker keeps two types: "Argument 'state' of 'bump' has type mismatch: expected 'State', found '&mut State'".
+# pending: the checker admits the native `&mut State` as the view, and Body IR refuses to lower it: "explicit source-place input cannot coerce or copy its owner".
 # expect-stdout:
 #   1
 
