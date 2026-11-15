@@ -51,7 +51,7 @@ from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, forget_view, library_directory
 from rust_registry import selected_registry
-from rust_manifest import RustFacet, package_environment, rust_facet
+from rust_manifest import RustFacet, package_environment, rust_facet, unit_environment, unit_fact_arguments
 from rust_build import (
     BuiltUnit,
     RustBuild,
@@ -807,7 +807,7 @@ pub def library_compile_arguments(
     profile = selected_producer_profile(request.profile, producer_profile)
     unit = artifact_context(facet, declared, profile)?
     dependencies = directory.joinpath("library.d")
-    arguments = library_arguments(declared)
+    arguments = library_arguments(declared) + unit_fact_arguments(declared, request.rustc, profile, facet.features)?
     mut metadata = "metadata=incan-unit"
     if iteration:
         context = fingerprint([unit, declared.package, declared.version])?
@@ -962,7 +962,7 @@ def compile_local_rust_library(
     graph = directory.joinpath(f"{declared.crate_name}.incngraph")
     context = artifact_context(facet, declared, request.profile)?
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
-    environment = package_environment(facet.project, declared, declared.crate_name)
+    environment = unit_environment(facet.project, declared, request.rustc, request.profile, facet.features)?
     linked = extern_artifacts(arguments)
     reached_search = facet_search(facet, built)?
     store = rust_store()?

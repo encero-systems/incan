@@ -153,7 +153,7 @@ pub def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name:
         rust_facet = table(root["rust"], manifest, ["rust"])?
         allowed(
             rust_facet,
-            ["name", "type", "edition", "source", "bin", "lib", "build-script", "lints"],
+            ["name", "type", "edition", "source", "bin", "lib", "build-script", "lints", "facts"],
             manifest,
             ["rust"],
         )?
@@ -170,7 +170,9 @@ pub def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name:
             required(source, "root", manifest, ["rust", "source", "root"])?
         if "bin" in rust_facet:
             validate_binaries(rust_facet["bin"], manifest)?
-        if flag(rust_facet, "build-script", false, manifest, ["rust"])?:
+        # A build script's effect reaches a compile only as a recorded fact (RFC 119); the compile selects the record
+        # for its exact binding, so a Loaf with no record at all is refused here.
+        if flag(rust_facet, "build-script", false, manifest, ["rust"])? and "facts" not in rust_facet:
             return Err(
                 refusal(
                     manifest,
