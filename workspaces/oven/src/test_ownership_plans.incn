@@ -605,6 +605,36 @@ def encoded_name(name: str) -> str:
     return "_".join([str(int(byte)) for byte in name.encode("utf-8")])
 
 
+const READ_ONLY_TEXT: str = """def read_only(value: str) -> int:
+    return len(value)
+
+
+def loop_over(value: str) -> int:
+    mut total = 0
+    for _ in range(3):
+        total += read_only(value)
+    return total
+
+
+def main() -> None:
+    mut text = ""
+    for _ in range(4):
+        text += "a"
+    println(loop_over(text))
+"""
+
+
+pub def test_a_read_only_text_parameter_is_lent_and_never_copied() -> Result[None, str]:
+    """
+    A function whose `str` parameter it only reads receives it lent: neither it nor a loop that passes the same text on
+    each turn copies or drops a string (#3071).
+    """
+    report = plan_report("read_only_text", READ_ONLY_TEXT, "12")?
+    assert returning_drops(report, "read_only")? == 0, "read_only drops a copy of its parameter"
+    assert returning_drops(report, "loop_over")? == 0, "loop_over drops a copy of its parameter"
+    return Ok(None)
+
+
 def initializers(report: str) -> list[str]:
     """The module and static initializer functions the plan report names."""
     mut found: list[str] = []
