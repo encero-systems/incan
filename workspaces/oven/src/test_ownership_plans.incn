@@ -557,6 +557,54 @@ pub def test_a_const_with_a_computed_initializer_keeps_its_module_initializer() 
     return Ok(None)
 
 
+const FROZEN_MEMBERSHIP: str = """const CONTROLS: FrozenSet[str] = {"a", "b", "c"}
+const NAMES: FrozenList[str] = ["x", "y"]
+
+
+def count(text: str) -> int:
+    mut found = 0
+    for character in text:
+        if character in CONTROLS:
+            found += 1
+        if character not in NAMES:
+            found += 10
+    return found
+
+
+def main() -> None:
+    println(count("abxz"))
+"""
+
+
+pub def test_text_membership_in_a_frozen_set_or_list_copies_no_element() -> Result[None, str]:
+    """
+    `x in` a frozen set or list of text compares each static element in place: the plan formats no element into an
+    owned list, and the runtime's in-place comparison is what it calls (#2944).
+    """
+    report = plan_report("frozen_membership", FROZEN_MEMBERSHIP, "32")?
+    names = plan_function_names(report)
+    snapshots = [name for name in names if encoded_name("frozen_text_item") in name]
+    assert len(snapshots) == 0, f"membership formats frozen elements through {snapshots}"
+    compared = [name for name in names if encoded_name("frozen_list_contains_text") in name]
+    assert len(compared) > 0, f"membership compares through none of {names}"
+    return Ok(None)
+
+
+def plan_function_names(report: str) -> list[str]:
+    """Every function the plan report names, runtime helpers included."""
+    mut names: list[str] = []
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) >= 2 and fields[0] == "plan-function":
+            names.append(fields[len(fields) - 1])
+    return names
+
+
+def encoded_name(name: str) -> str:
+    """A function name as a records plan spells it inside a module item's name: its bytes in decimal, joined by `_`."""
+    return "_".join([str(int(byte)) for byte in name.encode("utf-8")])
+
+
 def initializers(report: str) -> list[str]:
     """The module and static initializer functions the plan report names."""
     mut found: list[str] = []
