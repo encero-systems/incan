@@ -66,6 +66,35 @@ def main() -> None:
 """
 
 
+const COPY_MODEL: str = """@derive(Copy, Clone)
+pub model Point:
+    pub x: int
+    pub y: int
+
+
+def point_sum(point: Point) -> int:
+    return point.x + point.y
+
+
+def copy_twice(point: Point) -> int:
+    first = point_sum(point)
+    pair = (point, point)
+    return first + point_sum(pair.0) + point_sum(point)
+
+
+def main() -> None:
+    println(copy_twice(Point(x=3, y=4)))
+"""
+
+
+pub def test_a_model_that_derives_copy_is_copied_and_never_cloned() -> Result[None, str]:
+    """Reading a `@derive(Copy)` model into a call, a tuple and a second call copies it and calls no clone (#1603)."""
+    report = plan_report("copies", COPY_MODEL, "21")?
+    copies = clones(report, "copy_twice")?
+    assert copies == 0, f"copy_twice holds {copies} clone calls"
+    return Ok(None)
+
+
 pub def test_a_field_leaves_its_owner_at_the_owners_last_read() -> Result[None, str]:
     """The last read of a local model takes a field out of it, so the plan clones nothing (#1604)."""
     report = plan_report("fields", FIELD_OUT, "17\n17\n11")?
