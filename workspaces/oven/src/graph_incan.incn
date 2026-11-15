@@ -8,7 +8,7 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from files import make_directory, read, read_json, remove
 from graph_cache import content_facts, interface_inputs, is_unchecked, publish_unchecked
-from graph_exports import claim_export, export_file, exported, pending_export, publish_export as admit_export
+from graph_exports import claim_export, exported, pending_export, publish_export as admit_export
 from publication import publish, publish_binary
 from unit_freshness import (
     artifact_files,
@@ -122,13 +122,14 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
         cache_root = selected
     digest, source_portable = export_digest(ready, project, toolchain)?
     portable = source_portable and portable_description(ready, project)
-    entry = export_file(digest)?
-    if portable and exported(entry)?:
-        return Ok(entry)
-    held = claim_export(entry)?
-    if portable and exported(entry)?:
-        return Ok(entry)
-    pending_entry = pending_export(entry, Path(ready.source))?
+    if portable:
+        if let Some(entry) = exported(digest)?:
+            return Ok(entry)
+    held = claim_export(digest)?
+    if portable:
+        if let Some(entry) = exported(digest)?:
+            return Ok(entry)
+    pending_entry = pending_export(digest, Path(ready.source))?
     directory = interface_directory(pending_entry)
     interface = directory.joinpath(f"{artifact_stem(ready.package)}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
@@ -141,7 +142,7 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
         arguments.append(pending.0)
     clock = begin_work()
     status = run_compiler(toolchain, arguments)?
-    record_work(Operation.GraphExport, entry.parent().name(), clock)
+    record_work(Operation.GraphExport, digest, clock)
     if status != 0:
         return Err(f"Incan graph export failed for {ready.package}")
     # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
@@ -149,9 +150,9 @@ pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Op
     if is_unchecked(pending_entry) or not portable:
         return Ok(pending_entry)
     current, still_portable = export_digest(ready, project, toolchain)?
-    if current != entry.parent().name() or not still_portable:
+    if current != digest or not still_portable:
         return Err("Incan graph inputs changed during export")
-    return admit_export(entry, pending_entry)
+    return admit_export(digest, pending_entry)
 
 
 pub def publish_prepared_graph(
@@ -241,7 +242,7 @@ def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -
     )?
     sources, portable = content_facts(project)?
     inputs.extend(sources)
-    bindings = ready.program_entries + ready.contract_models + ready.c_headers
+    bindings = ready.program_entries + ready.test_batch + ready.contract_models + ready.c_headers
     inputs.extend([relative_name(path, project) for path in bindings])
     if let Some(vocabulary) = ready.vocab:
         inputs.extend(["vocabulary", vocabulary_facts(Path(vocabulary))?])
@@ -254,7 +255,7 @@ def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -
 
 def portable_description(ready: UnitDescription, project: Path) -> bool:
     """Retain only inputs whose source bindings can be transported under the requesting project's root."""
-    mut paths = [ready.source, ready.source_root] + ready.program_entries + ready.contract_models + ready.c_headers
+    mut paths = [ready.source, ready.source_root] + ready.program_entries + ready.test_batch + ready.contract_models + ready.c_headers
     if let Some(entry) = ready.vocab_entry:
         paths.append(entry)
     for path in paths:

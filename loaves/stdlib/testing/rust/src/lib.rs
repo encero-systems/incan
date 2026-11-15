@@ -35,6 +35,16 @@ pub fn panic_text<F: FnOnce()>(block: F) -> Option<String> {
     Some(text)
 }
 
+/// Raise a failure `panic_text` caught again, with its text as the payload, without reporting it again: resuming the
+/// unwind runs no panic hook, so a test that fails before its fixtures' teardown is reported once.
+///
+/// # Panics
+///
+/// Always unwinds with `msg` as its payload.
+pub fn rethrow_t<T>(msg: String) -> T {
+    std::panic::resume_unwind(Box::new(msg))
+}
+
 /// Return the canonical runtime misuse message for a runner-only `std.testing` marker.
 pub fn testing_marker_runtime_misuse_message(marker: &str) -> String {
     format!("std.testing.{marker} is marker metadata for `incan test` and is not executable runtime logic")

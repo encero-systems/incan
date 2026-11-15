@@ -7,6 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
+use crate::test_batch::BatchPlace;
 use incan_driver::testing::types::{FixtureInfo, TestInfo};
 use incan_frontend::ast::{Declaration, Expr, FunctionDecl, Spanned, Statement};
 use incan_lang::lang::conventions::NONE_TYPE_NAME;
@@ -93,6 +94,10 @@ pub(crate) struct EntryWriter<'a> {
     /// Module- and session-scoped fixtures a file group sets up once (`crate::test_groups`); a case reads their
     /// values.
     pub(crate) shared: HashSet<String>,
+    /// In a batch unit, the module's place, and the shared plain session fixtures whose accessors its conftests host
+    /// (`crate::test_batch`).
+    pub(crate) batch: Option<BatchPlace>,
+    pub(crate) hosted: HashSet<String>,
     uses: RefCell<Uses>,
     locals: Cell<usize>,
 }
@@ -109,6 +114,8 @@ impl<'a> EntryWriter<'a> {
             fixtures,
             functions,
             shared: HashSet::new(),
+            batch: None,
+            hosted: HashSet::new(),
             uses: RefCell::new(Uses::default()),
             locals: Cell::new(0),
         }
@@ -435,9 +442,10 @@ impl<'a> EntryWriter<'a> {
         }
         written.push_str(&self.text(yielded.span.end, self.line_end(last.span.end)));
         if guarded {
+            // The failure was reported when it was raised; raising it again after teardown reports nothing more.
             let reraise = if stage.returns_value { "return " } else { "" };
             written.push_str(&format!(
-                "\n{indent}match {PREFIX}_panic:\n{indent}    {some}({PREFIX}_message) => {reraise}{PREFIX}_fail({PREFIX}_message)\n{indent}    {none} => pass"
+                "\n{indent}match {PREFIX}_panic:\n{indent}    {some}({PREFIX}_message) => {reraise}{PREFIX}_rethrow({PREFIX}_message)\n{indent}    {none} => pass"
             ));
             if stage.returns_value {
                 written.push_str(&format!("\n{indent}return {ok}({none})"));
@@ -484,6 +492,7 @@ impl<'a> EntryWriter<'a> {
             let mut names = vec![format!("fail_t as {PREFIX}_fail")];
             if uses.panic_boundary {
                 names.insert(0, format!("panic_text as {PREFIX}_panic_text"));
+                names.push(format!("rethrow_t as {PREFIX}_rethrow"));
             }
             imports.push(format!("from rust::incan_std_testing import {}", names.join(", ")));
         }

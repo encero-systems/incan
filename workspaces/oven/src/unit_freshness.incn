@@ -172,7 +172,7 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
     described = description_digest(unit)?
     # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
-    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", ledger_name(unit), project)?
+    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", project)?
     mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
@@ -459,6 +459,9 @@ def source_contents(
             contents.extend(source_inputs(modules, root, project, code)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
+    # A batch unit's further test modules are entries of their own, in run order.
+    for entry in unit.test_batch:
+        contents.extend(["test-batch"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     if let Some(entry) = unit.vocab_entry:
         contents.extend(["vocabulary-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     for schema in unit.contract_models:

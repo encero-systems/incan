@@ -39,12 +39,14 @@ from testing import (
     test_sources,
 )
 from runner_options import RunnerOptions, split_runner_options
+from test_batches import batch_groups, batch_of, module_of
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
+from home_views import selected_home_view
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
@@ -181,6 +183,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect", "lock", "trust"]:
         begin_installation_command()
+    # A build binds the home's own view of its bakery the first time the home builds (BE-01).
+    if command in ["run", "test", "build"]:
+        match selected_home_view():
+            Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+            Ok(_) => pass
     if command == "--internal-readmit":
         # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
         # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
@@ -812,13 +819,15 @@ def project_cases(options: Options, runner: RunnerOptions) -> Result[Collected, 
 def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], root: Path) -> Result[Collected, str]:
     """
     Compile each test module and collect its tests: listings name a module below `root`, and reports below the working
-    directory. A failed module keeps its compilation status.
+    directory. A failed module keeps its compilation status. Under one job, the modules that share a plain session
+    conftest fixture run from one batch unit instead, its cases in place of theirs (`test_batches`).
     """
     mut here = root
     match Path.cwd():
         Ok(directory) => here = directory
         Err(_) => pass
     mut collected = Collected()
+    mut found: list[list[TestCase]] = []
     for source in sources:
         mut selected = options
         selected.path = source.0
@@ -826,11 +835,60 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
         if code != 0:
             if collected.compiled == 0:
                 collected.compiled = code
+            found.append([])
             continue
         reported = relative_name(source, here)
-        for test_case in collected_cases(binary, relative_name(source, root), source.name(), reported)?:
-            collected.cases.append(test_case)
+        found.append(collected_cases(binary, relative_name(source, root), source.name(), reported)?)
+    mut batches: list[list[int]] = []
+    if runner.jobs == 1 and not runner.list:
+        batches = batch_groups(found)
+    for position in range(len(sources)):
+        match batch_of(batches, position):
+            None =>
+                for test_case in found[position]:
+                    collected.cases.append(test_case)
+            Some(batch) =>
+                if batch[0] == position:
+                    members = [sources[member] for member in batch]
+                    code, cases = batch_cases(options, runner, members, root, here)?
+                    if code != 0 and collected.compiled == 0:
+                        collected.compiled = code
+                    for test_case in cases:
+                        collected.cases.append(test_case)
     return Ok(collected)
+
+
+def batch_cases(
+    options: Options,
+    runner: RunnerOptions,
+    members: list[Path],
+    root: Path,
+    here: Path,
+) -> Result[tuple[i32, list[TestCase]], str]:
+    """
+    Compile a batch unit in this process, the first member its entry, and collect its cases, each named by the module
+    it belongs to as that module's own cases are.
+    """
+    mut unit = describe(members[0], options.profile, options.request, options.manifests, purpose=ActivationPurpose.Test)?
+    unit.kind = "test"
+    unit.test_batch = [member.0 for member in members[1:]]
+    for feature in runner.features:
+        if feature not in unit.active_features:
+            unit.active_features.append(feature)
+    code, binary = compile_tests(unit, toolchain_for(unit)?)?
+    if code != 0:
+        return Ok((code, []))
+    mut cases: list[TestCase] = []
+    for test_case in collected_cases(binary, "", "", "")?:
+        match module_of(test_case, members, Path(unit.project_root)):
+            None => return Err(f"batch unit {binary.0} reports a case of an unknown module {test_case.module}")
+            Some(module) =>
+                mut named = test_case
+                named.file = relative_name(module, root)
+                named.label = module.name()
+                named.path = relative_name(module, here)
+                cases.append(named)
+    return Ok((code, cases))
 
 
 def relative_name(source: Path, root: Path) -> str:

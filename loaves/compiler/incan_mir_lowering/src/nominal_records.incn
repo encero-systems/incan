@@ -88,10 +88,14 @@ pub def retain_named_scalar(
     runtime: &list[ExternalFunction],
     unit: &UnitNominals,
     positions: list[tuple[int, int]] = [],
+    frames: list[Function] = [],
 ) -> Result[list[NominalReference], str]:
-    """Retain a fresh product naming each model and enum it uses by declaration; return their current positions."""
-    references = product_nominals(function, runtime)?
-    retain_scalar(directory, inputs, function, runtime, describe_nominals(references, unit)?, positions)?
+    """
+    Retain a fresh product, with the helper frames its lowering synthesized, naming each model and enum it uses by
+    declaration; return their current positions.
+    """
+    references = product_nominals(function, runtime, frames)?
+    retain_scalar(directory, inputs, function, runtime, describe_nominals(references, unit)?, positions, frames)?
     return Ok(references)
 
 

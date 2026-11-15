@@ -2,6 +2,8 @@
 # cli-commands:
 #   test tests/test_lazy.incn --nocapture
 # expect-stdout:
+#
+#   running 1 test
 #   early test
 #   test_lazy.incn::test_early PASSED
 #   late setup
@@ -9,6 +11,10 @@
 #   test_lazy.incn::test_uses_late PASSED
 #   after
 #   late teardown
+#   test incan_case_group ... ok
+#
+#   test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <duration>
+#
 #   test_lazy.incn::test_after PASSED
 
 def main() -> None:

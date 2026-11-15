@@ -1,6 +1,6 @@
 """Engine control-channel boundaries reject malformed input before allocating or admitting work."""
 
-from core_process import Process, spawn_detached
+from core_process import Process, executable, spawn_detached
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from rust::std::string import String as RustString
@@ -11,7 +11,7 @@ from files import write, json_text
 from bakery_roots import Collected, collect
 from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
-from engine_client import service_identity
+from engine_client import service_generation, service_identity
 from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
@@ -19,9 +19,7 @@ from std.json import JsonValue, parse
 from rust::std::process import Child, Command
 from pub::incan_platform.ipc import Connection, dial, listen
 from engine_endpoint import endpoint, handshake, owner_uid, connect_with
-from observation import observe
 from toolchain import load_toolchain, toolchain_directory
-from unit_freshness import fingerprint
 from engine_channel import Channel, SendOutcome
 from engine_codec import decode, encode
 from engine_messages import (
@@ -217,6 +215,18 @@ def detail(refusal: Refusal) -> str:
     return refusal.detail
 
 
+pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[None, str]:
+    """Byte-identical engine executables negotiate one service generation after installation relocation."""
+    scratch = scratch_directory()?
+    binary = Path(executable()?)
+    relocated = scratch.path().joinpath("relocated-oven")
+    relocated.write_bytes(binary.read_bytes().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    assert service_generation(binary.0)? == service_generation(relocated.0)?
+    return Ok(None)
+
+
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     """Full identities gate admission, drain settles existing work, and every live interest prevents idle exit."""
     admission = scratch_directory()?
@@ -338,7 +348,7 @@ def check_project_directory_selection() -> Result[None, str]:
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"project records run: status={outcome.status.code()} stderr={error}")
     mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    identity.service_generation = service_generation(binary)?
     mut channel = connect_with(store, identity, binary).map_err(detail)?
     channel.send(zero_id(), Message.Stop(Stop(reason="project selection proof completed"))).map_err(detail)?
     stopped = channel.receive().map_err(detail)?
@@ -821,7 +831,7 @@ def run_to_barrier(binary: str, source: Path, store: Path, barrier: Barrier) -> 
 def stop_engine(store: Path, binary: str) -> Result[None, str]:
     """Stop the records engine serving `store`, and require its acknowledgment."""
     mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    identity.service_generation = service_generation(binary)?
     mut channel = connect_with(store, identity, binary).map_err(detail)?
     channel.send(zero_id(), Message.Stop(Stop(reason="execution collection proof completed"))).map_err(detail)?
     stopped = channel.receive().map_err(detail)?

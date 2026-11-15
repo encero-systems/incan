@@ -23,10 +23,11 @@ pub(crate) const GROUP: &str = "incan_case_group";
 /// The environment variable the runner names a group's selected case entries in, separated by commas.
 const SELECTED_CASES: &str = "INCAN_TEST_CASES";
 
-/// One case a group runs: the function that runs it, the test's return type, whether that function is async, and the
-/// shared `yield` fixtures it needs, each after those it depends on.
+/// One case a group runs: the function that runs it, the marker the group prints and selects it by, the test's return
+/// type, whether that function is async, and the shared `yield` fixtures it needs, each after those it depends on.
 pub(crate) struct Member {
     pub(crate) entry: String,
+    pub(crate) marker: String,
     pub(crate) returns: String,
     pub(crate) asynchronous: bool,
     pub(crate) yields: Vec<String>,
@@ -129,7 +130,8 @@ pub(crate) fn write_group(writer: &EntryWriter<'_>, members: &[Member], requeste
     writer.uses_group();
     let blocking = Blocking::default();
     let mut written = String::new();
-    for fixture in &order {
+    // A batch's conftest holds a hosted fixture's static and accessor (`crate::test_batch`).
+    for fixture in order.iter().filter(|fixture| !writer.hosted.contains(&fixture.name)) {
         written.push_str(&shared_storage(writer, fixture, &blocking)?);
     }
     if order.iter().any(|fixture| fixture.has_teardown && fixture.is_async) {
@@ -138,7 +140,13 @@ pub(crate) fn write_group(writer: &EntryWriter<'_>, members: &[Member], requeste
     for fixture in order.iter().filter(|fixture| fixture.has_teardown) {
         written.push_str(&yield_entry(writer, fixture, &blocking)?);
     }
-    written.push_str(&function(GROUP, &[], NONE_TYPE_NAME, &[format!("{GROUP}_run(0)")]));
+    // A batch's entry module runs every module's group through its public entry.
+    let group = function(GROUP, &[], NONE_TYPE_NAME, &[format!("{GROUP}_run(0)")]);
+    if writer.batch.is_some() {
+        written.push_str(&group.replacen("\ndef ", "\npub def ", 1));
+    } else {
+        written.push_str(&group);
+    }
     written.push_str(&run_function(writer, members, &blocking)?);
     written.push_str(&format!(
         "\n\ndef {PREFIX}_selected(entry: str) -> bool:\n    selected = {PREFIX}_get_or(\"{SELECTED_CASES}\", \"\")\n    return selected == \"\" or entry in selected.split(\",\")\n"
@@ -241,8 +249,8 @@ fn run_function(writer: &EntryWriter<'_>, members: &[Member], blocking: &Blockin
     let mut run = Vec::new();
     let mut written = String::new();
     for (position, member) in members.iter().enumerate() {
-        let entry = &member.entry;
-        run.push(format!("if {start} <= {position} and {PREFIX}_selected(\"{entry}\"):"));
+        let marker = &member.marker;
+        run.push(format!("if {start} <= {position} and {PREFIX}_selected(\"{marker}\"):"));
         for name in &member.yields {
             let asynchronous = writer.fixtures.get(name).is_some_and(|fixture| fixture.is_async);
             let enter = if asynchronous {
@@ -269,7 +277,7 @@ fn run_function(writer: &EntryWriter<'_>, members: &[Member], blocking: &Blockin
 /// The lines that run one case between its markers, its failure caught and its own duration measured.
 fn member_block(member: &Member, position: usize) -> Vec<String> {
     let (_, _, some, none) = constructor_spellings();
-    let entry = &member.entry;
+    let entry = &member.marker;
     let outcome = if member.asynchronous {
         format!("{GROUP}_threaded_{position}()")
     } else {
@@ -401,7 +409,7 @@ fn function(name: &str, parameters: &[String], returns: &str, body: &[String]) -
 }
 
 /// A shared fixture's written return type, the type of the static that holds its value.
-fn return_type(writer: &EntryWriter<'_>, name: &str) -> Result<String, String> {
+pub(crate) fn return_type(writer: &EntryWriter<'_>, name: &str) -> Result<String, String> {
     let function = writer.function(name)?;
     let written = writer
         .text(function.return_type.span.start, function.return_type.span.end)

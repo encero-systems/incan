@@ -1,0 +1,41 @@
+"""Installation admits the compiler records a toolchain ships, without running a compiler (RFC 179)."""
+
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.json import JsonValue
+from scratch import scratch_directory
+from compiler_record_admission import SHIPPED_RECORDS, convert
+
+
+pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() -> Result[None, str]:
+    """
+    A toolchain that ships its record export installs with a driver that cannot run.
+
+    1. Ship one record object and the export index beside the toolchain.
+    2. Convert with a driver file that is not executable: only admission may happen.
+    3. The sealed set and its pin exist.
+    """
+    scratch = scratch_directory()?
+    installed = scratch.path().joinpath("toolchain")
+    export = installed.joinpath(SHIPPED_RECORDS)
+    # 1. One content-named object and the index that names it.
+    export.joinpath("objects").mkdir(true, true).map_err((error) => error.message())?
+    value = b"shipped record"
+    revision = hexlify(sha256.digest(value))
+    object = f"objects/{revision}"
+    export.joinpath(object).write_bytes(value).map_err((error) => error.message())?
+    key = JsonValue.string(f"loaf/debug/probe/metadata/00000000/{revision}")
+    record = JsonValue.object({"key": key, "revision": JsonValue.string(revision), "object": JsonValue.string(object)})
+    schema = JsonValue.string("incan.compiler-record-export/2")
+    index = JsonValue.object({"schema": schema, "records": JsonValue.array([record])})
+    text = index.to_json().map_err((error) => error.message())?
+    export.joinpath("index.json").write_bytes(text.encode("utf-8")).map_err((error) => error.message())?
+    # 2. The driver exists, so its digest can name the producer, but running it would fail.
+    driver = installed.joinpath("bin").joinpath("incan-rustc-driver")
+    driver.parent().mkdir(true, true).map_err((error) => error.message())?
+    driver.write_bytes(b"not a program").map_err((error) => error.message())?
+    pin = convert(driver.0, installed, installed)?
+    # 3. Admission published the set the pin names.
+    assert pin.root == "compiler-records", "the pin names the installed set"
+    assert installed.joinpath("compiler-records").joinpath("manifest.json").is_file(), "the set is published"
+    return Ok(None)

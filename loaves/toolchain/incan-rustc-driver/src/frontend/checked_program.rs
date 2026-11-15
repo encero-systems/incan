@@ -223,18 +223,43 @@ pub(super) fn runtime_declarations(
     Ok(bindings)
 }
 
-/// Collect a test unit's modules again with the test file read from `source`: the file with its conftests and its
-/// generated case entries (`crate::test_cases`). The test module keeps its logical identity, as ordinary collection
-/// gives it.
+/// Collect a test unit's modules again with each checked file read from `sources`: the test file with its conftests
+/// and its generated case entries (`crate::test_cases`), and in a batch the other modules and hosting conftests. The
+/// test module keeps its logical identity, as ordinary collection gives it; outside the source root, a batch's entry
+/// module is spelled from the batch's frame, as the modules it imports are (`crate::test_batch`).
 fn collect_test_entries(
     path: &Path,
-    source: String,
+    sources: Vec<(PathBuf, String)>,
+    frame: Option<&Path>,
     session: &CompilationSession,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let segments = incan_frontend::module::logical_module_segments_from_file(&session.source_root, path)
+        .or_else(|| frame.and_then(|frame| incan_frontend::module::logical_module_segments_from_file(frame, path)))
         .unwrap_or_else(|| vec!["main".to_string()]);
-    let overlay = std::collections::HashMap::from([(path.to_path_buf(), source)]);
+    let overlay: std::collections::HashMap<PathBuf, String> = sources.into_iter().collect();
     incan_driver::modules::collect_document_modules(path.to_path_buf(), session, segments, &overlay)
+}
+
+/// Merge lowering witnesses from independent accepted products while refusing disagreement for one compiler owner.
+fn canonical_lowering_inputs(
+    inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+) -> Result<Vec<(incan_semantics_core::CompilerNodeId, String)>, String> {
+    let mut canonical = BTreeMap::new();
+    for (identity, witness) in inputs {
+        match canonical.entry(identity) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(witness);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) if entry.get() != &witness => {
+                return Err(format!(
+                    "conflicting lowering witnesses for Body IR owner {}",
+                    entry.key().path()
+                ));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    Ok(canonical.into_iter().collect())
 }
 
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
@@ -290,10 +315,19 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     let collected = crate::test_unit::collect(unit, &session)?;
     // A test file whose tests take fixtures or parameters is checked with its generated case entries, and rustc reads
-    // their spans from the same text.
-    crate::spans::retain_checked_source(&path, collected.source.as_deref())?;
-    if let Some(source) = collected.source {
-        modules = collect_test_entries(&path, source, &session).map_err(|failure| receipt.diagnostic(failure))?;
+    // their spans from the same text; so is every module and hosting conftest of a test batch.
+    let entry_text = collected
+        .sources
+        .iter()
+        .find(|(file, _)| *file == path)
+        .map(|(_, text)| text.as_str());
+    crate::spans::retain_checked_source(&path, entry_text)?;
+    for (file, text) in collected.sources.iter().filter(|(file, _)| *file != path) {
+        crate::spans::retain_checked_source(file, Some(text))?;
+    }
+    if entry_text.is_some() {
+        modules = collect_test_entries(&path, collected.sources, collected.frame.as_deref(), &session)
+            .map_err(|failure| receipt.diagnostic(failure))?;
         session
             .resolve_rust_facts(&modules)
             .map_err(|error| error.to_string())?;
@@ -436,6 +470,7 @@ pub(super) fn checked_modules(
             .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
         cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
     }
+    let cacheable_bodies = canonical_lowering_inputs(cacheable_bodies)?;
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
     let graph = if library && collect_codegraph {
@@ -1140,6 +1175,33 @@ mod shared_identity_tests {
         assert!(
             Arc::ptr_eq(kept, &complete),
             "a map that already named every identity was copied"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_lowering_inputs;
+    use incan_semantics_core::CompilerNodeId;
+
+    /// Callable and namespace products may repeat one witness, but may not disagree about an owner.
+    #[test]
+    fn lowering_witnesses_are_unique_by_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let value = CompilerNodeId::declaration_span("main", 0, 12);
+        let other = CompilerNodeId::declaration_span("main", 14, 30);
+        let inputs = vec![
+            (value.clone(), "body:a".to_owned()),
+            (other.clone(), "body:b".to_owned()),
+            (value.clone(), "body:a".to_owned()),
+        ];
+        assert_eq!(
+            canonical_lowering_inputs(inputs)?,
+            vec![(value.clone(), "body:a".to_owned()), (other, "body:b".to_owned())]
+        );
+        assert_eq!(
+            canonical_lowering_inputs(vec![(value.clone(), "body:a".to_owned()), (value, "body:b".to_owned())]),
+            Err("conflicting lowering witnesses for Body IR owner main#decl.0..12".to_owned())
         );
         Ok(())
     }

@@ -62,10 +62,11 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | --- | --- |
 | `# behavior: <one line>` | What the case proves. Required, once. |
 | `# retires: <path>.rs::<fn>` | The retired test the case replaces. Repeatable. |
-| `# expect-stdout:` | The whole stdout, one indented line per line. Exact; an empty block means nothing is printed. |
+| `# expect-stdout:` | The whole stdout, one indented line per line. Exact; an empty block means nothing is printed. A line may hold one `<duration>`, which matches a printed number of seconds such as `0.00s`. |
 | `# expect-stdout-contains:` | Lines that must each appear as a whole stdout line. Not with `expect-stdout`. |
 | `# expect-stderr:` | The whole stderr, one indented line per line. Exact; an empty block means nothing is printed. |
 | `# expect-stderr-contains:` | Substrings that must each appear in stderr. |
+| `# expect-stderr-once:` | Substrings that must each appear in stderr exactly once, such as a failure that must be reported once. |
 | `# expect-exit: <n>` | The exit code, `0` to `255`. Default `0`. |
 | `# expect-diagnostic: <CODE>` | The program is refused at check time with this code. Repeatable. Never with a run expectation. |
 | `# expect-accepted:` | The program checks without errors and is never run. |

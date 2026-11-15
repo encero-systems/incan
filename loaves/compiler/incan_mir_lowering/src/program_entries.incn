@@ -498,13 +498,12 @@ def lower_ordinary_frame(
                 evaluator_name(context, body),
                 "checker supplied no complete scalar body witness",
             )?
-    original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
         if let Some(witness) = inputs:
             sync_carriers(nominals, program, intrinsics)
             current = Some(location(body.span, source, file))
             if let Some(product) = retained_scalar(directory, witness, nominals, current, positions):
-                function, runtime, references = product
+                function, runtime, references, frames = product
                 report_scalar(
                     record_report,
                     directory,
@@ -516,7 +515,8 @@ def lower_ordinary_frame(
                     references,
                     positions,
                 )?
-                return Ok((function, runtime, [], []))
+                # A reused product returns the helper frames its lowering once synthesized, as lowering would.
+                return Ok((function, runtime, [], frames))
     function, runtime, pending, synthesized = lower_function(
         context,
         program,
@@ -528,10 +528,13 @@ def lower_ordinary_frame(
         [],
         DecoratorFrame.Normal,
     )?
-    if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
+    # A product carries synthesized helper frames, and names any carrier this lowering admitted by declaration, so a
+    # reuse needs that carrier present already. Only generic instance requests stay outside a product.
+    if len(pending) == 0:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                match retain_named_scalar(directory, witness, function, runtime, nominals, positions):
+                sync_carriers(nominals, program, intrinsics)
+                match retain_named_scalar(directory, witness, function, runtime, nominals, positions, synthesized):
                     Ok(references) =>
                         report_scalar(
                             record_report,
@@ -550,7 +553,7 @@ def lower_ordinary_frame(
                         if record_report is not None:
                             report_scalar_refusal(record_report, record_identity, function.name, reason)?
     elif record_report is not None and inputs is not None:
-        refusal = lowering_refusal(len(pending), len(synthesized), len(intrinsics) - original_intrinsics)
+        refusal = lowering_refusal(len(pending), 0, 0)
         report_scalar_refusal(record_report, record_identity, function.name, refusal)?
     return Ok((function, runtime, pending, synthesized))
 

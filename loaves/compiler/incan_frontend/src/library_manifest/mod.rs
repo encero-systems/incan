@@ -6,6 +6,7 @@
 //! and write APIs.
 
 mod checked_replay;
+pub mod compiler_records;
 mod model;
 pub(crate) mod ownership;
 pub mod public_identities;

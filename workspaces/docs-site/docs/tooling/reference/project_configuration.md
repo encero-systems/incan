@@ -8,7 +8,7 @@ The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`
 
 ## `[project]`
 
-`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `license`, `license-files`, `readme`, `requires-incan` and `private`. Accepting a metadata field does not enforce a compiler-version requirement.
+`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. Accepting a metadata field does not enforce a compiler-version requirement.
 
 ```toml
 [project]

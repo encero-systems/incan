@@ -272,7 +272,10 @@ pub model PreparedInspection:
     pub def snapshot(self) -> Result[str, str]:
         """Identify the exact prepared inputs used by feedback and the answer in this request."""
         if let Some(page) = self.page:
-            return Ok(page.snapshot)
+            if page.snapshot != "":
+                return Ok(page.snapshot)
+            # A page answered without a snapshot, as a plain query is, cannot name one; the request is prepared now.
+            return prepare_cold(self.selected, self.key, self.toolchain)?.snapshot()
         return snapshot_identity(self.paths, self.root, self.selected.strict)
 
     pub def respond(self, preferences: Dict[str, int] = {}) -> Result[str, str]:
@@ -282,14 +285,14 @@ pub model PreparedInspection:
         request is prepared now.
         """
         if let Some(page) = self.page:
-            if let Some(answer) = page.answer(preferences):
+            if let Some(answer) = page.answer(preferences)?:
                 trace(f"graph page {self.key[:12]}: warm")
                 return Ok(answer)
-            return prepare_cold(self.selected, self.key)?.respond(preferences)
-        answer = response(self.paths, self.root, self.selected, self.toolchain, preferences)?
+            return prepare_cold(self.selected, self.key, self.toolchain)?.respond(preferences)
+        answered = response(self.paths, self.root, self.selected, self.toolchain, preferences, self.key != "")?
         if self.key != "":
-            keep_page(self, preferences, answer)
-        return Ok(answer)
+            keep_page(self, preferences, answered)
+        return Ok(answered.text)
 
 
 pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection, str]:
@@ -297,37 +300,44 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     Prepare a validated graph request, or find the bakery page that answers it; CLI syntax failures never enter this
     boundary.
 
-    1. Resolve the path and identify the request.
+    1. Resolve the path, read the installed toolchain and identify the request.
     2. A page whose inputs all have the metadata they had answers it: nothing is prepared.
     3. Otherwise prepare it, watching the inputs its answer will be paged with.
     """
-    # 1. Path failures are execution errors after syntax has been admitted.
+    # 1. Path and installation failures are execution errors after syntax has been admitted.
     path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
-    key = page_key(selected, path)?
-    # 2. A warm request reads one bakery record and checks its inputs' metadata.
+    toolchain = load_toolchain()?
+    key = page_key(selected, path, toolchain)?
+    # 2. A warm request reads its page and checks its inputs' metadata.
     if key != "":
         if let Some(page) = warm_page(key)?:
             return Ok(
-                PreparedInspection(paths=[], root=path.0, selected=selected, toolchain=load_toolchain()?, key=key, page=Some(page)),
+                PreparedInspection(
+                    paths=[],
+                    root=path.0,
+                    selected=selected,
+                    toolchain=toolchain,
+                    key=key,
+                    page=Some(page),
+                ),
             )
     # 3. A cold request prepares, as before.
-    return prepare_cold(selected, key)
+    return prepare_cold(selected, key, toolchain)
 
 
-def prepare_cold(selected: GraphOptions, key: str) -> Result[PreparedInspection, str]:
+def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Result[PreparedInspection, str]:
     """
     Prepare a validated graph request.
 
-    1. Resolve the path and read the installed toolchain; a paged request watches its inputs from here on.
+    1. Resolve the path; a paged request watches its inputs from here on.
     2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
     3. Return the prepared selection to the shared inspection boundary.
     """
-    # 1. Path and installation failures are execution errors after syntax has been admitted.
+    # 1. Path failures are execution errors after syntax has been admitted.
     started = Instant.now()
     path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     if key != "":
         watch_inputs()
-    toolchain = load_toolchain()?
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
     source = entry_source(path)
     mut paths: list[GraphUnit] = []
@@ -348,40 +358,55 @@ def prepare_cold(selected: GraphOptions, key: str) -> Result[PreparedInspection,
     return Ok(PreparedInspection(paths=paths, root=path.0, selected=selected, toolchain=toolchain, key=key))
 
 
-def page_key(selected: GraphOptions, path: Path) -> Result[str, str]:
+def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result[str, str]:
     """
-    The page identity of a request: every graph option and the resolved path. Only an Incan source's answer is paged,
-    and never a process-risk answer, which observes running processes.
+    The page identity of a request: every graph option and the resolved path. An Incan source's answer and a Rust
+    project's are paged; a process-risk answer, which observes running processes, never is.
     """
-    source = entry_source(path)
-    if selected.risk or not source.is_file() or not source.name().endswith(".incn"):
+    if selected.risk:
         return Ok("")
-    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query, selected.term]
+    source = entry_source(path)
+    mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query]
+    parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
     parts = parts + [selected.task, str(selected.budget), ",".join(selected.request.features)]
     parts = parts + [str(selected.request.default_features), str(selected.request.all_features)]
     for name in sorted([name for name in selected.substitutes.keys()]):
         parts.append(f"substitute:{name}={selected.substitutes[name]}")
-    return request_key(parts)
+    return request_key(parts, toolchain)
 
 
-def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answer: str) -> None:
+def keep_page(prepared: PreparedInspection, preferences: Dict[str, int], answered: Answered) -> None:
     """
-    Keep a cold answer in its bakery page, with the snapshot it was answered from and its inputs' metadata. An answer
-    with unchecked units is not paged, since its warnings belong to the request; failing to page never fails it.
+    Keep a cold answer in its bakery page, with the snapshot the response computed (none for a plain query) and its
+    inputs' metadata. An answer with unchecked units is not paged, since its warnings belong to the request; failing
+    to page never fails it.
     """
-    match keep_checked_page(prepared, preferences, answer):
-        Ok(kept) => trace(f"graph page {prepared.key[:12]}: kept={kept}")
+    started = Instant.now()
+    match keep_checked_page(prepared, preferences, answered):
+        Ok(kept) => trace(f"graph page {prepared.key[:12]}: kept={kept} in {started.elapsed().as_millis()} ms")
         Err(reason) => trace(f"graph page {prepared.key[:12]}: not kept: {reason}")
 
 
-def keep_checked_page(prepared: PreparedInspection, preferences: Dict[str, int], answer: str) -> Result[bool, str]:
+def keep_checked_page(
+    prepared: PreparedInspection,
+    preferences: Dict[str, int],
+    answered: Answered,
+) -> Result[bool, str]:
     """Publish the page of a checked answer; `false` when an input is unsettled or a unit is unchecked."""
-    if len(unchecked_notes(prepared.paths)?) > 0:
-        _ = watched_inputs()
+    observed = watched_inputs()
+    if answered.unchecked:
         return Ok(false)
-    snapshot = snapshot_identity(prepared.paths, prepared.root, prepared.selected.strict)?
-    return publish_page(prepared.key, watched_inputs().stamps, snapshot, preferences, answer)
+    return publish_page(prepared.key, observed, answered.snapshot, preferences, answered.text)
+
+
+pub model Answered:
+    """One rendered answer and the snapshot it was answered from; a plain query computes none, so its is empty."""
+
+    pub text: str
+    pub snapshot: str = ""
+    # Whether a selected unit failed checking, so the answer carries warnings that belong to its request.
+    pub unchecked: bool = false
 
 
 def entry_source(path: Path) -> Path:
@@ -409,11 +434,13 @@ def response(
     selected: GraphOptions,
     toolchain: Toolchain,
     preferences: Dict[str, int],
-) -> Result[str, str]:
+    paged: bool = false,
+) -> Result[Answered, str]:
     """
     Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
 
     Every unit that failed checking is named on stderr, one line each, before any answer; `--strict` refuses instead.
+    A paged request's answer that would be cached under its own root is rendered without that cache: its page keeps it.
 
     1. Units that failed checking are named, or refused with `--strict`.
     2. An answer cached under the digest of the selection and the units' graphs is returned as it is.
@@ -428,6 +455,7 @@ def response(
         return Err("\n".join([unchecked_refusal(note) for note in notes]))
     for note in notes:
         warn(unchecked_warning(note))
+    degraded = len(notes) > 0
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
     mut snapshot = ""
     if needs_snapshot(selected):
@@ -442,26 +470,33 @@ def response(
             observed = JsonValue.array(process).to_json().map_err((error) => error.message())?
             snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"
     if selected.stale != "":
-        return json_text(snapshot_status(selected.stale, snapshot))
+        status = json_text(snapshot_status(selected.stale, snapshot))?
+        return Ok(Answered(text=status, snapshot=snapshot, unchecked=degraded))
     portable = shared_query(selected)
+    if paged and not portable:
+        # The request's page keeps this answer; a presentation cache keyed by the same root would only duplicate it.
+        rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
+        return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
     mut inputs: list[str] = []
     match presentation_inputs(paths, root, selected, snapshot, preferences, portable)?:
-        None => return render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)
+        None =>
+            rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
+            return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
         Some(ready) => inputs = ready
     cached = Path(f"{cache_file(fingerprint(inputs)?)?.0}.answer")
     trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
     if cached.is_file():
-        return read(cached)
+        return Ok(Answered(text=read(cached)?, snapshot=snapshot, unchecked=degraded))
     # 3. A missing answer is rendered once, after rechecking its claim.
     held = claim(bakery()?, fingerprint(["graph-answer"] + inputs)?)?
     if cached.is_file():
-        return read(cached)
+        return Ok(Answered(text=read(cached)?, snapshot=snapshot, unchecked=degraded))
     evaluation = Instant.now()
     rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
     if not portable or portable_answer(rendered):
         publish(cached, rendered)?
     trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
-    return Ok(rendered)
+    return Ok(Answered(text=rendered, snapshot=snapshot, unchecked=degraded))
 
 
 def needs_snapshot(selected: GraphOptions) -> bool:

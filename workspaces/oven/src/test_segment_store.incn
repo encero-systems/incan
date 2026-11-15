@@ -24,6 +24,7 @@ from pub::incan_platform.store import (
     Lookup,
     Snapshot,
     begin,
+    begin_compared,
     commit,
     commit_group,
     commit_pinned,
@@ -767,4 +768,28 @@ def verify_work_observer(root: Path) -> Result[None, str]:
     observe_work(WorkObserver())
     _ = write_one(root, "key", "next").map_err((error) => error.message())?
     assert observed_work.get("store_lock", 0) == calls, "disabled observer still received work"
+    return Ok(None)
+
+
+pub def test_publishing_a_view_compares_the_revision_it_read() -> Result[None, str]:
+    """
+    A compared publication commits only onto the view revision its transaction read: a second writer that read the
+    same revision and writes something else is refused, one whose writes are already there publishes nothing, a
+    fresh read publishes, and the source the view was forked from never sees the project's writes.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    home = write_one(root, "shared", "base").map_err((error) => error.message())?
+    _ = fork(home, "project").map_err((error) => error.message())?
+    read = snapshot(root, "project").map_err((error) => error.message())?
+    first = commit(put(begin_compared(read), "head", b"one")).map_err((error) => error.message())?
+    assert text(lookup(first, "head")) == "one"
+    assert error_kind(commit(put(begin_compared(read), "head", b"two"))) == "conflict", "a stale revision published"
+    already = commit(put(begin_compared(read), "head", b"one"))
+    assert error_kind(already) == "ok", "an already published write was refused"
+    fresh = snapshot(root, "project").map_err((error) => error.message())?
+    second = commit(put(begin_compared(fresh), "head", b"two")).map_err((error) => error.message())?
+    assert text(lookup(second, "head")) == "two"
+    assert text(lookup(snapshot(root).map_err((error) => error.message())?, "head")) == "<absent>"
+    assert text(lookup(second, "shared")) == "base"
     return Ok(None)

@@ -89,6 +89,14 @@ enum StoredTarget:
     Instantiated(str, list[StoredType])
     CloneModel(int)
     CloneEnum(int)
+    ClosureBody(str, int)
+    ClosureBodyOnce(str, int)
+    CallClosure(list[StoredType])
+    CallClosureOnce(list[StoredType])
+    CallBorrowingClosure(list[StoredType])
+    SharedCallableBody(list[StoredType])
+    CloneClosure(list[StoredType])
+    Value(StoredOperand)
 
 
 @derive(Serialize, Deserialize)
@@ -150,18 +158,24 @@ model StoredProduct:
     A complete function and its dependency requirements, authenticated together by the store owner.
 
     `nominals` names, for each product-local ordinal in first-seen order, the model or enum declaration it stands for.
+    `frames` are the helper frames lowering synthesized for the function, such as lifted closures, in emission order.
     """
 
     schema: int
     function: str
     runtime: list[StoredExternal]
     nominals: list[ProductNominal]
+    frames: list[str]
 
 
-pub def product_nominals(function: &Function, runtime: &list[ExternalFunction]) -> Result[list[NominalReference], str]:
+pub def product_nominals(
+    function: &Function,
+    runtime: &list[ExternalFunction],
+    frames: list[Function] = [],
+) -> Result[list[NominalReference], str]:
     """Name the unit positions a product of this function would retain, in the product's first-seen ordinal order."""
     mut remap = capture_remap()
-    _stored = stored_product(function, runtime, remap)?
+    _stored = stored_product(function, runtime, frames, remap)?
     return Ok(remap.references)
 
 
@@ -169,17 +183,19 @@ pub def encode_product(
     function: &Function,
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal] = [],
+    frames: list[Function] = [],
 ) -> Result[str, str]:
     """
-    Retain a complete function and its dependency requirements, naming every model and enum by declaration identity.
+    Retain a complete function, its synthesized helper frames and its dependency requirements, naming every model and
+    enum by declaration identity.
 
-    1. Loss-check the function and encode every external signature field with product-local nominal ordinals.
+    1. Loss-check the function, its frames and every external signature field with product-local nominal ordinals.
     2. Require one declaration identity for each ordinal, in first-seen order.
     3. Restore the product at the captured positions and require exact equality before publication.
     """
     # 1. Unsupported carriers still refuse capture rather than omit dependency facts.
     mut remap = capture_remap()
-    mut stored = stored_product(function, runtime, remap)?
+    mut stored = stored_product(function, runtime, frames, remap)?
     # 2. An ordinal without an identity would only be meaningful in the producing unit.
     if len(nominals) != len(remap.references):
         return Err("plan product names a model or enum without a declaration identity")
@@ -194,15 +210,46 @@ pub def encode_product(
         return Err("scalar function product round trip changed native facts")
     if not same_runtime(restored, runtime):
         return Err("native product round trip changed its dependency requirements")
+    restored_frames = decode_frames(text, remap.references)?
+    if len(restored_frames) != len(frames):
+        return Err("native product round trip changed its helper frames")
+    for index in range(len(frames)):
+        if not same_function(restored_frames[index], frames[index]):
+            return Err("native product round trip changed its helper frames")
     return Ok(text)
 
 
 pub def product_identities(text: str) -> Result[list[ProductNominal], str]:
     """Read the declarations a product names, so its consumer can resolve each one in the current unit."""
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 5:
+    if stored.schema != 6:
         return Err("unknown native product schema")
     return Ok(stored.nominals)
+
+
+pub def product_frame_names(text: str) -> Result[list[str], str]:
+    """Name a product's helper frames in emission order, without resolving any declaration."""
+    stored = decode_product_record(text).map_err((error) => str(error))?
+    if stored.schema != 6:
+        return Err("unknown native product schema")
+    mut names: list[str] = []
+    for frame in stored.frames:
+        names.append(decode_record(frame).map_err((error) => str(error))?.name)
+    return Ok(names)
+
+
+pub def decode_frames(text: str, references: list[NominalReference] = []) -> Result[list[Function], str]:
+    """Restore a product's helper frames, binding their ordinals exactly as the product's function binds them."""
+    stored = decode_product_record(text).map_err((error) => str(error))?
+    if stored.schema != 6:
+        return Err("unknown native product schema")
+    if len(references) != len(stored.nominals):
+        return Err("plan product declaration identities differ from their resolved positions")
+    mut remap = binding_remap(references)
+    mut frames: list[Function] = []
+    for frame in stored.frames:
+        frames.append(decode_function(frame, remap)?)
+    return Ok(frames)
 
 
 pub def decode_product(
@@ -218,7 +265,7 @@ pub def decode_product(
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 5:
+    if stored.schema != 6:
         return Err("unknown native product schema")
     # 2. The consumer resolves declarations; this codec only checks that every ordinal has a position.
     if len(references) != len(stored.nominals):
@@ -278,15 +325,19 @@ pub def decode_scalar(text: str) -> Result[Function, str]:
 def stored_product(
     function: &Function,
     runtime: &list[ExternalFunction],
+    frames: list[Function],
     mut remap: NominalRemap,
 ) -> Result[StoredProduct, str]:
-    """Encode the function and then its requirements, assigning nominal ordinals in that first-seen order."""
+    """Encode the function, its requirements and then its frames, assigning nominal ordinals in that first-seen order."""
     encoded = encode_function(function, remap)?
     mut externals: list[StoredExternal] = []
     for value in runtime:
         externals.append(store_external(value, remap)?)
+    mut stored_frames: list[str] = []
+    for frame in frames:
+        stored_frames.append(encode_function(frame, remap)?)
     nominals: list[ProductNominal] = []
-    return Ok(StoredProduct(schema=5, function=encoded, runtime=externals, nominals=nominals))
+    return Ok(StoredProduct(schema=6, function=encoded, runtime=externals, nominals=nominals, frames=stored_frames))
 
 
 def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str, str]:
@@ -596,6 +647,22 @@ def store_target(target: CalleeKind, mut remap: NominalRemap) -> Result[StoredTa
             return Ok(StoredTarget.Instantiated(store_binding(path)?, store_types(arguments, remap)?))
         CalleeKind.CloneModel(owner, name) => return Ok(StoredTarget.CloneModel(remap.slot(NominalKind.Model, owner, name)?.index))
         CalleeKind.CloneEnum(owner, name) => return Ok(StoredTarget.CloneEnum(remap.slot(NominalKind.Enum, owner, name)?.index))
+        _ => return store_closure_target(target, remap)
+
+
+def store_closure_target(target: CalleeKind, mut remap: NominalRemap) -> Result[StoredTarget, str]:
+    """Retain calls into lifted closure frames and callable values; the frames travel in the same product."""
+    match target:
+        CalleeKind.ClosureBody(name, captures) => return Ok(StoredTarget.ClosureBody(name, captures))
+        CalleeKind.ClosureBodyOnce(name, captures) => return Ok(StoredTarget.ClosureBodyOnce(name, captures))
+        CalleeKind.CallClosure(signature) => return Ok(StoredTarget.CallClosure(store_types(signature, remap)?))
+        CalleeKind.CallClosureOnce(signature) => return Ok(StoredTarget.CallClosureOnce(store_types(signature, remap)?))
+        CalleeKind.CallBorrowingClosure(signature) =>
+            return Ok(StoredTarget.CallBorrowingClosure(store_types(signature, remap)?))
+        CalleeKind.SharedCallableBody(signature) =>
+            return Ok(StoredTarget.SharedCallableBody(store_types(signature, remap)?))
+        CalleeKind.CloneClosure(signature) => return Ok(StoredTarget.CloneClosure(store_types(signature, remap)?))
+        CalleeKind.Value(operand) => return Ok(StoredTarget.Value(store_operand(operand, remap)?))
         _ => return Err("native products refuse dynamic or owner-dependent callees")
 
 
@@ -612,6 +679,16 @@ def restore_target(target: StoredTarget, mut remap: NominalRemap) -> Result[Call
         StoredTarget.CloneEnum(ordinal) =>
             slot = remap.slot(NominalKind.Enum, ordinal, "")?
             return Ok(CalleeKind.CloneEnum(slot.index, slot.name))
+        StoredTarget.ClosureBody(name, captures) => return Ok(CalleeKind.ClosureBody(name, captures))
+        StoredTarget.ClosureBodyOnce(name, captures) => return Ok(CalleeKind.ClosureBodyOnce(name, captures))
+        StoredTarget.CallClosure(signature) => return Ok(CalleeKind.CallClosure(restore_types(signature, remap)?))
+        StoredTarget.CallClosureOnce(signature) => return Ok(CalleeKind.CallClosureOnce(restore_types(signature, remap)?))
+        StoredTarget.CallBorrowingClosure(signature) =>
+            return Ok(CalleeKind.CallBorrowingClosure(restore_types(signature, remap)?))
+        StoredTarget.SharedCallableBody(signature) =>
+            return Ok(CalleeKind.SharedCallableBody(restore_types(signature, remap)?))
+        StoredTarget.CloneClosure(signature) => return Ok(CalleeKind.CloneClosure(restore_types(signature, remap)?))
+        StoredTarget.Value(operand) => return Ok(CalleeKind.Value(restore_operand(operand, remap)?))
 
 
 def store_block(block: BasicBlock, mut remap: NominalRemap) -> Result[StoredBlock, str]:

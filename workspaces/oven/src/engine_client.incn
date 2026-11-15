@@ -18,8 +18,9 @@ from engine_wire import Refusal
 from files import json_text
 from incan_units import run_program
 from json_fields import required_text
-from observation import observe, file_metadata, trace
-from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
+from observation import file_metadata, trace
+from retained_readings import installed_digest
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, fork, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
@@ -27,8 +28,21 @@ from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
 from home_paths import installation_catalog
+from home_views import selected_home_view
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+
+
+pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:
+    """
+    The records engine's project view of one program in one home: named from the home's view key (`scope`), so it
+    survives moving the home and two homes over one bakery never share it, then from the source and the profile. A
+    selected body-refusal diagnosis is a view of its own.
+    """
+    mut identity = [scope, source, profile]
+    if let Some(mode) = refusals:
+        identity.append("body-refusals:" + mode)
+    return Ok(f"project-{fingerprint(identity)?}")
 
 
 pub def execute(
@@ -49,13 +63,16 @@ pub def execute(
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
-    mut view_identity = [home()?.0, absolute.0, profile]
+    # A home that has bound its view names its project views from it; one without (an `INCAN_BAKERY` invocation)
+    # keeps naming them from its path. A check is a view of its own, apart from the program's builds.
+    bound = selected_home_view()?
+    mut scope = home()?.0
+    if let Some(found) = bound:
+        scope = found
+    mut view_profile = profile
     if command == "check":
-        view_identity.append("check")
-    match get_optional("OVEN_BODY_REFUSALS"):
-        Some(mode) => view_identity.append("body-refusals:" + mode)
-        None => pass
-    view = f"project-{fingerprint(view_identity)?}"
+        view_profile = profile + "+check"
+    view = project_view_name(scope, absolute.0, view_profile, get_optional("OVEN_BODY_REFUSALS"))?
     mut policy = ""
     if proofs:
         policy = "proofs"
@@ -63,8 +80,13 @@ pub def execute(
     store = bakery()?
     store.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     compiler = installed_compiler()?
-    if not proofs and command != "check":
-        if let Some(code) = execute_local(store, compiler, command, absolute, view, profile, arguments, argv0)?:
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    if selected.index == "":
+        # A program's first build in a home starts its project view as a copy-on-write fork of the home's view.
+        if let Some(found) = bound:
+            fork_project_view(store, found, view)?
+    elif not proofs and command != "check":
+        if let Some(code) = execute_local(store, selected, compiler, command, absolute, profile, arguments, argv0)?:
             return Ok(code)
     request = session_id()?
     identity = identity_for(store, compiler)?
@@ -119,20 +141,31 @@ pub def execute(
     return code
 
 
+def fork_project_view(store: Path, home_view: str, view: str) -> Result[None, str]:
+    """
+    Start a program's project view as a fork of the home's view: it shares the home view's index pages and copies none
+    of its records. A request that forked it first leaves it as that request made it.
+    """
+    match fork(snapshot(store, home_view).map_err((error) => error.message())?, view):
+        Ok(_) => return Ok(None)
+        Err(error) =>
+            if error.kind == "conflict":
+                return Ok(None)
+            return Err(error.message())
+
+
 def execute_local(
     store: Path,
+    selected: Snapshot,
     compiler: str,
     command: str,
     source: Path,
-    view: str,
     profile: str,
     arguments: list[str],
     argv0: Option[str],
 ) -> Result[Option[i32], str]:
-    """An unchanged local capture and selected native record need no service request or control round trips."""
-    selected = snapshot(store, view).map_err((error) => error.message())?
-    if selected.index == "":
-        return Ok(None)
+    """An unchanged local capture of an existing project view and its selected native record need no service request."""
+    view = selected.view
     capturing = begin_work()
     captured = prepare_submit(
         store,
@@ -180,18 +213,25 @@ pub def service_identity(store: Path) -> Result[Identity, str]:
 
 
 def installed_compiler() -> Result[str, str]:
-    """Read this home's installation admission once, before deciding whether a service is needed."""
+    """
+    Read this home's installation admission once, before deciding whether a service is needed: in the home's own view
+    of its bakery, or, for an `INCAN_BAKERY` invocation, which binds no view, in the home's installation catalog.
+    """
     admitting = begin_work()
-    catalog = installation_catalog()?
-    compiler = installation_compiler(catalog)?
-    record_work(Operation.EngineAdmission, catalog.0, admitting)
+    mut store = installation_catalog()?
+    mut view = str(HOME_VIEW)
+    if let Some(bound) = selected_home_view()?:
+        store = bakery()?
+        view = bound
+    compiler = installation_compiler(store, view)?
+    record_work(Operation.EngineAdmission, store.0, admitting)
     return Ok(compiler)
 
 
 def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     """Prepare service negotiation only for a request that cannot be answered by a local record read."""
     binary = executable()?
-    generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    generation = service_generation(binary)?
     return Ok(
         Identity(
             store_id=physical_store_identity(store)?,
@@ -203,6 +243,11 @@ def identity_for(store: Path, compiler: str) -> Result[Identity, str]:
     )
 
 
+pub def service_generation(binary: str) -> Result[str, str]:
+    """Name the engine service implementation by exact bytes, independent of its installed path."""
+    return fingerprint(["incan.engine.service/2", installed_digest(Path(binary))?])
+
+
 def physical_store_identity(store: Path) -> Result[str, str]:
     """Name the physical root by its filesystem identity, independent of homes, aliases and directory contents."""
     match file_metadata(store)?:
@@ -210,24 +255,32 @@ def physical_store_identity(store: Path) -> Result[str, str]:
         None => return Err("engine store root disappeared during admission")
 
 
-def installation_compiler(store: Path) -> Result[str, str]:
-    """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
+def installation_compiler(store: Path, view: str) -> Result[str, str]:
+    """Admit a toolchain once per installation in `view` of `store`, independent of project or alternate stores."""
     directory = toolchain_directory()?
     admission = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
-    selected = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(selected, key, admission)?:
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
-    checked = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(checked, key, admission)?:
+    _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    compiler = compiler_fingerprint(load_toolchain()?)?
+    return record_installation(store, view, key, admission, compiler_fingerprint(load_toolchain()?)?)
+
+
+pub def admitted_installation(store: Path, view: str, key: str, admission: str) -> Result[Option[str], str]:
+    """The compiler admitted for one installation in `view` of the bakery, if any."""
+    return admitted_compiler(snapshot(store, view).map_err((error) => error.message())?, key, admission)
+
+
+pub def record_installation(store: Path, view: str, key: str, admission: str, compiler: str) -> Result[str, str]:
+    """Record `compiler` as the admitted compiler of one installation in `view` of the bakery."""
     value = json_text(
         JsonValue.object({"admission": JsonValue.string(admission), "compiler": JsonValue.string(compiler)}),
     )?
-    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    _ = commit(put(begin(selected), key, value.encode("utf-8"))).map_err((error) => error.message())?
     return Ok(compiler)
 
 

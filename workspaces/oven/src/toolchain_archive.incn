@@ -41,7 +41,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
-from compiler_record_admission import convert
+from compiler_record_admission import convert, ship_records
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -136,6 +136,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     search = stage_search([path for path in toolchain.search if ships_search(path, shipped)], stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
+    # The standard Loaves' compiler records ship as the driver exports them, so installing the archive converts nothing.
+    ship_records(toolchain.driver, directory, stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
     for key, relative in c_tools:

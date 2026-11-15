@@ -21,7 +21,7 @@ pub def body_position_map(body: str, source: str, file: str, owner: SourceSpan) 
 
 
 pub def relocate_product(text: str, file: str, line: int) -> Result[str, str]:
-    """Relocate only the existing codec's source-span objects, leaving native instructions and literal text intact."""
+    """Relocate the codec's source-span objects in the function, its runtime and its frames, leaving all else intact."""
     mut product = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
     function = parse(product["function"].expect_str().map_err((error) => error.message())?).map_err(
         (error) => error.message(),
@@ -32,6 +32,13 @@ pub def relocate_product(text: str, file: str, line: int) -> Result[str, str]:
     moved = shift_positions(function, old_file, old_line, file, line)?
     product["function"] = JsonValue.string(moved.to_json().map_err((error) => error.message())?)
     product["runtime"] = shift_positions(product["runtime"], old_file, old_line, file, line)?
+    if "frames" in product:
+        mut frames: list[JsonValue] = []
+        for frame in product["frames"].expect_array().map_err((error) => error.message())?:
+            parsed = parse(frame.expect_str().map_err((error) => error.message())?).map_err((error) => error.message())?
+            shifted = shift_positions(parsed, old_file, old_line, file, line)?
+            frames.append(JsonValue.string(shifted.to_json().map_err((error) => error.message())?))
+        product["frames"] = JsonValue.array(frames)
     return JsonValue.object(product).to_json().map_err((error) => error.message())
 
 
@@ -134,6 +141,12 @@ def map_product_spans(text: str, mapping: &PositionMapping) -> Result[str, str]:
     moved = map_spans(function, mapping)?
     product["function"] = JsonValue.string(moved.to_json().map_err((error) => error.message())?)
     product["runtime"] = map_spans(product["runtime"], mapping)?
+    if "frames" in product:
+        mut frames: list[JsonValue] = []
+        for frame in product["frames"].expect_array().map_err((error) => error.message())?:
+            parsed = parse(frame.expect_str().map_err((error) => error.message())?).map_err((error) => error.message())?
+            frames.append(JsonValue.string(map_spans(parsed, mapping)?.to_json().map_err((error) => error.message())?))
+        product["frames"] = JsonValue.array(frames)
     return JsonValue.object(product).to_json().map_err((error) => error.message())
 
 

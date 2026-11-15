@@ -21,6 +21,7 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-exit",
     "expect-diagnostic",
     "expect-accepted",
@@ -45,6 +46,7 @@ const BLOCKS: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-dependencies",
     "expect-std-packages",
     "expect-active-features",
@@ -54,6 +56,7 @@ const BLOCKS: FrozenList[str] = [
 const SUBSET_BLOCKS: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-std-packages",
     "expect-trace-contains",
     "expect-trace-at-most-once",
@@ -65,6 +68,7 @@ const SET_BLOCKS: FrozenList[str] = [
     "expect-trace-at-most-once",
     "expect-stdout-contains",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-dependencies",
     "expect-std-packages",
     "expect-active-features",
@@ -296,8 +300,8 @@ def finish(header: Header) -> Result[Header, str]:
         line = header.block_lines[key]
         if len(items) == 0 and key in SUBSET_BLOCKS:
             return Err(f"line {line}: `{key}:` lists nothing, so anything would satisfy it")
-        if key == "expect-stderr-contains" and "" in items:
-            return Err(f"line {line}: `expect-stderr-contains:` lists an empty substring, which checks nothing")
+        if key in ["expect-stderr-contains", "expect-stderr-once"] and "" in items:
+            return Err(f"line {line}: `{key}:` lists an empty substring, which checks nothing")
     if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
         return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
     if header.declares("expect-stderr") and header.declares("expect-stderr-contains"):
@@ -305,7 +309,7 @@ def finish(header: Header) -> Result[Header, str]:
     refused = len(header.diagnostics) > 0
     run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares(
         "expect-stderr",
-    ) or header.declares("expect-stderr-contains") or header.declares("expect-exit")
+    ) or header.declares("expect-stderr-contains") or header.declares("expect-stderr-once") or header.declares("expect-exit")
     if refused and (run or header.accepted):
         return Err(
             "`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`",

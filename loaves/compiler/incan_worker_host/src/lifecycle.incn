@@ -2,11 +2,15 @@
 When a compiler worker retires: the lifecycle policy, apart from the sockets it is applied to.
 
 A worker serves one activation at a time. It retires after `IDLE_SECONDS` without a request; when its physical
-footprint stays more than `FOOTPRINT_MARGIN` bytes above its post-start baseline for `FOOTPRINT_STRIKES` activations
-in a row; at once when its footprint after an activation exceeds `FOOTPRINT_CEILING`, because only exiting returns a
-heavy compile's peak heap; when a request of another protocol or generation reaches it; when nothing can reach it any
-more, because its socket path no longer leads to its socket or its home is gone; and when the process could not be
-restored after an activation. A contained compiler panic does not retire it.
+footprint stays more than `FOOTPRINT_MARGIN` bytes above its post-start baseline for `FOOTPRINT_STRIKES` compiling
+activations in a row; at once when its footprint after an activation exceeds `FOOTPRINT_CEILING`, because only exiting
+returns a heavy compile's peak heap; when a request of another protocol or generation reaches it; when nothing can
+reach it any more, because its socket path no longer leads to its socket or its home is gone; and when the process
+could not be restored after an activation. A contained compiler panic does not retire it.
+
+A light activation (formatting, a source listing, an import collection) checks and links nothing. The footprint after
+it is the heap the compile before it left, so it neither adds to a run of excess activations nor ends one; the ceiling
+still applies to it.
 """
 
 from rust::std::time import Instant
@@ -85,13 +89,14 @@ pub class Lifecycle:
         """Whether the worker has served nothing for its whole idle period."""
         return int(self.last_activity.elapsed().as_millis()) >= self.bounds.idle_millis
 
-    pub def settle(mut self, outcome: ActivationOutcome, footprint: int) -> Settled:
+    pub def settle(mut self, outcome: ActivationOutcome, footprint: int, light: bool = false) -> Settled:
         """
         The reply to an ended activation and whether the worker retires after it.
 
         1. An unrestored process retires at once; it serves no queued request.
         2. Otherwise the outcome becomes the reply: a panic is a compiler fault, and the worker stays.
-        3. The footprint decides the rest; an unknown footprint retires nothing.
+        3. The footprint decides the rest; an unknown footprint retires nothing, and a `light` activation is held only
+           to the ceiling.
         """
         self.touch()
         mut reply = Reply.Completed(0)
@@ -104,19 +109,23 @@ pub class Lifecycle:
             ActivationOutcome.Unavailable(reason) => reply = Reply.Refused(reason)
             # 2. The entry contained the panic, so only this request failed.
             ActivationOutcome.Panicked => reply = Reply.CompilerFault(Fault.Panicked)
-        # 3. The ceiling retires at once; excess over the baseline must persist across consecutive activations.
-        if self.over_footprint(footprint):
+        # 3. The ceiling retires at once; excess over the baseline must persist across consecutive compiles.
+        if self.over_footprint(footprint, light):
             return Settled(reply=reply, retirement=Some(Retirement.Footprint))
         return Settled(reply=reply, retirement=None)
 
-    def over_footprint(mut self, footprint: int) -> bool:
+    def over_footprint(mut self, footprint: int, light: bool) -> bool:
         """
         Whether the footprint after an activation retires the worker: above the ceiling, or more than the margin above
-        the baseline for the last `FOOTPRINT_STRIKES` activations. One back within the margin ends the run.
+        the baseline for the last `FOOTPRINT_STRIKES` compiling activations. One back within the margin ends the run; a
+        light activation leaves the run as it was.
         """
         if footprint < 0:
-            self.strikes = 0
+            if not light:
+                self.strikes = 0
             return false
+        if light:
+            return footprint > self.bounds.ceiling
         if self.baseline >= 0 and footprint - self.baseline > self.bounds.margin:
             self.strikes += 1
         else:

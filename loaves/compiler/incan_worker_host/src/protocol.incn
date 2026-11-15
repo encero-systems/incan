@@ -30,6 +30,13 @@ pub enum WorkerCommand:
     # `--rust-imports UNIT`: list the Rust crate requests in a unit's authored source graph.
     RustImports
 
+    pub def light(self) -> bool:
+        """Whether the command only reads sources, checking and linking nothing: every command but a unit or a check."""
+        match self:
+            WorkerCommand.Unit => return false
+            WorkerCommand.Check => return false
+            _ => return true
+
 
 pub model CompileRequest:
     """One admitted compiler invocation, as the compiler entry runs it."""

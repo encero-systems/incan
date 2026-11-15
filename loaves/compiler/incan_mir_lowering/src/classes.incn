@@ -5,6 +5,7 @@ from rust::incan_semantics_core import (
     IncanType as RustType,
     CanonicalSymbolId,
     SemanticSourceTargetKind,
+    SymbolNamespace,
     canonical_module_identity,
 )
 from rust::incan_semantics_core::body_ir import (
@@ -77,7 +78,7 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
             match canonical_module_identity(identity):
                 Some(owner) =>
                     if owner != module.module_id.path():
-                        return module_function_symbol(owner, body)
+                        return module_function_symbol(module, owner, body)
                 None => pass
             if identity.kind == SemanticSourceTargetKind.Function:
                 # Overloads share their source name, so each takes its own declaration span as well.
@@ -194,11 +195,19 @@ pub def body_type_bindings(
     return Ok((names, arguments))
 
 
-def module_function_symbol(owner: str, body: &Body) -> str:
-    """Encode the full owner and declaration span using identifier-safe bytes without punctuation collisions."""
+def module_function_symbol(module: &BodyIrModule, owner: str, body: &Body) -> str:
+    """
+    Name a dependency module's frame by its owner module and declaration, using identifier-safe bytes.
+
+    A module-level, nongeneric, unoverloaded source function is named by its declaration name, as its stable declaration
+    identity is, so text that moves its source offsets renames nothing. Any other frame keeps its checked declaration
+    span: a member, an overload, a generic template, a nested or a generated frame.
+    """
     mut symbol = "__incan_module"
     for segment in owner.split("::"):
         symbol += symbol_component(segment)
+    if declaration_named_frame(module, body):
+        return symbol + "_named" + symbol_component(str(body.name))
     # A trait default can have the same canonical declaration and span in several concrete receiver frames.
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
@@ -207,6 +216,24 @@ def module_function_symbol(owner: str, body: &Body) -> str:
     if len(body.type_parameters) != 0:
         symbol += symbol_component(str(body.name))
     return f"{symbol}_{body_span_symbol(body)}_{body.span.end}"
+
+
+def declaration_named_frame(module: &BodyIrModule, body: &Body) -> bool:
+    """Whether a frame's owner module and source name alone identify it among the unit's frames."""
+    if body.span.is_generated() or len(body.type_parameters) != 0:
+        return false
+    if len(body.locals) != 0:
+        match receiver_mode(body.locals[0].origin):
+            Some(_mutable) => return false
+            None => pass
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            if identity.namespace != SymbolNamespace.OrdinaryLexical or identity.scope_discriminant is not None:
+                return false
+            if identity.kind != SemanticSourceTargetKind.Function:
+                return false
+            return not has_overloaded_name(module, body, identity)
 
 
 pub def method_receiver(

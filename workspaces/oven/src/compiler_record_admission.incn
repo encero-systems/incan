@@ -1,5 +1,6 @@
-"""Convert installed Loaf artifacts once and admit their bounded compiler records as one sealed set (#2946)."""
+"""Admit the compiler records a toolchain ships, or convert its installed Loaves once, as one sealed set (#2946)."""
 
+from rust::std::fs import remove_dir_all
 from rust::std::process import Command
 from std.encoding.hex import hexlify
 from std.fs import Path
@@ -15,6 +16,8 @@ from store_path_conversion import snapshot
 
 pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/2"
 const EXPORT_SCHEMA: str = "incan.compiler-record-export/2"
+# The directory, beside the installed Loaves, where a toolchain archive ships their compiler records as exported.
+pub const SHIPPED_RECORDS: str = "compiler-record-export"
 
 
 pub model CompilerRecordPin:
@@ -30,22 +33,19 @@ pub model CompilerRecordPin:
 
 pub def convert(driver: str, installed: Path, installation: Path) -> Result[CompilerRecordPin, str]:
     """
-    Validate installed manifests with the candidate compiler and admit their record values through sealed-set.
+    Admit the installed Loaves' compiler records as one sealed set, converting nothing when the toolchain ships them.
 
-    The compiler owns semantic decoding and the declaration-family split. Oven owns content admission and records only
-    the resulting installed store root plus sealed-set digest. Scratch exports never become a selectable cache.
+    An archive `incan toolchain pack` wrote ships the candidate compiler's record export beside its Loaves; only an
+    archive without one has the compiler export the records here. The compiler owns semantic decoding and the record
+    split. Oven owns content admission and records only the resulting installed store root plus sealed-set digest.
+    Scratch exports never become a selectable cache, and a shipped export is removed once its set is admitted.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot create temporary directory {error.message()}")?
-    converted = temporary.path().joinpath("converted")
-    output = Command
-        .new(driver)
-        .arg("--compiler-records")
-        .arg(installed.0)
-        .arg(converted.0)
-        .output()
-        .map_err((error) => f"cannot convert installed compiler records: {error}")?
-    if not output.status.success():
-        return Err("cannot convert installed compiler records: " + decoded(output.stderr))
+    shipped = installed.joinpath(SHIPPED_RECORDS)
+    mut converted = shipped
+    if not shipped.joinpath("index.json").is_file():
+        converted = temporary.path().joinpath("converted")
+        export_records(driver, installed, converted)?
     index = read_json(converted.joinpath("index.json"))?
     if required_text(index, "schema")? != EXPORT_SCHEMA:
         return Err("candidate compiler returned an unsupported record export")
@@ -81,7 +81,29 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     _ = admit(installation.joinpath("compiler-record-store"), transport, digest, profile).map_err(
         (error) => error.message(),
     )?
+    # The admitted set now holds every shipped object; the shipped transport would be a third copy.
+    if converted.0 == shipped.0:
+        remove_dir_all(shipped.0).map_err((error) => f"cannot remove shipped compiler records {shipped.0}: {error}")?
     return Ok(CompilerRecordPin(root=relative, digest=digest))
+
+
+pub def ship_records(driver: str, installed: Path, stage: Path) -> Result[None, str]:
+    """Export the installed Loaves' compiler records into a packing stage, so installing its archive converts nothing."""
+    return export_records(driver, installed, stage.joinpath(SHIPPED_RECORDS))
+
+
+def export_records(driver: str, installed: Path, output: Path) -> Result[None, str]:
+    """Have the candidate compiler validate the installed manifests and export their compiler records into `output`."""
+    result = Command
+        .new(driver)
+        .arg("--compiler-records")
+        .arg(installed.0)
+        .arg(output.0)
+        .output()
+        .map_err((error) => f"cannot convert installed compiler records: {error}")?
+    if not result.status.success():
+        return Err("cannot convert installed compiler records: " + decoded(result.stderr))
+    return Ok(None)
 
 
 pub def compiler_record_profile() -> Profile:
