@@ -146,3 +146,48 @@ fn property_view_result_reads_as_its_value_type() -> Result<(), Box<dyn std::err
     assert!(reads.is_empty(), "{reads:?}");
     Ok(())
 }
+
+/// A local declared as a `Borrowed[T]` or `BorrowedMut[T]` view takes a native reference as the view it already is:
+/// `&T` or `&mut T` for a shared view, `&mut T` for an exclusive one. A native `&T` grants no exclusive access, so it
+/// is still refused for a `BorrowedMut[T]` local (shape A).
+#[test]
+fn local_view_takes_a_native_reference() -> Result<(), Box<dyn std::error::Error>> {
+    let admitted = "def shared(items: &list[int]) -> int:\n    view: Borrowed[list[int]] = items\n    return len(view)\n\ndef exclusive(items: &mut list[int]) -> int:\n    mut view: BorrowedMut[list[int]] = items\n    view.append(1)\n    seen: Borrowed[list[int]] = items\n    return len(seen)\n";
+    let checker = checked(admitted)?;
+    let mismatches: Vec<_> = checker
+        .errors
+        .iter()
+        .filter(|error| error.message.contains("mismatch"))
+        .collect();
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+    let refused = "def shared(items: &list[int]) -> int:\n    mut view: BorrowedMut[list[int]] = items\n    view.append(1)\n    return len(view)\n";
+    let checker = checked(refused)?;
+    assert!(
+        checker.errors.iter().any(|error| error.message.contains("mismatch")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
+
+/// A declaration whose result is a direct `Borrowed[T]` view returns a native `&T` as the view it is; an owned `T`
+/// result still refuses a native reference (shape A).
+#[test]
+fn view_result_returns_a_native_reference() -> Result<(), Box<dyn std::error::Error>> {
+    let admitted = "def view_of(items: &list[int]) -> Borrowed[list[int]] from items:\n    return items\n";
+    let checker = checked(admitted)?;
+    let mismatches: Vec<_> = checker
+        .errors
+        .iter()
+        .filter(|error| error.message.contains("mismatch"))
+        .collect();
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+    let refused = "def copy_of(items: &list[int]) -> list[int]:\n    return items\n";
+    let checker = checked(refused)?;
+    assert!(
+        checker.errors.iter().any(|error| error.message.contains("mismatch")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
