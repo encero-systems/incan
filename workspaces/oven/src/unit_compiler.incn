@@ -100,7 +100,7 @@ pub def compile_prepared_unit(
     )? + anchor_arguments(toolchain.closure_anchors)? + shared_arguments(unit, development)? + archive_arguments(
         unit.c_archives,
     )
-    if toolchain.codegraph_on_request and graph_body_records is None:
+    if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
         records_path = Path(f"{path.0}.graph-body-records")
