@@ -1,7 +1,7 @@
 name: Release qualification
 
-# Full qualification builds this checkout's compiler from the checked-in released seed. Stacked PRs use
-# stack_checks.yml; the release workflow enables the fixed-point flag once the reproducibility stage lands.
+# Every full qualification builds and verifies this checkout's compiler from the checked-in released seed, then runs
+# the byte-for-byte fixed-point rebuild. Stacked PRs use stack_checks.yml.
 on:
   push:
     branches: [main, release/**]
@@ -29,16 +29,26 @@ jobs:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    env:
+      INCAN_STDLIB: ${{ github.workspace }}/loaves/stdlib
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Restore release caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/incan-build-toolchain/cache/release-reference
+            ${{ runner.temp }}/incan-build-toolchain/cache/release-rust
+          key: release-v1-${{ matrix.target }}-${{ hashFiles('build-toolchain.json') }}-${{ github.sha }}
+          restore-keys: release-v1-${{ matrix.target }}-${{ hashFiles('build-toolchain.json') }}-
       - name: Install the released build seed
         uses: ./.github/actions/install-build-toolchain
         with:
           target: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and verify the checkout release
+      - name: Build, verify and reproduce the checkout release
         run: >-
           incan run scripts/release.incn -- "$GITHUB_SHA" "$RUNNER_TEMP/release" --prove-fixed-point
           --jobs 6 --timeout 600
@@ -59,6 +69,8 @@ jobs:
   docs:
     name: US English and strict docs
     runs-on: ubuntu-latest
+    env:
+      INCAN_STDLIB: ${{ github.workspace }}/loaves/stdlib
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

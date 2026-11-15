@@ -16,12 +16,19 @@ use crate::loaf_index::LoafIndex;
 const OTHER_FUNCTIONS: usize = 60;
 
 /// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, `unit`, without parameters, the
-/// constant `RATE`, the static `LIMIT` and many other public functions.
+/// constant `RATE`, the static `LIMIT`, the generic function `first` and many other public functions.
 pub(super) fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+    catalog_with("")
+}
+
+/// The Loaf `prices` of [`catalog`], whose module `money` also declares `extra`.
+pub(super) fn catalog_with(extra: &str) -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut source = "pub def price(cents: int, rounded: bool = true) -> int:\n    return cents\n".to_owned();
     source.push_str("\npub def unit() -> int:\n    return 100\n");
     source.push_str("\npub const RATE: int = 7\n");
     source.push_str("\npub static LIMIT: int = 500\n");
+    source.push_str("\npub def first[T](items: list[T]) -> T:\n    return items[0]\n");
+    source.push_str(extra);
     for index in 0..OTHER_FUNCTIONS {
         source.push_str(&format!(
             "\npub def discount_{index}(cents: int, percent: int = 10) -> int:\n    return cents - percent\n"
@@ -103,7 +110,7 @@ fn a_program_checks_an_imported_function_from_its_declaration_records() -> Resul
 }
 
 /// The package a program reaches as `std.encoding`.
-const CODECS: &str = "incan_stdlib_codecs";
+pub(super) const CODECS: &str = "incan_stdlib_codecs";
 
 /// A standard Loaf whose namespace `encoding` holds the modules `base64`, declaring `b64encode`, and `hex`, each beside
 /// many other functions, so the parent namespace `encoding` publishes both modules' members.
@@ -117,6 +124,12 @@ fn codecs() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut exports = Vec::new();
     for (module, first) in [("base64", "b64encode"), ("hex", "hexlify")] {
         let mut source = format!("pub def {first}(data: bytes) -> str:\n    return \"\"\n");
+        if module == "base64" {
+            source.push_str("\npub model EncodingError:\n    pub detail: str\n");
+            source.push_str(
+                "\npub def b64decode(text: str) -> Result[bytes, EncodingError]:\n    return Err(EncodingError(detail=text))\n",
+            );
+        }
         for index in 0..OTHER_FUNCTIONS {
             source.push_str(&format!(
                 "\npub def {module}_{index}(data: bytes) -> str:\n    return \"\"\n"
@@ -230,8 +243,17 @@ fn importing_a_child_namespace_reads_no_record_of_its_parent() -> Result<(), Box
 
 /// Check `source`, a program importing from the installed Loaf `prices`, and return the keys of the records it read.
 fn prices_import_reads(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    manifest_import_reads(&catalog()?, source)
+}
+
+/// Check `source`, a program importing from `manifest` installed as the Loaf `prices`, and return the keys of the
+/// records it read.
+pub(super) fn manifest_import_reads(
+    manifest: &LibraryManifest,
+    source: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let _selection = thread_selection::select(installed_library(root.path(), &catalog()?)?);
+    let _selection = thread_selection::select(installed_library(root.path(), manifest)?);
     let index = LoafIndex::deferred([(
         "prices".to_owned(),
         "prices".to_owned(),
@@ -320,6 +342,64 @@ fn a_program_imports_a_function_by_name_from_its_declaration_records() -> Result
     assert!(
         read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
         "checking reads `price`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
+
+/// A program that calls a generic function of an installed Loaf's module, whose type parameters have no bounds and
+/// whose signature otherwise names built-in types only, is checked from the function's own records: it reads
+/// `money::first`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_an_imported_generic_function_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>>
+{
+    let read =
+        prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.first([1, 2])\n")?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"money::first"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `first`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
+
+/// A program that calls a function whose signature names one of the Loaf's own types is checked from the function's
+/// records and the Loaf's type scope: it reads `b64decode`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_a_function_naming_the_loafs_own_type_from_its_records() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let _selection = thread_selection::select(installed_library(root.path(), &codecs()?)?);
+    let index = LoafIndex::deferred([(CODECS.to_owned(), CODECS.to_owned(), root.path().join("debug"), true)])?;
+    let source =
+        "from std.encoding import base64\n\ndef main() -> bool:\n    return base64.b64decode(\"dHdv\").is_ok()\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let exports: Arc<[crate::module::ExportedSymbol]> = Arc::from(crate::module::exported_symbols(&program));
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_owned()]));
+    checker.set_loaves(Arc::new(index));
+    checker
+        .check_with_imports_and_exports(&program, &[], Default::default())
+        .map_err(|errors| format!("{errors:?}"))?;
+    checker.seal_current_module_dependency_interface("main", &program, exports, true);
+    let read = thread_selection::read_keys();
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"encoding::base64::b64decode"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `b64decode`'s signature by name; it read {read:?}"
     );
     let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
     let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();

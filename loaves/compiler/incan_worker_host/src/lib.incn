@@ -5,7 +5,7 @@ lifecycle of one worker process.
 The compiler's executable entry asks the host for one request at a time, runs it, and gives the host the outcome:
 
 ```text
-host = start(arguments, footprint())
+host = start(arguments)
 while request = next_request(host):
     complete(host, run(request), footprint())
 ```

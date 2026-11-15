@@ -35,22 +35,44 @@ pub struct DeclarationFact {
     pub value: Value,
 }
 
+/// The field of a default entry that names the overload it belongs to: the declaration's position among the
+/// declarations of its name in its module.
+pub const OVERLOAD_FIELD: &str = "overload";
+
 /// Every declaration fact of `api`, in declaration order: each declaration's signature, then its layout and defaults
-/// when it has them. `api` carries no documentation (`LibraryContractMetadata::split_documentation`).
+/// when it has them. The default entries of a name its module declares more than once each name their overload, so a
+/// reader puts every overload's defaults back on its own signature. `api` carries no documentation
+/// (`LibraryContractMetadata::split_documentation`).
 pub fn declaration_facts(api: &CheckedApiMetadataPackage) -> Result<Vec<DeclarationFact>, serde_json::Error> {
     let mut facts = Vec::new();
     for module in &api.modules {
+        let mut signatures = Vec::with_capacity(module.declarations.len());
+        let mut declared = std::collections::BTreeMap::new();
         for declaration in &module.declarations {
-            let mut signature = serde_json::to_value(declaration)?;
+            let signature = serde_json::to_value(declaration)?;
             let simple = signature
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
+            *declared.entry(simple.clone()).or_insert(0usize) += 1;
+            signatures.push((simple, signature));
+        }
+        let mut seen = std::collections::BTreeMap::new();
+        for (simple, mut signature) in signatures {
             let name = qualified_name(&module.module_path, &simple);
+            let overload = seen.entry(simple.clone()).or_insert(0usize);
             let mut defaults = Vec::new();
             without_documentation(&mut signature);
             take_defaults(&mut signature, &simple, &mut defaults);
+            if declared.get(&simple).copied().unwrap_or_default() > 1 {
+                for entry in &mut defaults {
+                    if let Value::Object(fields) = entry {
+                        fields.insert(OVERLOAD_FIELD.to_owned(), Value::from(*overload));
+                    }
+                }
+            }
+            *overload += 1;
             let layout = take_layout(&mut signature);
             facts.push(DeclarationFact {
                 facet: DeclarationFacet::Signature,
@@ -104,6 +126,20 @@ pub fn restored_declaration(mut signature: Value, defaults: Option<&Value>) -> V
         .to_owned();
     put_defaults(&mut signature, &simple, &by_member);
     signature
+}
+
+/// A nominal declaration as the documentation-free checked API carries it, from its `signature` record, its `layout`
+/// record's value, if it has one, and its `default` record's value, if it has one: the layout's fields or variants are
+/// put back on the signature, then each stated default on the member its path names.
+pub fn restored_nominal_declaration(mut signature: Value, layout: Option<&Value>, defaults: Option<&Value>) -> Value {
+    if let (Value::Object(fields), Some(Value::Object(layout))) = (&mut signature, layout) {
+        for field in LAYOUT_FIELDS {
+            if let Some(members) = layout.get(field) {
+                fields.insert(field.to_owned(), members.clone());
+            }
+        }
+    }
+    restored_declaration(signature, defaults)
 }
 
 /// Put the default fields recorded for `member` back on `value`, and those of its member entries on them.

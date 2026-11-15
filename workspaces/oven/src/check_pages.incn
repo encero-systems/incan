@@ -18,7 +18,7 @@ from rust::std::fs import remove_dir_all
 from pub::incan_platform.store import Snapshot
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_body_values import encode_body_inventory, select_body_inventory_except, select_body_inventory_of
-from compiler_graph_records import family_outputs, owner_evaluations
+from compiler_graph_records import family_listing, owner_evaluations
 from files import discard_file
 from observation import trace
 from publication import place, publish, publish_binary
@@ -208,10 +208,10 @@ def checked_context(unit: UnitDescription) -> Result[str, str]:
 
 
 def selection_source(graph: Snapshot, unit: UnitDescription) -> Result[str, str]:
-    """The compiler context and every current checked-body output key in the view, as one digest."""
+    """The compiler context and the revision of each checked-body output index entry in the view, as one digest."""
     mut parts = [checked_context(unit)?]
     for family in PAGE_FAMILIES:
-        parts.extend(family_outputs(graph, family, CHECKER_PROFILE)?)
+        parts.extend(family_listing(graph, family, CHECKER_PROFILE)?)
     return Ok(hexlify(sha256.digest("\n".join(parts).encode("utf-8"))))
 
 

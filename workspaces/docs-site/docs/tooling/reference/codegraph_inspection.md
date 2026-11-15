@@ -132,7 +132,7 @@ A `type` reference is a type the compiler proved at an expression's span. An exp
 | Field | Contents |
 | --- | --- |
 | `module_id`, `owner_id` | The module record, and the containing declaration record or `null`. |
-| `callee` | The callee spelling. |
+| `callee` | The callee spelling. For a method call whose receiver is a whole-module import, a path rooted at `std` or a type the module declares, it is `Receiver.method`, such as `helpers.make_widget`, `std.builtins.len` or `Signal.Ready`; for a value receiver, the bare method name. |
 | `kind` | `function`, `method`, `constructor` or `surface_symbol`. |
 | `argument_count`, `type_argument_count` | The value and explicit type arguments at the call site. |
 | `target_id`, `canonical_identity`, `canonical_owner`, `stable_identity` | As for `reference`, for the uniquely selected callable. A failed or ambiguous selection has no identity. |

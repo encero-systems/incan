@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 
 use super::declaration_records::{DeclarationFacet, declaration_facts};
 use super::executable_surface::{own_public_identities, runtime_bindings};
+use super::type_scope::module_type_scopes;
 use super::{LibraryManifest, LibraryManifestError};
 
 /// The record identity and value schema every installed compiler record follows.
@@ -74,6 +75,10 @@ pub enum RecordFamily {
     /// One public namespace of the checked API: its members, child modules and the identities of its public paths, and
     /// what its parent namespace publishes under its name.
     PublicNamespace,
+    /// One name an exported enum publishes at the package root beside its own: a variant or a variant alias.
+    EnumVariant,
+    /// One module's type scope: the type or trait declaration each spelling among its declarations names.
+    TypeScope,
     RustAbi,
 }
 
@@ -105,6 +110,8 @@ impl RecordFamily {
             Self::Layout => "layout",
             Self::Default => "default",
             Self::PublicNamespace => "public-namespace",
+            Self::EnumVariant => "enum-variant",
+            Self::TypeScope => "type-scope",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -175,6 +182,7 @@ impl LibraryManifest {
         if let Some(api) = &contract_facts.api {
             records.extend(declaration_fact_records(api)?);
             records.extend(namespace_records(api, &contract_facts.identity_graph, &self.name)?);
+            records.extend(type_scope_records(api, &contract_facts.identity_graph, &self.name)?);
         }
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
@@ -219,6 +227,7 @@ impl LibraryManifest {
         })?;
         named(&mut records, RecordFamily::Trait, &exports.traits, |item| &item.name)?;
         named(&mut records, RecordFamily::Enum, &exports.enums, |item| &item.name)?;
+        enum_variant_records(&mut records, &exports.enums)?;
         named(&mut records, RecordFamily::TypeAlias, &exports.type_aliases, |item| {
             &item.name
         })?;
@@ -278,10 +287,15 @@ impl LibraryManifest {
                 .and_then(|abi| abi.cache_digest.as_ref())
                 .is_some(),
         });
-        match value {
+        let mut fields = match value {
             Value::Object(fields) => fields,
             _ => Map::new(),
+        };
+        // The cache's digest lets a consumer read and authenticate the cache without the manifest that names it.
+        if let Some(digest) = self.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) {
+            fields.insert("rust_abi_cache_digest".to_owned(), Value::String(digest.clone()));
         }
+        fields
     }
 }
 
@@ -294,6 +308,28 @@ fn named<T: Serialize>(
 ) -> Result<(), LibraryManifestError> {
     for (index, value) in values.iter().enumerate() {
         records.push(record(family, index, name(value), value)?);
+    }
+    Ok(())
+}
+
+/// One record per name an exported enum publishes at the package root beside its own: each variant and each variant
+/// alias, named by it, so the records' names alone tell a consumer whether the root exports a name.
+fn enum_variant_records(
+    records: &mut Vec<CompilerRecord>,
+    enums: &[super::EnumExport],
+) -> Result<(), LibraryManifestError> {
+    let mut index = 0;
+    for exported in enums {
+        let variants = exported.variants.iter().map(|variant| (&variant.name, &variant.name));
+        let aliases = exported
+            .variant_aliases
+            .iter()
+            .map(|alias| (&alias.name, &alias.target));
+        for (name, variant) in variants.chain(aliases) {
+            let value = json!({ "enum": exported.name.as_str(), "variant": variant });
+            records.push(record(RecordFamily::EnumVariant, index, name, &value)?);
+            index += 1;
+        }
     }
     Ok(())
 }
@@ -362,6 +398,20 @@ fn namespace_records(
         )?);
     }
     Ok(records)
+}
+
+/// One record per module of the documentation-free `api`, named by its path: its type scope, so a consumer reads how
+/// one module spells the Loaf's types from that record.
+fn type_scope_records(
+    api: &crate::api_metadata::CheckedApiMetadataPackage,
+    graph: &super::LibraryIdentityGraph,
+    package: &str,
+) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+    module_type_scopes(api, graph, package)
+        .iter()
+        .enumerate()
+        .map(|(index, scope)| record(RecordFamily::TypeScope, index, &scope.module.join("::"), scope))
+        .collect()
 }
 
 /// Encode one record value with the compiler-record codec.

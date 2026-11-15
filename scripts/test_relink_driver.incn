@@ -6,8 +6,8 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from native_build import NativeContext, build_support_tool
-from relink_driver import install_driver, prepare_compiler_home, readmit
+from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
+from relink_driver import install_driver, prepare_compiler_home, readmit, withdraw_installed_providers
 from release_support import TOOLCHAIN_DIRECTORY
 
 # The fields of an installed manifest every compiler home needs, before its registry fields.
@@ -222,6 +222,44 @@ def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
     return Ok(None)
 
 
+def test_a_standard_relink_withdraws_the_installed_providers_before_it_builds_support() -> Result[None, str]:
+    """
+    A standard relink builds the support crates as a release does, in a home whose manifest names no support,
+    runtime or standard provider and which holds no standard Loaf: an edited support crate's dependents are then
+    built against it, never left naming the installed one. Every other manifest field stays.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    library = toolchain.joinpath("loaves/incan_stdlib_primitives/release")
+    library.mkdir(true, true).map_err((error) => error.message())?
+    library.joinpath("libincan_stdlib_primitives.rlib").write_bytes(b"rlib").map_err((error) => error.message())?
+    home.joinpath("native-support/earlier").mkdir(true, true).map_err((error) => error.message())?
+    installed = "{\"name\":\"incan_std_primitives\",\"path\":\"native/a/libincan_std_primitives-0.rlib\"}"
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(
+            MANIFEST_HEAD.replace("\"externs\":[]", f"\"externs\":[{installed}]")
+            + "\"search\":[\"native/a\"],\"registry_units\":\"registry/units.json\"}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    withdraw_installed_providers(home)?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    externs = manifest.require("externs").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    search = manifest.require("search").and_then((value) => value.expect_array()).map_err((e) => e.message())?
+    units = manifest.require("registry_units").and_then((value) => value.expect_str()).map_err((e) => e.message())?
+    assert len(externs) == 0, text
+    assert len(search) == 0, text
+    assert units == "registry/units.json", text
+    assert not toolchain.joinpath("loaves").exists()
+    assert not home.joinpath("native-support").exists()
+    return Ok(None)
+
+
 def test_a_standard_relink_builds_its_helper_again_in_the_same_lane() -> Result[None, str]:
     """
     A lane relinks into one home many times, and each standard relink builds the support helper first, so preparing
@@ -301,4 +339,45 @@ def test_a_relinked_driver_ships_its_development_linker_and_retires_the_earlier_
     assert installed.read_bytes().map_err((error) => error.message())? == b"linker"
     assert not toolchain.joinpath("bin/incan-link-a").exists(), "the earlier driver's linker stayed installed"
     assert not toolchain.joinpath("bin/incan-rustc-driver-a").exists()
+    return Ok(None)
+
+
+def test_a_candidate_home_installs_its_runtime_where_an_installed_home_has_it() -> Result[None, str]:
+    """
+    A release's builder and the home its bundle installs into share one bakery during installed verification. A unit
+    the builder compiled names the runtime from the toolchain directory (`toolchain:<directory>/<generation>/…`), and
+    the installed home resolves that reference against its own toolchain directory, where a packed runtime generation
+    is a directory of `native/`. The builder therefore installs each runtime generation under `native/` too.
+    """
+    toolchain = Path("/home").joinpath(TOOLCHAIN_DIRECTORY)
+    assert runtime_root(toolchain).0 == toolchain.joinpath("native").0, runtime_root(toolchain).0
+    return Ok(None)
+
+
+def test_a_candidate_home_adds_a_generation_beside_the_seeds_without_writing_into_the_seed() -> Result[None, str]:
+    """
+    A release's candidate home reads the seed's native generations and installs its own runtime generation beside
+    them. The seed is immutable, so the candidate owns the directory and links each of the seed's generations into it.
+
+    1. Each generation the seed publishes is read through the candidate's directory.
+    2. A generation the candidate installs there exists in the candidate only.
+    3. A seed that publishes no such tree gives the candidate none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    seed.joinpath("native/a").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("native/a/libsupport.rlib").write_bytes(b"support").map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("candidate")
+    candidate.mkdir(true, true).map_err((error) => error.message())?
+    share_seed_generations(seed, candidate, "native")?
+    # 1. The seed's generation, by the candidate's own path.
+    shared = candidate.joinpath("native/a/libsupport.rlib").read_bytes().map_err((error) => error.message())?
+    assert shared == b"support"
+    # 2. The candidate's runtime generation never reaches the seed.
+    runtime_root(candidate).joinpath("b").mkdir(true, true).map_err((error) => error.message())?
+    assert candidate.joinpath("native/b").is_dir()
+    assert not seed.joinpath("native/b").exists(), "the candidate's generation was written into the seed"
+    # 3. Nothing to share is not an error.
+    share_seed_generations(seed, candidate, "absent")?
+    assert not candidate.joinpath("absent").exists()
     return Ok(None)

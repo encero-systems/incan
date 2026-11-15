@@ -2,12 +2,12 @@
 //! function, constant or static by its module-qualified name, so checking a program reads what it uses rather than the
 //! Loaf's whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
 
-use incan_lang::lang::types::builtin_type_name;
 use serde_json::Value;
 
+use super::record_types::RecordSpellings;
 use super::*;
-use crate::library_manifest::declaration_records::{DeclarationFacet, restored_declaration};
-use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, TypeRef};
+use crate::library_manifest::declaration_records::{DeclarationFacet, OVERLOAD_FIELD, restored_declaration};
+use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph};
 
 impl TypeChecker {
     /// Bind `from <loaf>[.<path>] import <namespace>, …` from the Loaf's namespace records when every item names one of
@@ -81,18 +81,22 @@ impl TypeChecker {
             else {
                 return false;
             };
-            members.push(PublicModuleMember {
-                kind: resolved.kind,
-                canonical: resolved.canonical,
-                source_module_path: source_module_path.to_vec(),
-                source_name: resolved.source_name,
-                type_alias: None,
-                partial_projection: None,
-            });
+            let marker_free = self.record_proves_no_testing_marker(library, source_module_path, &resolved.source_name);
+            members.push((
+                PublicModuleMember {
+                    kind: resolved.kind,
+                    canonical: resolved.canonical,
+                    source_module_path: source_module_path.to_vec(),
+                    source_name: resolved.source_name,
+                    type_alias: None,
+                    partial_projection: None,
+                },
+                marker_free,
+            ));
         }
         let mut source_module = admitted.binding_root.clone();
         source_module.extend(import.module.iter().cloned());
-        for (item, member) in items.iter().zip(members) {
+        for (item, (member, marker_free)) in items.iter().zip(members) {
             let local_name = Self::import_item_local_name(item);
             if self.validate_protected_builtin_binding(&local_name, span) {
                 continue;
@@ -104,9 +108,46 @@ impl TypeChecker {
             let mut binding_path = source_module.clone();
             binding_path.push(item.name.clone());
             self.define_pub_module_import_symbol(library, local_name.clone(), binding_path, member, span);
-            self.record_standard_surface_import(&admitted.binding_root, &import.module, item, &local_name, span);
+            self.record_standard_surface_import(
+                &admitted.binding_root,
+                &import.module,
+                item,
+                &local_name,
+                span,
+                marker_free,
+            );
         }
         true
+    }
+
+    /// Whether the signature records of `name`, declared in the module `module` of `library`, prove it is no
+    /// `std.testing` marker: none of its declarations carries the marker decorator. `false` when no record says.
+    fn record_proves_no_testing_marker(&self, library: &str, module: &[String], name: &str) -> bool {
+        let qualified = module
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(name))
+            .collect::<Vec<_>>()
+            .join("::");
+        let Ok(Some(signatures)) = self
+            .loaves
+            .declaration_facts(library, DeclarationFacet::Signature, &qualified)
+        else {
+            return false;
+        };
+        signatures.iter().all(|signature| {
+            signature
+                .get("decorators")
+                .and_then(Value::as_array)
+                .is_some_and(|decorators| {
+                    decorators.iter().all(|decorator| {
+                        decorator.get("path").and_then(Value::as_array).is_none_or(|path| {
+                            path.len() != 1
+                                || path[0].as_str() != Some(crate::testing_markers::TESTING_MARKER_DECORATOR)
+                        })
+                    })
+                })
+        })
     }
 
     /// Whether the records prove `item`, imported from the namespace `module` of `library`, is one of its public
@@ -155,9 +196,10 @@ impl TypeChecker {
     }
 
     /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
-    /// member's own declaration records. `None` when they cannot settle it exactly: no records, another kind of member,
-    /// an alias, overloads, a signature naming anything but built-in types, or no single declaration identity; the
-    /// manifest then resolves the member.
+    /// member's own declaration records; an overloaded function is resolved from each overload's records. `None` when
+    /// they cannot settle it exactly: no records, another kind of member, an alias, a bounded type parameter, a type
+    /// its declaring module's records do not settle (see [`Self::record_type_remapping`]), a default record that names
+    /// no overload, or no single declaration identity; the manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -166,66 +208,139 @@ impl TypeChecker {
     ) -> Option<ResolvedPublicModuleSymbol> {
         let admitted = self.loaves.admitted(library)?;
         let members = self.record_namespace_members(library, module_path, member)?;
-        let [found] = members.as_slice() else {
-            return None;
-        };
+        let (found, overloads) = members.split_first()?;
         let source_path: Vec<String> = serde_json::from_value(found.get("source_path")?.clone()).ok()?;
+        if overloads
+            .iter()
+            .any(|overload| overload.get("source_path") != found.get("source_path"))
+        {
+            return None;
+        }
         let (source_name, source_module) = source_path.split_last()?;
         let qualified = source_path.join("::");
         let signatures = self
             .loaves
             .declaration_facts(library, DeclarationFacet::Signature, &qualified)
             .ok()??;
-        let [signature] = signatures.as_slice() else {
-            return None;
-        };
         let defaults = self
             .loaves
             .declaration_facts(library, DeclarationFacet::Defaults, &qualified)
             .ok()??;
-        if defaults.len() > 1 {
-            return None;
-        }
-        let declaration: ApiDeclaration =
-            serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
-        let built_in = match &declaration {
-            ApiDeclaration::Function(function) => {
-                function.type_params.is_empty()
-                    && function.params.iter().all(|param| built_in_type(&param.ty))
-                    && built_in_type(&function.return_type)
-            }
-            ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
-            ApiDeclaration::Static(item) => built_in_type(&item.ty),
-            _ => false,
-        };
-        if !built_in {
-            return None;
+        let declarations = restored_declarations(&signatures, &defaults)?;
+        let mut remapping = HashMap::new();
+        for declaration in &declarations {
+            let spellings = RecordSpellings::of_member(declaration)?;
+            remapping.extend(self.record_type_remapping(library, source_module, &spellings, &mut Vec::new())?);
         }
         let public_path = std::iter::once(admitted.name.clone())
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_owned()))
             .collect::<Vec<_>>();
         let namespace = self.loaves.public_namespace(library, module_path).ok()??;
-        let identities: Vec<ExportIdentity> = serde_json::from_value(namespace.get("identities")?.clone()).ok()?;
-        let matching = identities
-            .iter()
-            .filter(|identity| identity.public_path == public_path && identity.source_path == source_path)
-            .collect::<Vec<_>>();
-        let [identity] = matching.as_slice() else {
-            return None;
+        let exports: Vec<ExportIdentity> = serde_json::from_value(namespace.get("identities")?.clone()).ok()?;
+        let (mut kind, canonical) = match declarations.as_slice() {
+            [declaration] => {
+                let matching = exports
+                    .iter()
+                    .filter(|identity| identity.public_path == public_path && identity.source_path == source_path)
+                    .collect::<Vec<_>>();
+                let [identity] = matching.as_slice() else {
+                    return None;
+                };
+                let canonical = identity.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)?;
+                (
+                    self.symbol_kind_from_api_declaration(None, declaration)?,
+                    Some(canonical),
+                )
+            }
+            overloads => self.record_overloads(overloads, exports, &public_path, &source_path)?,
         };
-        let canonical = identity.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate)?;
-        let mut kind = self.symbol_kind_from_api_declaration(None, &declaration)?;
+        self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         Self::mark_compiled_class_field_provider(&mut kind, library);
         let mut source_module_path = admitted.binding_root;
         source_module_path.extend(source_module.iter().cloned());
         Some(ResolvedPublicModuleSymbol {
             kind,
-            canonical: Some(canonical),
+            canonical,
             source_module_path,
             source_name: source_name.clone(),
         })
     }
+
+    /// The overload set the function declarations `overloads` publish at `public_path`, each candidate with its own
+    /// identity among `exports`, the namespace's identities, in declaration order, and the set's one identity when
+    /// every candidate shares it, as the manifest route selects them. `None` when a declaration is no function.
+    fn record_overloads(
+        &self,
+        overloads: &[ApiDeclaration],
+        exports: Vec<ExportIdentity>,
+        public_path: &[String],
+        source_path: &[String],
+    ) -> Option<(SymbolKind, Option<CanonicalSymbolId>)> {
+        let graph = LibraryIdentityGraph {
+            exports,
+            ..Default::default()
+        };
+        let identities = graph.identities_for_public_source_path(public_path, source_path);
+        let mut candidates = Vec::with_capacity(overloads.len());
+        for (index, declaration) in overloads.iter().enumerate() {
+            if !matches!(declaration, ApiDeclaration::Function(_)) {
+                return None;
+            }
+            let SymbolKind::Function(info) = self.symbol_kind_from_api_declaration(None, declaration)? else {
+                return None;
+            };
+            candidates.push(FunctionOverloadInfo {
+                info,
+                span: Span::default(),
+                identity: identities.get(index).cloned().flatten(),
+            });
+        }
+        let canonical = identities
+            .first()
+            .cloned()
+            .flatten()
+            .filter(|first| identities.iter().all(|identity| identity.as_ref() == Some(first)))
+            .or_else(|| graph.canonical_for_public_path(public_path));
+        Some((SymbolKind::FunctionOverloads(candidates), canonical))
+    }
+}
+
+/// The declarations the `signatures` records of one name describe, in declaration order, each with the defaults of its
+/// own `defaults` record put back. An overload's default record names the overload it belongs to; `None` when one
+/// names none, as in a set converted before it did, or when a record does not decode.
+fn restored_declarations(signatures: &[Value], defaults: &[Value]) -> Option<Vec<ApiDeclaration>> {
+    if let [signature] = signatures {
+        if defaults.len() > 1 {
+            return None;
+        }
+        let declaration = serde_json::from_value(restored_declaration(signature.clone(), defaults.first())).ok()?;
+        return Some(vec![declaration]);
+    }
+    let mut by_overload = std::collections::BTreeMap::new();
+    for record in defaults {
+        let entries = record.as_array()?;
+        let overload = entries.first()?.get(OVERLOAD_FIELD)?.as_u64()?;
+        if entries
+            .iter()
+            .any(|entry| entry.get(OVERLOAD_FIELD).and_then(Value::as_u64) != Some(overload))
+            || overload >= signatures.len() as u64
+            || by_overload.insert(overload, record).is_some()
+        {
+            return None;
+        }
+    }
+    signatures
+        .iter()
+        .zip(0u64..)
+        .map(|(signature, overload)| {
+            serde_json::from_value(restored_declaration(
+                signature.clone(),
+                by_overload.get(&overload).copied(),
+            ))
+            .ok()
+        })
+        .collect()
 }
 
 /// The members a namespace record publishes under `name`.
@@ -237,16 +352,4 @@ fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
         .flatten()
         .filter(|member| member.get("name").and_then(Value::as_str) == Some(name))
         .collect()
-}
-
-/// Whether `ty` names built-in types only, which no provider's type remapping can change.
-fn built_in_type(ty: &TypeRef) -> bool {
-    match ty {
-        TypeRef::Named { name, origin } => origin.is_none() && builtin_type_name(name).is_some(),
-        TypeRef::Applied { name, args, origin } => {
-            origin.is_none() && builtin_type_name(name).is_some() && args.iter().all(built_in_type)
-        }
-        TypeRef::Function { params, return_type } => params.iter().all(built_in_type) && built_in_type(return_type),
-        _ => false,
-    }
 }

@@ -3,8 +3,8 @@
 #   oven workspace inspect --workspace
 # expect-stdout-contains:
 #   Selected scope (workspace)
-#     - alpha (packages/alpha)
-#     - beta (packages/beta)
+#     - alpha (<project>/packages/alpha)
+#     - beta (<project>/packages/beta)
 # expect-stderr:
 # expect-exit: 0
 

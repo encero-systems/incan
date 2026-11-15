@@ -16,6 +16,7 @@ from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build
 from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
+from std.primitives.crumb.encoding_errors import BinaryError
 from std.primitives.crumb.framing import Reader, frame
 from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
@@ -549,9 +550,7 @@ def row_twin_decode(document: JsonValue) -> Result[bytes, str]:
         match read_rows(backing(data[:length])?, supplied, registry, row_require_sealed(document)?, budget):
             Err(error) =>
                 output.octet(1, setup).map_err((e) => e.message())?
-                output
-                    .append(frame(encode_utf8(error.kind.value()), setup).map_err((e) => e.message())?, setup)
-                    .map_err((e) => e.message())?
+                row_refusal(output, error, setup)?
             Ok(rows) =>
                 output.octet(0, setup).map_err((e) => e.message())?
                 mut sealed = 0
@@ -573,6 +572,26 @@ def row_twin_decode(document: JsonValue) -> Result[bytes, str]:
                         .append(frame(preimage, setup).map_err((e) => e.message())?, setup)
                         .map_err((e) => e.message())?
     return output.finish(setup).map_err((e) => e.message())
+
+
+def row_refusal(mut output: EncodingBuffer, error: BinaryError, mut setup: Budget) -> Result[None, str]:
+    """Write a refusal's category, envelope offset, and stored field and variant when known."""
+    output.append(frame(encode_utf8(error.kind.value()), setup).map_err((e) => e.message())?, setup).map_err(
+        (e) => e.message(),
+    )?
+    output.count(error.offset, setup).map_err((e) => e.message())?
+    refusal_member(output, error.field, setup)?
+    return refusal_member(output, error.variant, setup)
+
+
+def refusal_member(mut output: EncodingBuffer, member: Option[bytes], mut setup: Budget) -> Result[None, str]:
+    """Write a zero for an unknown member, or a one and the member's framed identity."""
+    match member:
+        Some(identity) =>
+            output.octet(1, setup).map_err((e) => e.message())?
+            output.append(frame(identity, setup).map_err((e) => e.message())?, setup).map_err((e) => e.message())?
+        None => output.octet(0, setup).map_err((e) => e.message())?
+    return Ok(None)
 
 
 def row_supplied(document: JsonValue) -> Result[list[Description], str]:

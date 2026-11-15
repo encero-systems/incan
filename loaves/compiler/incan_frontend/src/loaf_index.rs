@@ -193,6 +193,16 @@ impl LoafArtifact {
         let Some(expected) = manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) else {
             return Ok((None, BTreeSet::new()));
         };
+        Self::read_digested_rust_abi_cache(dir, name, expected)
+    }
+
+    /// Read the native ABI cache of the Loaf `name` in `dir`, refusing bytes whose digest is not `expected`, the
+    /// digest its manifest names: the manifest itself or the summary that carries it.
+    fn read_digested_rust_abi_cache(
+        dir: &Path,
+        name: &str,
+        expected: &str,
+    ) -> Result<(Option<Arc<RustAbiCache>>, BTreeSet<String>), LoafIndexError> {
         let path = dir.join(format!("{}.rustabi", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
@@ -529,18 +539,34 @@ impl LoafIndex {
         indexed.public_namespace(path)
     }
 
+    /// The type scope of the module `module` of the Loaf indexed as `key`, from its own record; `None` when only its
+    /// manifest can tell (see [`IndexedLoaf::type_scope`]).
+    pub fn type_scope(
+        &self,
+        key: &str,
+        module: &[String],
+    ) -> Result<Option<crate::library_manifest::type_scope::ModuleTypeScope>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.type_scope(module)
+    }
+
     /// Whether the Loaf indexed as `key` may export `name` at its package root: `Some(false)` only when its installed
-    /// set proves it does not, from record names alone (an exported enum's variants are not named by records, so a
-    /// Loaf exporting any enum is never proven). `None` when only its manifest can tell.
+    /// set proves it does not, from record names alone. An exported enum also publishes its variants and variant
+    /// aliases there; a set that holds an enum without naming them, as one converted before they were record names
+    /// does, is never proven. `None` when only its manifest can tell.
     pub fn may_export_at_root(&self, key: &str, name: &str) -> Result<Option<bool>, LoafIndexError> {
         use crate::library_manifest::compiler_records::RecordFamily;
-        const EXPORTS: [RecordFamily; 10] = [
+        const EXPORTS: [RecordFamily; 12] = [
             RecordFamily::Alias,
             RecordFamily::Partial,
             RecordFamily::Model,
             RecordFamily::Class,
             RecordFamily::Function,
             RecordFamily::Trait,
+            RecordFamily::Enum,
+            RecordFamily::EnumVariant,
             RecordFamily::TypeAlias,
             RecordFamily::Newtype,
             RecordFamily::Const,
@@ -552,7 +578,7 @@ impl LoafIndex {
         let Some(enums) = indexed.names_record(&[RecordFamily::Enum.as_str()], None)? else {
             return Ok(None);
         };
-        if enums {
+        if enums && indexed.names_record(&[RecordFamily::EnumVariant.as_str()], None)? != Some(true) {
             return Ok(Some(true));
         }
         let exports = EXPORTS.map(RecordFamily::as_str);
@@ -858,14 +884,18 @@ impl LoafIndex {
                 return Some(project_item(item));
             }
         }
+        // A path no summary names may still be in any shipped cache; each is read by its summary's digest, so the
+        // lookup demands no manifest. An unreadable cache is retained like an unreadable fact.
         for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
-            let Ok(entry) = entry.demand() else {
-                continue;
+            let cache = match entry.rust_abi_cache() {
+                Ok(Some(cache)) => cache,
+                Ok(None) => continue,
+                Err(error) => {
+                    let _ = self.rust_abi_failure.set(error);
+                    continue;
+                }
             };
-            let Some(cache) = entry.artifact.rust_abi_cache.as_ref() else {
-                continue;
-            };
-            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || entry.artifact.dir.clone()) {
+            if let Some(item) = self.cache_fact(read_cache(&cache, canonical_path), || entry.dir.clone()) {
                 return Some(item);
             }
         }
@@ -1062,9 +1092,62 @@ mod scoped_name_tests {
 
 #[cfg(test)]
 mod resolved_item_tests {
-    use super::LoafIndex;
+    use super::lazy_entry::IndexedLoaf;
+    use super::manifest_input::read_bytes;
+    use super::{LoafIdentity, LoafIndex, LoafNamespace};
+    use crate::rust_abi_cache::encode_rust_abi_cache;
     use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+    use incan_loaf_names::artifact_stem;
+    use std::collections::BTreeSet;
     use std::sync::Arc;
+
+    /// A Rust path no Loaf's summary names is looked up in each Loaf's shipped ABI cache, read and authenticated by
+    /// the digest the Loaf's summary names, so the lookup demands no Loaf's manifest.
+    #[test]
+    fn a_shipped_abi_cache_answers_without_its_loafs_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let path = "native::Header";
+        let directory = tempfile::tempdir()?;
+        let cache = directory.path().join(format!("{}.rustabi", artifact_stem("catalog")));
+        let item = RustItemMetadata {
+            canonical_path: path.to_owned(),
+            definition_path: None,
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo::default()),
+        };
+        std::fs::write(
+            &cache,
+            encode_rust_abi_cache(&[(path.to_owned(), item)].into_iter().collect())?,
+        )?;
+        let (_, digest) = read_bytes(&cache)?;
+        let identity = LoafIdentity {
+            name: "catalog".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: "admitted-digest".to_owned(),
+            feature_projection: BTreeSet::new(),
+        };
+        let namespace = LoafNamespace::Dependency {
+            key: "catalog".to_owned(),
+        };
+        let mut indexed = IndexedLoaf::summary_only("catalog".to_owned(), namespace, identity);
+        // The directory holds the cache alone: a demanded manifest cannot be read, so it cannot answer either.
+        indexed.dir = directory.path().to_path_buf();
+        let mut summary = serde_json::to_value(&indexed.summary)?;
+        summary["rust_abi_cache_declared"] = true.into();
+        summary["rust_abi_cache"] = true.into();
+        summary["rust_abi_cache_digest"] = digest.into();
+        indexed.summary = serde_json::from_value(summary)?;
+        let observation = indexed.clone();
+        let mut index = LoafIndex::default();
+        index.entries.insert("catalog".to_owned(), indexed);
+
+        let found = index
+            .rust_abi_item(path)
+            .ok_or("the shipped ABI cache did not answer")?;
+
+        assert_eq!(found.canonical_path, path);
+        assert!(!observation.was_demanded(), "the lookup demanded the Loaf's manifest");
+        Ok(())
+    }
 
     /// Releasing decoded items after checking drops every shared item the index held, and a later lookup answers
     /// again through the same lookup order instead of from a retained copy.

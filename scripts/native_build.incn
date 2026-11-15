@@ -493,12 +493,37 @@ def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
     return Ok([JsonValue.string(path) for path in sorted([path for path in paths])])
 
 
+pub def share_seed_generations(seed: Path, destination: Path, name: str) -> Result[None, str]:
+    """
+    Link each generation directory of one immutable seed tree into a directory the candidate home owns, when the seed
+    publishes the tree. The candidate installs its own generations beside the seed's, and nothing it writes there
+    reaches the seed.
+    """
+    source = seed.joinpath(name)
+    if not source.exists():
+        return Ok(None)
+    owned = destination.joinpath(name)
+    owned.mkdir(true, true).map_err((error) => error.message())?
+    for generation in source.iterdir().map_err((error) => error.message())?:
+        owned.joinpath(generation.name()).symlink_to(generation).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def runtime_root(toolchain: Path) -> Path:
+    """
+    The directory of `toolchain` that holds one directory per installed runtime generation: `native/`, where a packed
+    toolchain keeps its runtime. A unit compiled in the building home names the runtime from the toolchain directory,
+    and a home that installs the bundle and reuses that unit from the builder's bakery resolves the same reference.
+    """
+    return toolchain.joinpath("native")
+
+
 def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Path) -> Result[Path, str]:
     """Stage the complete runtime generation, bind it by content, and update the candidate manifest."""
     toolchain = context.home.joinpath(TOOLCHAIN_DIRECTORY)
-    runtime_root = toolchain.joinpath("runtime")
-    runtime_root.mkdir(true, true).map_err((error) => error.message())?
-    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(runtime_root)).map_err((error) => error.message())?
+    generations = runtime_root(toolchain)
+    generations.mkdir(true, true).map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new_with(".staged.", "", Some(generations)).map_err((error) => error.message())?
     staged = temporary.path()
     artifacts = runtime_artifacts()
     for artifact in artifacts:
@@ -507,7 +532,7 @@ def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Pa
     publish(context, helper, unit, staged, false, "runtime-install-publish")?
     write_artifact_digests(staged, artifacts)?
     generation = digest(staged.joinpath("artifacts.sha256"))?
-    installed = runtime_root.joinpath(generation)
+    installed = generations.joinpath(generation)
     if installed.exists():
         require_same_generation(staged, installed, artifacts + ["artifacts.sha256"])?
         publish(context, helper, unit, installed, false, "runtime-existing-publish")?

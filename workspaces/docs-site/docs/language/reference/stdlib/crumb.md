@@ -57,6 +57,8 @@ Successful reads advance the cursor. Every failed read preserves its original cu
 
 ## Type descriptions and spellings
 
+A name in a description, in metadata and in COMIC text is a UAX 31 identifier, with `_` allowed, that is already in Unicode normalization form NFC. `std.primitives.crumb.names` checks it: `admit_name(value: str) -> NameAdmission` returns a `status`, `NameStatus.Valid`, `Invalid` or `Unnormalized`, and `difference`, the position of the first scalar that differs from NFC for an unnormalized name and `-1` otherwise; `valid_name(value: str) -> bool` holds only for a valid name.
+
 The child modules `std.primitives.crumb.types`, `.spelling`, `.identity` and `.admission` expose explicit description inputs. They do not generate reflection hooks, authenticate a provider, load external descriptions or reconstruct a model. A structural view does not replace the complete description metadata or its digest.
 
 `TypeNode` has these variants:
@@ -360,3 +362,19 @@ Both admission and later access consume shared byte/work/depth allowances. Recon
 | `NonmaximalGroup`, `BlockCount` | Adjacent groups with the same nominal identity or an inconsistent block count. |
 
 A failed finite admission returns no partial set or unchecked selection. This surface does not provide incremental record yields, application model reconstruction or automatic typed-array borrowing.
+
+## Typed model codecs
+
+`std.primitives.crumb.typed_rows` and `std.primitives.crumb.typed_columns` move typed models through the finite row and column formats.
+
+| Declaration | Contract |
+| --- | --- |
+| `TypedRowWriter.create(descriptions: list[Description], registry: KindRegistry, sealed: bool, budget: Budget) -> Result[TypedRowWriter, CrumbError]` | Admits the descriptions. `sealed=true` is refused with `typed row seals are not available`. |
+| `TypedColumnWriter.create(descriptions, registry, sealed, budget) -> Result[TypedColumnWriter, CrumbError]` | The same for columns; `sealed=true` is refused with `typed column seals are not available`. |
+| `writer.root(shape: ShapeInfo) -> Result[TypedCellWriter, CrumbError]` | A cell writer for one root value of the shape. |
+| `writer.append(writer: TypedCellWriter) -> Result[None, CrumbError]` | Adds one written root. |
+| `writer.finish() -> Result[bytes, CrumbError]` | The complete envelope. |
+| `TypedRowReader.create(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, budget: Budget) -> Result[TypedRowReader, CrumbError]` | Admits the framing, the descriptions and every root range before exposing a source. |
+| `TypedColumnReader.create(view, supplied, registry, require_sealed, budget) -> Result[TypedColumnReader, CrumbError]` | Admits the descriptions, group directories and every indexed block before exposing a source; another profile is refused with `typed column profile`. |
+| `reader.len() -> int` | The number of roots. |
+| `reader.source(index: int, shape: ShapeInfo) -> Result[TypedCellSource, CrumbError]` | A typed source for the root at `index`. |

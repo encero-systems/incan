@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -23,17 +22,21 @@ use crate::library_manifest::{
     SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabExports,
 };
 
+use super::LoafIndexError;
 use super::lazy_entry::Summary;
-use super::{LoafIdentity, LoafIndexError};
 use crate::api_metadata::ApiDocumentation;
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 mod declaration_records;
+mod inventory;
 mod runtime_bindings;
 #[cfg(test)]
 mod thread_selection;
+use declaration_records::NAMED_FAMILIES;
 pub(super) use declaration_records::{names_record, read_declaration};
+pub(super) use inventory::summary;
+use inventory::{Metadata, read_summary};
 pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
@@ -43,9 +46,6 @@ const DOCUMENTATION: &str = "documentation";
 const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
 const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
-/// The record families a consumer reads by name: a declaration's own facts and a public namespace. A manifest
-/// projection never selects them either.
-const NAMED_FAMILIES: [&str; 4] = ["declaration-signature", "layout", "default", "public-namespace"];
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -191,105 +191,6 @@ impl RecordSet {
         #[cfg(not(test))]
         let _ = key;
     }
-}
-
-/// Metadata retained separately from declarations so the original Loaf identity survives conversion.
-#[derive(Deserialize)]
-#[cfg_attr(test, derive(serde::Serialize))]
-struct Metadata {
-    name: String,
-    version: String,
-    incan_version: String,
-    manifest_format: u32,
-    manifest_digest: String,
-    vocabulary: bool,
-    provider_operations: bool,
-    native_unions: bool,
-    rust_paths: BTreeSet<String>,
-    rust_abi_cache_declared: bool,
-}
-
-/// Read only the small, authenticated inventory record used to index an installed Loaf lazily.
-pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
-    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
-        return Ok(None);
-    };
-    read_summary(set, dir, name)
-}
-
-/// Read the inventory record of one Loaf group of `set`, once per process.
-fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
-    let profile = dir
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
-    let prefix = format!("loaf/{profile}/{name}/metadata/");
-    if let Some(summary) = set
-        .summaries
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&prefix)
-    {
-        return Ok(Some(summary.clone()));
-    }
-    let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
-    if entries.is_empty() {
-        return Ok(None);
-    }
-    if entries.len() != 1 {
-        return Err(unreadable(
-            dir,
-            name,
-            "compiler-record metadata requires exactly one value".to_owned(),
-        ));
-    }
-    let entry = entries[0];
-    if entry.revision != entry.value {
-        return Err(unreadable(
-            dir,
-            name,
-            format!(
-                "compiler-record `{}` has distinct revision and value identities",
-                entry.key
-            ),
-        ));
-    }
-    let value = read_value(&set.root, &entry.value)
-        .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
-    set.count_read(&entry.key, value.len());
-    let metadata: Metadata = LibraryManifest::decode_compiler_record_value(&value)
-        .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
-    if metadata.name != name {
-        return Err(unreadable(
-            dir,
-            name,
-            format!("compiler records name the Loaf `{}`", metadata.name),
-        ));
-    }
-    valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    let summary = Summary {
-        identity: LoafIdentity {
-            name: metadata.name,
-            version: metadata.version,
-            digest: metadata.manifest_digest,
-            feature_projection: BTreeSet::new(),
-        },
-        vocabulary: metadata.vocabulary,
-        provider_operations: metadata.provider_operations,
-        native_unions: metadata.native_unions,
-        rust_paths: metadata.rust_paths,
-        rust_abi_cache_declared: metadata.rust_abi_cache_declared,
-        rust_abi_cache: metadata.rust_abi_cache_declared,
-    };
-    set.summaries
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(prefix, summary.clone());
-    Ok(Some(summary))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
@@ -942,7 +843,9 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod member_families;
     mod namespace_records;
+    mod type_scopes;
     mod typechecker_reads;
 
     use std::collections::BTreeSet;
@@ -1005,6 +908,7 @@ mod tests {
             native_unions: false,
             rust_paths: BTreeSet::new(),
             rust_abi_cache_declared: false,
+            rust_abi_cache_digest: None,
         })?;
         let contract = LibraryManifest::encode_compiler_record_value(&LibraryContractMetadata::default())?;
         let expected = RecordReads {
@@ -1071,6 +975,7 @@ mod tests {
             native_unions: false,
             rust_paths: BTreeSet::new(),
             rust_abi_cache_declared: false,
+            rust_abi_cache_digest: None,
         })?)
     }
 

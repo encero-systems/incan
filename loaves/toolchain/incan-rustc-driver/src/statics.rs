@@ -23,8 +23,8 @@ pub(crate) fn method_name(slot: i64, method: &str) -> String {
     format!("__incan_static_method_{slot}_{method}")
 }
 
-/// Require the selected method's receiver to borrow exactly this cell's model carrier and its result to outlive the
-/// storage guard. The same signature controls adapter declaration and plan validation.
+/// Require the selected method's receiver to borrow exactly this cell's carrier, a model or a dictionary, and its
+/// result to outlive the storage guard. The same signature controls adapter declaration and plan validation.
 pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> Result<&'plan Function, PlanError> {
     let cell = cell(plan, slot)?;
     let method = plan
@@ -38,6 +38,7 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     })?;
     let carrier = match &receiver.ty {
         PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
+        PlanType::DictRef(key, value) => PlanType::Dict(key.clone(), value.clone()),
         _ => {
             return Err(PlanError::Invalid {
                 function: method.name.clone(),
@@ -45,13 +46,24 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
             });
         }
     };
-    if cell.ty != carrier || !guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), None) {
+    if cell.ty != carrier || !result_outlives_guard(plan, method, None) {
         return Err(PlanError::Invalid {
             function: method.name.clone(),
             reason: "unsupported static method carrier or escaping result".into(),
         });
     }
     Ok(method)
+}
+
+/// Whether a guarded method's result borrows nothing from the storage its guard protects. A dictionary reader
+/// returns a clone of the value type the cell itself stores, which a static can only hold when it is owned.
+fn result_outlives_guard(plan: &Plan, method: &Function, tcx: Option<TyCtxt<'_>>) -> bool {
+    if let Some(PlanType::DictRef(_, value)) = method.parameters.first().map(|receiver| &receiver.ty)
+        && crate::plan::list_leaf_type(value.clone()) == method.return_type
+    {
+        return true;
+    }
+    guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), tcx)
 }
 
 /// Require owned source layouts and defer opaque native ownership to the exact metadata type. Preflight has no
@@ -228,7 +240,7 @@ pub(crate) fn verify_method_results(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
                 continue;
             };
             let method = method_target(plan, *slot, name)?;
-            if !guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), Some(tcx)) {
+            if !result_outlives_guard(plan, method, Some(tcx)) {
                 return Err(PlanError::Invalid {
                     function: name.clone(),
                     reason: "static method result contains a borrowed or unresolved native carrier".into(),

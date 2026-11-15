@@ -189,7 +189,7 @@ def read_envelope(
 
 def read_records(
     mut cursor: EncodingCursor,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     sealed: bool,
     mut budget: Budget,
 ) -> Result[list[StoredRow], BinaryError]:

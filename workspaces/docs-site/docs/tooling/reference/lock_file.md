@@ -70,6 +70,10 @@ Each Loaf digest covers length-prefixed values for its origin, name, version, or
 
 Reordering `[[loaf]]` tables, dependency edges or feature names does not change `graph`. Changing a semantic field, an exact edge or any reached entry changes `graph`. Cycles, unresolved or ambiguous edges, multiple roots and entries outside the root closure are refused.
 
+## Published Loaf lock
+
+A source-Loaf archive carries `oven.lock` inside its archive digest: the slice of the publishing project's lock that its published Loaf reaches, with that Loaf as the slice's only root. The slice keeps every reached entry's identity, version, digests, feature selections and exact edges, and omits the root's workspace-relative location. An adopted source Loaf carries no lock. A project's own `oven.lock` among the selected files is refused, since the archive's lock is generated, and a lock that names the published Loaf at its version other than once is refused. A consumer reads the published lock as checked data and never resolves from it; compile-time trust that covers the published Loaf extends to the Loaves its lock pins, as [`oven describe-unit`](cli_reference.md#oven-describe-unit) reports under `covered_by`.
+
 ## Accepted example
 
 ```toml

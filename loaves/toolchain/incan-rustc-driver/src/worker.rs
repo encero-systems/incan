@@ -24,7 +24,7 @@ mod console;
 
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut host = incan_worker_host::start(&arguments.to_vec(), footprint(), live_heap())?;
+    let mut host = incan_worker_host::start(&arguments.to_vec())?;
     let home = incan_worker_host::selected_home(&host);
     while let Some(activation) = incan_worker_host::next_activation(&mut host) {
         match activation {

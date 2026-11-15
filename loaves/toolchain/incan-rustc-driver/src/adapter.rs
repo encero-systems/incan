@@ -270,6 +270,7 @@ fn compilation_arguments(
     overflow_checks: bool,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
+    let optimization = optimization_level(overflow_checks);
     let debuginfo = debuginfo(kind, overflow_checks);
     let mut args = vec![
         "incan-rustc-driver".into(),
@@ -284,7 +285,7 @@ fn compilation_arguments(
         "-C".into(),
         format!("overflow-checks={overflow}"),
         "-C".into(),
-        "opt-level=3".into(),
+        format!("opt-level={optimization}"),
         "-C".into(),
         format!("debuginfo={debuginfo}"),
         "-o".into(),
@@ -303,6 +304,11 @@ fn compilation_arguments(
         args.push("-Csplit-debuginfo=unpacked".into());
     }
     args
+}
+
+/// Select unoptimized native code for the debug profile and optimized native code for the release profile.
+fn optimization_level(overflow_checks: bool) -> &'static str {
+    if overflow_checks { "0" } else { "3" }
 }
 
 /// Select full debug metadata for libraries and development executables, but omit metadata stripped from release
@@ -383,7 +389,7 @@ fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darw
 
 #[cfg(test)]
 mod tests {
-    use super::{UnitKind, debuginfo};
+    use super::{UnitKind, debuginfo, optimization_level};
 
     /// Release executables omit debug metadata while development executables and libraries retain it.
     #[test]
@@ -392,5 +398,12 @@ mod tests {
         assert_eq!(debuginfo(UnitKind::Test, false), "0");
         assert_eq!(debuginfo(UnitKind::Program, true), "2");
         assert_eq!(debuginfo(UnitKind::Library, false), "2");
+    }
+
+    /// Debug compilation remains fast while release compilation retains optimized native code.
+    #[test]
+    fn optimization_follows_unit_profile() {
+        assert_eq!(optimization_level(true), "0");
+        assert_eq!(optimization_level(false), "3");
     }
 }

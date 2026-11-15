@@ -504,7 +504,7 @@ fn cell(node: &CellType, raw: &[u8], dictionary: &[Stored], budget: &mut Budget)
                 .iter()
                 .find(|entry| entry.key == key)
                 .ok_or("invalid_selector")?;
-            return super::rows::read_root(entry, raw, dictionary, budget);
+            return super::row_cells::read_root(entry, raw, 0, dictionary, budget).map_err(|refusal| refusal.category);
         }
         CellType::Integer(signed, width) => {
             if raw.len() != *width {
