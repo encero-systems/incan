@@ -44,7 +44,7 @@ from pub::internal_models import (
     decode_ready_work,
     encode_prepared_inputs,
     encode_ready_work,
-    encode_compiled_body_rows,
+    encode_compiled_body_outputs,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
@@ -72,7 +72,10 @@ from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
-from compiler_projection_cache import cached_editable_dependency_signature_record, editable_dependency_projection_key
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    editable_dependency_projection_key,
+)
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -651,59 +654,61 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Final, fields=[]),
     ).map_err((error) => f"{error:?}")?
     output = scratch.path().joinpath("compiled-body-output")
-    publish_compiled_output(
+    publish_binary(
         output,
-        CompiledBodyOutputs(
-            values=[
-                CompiledBodyValue(
-                    module="src/main.incn",
-                    name="main",
-                    identity=identity,
-                    declaration=declaration,
-                    local=local,
-                    final=final,
-                    body_ir=b"owner-frame",
-                    dependency_reads=[
-                        CompiledBodyDependencyRead(
-                            package=None,
-                            module="helper",
-                            name="value",
-                            identity="app|module:helper|value|function|module|0|() -> int",
-                            reference_subject="expr:main#10..17",
-                        ),
-                        CompiledBodyDependencyRead(
-                            package=None,
-                            module="lib",
-                            name="other",
-                            identity="function:lib::other|incan.source-signature/2:sha256:fixture",
-                            reference_subject="expr:main#20..27",
-                        ),
-                        CompiledBodyDependencyRead(
-                            package=Some("provider"),
-                            module="lib",
-                            name="CodecFault",
-                            identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
-                            reference_subject="type:main#expr.30..40/type.0",
-                        ),
-                        CompiledBodyDependencyRead(
-                            package=Some("provider"),
-                            module="lib",
-                            name="value",
-                            identity="provider|module:lib|value|function|module|0|() -> int",
-                            reference_subject="expr:main#50..57",
-                        ),
-                    ],
-                ),
-            ],
-            fallbacks=[
-                CompiledBodyFallback(
-                    module="src/main.incn",
-                    name="other",
-                    identity=fallback_identity,
-                    reason="local record output refused: Unsupported(\"fixture\")",
-                ),
-            ],
-        ),
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[
+                    CompiledBodyValue(
+                        module="src/main.incn",
+                        name="main",
+                        identity=identity,
+                        declaration=declaration,
+                        local=local,
+                        final=final,
+                        body_ir=b"owner-frame",
+                        dependency_reads=[
+                            CompiledBodyDependencyRead(
+                                package=None,
+                                module="helper",
+                                name="value",
+                                identity="app|module:helper|value|function|module|0|() -> int",
+                                reference_subject="expr:main#10..17",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=None,
+                                module="lib",
+                                name="other",
+                                identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                                reference_subject="expr:main#20..27",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="CodecFault",
+                                identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
+                                reference_subject="type:main#expr.30..40/type.0",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="value",
+                                identity="provider|module:lib|value|function|module|0|() -> int",
+                                reference_subject="expr:main#50..57",
+                            ),
+                        ],
+                    ),
+                ],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
     )?
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
@@ -714,31 +719,33 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
     diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")
-    publish_compiled_output(
+    publish_binary(
         diagnostic_output,
-        CompiledBodyOutputs(
-            values=[
-                CompiledBodyValue(
-                    module="src/main.incn",
-                    name="main",
-                    identity=identity,
-                    declaration=declaration,
-                    local=local,
-                    final=final,
-                    body_ir=b"owner-frame",
-                    dependency_reads=[
-                        CompiledBodyDependencyRead(
-                            package=Some("provider"),
-                            module="lib",
-                            name="transaction",
-                            identity="member/field:engine_programs::transaction",
-                            reference_subject="expr:engine_programs#120..131",
-                        ),
-                    ],
-                ),
-            ],
-            fallbacks=[],
-        ),
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[
+                    CompiledBodyValue(
+                        module="src/main.incn",
+                        name="main",
+                        identity=identity,
+                        declaration=declaration,
+                        local=local,
+                        final=final,
+                        body_ir=b"owner-frame",
+                        dependency_reads=[
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="transaction",
+                                identity="member/field:engine_programs::transaction",
+                                reference_subject="expr:engine_programs#120..131",
+                            ),
+                        ],
+                    ),
+                ],
+                fallbacks=[],
+            ),
+        ).map_err((error) => f"{error:?}")?,
     )?
     match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
         Ok(_) =>
@@ -794,19 +801,21 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     ) == ["src/main.incn::other: exact producer refusal"]
 
     fallback_output = scratch.path().joinpath("fallback-body-output")
-    publish_compiled_output(
+    publish_binary(
         fallback_output,
-        CompiledBodyOutputs(
-            values=[],
-            fallbacks=[
-                CompiledBodyFallback(
-                    module="src/main.incn",
-                    name="other",
-                    identity=fallback_identity,
-                    reason="local record output refused: Unsupported(\"fixture\")",
-                ),
-            ],
-        ),
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
     )?
     report = scratch.path().joinpath("fallback-plan-report")
     report.mkdir(true, true).map_err((error) => error.message())?
@@ -825,19 +834,21 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     canonical_fallback_output = scratch.path().joinpath("canonical-fallback-body-output")
-    publish_compiled_output(
+    publish_binary(
         canonical_fallback_output,
-        CompiledBodyOutputs(
-            values=[],
-            fallbacks=[
-                CompiledBodyFallback(
-                    module="src/main.incn",
-                    name="other",
-                    identity=fallback_identity,
-                    reason="local record output refused: Unsupported(\"fixture\")",
-                ),
-            ],
-        ),
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
     )?
     canonical_report = scratch.path().joinpath("canonical-fallback-plan-report")
     canonical_report.mkdir(true, true).map_err((error) => error.message())?
@@ -974,7 +985,7 @@ pub def test_a_rechecked_namespace_reads_imports_whose_bodies_were_retained() ->
         dependencies=["helper.incn"],
     )
     output = scratch.path().joinpath("compiled-body-output")
-    publish_compiled_output(output, CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?
+    publish_binary(output, compiled_output_bytes(CompiledBodyOutputs(namespaces=[namespace], values=[], fallbacks=[]))?)?
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_compiled_bodies(empty, unit, output)?
     assert published.bodies == 0 and published.fallbacks == 0
@@ -1199,13 +1210,14 @@ def activation(family: str, identity: str, dependency: int) -> RankedActivation:
     )
 
 
-def publish_compiled_output(output: Path, outputs: CompiledBodyOutputs) -> Result[None, str]:
-    """Write one independently bounded Crumb row per sidecar page, as the native compiler does."""
-    output.mkdir(true, true).map_err((error) => error.message())?
-    rows = encode_compiled_body_rows(outputs).map_err((error) => f"{error:?}")?
-    for index in range(len(rows)):
-        publish_binary(output.joinpath(str(index) + ".crumb"), rows[index])?
-    return Ok(None)
+def compiled_output_bytes(outputs: CompiledBodyOutputs) -> Result[bytes, str]:
+    """Join independently bounded test frames exactly as the native compiler sidecar writer does."""
+    mut encoded: list[u8] = []
+    for frame in encode_compiled_body_outputs(outputs).map_err((error) => f"{error:?}")?:
+        for byte in frame:
+            octet: u8 = byte.wrapping_resize()
+            encoded.append(octet)
+    return Ok(encoded)
 
 
 def required(before: Snapshot, key: str) -> Result[bytes, str]:

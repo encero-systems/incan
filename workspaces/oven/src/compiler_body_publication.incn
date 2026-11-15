@@ -1,9 +1,9 @@
 """Publish successful compiler body outputs into the ranked record graph."""
 
-from std.fs import Path
+from std.fs import File, Path
 from std.environ import get_or
 from std.json import JsonValue, parse
-from rust::std::fs import remove_dir_all
+from rust::std::fs import metadata
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, stage_put
@@ -14,8 +14,11 @@ from pub::internal_models import (
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
+    CompiledBodyOutput,
     CompiledBodyOutputs,
     GraphNamespaceValue,
+    compiled_body_frame_size,
+    decode_compiled_body_payload,
     encode_graph_namespace_value,
     record_root,
 )
@@ -35,14 +38,6 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
-from compiler_body_rows import read_compiled_body_outputs
-pub from compiler_captured_sources import (
-    PreparedSourceInputs,
-    PublishedSourceInputs,
-    prepare_captured_source_inputs,
-    publish_captured_source_inputs,
-    source_origin,
-)
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons, retained_namespace_event
 from compiler_plan_values import LOWERING_PROFILE
@@ -63,11 +58,14 @@ from compiler_projection_cache import (
     project_dependency_module,
     projection_cache,
 )
+from engine_capture import CapturedInput, InputRole
+from files import discard_file
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
 
 const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+const MAX_COMPILED_BODY_FRAMES: int = 4096
 
 
 model LoweringBody:
@@ -96,6 +94,105 @@ pub enum ProjectionRefusalMode(str):
     List = "list"
 
 
+class CompiledBodyFrames:
+    """Read one independently bounded binary compiler output frame without buffering the sidecar envelope."""
+
+    file: File
+    remaining: u64
+    count: int = 0
+    fallback_phase: bool = false
+    owner_phase: bool = false
+    previous_namespace: str = ""
+    previous_value: str = ""
+    previous_fallback: str = ""
+
+    @staticmethod
+    pub def open(path: Path) -> Result[CompiledBodyFrames, str]:
+        """Open one compiler sidecar and retain its exact remaining byte count for truncation checks."""
+        file = path.open("rb").map_err((error) => f"cannot open compiled body output: {error.message()}")?
+        size = metadata(path.0).map_err((error) => f"cannot inspect compiled body output: {error}")?.len()
+        return Ok(CompiledBodyFrames(file=file, remaining=size))
+
+    pub def next(mut self) -> Result[Option[CompiledBodyOutput], str]:
+        """Read, authenticate and order one owner frame, returning `None` only at the exact file boundary."""
+        if self.remaining == 0u64:
+            return Ok(None)
+        if self.remaining < 8u64:
+            return Err("compiled body output ends inside a frame prefix")
+        prefix = self.file
+            .read_exact(8)
+            .map_err((error) => f"compiled body frame prefix: cannot {error.message()}")?
+        size = compiled_body_frame_size(prefix).map_err((error) => f"compiled body output refused: {error:?}")?
+        converted: Option[u64] = size.try_resize()
+        frame_bytes = match converted:
+            Some(value) => value
+            None => return Err("compiled body frame length exceeds the host range")
+
+        if frame_bytes + 8u64 > self.remaining:
+            return Err("compiled body output ends inside an owner frame")
+        payload = self.file
+            .read_exact(size)
+            .map_err((error) => f"compiled body owner frame: cannot {error.message()}")?
+        self.remaining -= frame_bytes + 8u64
+        self.count += 1
+        if self.count > MAX_COMPILED_BODY_FRAMES:
+            return Err("compiled body output contains too many owner frames")
+        output = decode_compiled_body_payload(payload).map_err((error) => f"compiled body output refused: {error:?}")?
+        self.validate_order(output)?
+        return Ok(Some(output))
+
+    def validate_order(mut self, output: CompiledBodyOutput) -> Result[None, str]:
+        """Retain canonical value-then-fallback ordering without a whole-program decoder."""
+        match output:
+            CompiledBodyOutput.Namespace(value) =>
+                if self.owner_phase or self.fallback_phase or value.module <= self.previous_namespace:
+                    return Err("compiled namespace frames are not in canonical order")
+                self.previous_namespace = value.module
+            CompiledBodyOutput.Value(value) =>
+                self.owner_phase = true
+                if self.fallback_phase:
+                    return Err("compiled body value follows a fallback frame")
+                order = value.module + "\n" + value.identity
+                if order <= self.previous_value:
+                    return Err("compiled body value frames are not in canonical order")
+                self.previous_value = order
+            CompiledBodyOutput.Fallback(fallback) =>
+                self.owner_phase = true
+                self.fallback_phase = true
+                identity = match fallback.identity:
+                    Some(value) => value
+                    None => ""
+
+                order = fallback.module + "\n" + fallback.name + "\n" + identity
+                if order <= self.previous_fallback:
+                    return Err("compiled body fallback frames are not in canonical order")
+                self.previous_fallback = order
+        return Ok(None)
+
+
+def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
+    """Read the sidecar as one bounded owner allocation at a time while retaining only decoded semantic values."""
+    mut reader = CompiledBodyFrames.open(path)?
+    mut values: list[CompiledBodyValue] = []
+    mut fallbacks: list[CompiledBodyFallback] = []
+    mut namespaces: list[CompiledNamespaceValue] = []
+    while true:
+        match reader.next()?:
+            None => return Ok(CompiledBodyOutputs(namespaces=namespaces, values=values, fallbacks=fallbacks))
+            Some(CompiledBodyOutput.Namespace(value)) => namespaces.append(value)
+            Some(CompiledBodyOutput.Value(value)) => values.append(value)
+            Some(CompiledBodyOutput.Fallback(fallback)) =>
+                identity = match fallback.identity:
+                    Some(value) => value
+                    None => ""
+
+                if identity != "":
+                    for value in values:
+                        if value.module == fallback.module and value.identity == identity:
+                            return Err("compiled body fallback duplicates an eligible owner")
+                fallbacks.append(fallback)
+
+
 pub model PublishedCompiledBodies:
     """The graph generation and eligible/fallback body counts published from one successful whole check."""
 
@@ -118,66 +215,101 @@ pub model PreparedCompiledBodies:
     pub body_reuses: int = 0
 
 
-model AuthenticatedCompiledBodies:
-    """Decoded compiler rows and the measured fresh/reused owner counts they authenticate."""
+pub model PublishedSourceInputs:
+    """The graph generation and logical keys rewritten by captured source projection."""
 
-    outputs: CompiledBodyOutputs
-    origin: str
-    owner_evaluations: int
-    owner_reuses: int
+    pub snapshot: Snapshot
+    pub keys: list[RecordKey]
 
 
-model StagedCompiledBodySources:
-    """Prepared source authority and indexes shared by body and lowering evaluation staging."""
+pub model PreparedSourceInputs:
+    """Captured source projections staged for one atomic native request and the keys whose values changed."""
 
-    transaction: Transaction
-    source: PreparedBodyRecordSource
-    scope: ReadScope
-    projections: Dict[str, SourceProjection]
-    declarations: Dict[str, list[RecordKey]]
-    editable_packages: list[str]
-    rechecked: list[str]
+    pub transaction: Transaction
+    pub keys: list[RecordKey]
 
 
-def authenticate_compiled_bodies(
+pub def publish_captured_source_inputs(
+    selected: Snapshot,
     unit: UnitDescription,
-    output: Path,
-    retained: list[SelectedBodyRecord],
-    restored: list[str],
-) -> Result[AuthenticatedCompiledBodies, str]:
-    """Authenticate one compiler row directory, consume it and count the owners checked or restored this activation."""
-    authenticating = begin_work()
-    if not output.is_dir():
-        return Err("successful graph-enabled compile did not publish body output rows")
-    outputs = read_compiled_body_outputs(output)?
-    remove_dir_all(output.0).map_err((error) => f"cannot consume compiled body output {output.0}: {error}")?
-    chosen = set([record.identity for record in retained])
-    restored_identities = set([owner for owner in restored if owner in chosen])
-    mut owner_evaluations = len(outputs.fallbacks)
-    mut owner_reuses = 0
-    for value in outputs.values:
-        if value.identity in restored_identities:
-            owner_reuses += 1
-        else:
-            owner_evaluations += 1
-    origin = source_origin(unit)
-    if projection_refusal_mode()? == ProjectionRefusalMode.List:
-        refusals = projection_refusals(unit, origin, outputs.values)
-        if len(refusals) > 0:
-            return Err(
-                f"compiled body projection refusal list ({len(refusals)}):\n" + "\n".join(
-                    [f"{index + 1}. {refusals[index]}" for index in range(len(refusals))],
-                ),
-            )
-    record_work(Operation.EngineSidecarAuthentication, output.0, authenticating)
-    return Ok(
-        AuthenticatedCompiledBodies(
-            outputs=outputs,
-            origin=origin,
-            owner_evaluations=owner_evaluations,
-            owner_reuses=owner_reuses,
-        ),
-    )
+    inputs: list[CapturedInput],
+) -> Result[PublishedSourceInputs, str]:
+    """Publish captured Incan source projections in one standalone transaction."""
+    prepared = prepare_captured_source_inputs(selected, begin(selected), unit, inputs)?
+    published = commit(prepared.transaction).map_err((error) => error.message())?
+    return Ok(PublishedSourceInputs(snapshot=published, keys=prepared.keys))
+
+
+pub def prepare_captured_source_inputs(
+    selected: Snapshot,
+    transaction: Transaction,
+    unit: UnitDescription,
+    inputs: list[CapturedInput],
+) -> Result[PreparedSourceInputs, str]:
+    """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
+    mut prepared = transaction
+    mut changed: list[RecordKey] = []
+    for input in inputs:
+        if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            match captured_source_identity(unit, input.path)?:
+                None => continue
+                Some(identity) =>
+                    source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+                    projection = project_source(identity[0], identity[1], source)?
+                    header_key = encode_record_key(projection.header.key)?
+                    header_value = projection.header.text.encode("utf-8")
+                    if get(selected, header_key).map_err((error) => error.message())? != Some(header_value):
+                        changed.append(projection.header.key)
+                    stage_put(prepared, header_key, header_value)
+                    declaration_key = encode_record_key(projection.declarations.key)?
+                    declaration_value = projection.declarations.text.encode("utf-8")
+                    if get(selected, declaration_key).map_err((error) => error.message())? != Some(declaration_value):
+                        changed.append(projection.declarations.key)
+                    stage_put(prepared, declaration_key, declaration_value)
+                    for owner in projection.owners:
+                        for record in [owner, signature_record(owner)]:
+                            owner_key = encode_record_key(record.key)?
+                            owner_value = record.text.encode("utf-8")
+                            if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
+                                changed.append(record.key)
+                            stage_put(prepared, owner_key, owner_value)
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
+
+
+def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
+    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
+    mut normalized = ""
+    match Path(path).resolve():
+        Err(_) => return Ok(None)
+        Ok(resolved) => normalized = resolved.0
+    for dependency in dependency_source_roots(unit):
+        if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            return Ok(Some((dependency[0], logical_module(relative))))
+    if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
+        return Ok(Some((source_origin(unit), relative)))
+    return Ok(None)
+
+
+def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
+    """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
+    physical = Path(root).resolve().map_err((error) => f"captured source root: cannot {error.message()}")?
+    prefix = physical.0 + "/"
+    if path.startswith(prefix):
+        return Ok(Some(path[len(prefix):]))
+    return Ok(None)
+
+
+def logical_module(relative: str) -> str:
+    """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)
 
 
 pub def publish_compiled_bodies(
@@ -220,82 +352,216 @@ pub def prepare_compiled_bodies(
     3. Stage local, final and Body IR evaluations in the caller's request transaction.
     """
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
-    authenticated = authenticate_compiled_bodies(unit, output, retained, restored)?
-    outputs = authenticated.outputs
-    origin = authenticated.origin
-    owner_evaluations = authenticated.owner_evaluations
-    owner_reuses = authenticated.owner_reuses
+    authenticating = begin_work()
+    if not output.is_file():
+        return Err("successful graph-enabled compile did not publish body outputs")
+    outputs = read_compiled_body_outputs(output)?
+    discard_file(output)
+    # After a successful build the compiler also names an edited owner whose body it checked again, as its reported
+    # type errors show; a body is restored only from a record the engine selected.
+    chosen = set([record.identity for record in retained])
+    restored_identities = set([owner for owner in restored if owner in chosen])
+    mut owner_evaluations = len(outputs.fallbacks)
+    mut owner_reuses = 0
+    for value in outputs.values:
+        if value.identity in restored_identities:
+            owner_reuses += 1
+        else:
+            owner_evaluations += 1
+    origin = source_origin(unit)
+    if projection_refusal_mode()? == ProjectionRefusalMode.List:
+        refusals = projection_refusals(unit, origin, outputs.values)
+        if len(refusals) > 0:
+            return Err(
+                f"compiled body projection refusal list ({len(refusals)}):\n" + "\n".join(
+                    [f"{index + 1}. {refusals[index]}" for index in range(len(refusals))],
+                ),
+            )
+    record_work(Operation.EngineSidecarAuthentication, output.0, authenticating)
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     staging = begin_work()
-    staged = stage_compiled_body_sources(transaction, unit, origin, outputs)?
-    mut prepared = staged.transaction
-    mut source = staged.source
-    scope = staged.scope
-    projections = staged.projections
-    declarations = staged.declarations
-    editable_packages = staged.editable_packages
-    rechecked = staged.rechecked
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    mut prepared = transaction
+    projections = projection_cache(unit, origin, outputs)?
+    mut modules: set[str] = set()
+    for namespace in outputs.namespaces:
+        if namespace.module not in modules:
+            projection = projections[namespace.module]
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            stage_put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            stage_put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                owner_key = encode_record_key(owner.key)?
+                owner_value = owner.text.encode("utf-8")
+                stage_put(prepared, owner_key, owner_value)
+                source.add(owner_key, owner_value)
+            modules.add(namespace.module)
+        for dependency in namespace.dependencies:
+            dependency_projection = projections[dependency]
+            declaration_key = encode_record_key(dependency_projection.declarations.key)?
+            declaration_value = dependency_projection.declarations.text.encode("utf-8")
+            stage_put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+    for value in outputs.values:
+        if value.module not in modules:
+            projection = projections[value.module]
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            stage_put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            stage_put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    stage_put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
+            modules.add(value.module)
+    for fallback in outputs.fallbacks:
+        if fallback.module not in modules:
+            projection = projections[fallback.module]
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            stage_put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            stage_put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    stage_put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
+            modules.add(fallback.module)
+    # A rechecked namespace reads each import's declaration index, also when that module's bodies were all retained.
+    mut staged: list[str] = []
+    for module in modules:
+        staged.append(module)
+    for index in import_declaration_indexes(origin, unit.project_root, outputs.namespaces, staged)?:
+        stage_put(prepared, encode_record_key(index.key)?, index.text.encode("utf-8"))
+        source.add(encode_record_key(index.key)?, index.text.encode("utf-8"))
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in outputs.values:
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        owner = cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ).map_err(
+                            (error) => dependency_projection_refusal(
+                                error,
+                                value.module,
+                                value.name,
+                                value.identity,
+                                dependency,
+                            ),
+                        )?
+                        stage_put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+                        source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+                None =>
+                    slot = project_declaration_slot(origin, dependency.module, dependency.name)
+                    slot_value = dependency.identity.encode("utf-8")
+                    stage_put(prepared, encode_record_key(slot)?, slot_value)
+                    source.add(encode_record_key(slot)?, slot_value)
+                    dependency_module = project_dependency_module(unit, dependency.module)?
+                    dependency_projection = projections[dependency_module]
+                    declaration_key = encode_record_key(dependency_projection.declarations.key)?
+                    declaration_value = dependency_projection.declarations.text.encode("utf-8")
+                    stage_put(prepared, declaration_key, declaration_value)
+                    source.add(declaration_key, declaration_value)
+                    signature = cached_project_signature_record(
+                        projections,
+                        unit,
+                        dependency.module,
+                        dependency.name,
+                        dependency.identity,
+                    ).map_err(
+                        (error) => dependency_projection_refusal(
+                            error,
+                            value.module,
+                            value.name,
+                            value.identity,
+                            dependency,
+                        ),
+                    )?
+                    signature_key = encode_record_key(signature.key)?
+                    signature_value = signature.text.encode("utf-8")
+                    stage_put(prepared, signature_key, signature_value)
+                    source.add(signature_key, signature_value)
+    for value in outputs.values:
+        declaration_key = encode_record_key(
+            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
+        )?
+        stage_put(prepared, declaration_key, value.declaration)
+        source.add(declaration_key, value.declaration)
+        stage_put(prepared, encode_record_key(eligibility_key(origin, value.identity, value.name))?, b"record-eligible")
+    for fallback in outputs.fallbacks:
+        match fallback.identity:
+            Some(identity) =>
+                stage_put(
+                    prepared,
+                    encode_record_key(eligibility_key(origin, identity, fallback.name))?,
+                    ("full-source: " + fallback.reason).encode("utf-8"),
+                )
+            None => pass
+
+    declarations = module_declarations(outputs.values, origin)?
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
-    stage_compiled_namespaces(prepared, source, scope, projections, outputs.namespaces, origin)?
-    published = stage_compiled_body_values(
-        prepared,
-        source,
-        scope,
-        projections,
-        declarations,
-        outputs.values,
-        unit,
-        origin,
-        editable_packages,
-    )?
-    prepared = prepare_optional_lowering_records(
-        prepared,
-        source,
-        projections,
-        outputs,
-        retained,
-        selected,
-        unit,
-        origin,
-        declarations,
-        rechecked,
-        plan_output,
-    )?
-    record_work(Operation.EngineGraphStaging, output.0, staging)
-    return Ok(
-        PreparedCompiledBodies(
-            transaction=prepared,
-            bodies=published,
-            fallbacks=len(outputs.fallbacks),
-            checking_evaluations=owner_evaluations,
-            body_ir_evaluations=owner_evaluations,
-            body_reuses=owner_reuses,
-        ),
-    )
-
-
-def stage_compiled_body_values(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    scope: ReadScope,
-    projections: &Dict[str, SourceProjection],
-    declarations: &Dict[str, list[RecordKey]],
-    values: list[CompiledBodyValue],
-    unit: UnitDescription,
-    origin: str,
-    editable_packages: list[str],
-) -> Result[int, str]:
-    """Stage each compiler-produced local, final and Body IR value with its exact source and dependency witnesses."""
     mut published = 0
-    for value in values:
+    for namespace in outputs.namespaces:
+        projection = projections[namespace.module]
+        key = namespace_key(origin, namespace.module)
+        mut reads = [
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+        ]
+        for owner in projection.owners:
+            reads.append(prepared_product_request(owner.key))
+        for dependency in namespace.dependencies:
+            reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
+        value = encode_graph_namespace_value(
+            GraphNamespaceValue(
+                module=namespace.module,
+                interface=namespace.interface,
+                body_ir=namespace.body_ir,
+                lowering_inputs=namespace.lowering_inputs,
+            ),
+        ).map_err((error) => f"compiled namespace output refused: {error:?}")?
+        receipt = prepared_receipt(source, scope, key, reads)?
+        _ = prepare_evaluation(
+            prepared,
+            "compiled-namespace-" + namespace.module,
+            ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0),
+            value,
+            receipt,
+        )?
+    for value in outputs.values:
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
-        mut local_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        )]
+        mut local_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+        ]
         for declaration in declarations[value.module]:
             local_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
@@ -318,9 +584,12 @@ def stage_compiled_body_values(
         )?
         source.add(encode_record_key(local_key)?, value.local)
         final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
-        mut final_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        ), prepared_product_request(local_key)]
+        mut final_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+            prepared_product_request(local_key),
+        ]
         for declaration in declarations[value.module]:
             final_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
@@ -353,61 +622,6 @@ def stage_compiled_body_values(
         )?
         source.add(encode_record_key(body_ir_key)?, value.body_ir)
         published += 1
-    return Ok(published)
-
-
-def stage_compiled_namespaces(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    scope: ReadScope,
-    projections: &Dict[str, SourceProjection],
-    namespaces: list[CompiledNamespaceValue],
-    origin: str,
-) -> Result[None, str]:
-    """Stage every checked namespace row with its projection owners and imported declaration indexes as witnesses."""
-    for namespace in namespaces:
-        projection = projections[namespace.module]
-        key = namespace_key(origin, namespace.module)
-        mut reads = [prepared_product_request(projection.header.key), prepared_product_request(
-            projection.declarations.key,
-        )]
-        for owner in projection.owners:
-            reads.append(prepared_product_request(owner.key))
-        for dependency in namespace.dependencies:
-            reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
-        value = encode_graph_namespace_value(
-            GraphNamespaceValue(
-                module=namespace.module,
-                interface=namespace.interface,
-                body_ir=namespace.body_ir,
-                lowering_inputs=namespace.lowering_inputs,
-            ),
-        ).map_err((error) => f"compiled namespace output refused: {error:?}")?
-        receipt = prepared_receipt(source, scope, key, reads)?
-        _ = prepare_evaluation(
-            prepared,
-            "compiled-namespace-" + namespace.module,
-            ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0),
-            value,
-            receipt,
-        )?
-    return Ok(None)
-
-
-def prepare_optional_lowering_records(
-    prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
-    outputs: CompiledBodyOutputs,
-    retained: list[SelectedBodyRecord],
-    selected: Option[Snapshot],
-    unit: UnitDescription,
-    origin: str,
-    declarations: Dict[str, list[RecordKey]],
-    rechecked: list[str],
-    plan_output: Option[Path],
-) -> Result[Transaction, str]:
-    """Stage lowering records only when this compiler activation requested a plan report."""
     if let Some(report) = plan_output:
         witnesses = lowering_witnesses(
             projections,
@@ -419,194 +633,28 @@ def prepare_optional_lowering_records(
             origin,
             declarations,
         )?
-        return prepare_lowering_records(
+        prepared = prepare_lowering_records(
             prepared,
             source,
             witnesses,
             outputs.fallbacks,
-            rechecked,
+            staged,
             origin,
             report,
             unit,
             selected,
-        )
-    return Ok(prepared)
-
-
-def stage_compiled_body_sources(
-    transaction: Transaction,
-    unit: UnitDescription,
-    origin: str,
-    outputs: CompiledBodyOutputs,
-) -> Result[StagedCompiledBodySources, str]:
-    """Stage source, dependency, declaration and eligibility records that authenticate compiler output rows."""
-    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
-    mut source = PreparedBodyRecordSource.open(scope)
-    mut prepared = transaction
-    projections = projection_cache(unit, origin, outputs)?
-    rechecked = stage_compiled_projection_sources(prepared, source, projections, outputs, origin, unit)?
-    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
-    stage_compiled_dependency_sources(prepared, source, projections, outputs.values, editable_packages, origin, unit)?
-    for value in outputs.values:
-        declaration_key = encode_record_key(
-            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
         )?
-        stage_put(prepared, declaration_key, value.declaration)
-        source.add(declaration_key, value.declaration)
-        stage_put(prepared, encode_record_key(eligibility_key(origin, value.identity, value.name))?, b"record-eligible")
-    for fallback in outputs.fallbacks:
-        if let Some(identity) = fallback.identity:
-            stage_put(
-                prepared,
-                encode_record_key(eligibility_key(origin, identity, fallback.name))?,
-                ("full-source: " + fallback.reason).encode("utf-8"),
-            )
+    record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
-        StagedCompiledBodySources(
+        PreparedCompiledBodies(
             transaction=prepared,
-            source=source,
-            scope=scope,
-            projections=projections,
-            declarations=module_declarations(outputs.values, origin)?,
-            editable_packages=editable_packages,
-            rechecked=rechecked,
+            bodies=published,
+            fallbacks=len(outputs.fallbacks),
+            checking_evaluations=owner_evaluations,
+            body_ir_evaluations=owner_evaluations,
+            body_reuses=owner_reuses,
         ),
     )
-
-
-def stage_compiled_projection_sources(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
-    outputs: CompiledBodyOutputs,
-    origin: str,
-    unit: UnitDescription,
-) -> Result[list[str], str]:
-    """Stage each participating module projection and every declaration index a rechecked namespace imports."""
-    mut modules: set[str] = set()
-    for namespace in outputs.namespaces:
-        if namespace.module not in modules:
-            stage_source_projection(prepared, source, projections[namespace.module], false)?
-            modules.add(namespace.module)
-        for dependency in namespace.dependencies:
-            projection = projections[dependency]
-            key = encode_record_key(projection.declarations.key)?
-            value = projection.declarations.text.encode("utf-8")
-            stage_put(prepared, key, value)
-            source.add(key, value)
-    for value in outputs.values:
-        if value.module not in modules:
-            stage_source_projection(prepared, source, projections[value.module], true)?
-            modules.add(value.module)
-    for fallback in outputs.fallbacks:
-        if fallback.module not in modules:
-            stage_source_projection(prepared, source, projections[fallback.module], true)?
-            modules.add(fallback.module)
-    staged = [module for module in modules]
-    for index in import_declaration_indexes(origin, unit.project_root, outputs.namespaces, staged)?:
-        key = encode_record_key(index.key)?
-        value = index.text.encode("utf-8")
-        stage_put(prepared, key, value)
-        source.add(key, value)
-    return Ok(staged)
-
-
-def stage_source_projection(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    projection: SourceProjection,
-    signatures: bool,
-) -> Result[None, str]:
-    """Stage one module header, declaration index and owner records through the prepared request authority."""
-    for record in [projection.header, projection.declarations]:
-        key = encode_record_key(record.key)?
-        value = record.text.encode("utf-8")
-        stage_put(prepared, key, value)
-        source.add(key, value)
-    for owner in projection.owners:
-        mut records = [owner]
-        if signatures:
-            records.append(signature_record(owner))
-        for record in records:
-            key = encode_record_key(record.key)?
-            value = record.text.encode("utf-8")
-            stage_put(prepared, key, value)
-            source.add(key, value)
-    return Ok(None)
-
-
-def stage_compiled_dependency_sources(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
-    values: list[CompiledBodyValue],
-    editable_packages: list[str],
-    origin: str,
-    unit: UnitDescription,
-) -> Result[None, str]:
-    """Stage the exact editable-package or same-project declaration records each compiled owner reports reading."""
-    for value in values:
-        for dependency in value.dependency_reads:
-            match dependency.package:
-                Some(package) =>
-                    if package in editable_packages:
-                        owner = cached_editable_dependency_signature_record(
-                            projections,
-                            package,
-                            dependency.module,
-                            dependency.name,
-                            dependency.identity,
-                        ).map_err(
-                            (error) => dependency_projection_refusal(
-                                error,
-                                value.module,
-                                value.name,
-                                value.identity,
-                                dependency,
-                            ),
-                        )?
-                        stage_source_record(prepared, source, owner)?
-                None => stage_project_dependency_source(prepared, source, projections, value, dependency, origin, unit)?
-    return Ok(None)
-
-
-def stage_project_dependency_source(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    projections: &Dict[str, SourceProjection],
-    value: CompiledBodyValue,
-    dependency: CompiledBodyDependencyRead,
-    origin: str,
-    unit: UnitDescription,
-) -> Result[None, str]:
-    """Stage one same-project declaration slot, module index and exact checked signature."""
-    slot = project_declaration_slot(origin, dependency.module, dependency.name)
-    slot_value = dependency.identity.encode("utf-8")
-    stage_put(prepared, encode_record_key(slot)?, slot_value)
-    source.add(encode_record_key(slot)?, slot_value)
-    projection = projections[project_dependency_module(unit, dependency.module)?]
-    stage_source_record(prepared, source, projection.declarations)?
-    signature = cached_project_signature_record(
-        projections,
-        unit,
-        dependency.module,
-        dependency.name,
-        dependency.identity,
-    ).map_err((error) => dependency_projection_refusal(error, value.module, value.name, value.identity, dependency))?
-    return stage_source_record(prepared, source, signature)
-
-
-def stage_source_record(
-    mut prepared: Transaction,
-    mut source: PreparedBodyRecordSource,
-    record: SourceProjectionRecord,
-) -> Result[None, str]:
-    """Stage one source projection record and make the same bytes readable by prepared receipts."""
-    key = encode_record_key(record.key)?
-    value = record.text.encode("utf-8")
-    stage_put(prepared, key, value)
-    source.add(key, value)
-    return Ok(None)
 
 
 def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
@@ -1052,8 +1100,7 @@ def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjec
         if owner.key.facet == name or owner.key.facet.endswith(":" + name):
             match selected:
                 Some(_) => return Err(OwnerRecordFault.Ambiguous)
-                None =>
-                    selected = Some(owner)
+                None => selected = Some(owner)
     match selected:
         Some(owner) => return Ok(owner)
         None => return Err(OwnerRecordFault.Absent)
@@ -1253,6 +1300,13 @@ def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
         facet=name,
         context="checker-record",
     )
+
+
+pub def source_origin(unit: UnitDescription) -> str:
+    """Use the package authority, or isolate one manifest-free entry by its exact source path."""
+    if unit.package != "":
+        return unit.package
+    return "standalone:" + unit.source
 
 
 def root(encoded: bytes) -> Result[str, str]:

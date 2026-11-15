@@ -27,7 +27,7 @@ struct PendingBodyValue {
     restored: bool,
 }
 
-/// One complete namespace value awaiting its whole-module Body IR row.
+/// One complete namespace value awaiting its whole-module Body IR frame.
 struct PendingNamespaceValue {
     module: String,
     interface: Vec<u8>,
@@ -204,7 +204,7 @@ impl GraphBodyOutput {
             let module_path = module_path.to_string_lossy().into_owned();
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
-                    .map_err(|error| format!("Body IR namespace row output refused: {error}"))?;
+                    .map_err(|error| format!("Body IR namespace frame output refused: {error}"))?;
                 namespace.lowering_inputs = canonical_lowering_inputs(
                     lowering_inputs
                         .iter()
@@ -227,18 +227,18 @@ impl GraphBodyOutput {
                     &pending.identity,
                     body,
                 )
-                .map_err(|error| format!("Body IR owner row output refused: {error}"))?;
+                .map_err(|error| format!("Body IR owner frame output refused: {error}"))?;
             }
         }
         if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {
             return Err(format!(
-                "compiled graph output has no Body IR row for {} in {}",
+                "compiled graph output has no Body IR frame for {} in {}",
                 value.identity, value.module
             ));
         }
         if let Some(value) = self.namespaces.iter().find(|value| value.body_ir.is_empty()) {
             return Err(format!(
-                "compiled graph output has no Body IR namespace row for {}",
+                "compiled graph output has no Body IR namespace frame for {}",
                 value.module
             ));
         }
@@ -340,12 +340,13 @@ impl GraphBodyOutput {
             values,
             fallbacks,
         };
-        let rows = internal_models::encode_compiled_body_rows(outputs).map_err(|error| {
-            format!(
-                "compiled graph output refused: {error:?} ({body_count} owner rows, {body_ir_bytes} raw Body IR bytes)"
-            )
-        })?;
-        publish_rows(&path, rows)?;
+        let frames = internal_models::encode_compiled_body_outputs(outputs)
+            .map_err(|error| {
+                format!(
+                    "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"
+                )
+            })?;
+        publish(&path, frames)?;
         publish(&checker_report_path(&path), vec![report])
     }
 }
@@ -440,7 +441,7 @@ fn dependency_module(module_path: &[String]) -> String {
     }
 }
 
-/// Name the structured checker-admission report beside the graph body rows that produced it.
+/// Name the structured checker-admission report beside the graph body frames that produced it.
 fn checker_report_path(path: &Path) -> PathBuf {
     let mut report = OsString::from(path.as_os_str());
     report.push(".checker-report.json");
@@ -468,23 +469,6 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
         .flush()
         .map_err(|error| format!("cannot flush compiled graph output {}: {error}", temporary.display()))?;
     drop(output);
-    std::fs::rename(&temporary, path)
-        .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
-}
-
-/// Replace one compiler sidecar with a directory holding one independently bounded Crumb row per file.
-fn publish_rows(path: &Path, rows: Vec<Vec<u8>>) -> Result<(), String> {
-    let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
-    let temporary = path.with_extension(format!("pending-{}", std::process::id()));
-    std::fs::create_dir(&temporary)
-        .map_err(|error| format!("cannot create compiled graph output {}: {error}", temporary.display()))?;
-    for (index, row) in rows.into_iter().enumerate() {
-        let page = temporary.join(format!("{index:08}.crumb"));
-        std::fs::write(&page, row)
-            .map_err(|error| format!("cannot write compiled graph output {}: {error}", page.display()))?;
-    }
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
 }
