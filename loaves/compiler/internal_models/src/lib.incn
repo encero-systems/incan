@@ -127,6 +127,7 @@ pub from activation_envelopes import (
     stage_name,
 )
 pub from checker_record_models import (
+    CodecFault,
     GraphBodyValue,
     GraphBodyFields,
     GraphNamespaceValue,
@@ -150,7 +151,6 @@ pub from checker_records import (
     decode_graph_namespace_value,
     record_root,
 )
-pub from checker_field_grammar import CodecFault
 pub from compiled_body_rows import (
     CompiledBodyOutput,
     encode_compiled_body_rows,
