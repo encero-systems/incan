@@ -432,6 +432,9 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     initial_records = compiler_records_read(observations)?
     initial_digests = link_input_digests(observations)?
+    initial_abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index")
+    if initial_abi_opens == 0:
+        return Err("the initial build recorded no open of the Rust ABI index")
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -460,6 +463,10 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     records = compiler_records_read(observations)? - initial_records
     if records > 86:
         return Err(f"one-body edit opened {records} compiler records")
+    # The resident compiler keeps the unchanged Rust ABI index it opened, so the edit opens none.
+    abi_opens = invocation_count(observations, "incan_frontend::open_rust_abi_index") - initial_abi_opens
+    if abi_opens != 0:
+        return Err(f"one-body edit opened the unchanged Rust ABI index {abi_opens} times")
     processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
     if processes != 1:
         return Err(f"initial build and one-body edit used {processes} unit compiler processes")
