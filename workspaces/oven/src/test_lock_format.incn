@@ -721,13 +721,15 @@ pub def test_a_toolchain_loaf_s_lock_entry_carries_its_source_digest() -> Result
 pub def test_a_toolchain_loaf_s_lock_entry_names_its_registry_revision_and_archive_digest() -> Result[None, str]:
     """
     RFC 125: a toolchain-origin entry names the registry and revision of the index line its unit came from, and its
-    checksum is that line's source archive digest (`cksum`). All three are read from the closure unit; the upstream
-    crate digest the index line also carries is provenance and never the lock's checksum.
+    checksum is that line's source archive digest (`cksum`). All three are read from the closure unit, which records the
+    revision as a decimal string because installed records carry no numbers. The upstream crate digest the index line
+    also carries is provenance and never the lock's checksum.
     """
     archive = "sha256:8aaf6eed3d6cbe70c2c20d5b5b7ae889dedcd02ae07b00de2bb3e1d988af4181"
-    mut text = "{\"entry\": \"sha256:01\", \"loaf\": \"crates-io/hex\", \"version\": \"0.4.3\", \"domain\": \"target\", "
+    mut text = "{\"entry\": \"sha256:01\", \"loaf\": \"crates-io/hex\", \"version\": \"0.4.3\", "
+    text += "\"domain\": \"target\", "
     text += "\"features\": [\"alloc\", \"default\", \"std\"], \"profile\": \"release\", \"dependencies\": [], "
-    text += f"\"registry\": \"loaves.pub\", \"revision\": 2, \"checksum\": \"{archive}\"}}"
+    text += f"\"registry\": \"loaves.pub\", \"revision\": \"2\", \"checksum\": \"{archive}\"}}"
     item = JsonValue.parse(text).map_err((error) => error.message())?
     unit = registry_unit(item, "/store/entries", Path("/store"))?
     assert unit.registry == "loaves.pub" and unit.revision == 2 and unit.source_digest == archive
