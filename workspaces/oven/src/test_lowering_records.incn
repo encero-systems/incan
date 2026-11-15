@@ -293,6 +293,32 @@ pub def test_body_edit_rebuilds_beside_an_unchecked_fallback_owner() -> Result[N
     return stop_example_engine(binary, store)
 
 
+pub def test_declaration_edit_keeps_an_imported_enum_read() -> Result[None, str]:
+    """
+    A declaration added beside an unchanged function that reads a sibling module's enum builds warm as it builds
+    cold: the retained sibling still gives that function its variants (#3154).
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("imported-enum-project")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"imported_enum\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(source.joinpath("kinds.incn"), "pub enum Value:\n    Empty\n    Full(int)\n")?
+    reader = "from kinds import Value\n\n\ndef main() -> None:\n    match Value.Empty:\n        Value.Empty => println(1)\n        _ => pass\n    match Value.Full(2):\n        Value.Full(count) => println(count)\n        _ => pass\n"
+    write(source.joinpath("main.incn"), reader)?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    report_fixture_build(binary, project, store)?
+    write(source.joinpath("main.incn"), reader + "\n\ndef added() -> int:\n    return 1\n")?
+    report_fixture_build(binary, project, store)?
+    require_probe_output(project.joinpath("target/incan/release/bin/imported_enum"), "1\n2")?
+    return stop_example_engine(binary, store)
+
+
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     """
     A generic body edit in a warm store reproduces the cold plan, executable and output for both instances, and a
