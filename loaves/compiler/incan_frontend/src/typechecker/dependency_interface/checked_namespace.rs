@@ -18,6 +18,7 @@ pub struct CheckedNamespaceInterface {
     /// Member identities by declaration name. API metadata carries a member's identity only for a package origin, so
     /// an editable module's variants, fields, properties and methods keep theirs here (#3154).
     members: std::collections::BTreeMap<String, NamespaceMemberIdentities>,
+    nominal_scope: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
@@ -108,6 +109,7 @@ impl CheckedNamespaceInterface {
             api,
             identities,
             members,
+            nominal_scope: checker.collect_checked_nominal_scope(),
         }))
     }
 
@@ -195,21 +197,7 @@ impl CheckedNamespaceInterface {
             .iter()
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
-        let nominal_scope = Arc::new(
-            identities
-                .iter()
-                .filter(|(_, identity)| {
-                    matches!(
-                        identity.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::Newtype
-                    )
-                })
-                .map(|(name, identity)| (name.clone(), identity.clone()))
-                .collect(),
-        );
+        let nominal_scope = Arc::new(self.nominal_scope.clone());
         for (name, kind) in &symbols {
             if let Some(identity) = identities.get(name) {
                 converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
