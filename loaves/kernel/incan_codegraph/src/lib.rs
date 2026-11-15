@@ -7,6 +7,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[path = "../../../stdlib/primitives/rust/src/unicode_names.rs"]
+mod unicode_names;
+
 pub mod artifact;
 
 /// Current codegraph JSONL schema version.
