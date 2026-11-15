@@ -306,6 +306,82 @@ pub def test_a_value_read_once_on_each_path_is_transferred_at_that_read() -> Res
     return Ok(None)
 
 
+const FIELD_PATHS: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+pub model Decoded:
+    pub value: Value
+    pub index: list[int]
+
+
+def decode(size: int) -> Decoded:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Decoded(value=Value.Many("label", items), index=[1, 2, 3])
+
+
+def keep(value: Value) -> Value:
+    return value
+
+
+def field_each_branch(flag: bool, size: int) -> Value:
+    decoded = decode(size)
+    mut kept = Value.Empty
+    if flag:
+        kept = keep(decoded.value)
+    else:
+        kept = Value.Many("other", [decoded.value])
+    return kept
+
+
+def field_each_return(flag: bool, size: int) -> Value:
+    decoded = decode(size)
+    if flag:
+        return decoded.value
+    return keep(decoded.value)
+
+
+def field_then_replaced(size: int) -> int:
+    mut decoded = decode(size)
+    first = keep(decoded.value)
+    decoded = decode(size + 1)
+    return arity(first) + arity(keep(decoded.value))
+
+
+def field_in_loop(size: int) -> int:
+    mut total = 0
+    for round in range(3):
+        decoded = decode(size + round)
+        total += arity(keep(decoded.value))
+    return total
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def main() -> None:
+    println(arity(field_each_branch(true, 4)) + arity(field_each_branch(false, 9)))
+    println(arity(field_each_return(true, 2)) + arity(field_each_return(false, 3)))
+    println(field_then_replaced(5))
+    println(field_in_loop(1))
+"""
+
+
+pub def test_a_field_read_once_on_each_path_leaves_its_owner_at_that_read() -> Result[None, str]:
+    """A field read once on each path, or before its owner is replaced, moves out there uncopied (#1604)."""
+    report = plan_report("field_paths", FIELD_PATHS, "5\n5\n11\n6")?
+    for function in ["field_each_branch", "field_each_return", "field_then_replaced", "field_in_loop"]:
+        copies = clones(report, function)?
+        assert copies == 0, f"{function} holds {copies} clone calls"
+    return Ok(None)
+
+
 const ENDED_LOAN: str = """pub enum Value:
     Empty
     Many(str, list[Value])
