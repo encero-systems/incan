@@ -50,6 +50,11 @@ impl Budget {
         self.elements = self.elements.checked_sub(count).ok_or("limit_exceeded")?;
         Ok(())
     }
+
+    /// The bytes and elements still allowed.
+    pub(super) fn left(&self) -> (u64, u64) {
+        (self.bytes, self.elements)
+    }
 }
 
 /// The declared key type of one dictionary.

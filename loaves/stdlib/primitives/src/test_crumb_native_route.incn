@@ -1,8 +1,9 @@
 """The public Crumb row API runs the Rust codec; the Incan codec is its measured twin, never a second route."""
 
-from rust::incan_std_primitives::crumb import twin_row_reads
+from rust::incan_std_primitives::crumb import RowRequest, twin_row_reads
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.descriptions import Description, DescriptionMode
+from crate.primitives.crumb.metadata_values import encode
 from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.registrations import KindRegistry
 from crate.primitives.crumb.row_reader import read_rows
@@ -63,4 +64,90 @@ def test_the_public_read_path_does_not_run_the_incan_twin() -> Result[None, str]
             assert rows.is_sealed()
             ran = twin_row_reads() - before
             assert ran == 0u64, f"the public read path admitted {ran} envelope(s) in the Incan twin"
+    return Ok(None)
+
+
+def one_record() -> list[RowRecord]:
+    """One `stored` record whose only field holds 7."""
+    values = [
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
+    ]
+    return [RowRecord(key=b"record\x00", value=Value.Record(values))]
+
+
+def other_last(envelope: bytes, index: int) -> int:
+    """The position of each byte of the envelope, except that the last takes the first byte that differs from it."""
+    last = len(envelope) - 1
+    if index != last:
+        return index
+    for candidate in range(last):
+        if envelope[candidate] != envelope[last]:
+            return candidate
+    return index
+
+
+def admission(envelope: bytes, exact: bool, bytes_left: int, elements_left: int) -> RowRequest:
+    """A native request for one envelope with this allowance and no supplied description."""
+    mut request = RowRequest.new(envelope, false, exact)
+    request.allow(bytes_left, elements_left, 64)
+    return request
+
+
+def test_the_native_entry_admits_from_the_public_api_inputs() -> Result[None, str]:
+    """The entry reports the count, seal and length of an envelope, and positions trailing bytes and a bad seal."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, true, budget).map_err((e) => e.message())?
+    admitted = admission(envelope, true, 1048576, 1048576).admit()
+    assert admitted.admitted(), f"the native entry refused a written envelope: {admitted.category}"
+    assert admitted.records == 1
+    assert admitted.sealed
+    assert admitted.consumed == len(envelope)
+    # The envelope again with its first byte after it.
+    trailing: bytes = [envelope[index % len(envelope)] for index in range(len(envelope) + 1)]
+    exact = admission(trailing, true, 1048576, 1048576).admit()
+    assert exact.category == "trailing_bytes"
+    assert exact.offset == len(envelope)
+    prefix = admission(trailing, false, 1048576, 1048576).admit()
+    assert prefix.admitted()
+    assert prefix.consumed == len(envelope)
+    corrupt: bytes = [envelope[other_last(envelope, index)] for index in range(len(envelope))]
+    sealed = admission(corrupt, true, 1048576, 1048576).admit()
+    assert sealed.category == "seal_mismatch"
+    assert sealed.offset == len(envelope) - 33
+    return Ok(None)
+
+
+def test_the_native_entry_charges_exactly_the_allowance_it_reports() -> Result[None, str]:
+    """An allowance of exactly the reported charges admits the envelope again; one element less refuses it."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    envelope = write_rows([stored()], one_record(), registry, false, budget).map_err((e) => e.message())?
+    first = admission(envelope, true, 1048576, 1048576).admit()
+    assert first.admitted()
+    again = admission(envelope, true, first.bytes_charged, first.elements_charged).admit()
+    assert again.admitted(), f"the reported allowance did not suffice: {again.category}"
+    short = admission(envelope, true, first.bytes_charged, first.elements_charged - 1).admit()
+    assert short.category == "limit_exceeded"
+    return Ok(None)
+
+
+def test_the_native_entry_admits_a_supplied_description_by_its_d_encoding() -> Result[None, str]:
+    """A reference envelope refuses without its description and admits it supplied in its D encoding."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    reference = Description(metadata=stored().metadata, mode=DescriptionMode.Reference)
+    envelope = write_rows([reference], one_record(), registry, false, budget).map_err((e) => e.message())?
+    missing = admission(envelope, true, 1048576, 1048576).admit()
+    assert missing.category == "missing_description"
+    mut supplied = admission(envelope, true, 1048576, 1048576)
+    supplied.supply(encode(stored().metadata, budget).map_err((e) => e.message())?)
+    admitted = supplied.admit()
+    assert admitted.admitted(), f"the supplied description was not admitted: {admitted.category}"
+    assert admitted.records == 1
     return Ok(None)
