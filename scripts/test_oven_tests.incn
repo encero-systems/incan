@@ -149,8 +149,8 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
 
 def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
     """
-    Release-profile Loaf tests ask the builder's bakery, which already holds the release units the release built; Oven
-    sources keep the installation's own bakery, which their nested commands select through the inherited environment.
+    Release-profile tests ask the builder's bakery, which already holds the release units the release built; Oven
+    source tests mark their native children to restore the installation bakery used by nested build commands.
     """
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
@@ -158,8 +158,14 @@ def test_loaf_tests_share_the_release_builder_bakery() -> Result[None, str]:
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
     shared = invocations(root, evidence, logs, 2, "/builder/bakery")?
-    assert [len(item.environment) for item in shared] == [0, 0, 0, 1, 1, 1, 1, 1]
-    assert [item.environment["INCAN_BAKERY"] for item in shared[3:]] == ["/builder/bakery" for _ in range(5)]
+    assert [item.arguments for item in shared[:3]] == [
+        ["test", "src/test_alpha.incn", "--profile", "release"],
+        ["test", "src/test_beta.incn", "--profile", "release"],
+        ["test", "src/test_engine_protocol.incn", "--profile", "release"],
+    ]
+    assert [len(item.environment) for item in shared] == [2, 2, 2, 1, 1, 1, 1, 1]
+    assert [item.environment["INCAN_BAKERY"] for item in shared] == ["/builder/bakery" for _ in range(8)]
+    assert [item.environment["INCAN_TEST_ISOLATE_BAKERY"] for item in shared[:3]] == ["1", "1", "1"]
     remove_worker_projects(shared)?
     own = invocations(root, evidence, logs, 2)?
     assert [len(item.environment) for item in own] == [0, 0, 0, 0, 0, 0, 0, 0]
