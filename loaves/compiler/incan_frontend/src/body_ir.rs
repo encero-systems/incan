@@ -512,6 +512,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Locals whose value has been moved out via a full-value (non-projected) read, so scope-exit drop insertion
     /// skips them.
     moved_out: HashSet<bir::LocalId>,
+    /// Owner and field of each copied source read of an enum field that may leave its owner. The liveness pass
+    /// transfers the field at such a read when nothing reads the owner afterward.
+    field_transfer_candidates: HashSet<(bir::LocalId, CanonicalSymbolId)>,
     /// `mut` parameters of non-`Copy` type: the callee borrows the caller's value (#2022), so it never drops one.
     pub(super) borrowed_parameters: HashSet<bir::LocalId>,
     /// Rest packs and native collection value parameters own their storage, despite their builtin collection layout.
