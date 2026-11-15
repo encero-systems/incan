@@ -6,6 +6,7 @@ from memory_budget import (
     MIB,
     Measurement,
     budget_outcome,
+    commands,
     measurements_report,
     measurements_tsv,
     parse_options,
@@ -21,6 +22,18 @@ def test_options_keep_runs_and_budget_explicit() -> Result[None, str]:
     assert options.runs == 1
     assert options.budget_bytes == 1536 * MIB
     assert parse_options(["/usr/bin/true", "evidence"])?.runs == 3
+    return Ok(None)
+
+
+def test_an_existing_oven_observation_replaces_only_the_duplicate_oven_build() -> Result[None, str]:
+    """A release reuses its sampled candidate Oven while still measuring the other three informational commands."""
+    options = parse_options(["oven", "evidence", "--reuse-oven", "observed/memory-oven-1"])?
+    assert options.reused_oven == "observed/memory-oven-1"
+    assert [planned.name for planned in commands(options.reused_oven != "")] == [
+        "stdlib-primitives",
+        "contracts",
+        "hello",
+    ]
     return Ok(None)
 
 
