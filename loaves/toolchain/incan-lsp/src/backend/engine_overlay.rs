@@ -11,14 +11,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Location, NumberOrString, Position, Range, Url};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
 
 /// The environment selection that routes diagnostics through the engine's overlay request.
 pub(super) const ENGINE_SELECTION: &str = "INCAN_LSP_ENGINE";
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
-/// The document an overlay definition request answers with.
-const DEFINITION_SCHEMA: &str = "incan.overlay-definition/1";
 /// How long typing must pause before the in-process analysis behind hover and navigation runs on the overlay route.
 pub(super) const ANALYSIS_PAUSE_MS: u64 = 300;
 /// Requests of one program share its editor view's overlay root, so this server sends them one at a time; the lock
@@ -103,54 +101,11 @@ pub(super) fn hover(path: &Path, source: &str, line: u32, column: u32) -> Result
     Ok(answered["hover"].as_str().map(str::to_string))
 }
 
-/// The declaration at one-based `line` and `column` of `source`, resolved by the editor view's source projections.
-pub(super) fn definition(path: &Path, source: &str, line: u32, column: u32) -> Result<Option<Location>, String> {
-    let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let buffer = buffer_path(path);
-    std::fs::write(&buffer, source)
-        .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
-    let ask = Ask::Definition(line, column);
-    let answered = if per_process() {
-        process_answer(path, &buffer, 0, &ask)
-    } else {
-        served_answer(&mut server, path, &buffer, 0, &ask)
-    };
-    let _ = std::fs::remove_file(&buffer);
-    let answered = answered?;
-    if let Some(reason) = answered["error"].as_str() {
-        return Err(reason.to_string());
-    }
-    if answered["schema"] != DEFINITION_SCHEMA {
-        return Err("overlay definition answer names another schema".into());
-    }
-    let Some(definition) = answered["definition"].as_object() else {
-        return Ok(None);
-    };
-    let named = definition
-        .get("path")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("overlay definition has no path")?;
-    let uri = Url::from_file_path(named).map_err(|()| format!("overlay definition path is not absolute: {named}"))?;
-    let line = definition
-        .get("line")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(1)
-        .saturating_sub(1) as u32;
-    let column = definition
-        .get("column")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(1)
-        .saturating_sub(1) as u32;
-    let position = Position::new(line, column);
-    Ok(Some(Location::new(uri, Range::new(position, position))))
-}
-
 /// What one overlay request asks the engine for.
 enum Ask {
     Diagnostics,
     Build,
     Hover(u32, u32),
-    Definition(u32, u32),
 }
 
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
@@ -166,7 +121,6 @@ fn served_answer(
         Ask::Diagnostics => {}
         Ask::Build => request["build"] = serde_json::json!(true),
         Ask::Hover(line, column) => request["hover"] = serde_json::json!([line, column]),
-        Ask::Definition(line, column) => request["definition"] = serde_json::json!([line, column]),
     }
     let request = request.to_string();
     let mut last = String::new();
@@ -244,9 +198,6 @@ fn process_answer(path: &Path, buffer: &Path, version: i32, ask: &Ask) -> Result
         }
         Ask::Hover(line, column) => {
             command.arg("--hover").arg(format!("{line}:{column}"));
-        }
-        Ask::Definition(line, column) => {
-            command.arg("--definition").arg(format!("{line}:{column}"));
         }
     }
     let output = command

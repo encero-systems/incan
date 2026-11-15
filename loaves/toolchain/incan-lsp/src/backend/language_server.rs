@@ -402,36 +402,79 @@ impl LanguageServer for IncanLanguageServer {
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
     }
 
-    /// Resolve go-to-definition through the engine's editor-view source projections.
+    /// Resolve go-to-definition for local symbols, stdlib imports, decorators, and DSL-scoped symbols.
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some(source) = self.pending_sources.read().await.get(uri).cloned() else {
+
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+
+        let ast = match &doc.ast {
+            Some(ast) => ast,
+            None => return Ok(None),
+        };
+
+        let Some(offset) = position_to_offset(&doc.source, position) else {
             return Ok(None);
         };
-        let Ok(path) = uri.to_file_path() else {
+        // Same ownership rule as `hover` (RFC 081, #1022): a tag name or selector inside a fragment has no
+        // definition in ordinary Incan, and jumping to an unrelated binding that shares its spelling is worse than
+        // answering nothing. Expression holes are ordinary Incan and fall through to every path below.
+        if embedded_dsl_ownership_at_offset(ast, offset).is_some() {
             return Ok(None);
-        };
-        let (line, column) = (position.line + 1, position.character + 1);
-        let answered =
-            tokio::task::spawn_blocking(move || engine_overlay::definition(&path, &source, line, column)).await;
-        let location = match answered {
-            Ok(Ok(location)) => location,
-            Ok(Err(reason)) => {
-                self.client.log_message(MessageType::WARNING, reason).await;
-                None
+        }
+        if let Some(preview) = registry_preview_at_offset(&doc.registry_previews, offset) {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(&doc.source, preview.subject_span.start, preview.subject_span.end),
+            })));
+        }
+        if let Some(preview) = c_binding_preview_at_offset(&doc.c_binding_previews, offset)
+            && preview.span != preview.declaration_span
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(
+                    &doc.source,
+                    preview.declaration_span.start,
+                    preview.declaration_span.end,
+                ),
+            })));
+        }
+
+        if let Some(scoped_symbol) =
+            scoped_symbol_at_offset(ast, &doc.source, &doc.library_imported_dsl_surfaces, offset)
+            && let Some(import_span) =
+                find_pub_library_import_span(ast, scoped_symbol.dependency_key, scoped_symbol.symbol_span.start)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(&doc.source, import_span.start, import_span.end),
+            })));
+        }
+
+        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
+            if doc
+                .graph_navigation
+                .as_ref()
+                .is_some_and(|graph| graph.is_current(&docs))
+                && let Some(location) = graph_navigation::definition(doc, &docs, &occurrence.identity)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
-            Err(error) => {
-                self.client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!("overlay definition request failed: {error}"),
-                    )
-                    .await;
-                None
+            // Published dependencies without a live declaration record retain their checked manifest locations.
+            if let Some(location) =
+                definition_location_for_identity(&occurrence.identity, &doc.checked_identities.declaration_sources)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
-        };
-        Ok(location.map(GotoDefinitionResponse::Scalar))
+        }
+
+        Ok(None)
     }
 
     /// Return references that share the exact compiler-owned canonical identity across open checked documents.
