@@ -83,8 +83,13 @@ pub(crate) fn collect_incan_source_files_with_directories(
             let name = name.to_str().unwrap_or("");
             // Broad source collection is used for package libraries and test units. Compiler, editor and user tools
             // all place non-source state below hidden directories, and a directory such as `.incan` is no valid
-            // module name.
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
+            // module name. A directory with its own `loaf.toml` is another project: its modules are that project's,
+            // compiled against its dependencies, so collection stops at it.
+            if !name.starts_with('.')
+                && name != "target"
+                && name != "node_modules"
+                && !entry.path().join("loaf.toml").is_file()
+            {
                 collect_incan_source_files_with_directories(&entry.path(), files, directories, contains_symlinks)?;
             }
         } else if file_type.is_file() && entry.path().extension().is_some_and(|extension| extension == "incn") {

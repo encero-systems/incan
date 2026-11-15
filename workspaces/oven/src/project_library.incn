@@ -95,7 +95,8 @@ pub def is_test_module(name: str) -> bool:
 pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]], str]:
     """
     The test modules under a source root and the modules its shared library provides, each in byte order. Root
-    `main.incn` and `lib.incn` are entry files of neither; the walk skips what the compiler's collection skips.
+    `main.incn` and `lib.incn` are entry files of neither; the walk skips what the compiler's collection skips: hidden
+    directories, build output, vendored packages, and a nested project, a directory with its own `loaf.toml`.
     """
     mut tests: list[str] = []
     mut provided: list[str] = []
@@ -112,7 +113,7 @@ pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]],
             if name.startswith("."):
                 continue
             if entry.is_dir():
-                if name not in UNCOLLECTED:
+                if name not in UNCOLLECTED and not entry.joinpath("loaf.toml").is_file():
                     pending.append(entry)
             elif is_test_module(name):
                 tests.append(entry.0)
