@@ -1,0 +1,7 @@
+[project]
+name = "crates-io/unrecorded"
+version = "1.0.0"
+
+[rust]
+type = "lib"
+build-script = true
