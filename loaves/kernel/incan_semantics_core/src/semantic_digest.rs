@@ -458,24 +458,25 @@ impl ser::SerializeStruct for StructDigest<'_, '_> {
             return Ok(());
         }
         update_delimited(self.hasher, key.as_bytes());
-        if self.body_type && key == "named_type_identities" {
-            if let Some(context) = self.body {
-                let identities = context
-                    .nominals
-                    .iter()
-                    .map(|(name, canonical)| {
-                        context
-                            .nominal_identity(name)
-                            .map(|identity| (identity, canonical.declaration_span.expansion))
-                            .ok_or_else(|| DigestError("checked nominal has no stable declaration identity".into()))
-                    })
-                    .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-                return identities.serialize(DigestSerializer {
-                    hasher: self.hasher,
-                    mode: DigestMode::Meaning,
-                    body: None,
-                });
-            }
+        if self.body_type
+            && key == "named_type_identities"
+            && let Some(context) = self.body
+        {
+            let identities = context
+                .nominals
+                .iter()
+                .map(|(name, canonical)| {
+                    context
+                        .nominal_identity(name)
+                        .map(|identity| (identity, canonical.declaration_span.expansion))
+                        .ok_or_else(|| DigestError("checked nominal has no stable declaration identity".into()))
+                })
+                .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+            return identities.serialize(DigestSerializer {
+                hasher: self.hasher,
+                mode: DigestMode::Meaning,
+                body: None,
+            });
         }
         value.serialize(DigestSerializer {
             hasher: self.hasher,

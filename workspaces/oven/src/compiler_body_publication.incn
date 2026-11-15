@@ -51,9 +51,16 @@ from compiler_source_projection import (
     project_source,
     signature_record,
 )
-from compiler_projection_cache import cached_project_signature_record, project_dependency_module, projection_cache
+from compiler_projection_cache import (
+    cached_editable_dependency_signature_record,
+    cached_project_signature_record,
+    project_dependency_module,
+    projection_cache,
+)
 from engine_capture import CapturedInput, InputRole
 from files import discard_file
+from jec import begin as begin_work, record as record_work
+from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
 
 const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
@@ -337,6 +344,7 @@ pub def prepare_compiled_bodies(
     3. Stage local, final and Body IR evaluations in the caller's request transaction.
     """
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
+    authenticating = begin_work()
     if not output.is_file():
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
@@ -355,8 +363,10 @@ pub def prepare_compiled_bodies(
                     [f"{index + 1}. {refusals[index]}" for index in range(len(refusals))],
                 ),
             )
+    record_work(Operation.EngineSidecarAuthentication, output.0, authenticating)
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
+    staging = begin_work()
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
     mut source = PreparedBodyRecordSource.open(scope)
     mut prepared = transaction
@@ -434,23 +444,21 @@ pub def prepare_compiled_bodies(
             match dependency.package:
                 Some(package) =>
                     if package in editable_packages:
-                        owner = signature_record(
-                            dependency_owner_record(
-                                unit,
-                                package,
-                                dependency.module,
-                                dependency.name,
-                                dependency.identity,
-                            ).map_err(
-                                (error) => dependency_projection_refusal(
-                                    error,
-                                    value.module,
-                                    value.name,
-                                    value.identity,
-                                    dependency,
-                                ),
-                            )?,
-                        )
+                        owner = cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ).map_err(
+                            (error) => dependency_projection_refusal(
+                                error,
+                                value.module,
+                                value.name,
+                                value.identity,
+                                dependency,
+                            ),
+                        )?
                         stage_put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                         source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                 None =>
@@ -507,7 +515,10 @@ pub def prepare_compiled_bodies(
     for namespace in outputs.namespaces:
         projection = projections[namespace.module]
         key = namespace_key(origin, namespace.module)
-        mut reads = [prepared_product_request(projection.header.key), prepared_product_request(projection.declarations.key)]
+        mut reads = [
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+        ]
         for owner in projection.owners:
             reads.append(prepared_product_request(owner.key))
         for dependency in namespace.dependencies:
@@ -532,11 +543,15 @@ pub def prepare_compiled_bodies(
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
-        mut local_reads = [prepared_product_request(owner.key), prepared_product_request(projection.header.key), prepared_product_request(projection.declarations.key)]
+        mut local_reads = [
+            prepared_product_request(owner.key),
+            prepared_product_request(projection.header.key),
+            prepared_product_request(projection.declarations.key),
+        ]
         for declaration in declarations[value.module]:
             local_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -564,7 +579,7 @@ pub def prepare_compiled_bodies(
         for declaration in declarations[value.module]:
             final_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -594,7 +609,16 @@ pub def prepare_compiled_bodies(
         source.add(encode_record_key(body_ir_key)?, value.body_ir)
         published += 1
     if let Some(report) = plan_output:
-        witnesses = lowering_witnesses(projections, outputs.values, retained, source, selected, unit, origin, declarations)?
+        witnesses = lowering_witnesses(
+            projections,
+            outputs.values,
+            retained,
+            source,
+            selected,
+            unit,
+            origin,
+            declarations,
+        )?
         prepared = prepare_lowering_records(
             prepared,
             source,
@@ -605,6 +629,7 @@ pub def prepare_compiled_bodies(
             unit,
             selected,
         )?
+    record_work(Operation.EngineGraphStaging, output.0, staging)
     return Ok(
         PreparedCompiledBodies(
             transaction=prepared,
@@ -717,7 +742,7 @@ def lowering_witnesses(
         mut signatures = [projections[value.module].declarations.key]
         signatures.extend(declarations[value.module])
         for dependency in value.dependency_reads:
-            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+            match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
                 None => pass
             match dependency_signature_key(projections, unit, origin, dependency, editable_packages)?:
@@ -853,7 +878,12 @@ def prepare_lowering_records(
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
         signature_reads = [prepared_product_request(key) for key in body.signature_reads]
-        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [prepared_product_request(body_ir_key)] + signature_reads)?
+        demand_receipt = prepared_receipt(
+            staged_source,
+            scope,
+            demand_key,
+            [prepared_product_request(body_ir_key)] + signature_reads,
+        )?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
@@ -865,7 +895,12 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(demand_key)?, demand_value)
         plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
         check_reused_output(selected, event, plan_key, product)?
-        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [prepared_product_request(demand_key)] + signature_reads)?
+        plan_receipt = prepared_receipt(
+            staged_source,
+            scope,
+            plan_key,
+            [prepared_product_request(demand_key)] + signature_reads,
+        )?
         _ = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -1113,6 +1148,7 @@ def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
 
 
 def dependency_read_key(
+    projections: &Dict[str, SourceProjection],
     unit: UnitDescription,
     origin: str,
     dependency: CompiledBodyDependencyRead,
@@ -1124,15 +1160,13 @@ def dependency_read_key(
             if package in editable_packages:
                 return Ok(
                     Some(
-                        signature_record(
-                            dependency_owner_record(
-                                unit,
-                                package,
-                                dependency.module,
-                                dependency.name,
-                                dependency.identity,
-                            )?,
-                        ).key,
+                        cached_editable_dependency_signature_record(
+                            projections,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        )?.key,
                     ),
                 )
             return Ok(None)

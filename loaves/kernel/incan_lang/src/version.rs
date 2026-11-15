@@ -8,5 +8,5 @@
 //! - The value is this Loaf's `loaf.toml` version, which Oven passes as `CARGO_PKG_VERSION` at compile time.
 //! - Prefer this constant over repeating `env!("CARGO_PKG_VERSION")` in multiple places.
 
-/// The Incan compiler version string (for example, `0.6.0-dev.8`).
+/// The Incan compiler version string (for example, `0.6.0-dev.9`).
 pub const INCAN_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -43,6 +43,7 @@ def _operations() -> StorePathOps:
         replace=_replace,
         sync=_sync,
         sync_ordered=_sync,
+        barrier=_sync,
         map_read=_mapping,
         lock_shared=_lock,
         lock_exclusive=_lock,

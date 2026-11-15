@@ -105,9 +105,11 @@ fn equal_manifests_give_equal_records_and_digests() -> Result<(), String> {
             RecordFamily::Metadata,
             RecordFamily::Function,
             RecordFamily::ContractMetadata,
-            RecordFamily::Documentation
+            RecordFamily::Documentation,
+            RecordFamily::PublicIdentities,
+            RecordFamily::RuntimeBindings
         ],
-        "one metadata record, one record per declaration, the contract facts and their documentation"
+        "one metadata record, one record per declaration, the contract facts, their documentation, the public identities and the runtime bindings"
     );
     Ok(())
 }
@@ -125,5 +127,62 @@ fn a_longer_docstring_keeps_the_semantic_facts_digest() -> Result<(), String> {
         "source positions are not compile facts"
     );
     assert_ne!(before.record_content, after.record_content);
+    Ok(())
+}
+
+#[test]
+fn a_decorator_anchor_is_a_source_position() {
+    // Decorator metadata names its source location `anchor`, a span without the `span` name; Oven's own
+    // `incan_platform` carries five of them, and a longer docstring above one moved it.
+    let mut value = serde_json::json!({
+        "name": "traced",
+        "decorators": [{"path": ["probe"], "anchor": {"start": 10, "end": 16, "expansion": null}}],
+        "anchor": {"id": "probe::traced", "span": {"start": 0, "end": 40, "expansion": null}},
+    });
+    super::without_positions(&mut value);
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "name": "traced",
+            "decorators": [{"path": ["probe"]}],
+            "anchor": {"id": "probe::traced"},
+        }),
+        "every source position is left out, whatever field holds it"
+    );
+}
+
+/// The digests of `PRICE`'s records when its governed bodies sidecar has `content_digest` under `version`.
+fn digests_with_bodies(version: u32, content_digest: &str) -> Result<FactDigests, String> {
+    let mut manifest = manifest(PRICE, "0.1.0")?;
+    manifest.contract_metadata.executable_representation =
+        Some(crate::library_manifest::ExecutableRepresentationExport {
+            representation_version: version,
+            content_digest: content_digest.to_owned(),
+        });
+    Ok(manifest
+        .compiler_records(FIRST_FILE)
+        .map_err(|error| error.to_string())?
+        .digests)
+}
+
+#[test]
+fn moved_governed_bodies_keep_the_semantic_facts_digest() -> Result<(), String> {
+    // A longer docstring in Oven's `incan_platform` moved the spans its Body IR carries, so its `.incnbody` bytes, and
+    // the descriptor's digest of them, changed while every other compile fact stayed.
+    let before = digests_with_bodies(55, FIRST_FILE)?;
+    let after = digests_with_bodies(55, SECOND_FILE)?;
+    assert_eq!(
+        before.semantic_facts, after.semantic_facts,
+        "the bodies' byte digest is not a compile fact"
+    );
+    assert_ne!(
+        before.record_content, after.record_content,
+        "the records name the bodies' bytes"
+    );
+    let other_version = digests_with_bodies(56, FIRST_FILE)?;
+    assert_ne!(
+        before.semantic_facts, other_version.semantic_facts,
+        "the bodies' representation version is a compile fact"
+    );
     Ok(())
 }

@@ -2,7 +2,7 @@
 
 use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::surface::{dict_methods::DictMethodId, set_methods::SetMethodId};
-use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{IncanPrimitiveType, IncanType, body_ir as bir};
 
 use super::BodyBuilder;

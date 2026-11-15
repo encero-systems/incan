@@ -1,6 +1,6 @@
 [project]
 name = "incan-rustc-driver"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 private = true
 
 [dependencies]
@@ -30,6 +30,11 @@ path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
 sysroot_dependencies = ["rustc_driver"]
+
+# The development linker: rewrites link inputs to content-derived paths and runs ld, with no compiler in it.
+[[rust.bin]]
+name = "incan-link"
+path = "src/link_main.rs"
 
 # Native runtime code is linked by compiled programs rather than by the compiler binary.
 [tool.incan.codegraph]

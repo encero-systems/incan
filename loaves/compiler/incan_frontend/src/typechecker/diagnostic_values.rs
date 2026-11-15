@@ -594,7 +594,7 @@ impl SyntaxInventory {
     }
 }
 
-impl<'inventory> ser::Serializer for &'inventory mut SyntaxInventory {
+impl ser::Serializer for &mut SyntaxInventory {
     type Ok = ();
     type Error = InventoryError;
     type SerializeSeq = Self;

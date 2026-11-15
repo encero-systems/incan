@@ -182,43 +182,28 @@ fn extend_shared_identities<'a>(
 /// Retain canonical declarations for calls introduced by native lowering.
 ///
 /// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through
-/// Oven's ordinary artifact index; its checked public identities select the same `.incnbody` records as source imports.
-/// A lowering-provider producer uses its own checked export map, so specializing its source needs no external artifact.
+/// Oven's ordinary artifact index, which reads its runtime bindings record by name; their identities select the same
+/// `.incnbody` records as source imports. A lowering-provider producer uses its own checked export map, so
+/// specializing its source needs no external artifact.
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
 ) -> Result<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, String> {
     let mut bindings = Vec::new();
     for package in ["incan_native_runtime", "incan_stdlib_primitives"] {
-        let projected;
-        let manifest = if let Some(local) = local.filter(|manifest| manifest.name == package) {
-            local
-        } else {
-            projected = session
-                .loaves()
-                .execution_manifest(package)
-                .map_err(|error| error.to_string())?;
-            let Some(projected) = projected.as_deref() else {
-                continue;
-            };
-            projected
-        };
-        bindings.extend(
-            manifest
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .filter(|export| export.public_path.len() == 2)
-                .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
-                    path: export.public_path.join("::"),
-                    canonical: export.canonical.as_ref()?.hydrate()?,
-                }))
-                .filter(|binding| {
-                    binding.canonical.kind == SemanticSourceTargetKind::Function
-                        && matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
-                }),
-        );
+        if let Some(local) = local.filter(|manifest| manifest.name == package) {
+            bindings.extend(incan_frontend::library_manifest::executable_surface::runtime_bindings(
+                local,
+            ));
+            continue;
+        }
+        let published = session
+            .loaves()
+            .runtime_bindings(package)
+            .map_err(|error| error.to_string())?;
+        if let Some(published) = published {
+            bindings.extend(published.iter().cloned());
+        }
     }
     Ok(bindings)
 }

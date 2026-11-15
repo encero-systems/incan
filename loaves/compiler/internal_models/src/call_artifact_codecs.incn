@@ -1,0 +1,43 @@
+"""The codec each generated call-artifact field writes, so a record row validates by that codec's grammar."""
+
+
+pub enum CallArtifactCodec(str):
+    """A generated call-artifact row's grammar: one checked type, one `true` flag, or one checked identity."""
+
+    SpanType = "span-type"
+    SpanSet = "span-set"
+    SpanIdentity = "span-identity"
+
+
+pub def call_artifact_codec(selector: str) -> Option[CallArtifactCodec]:
+    """
+    Name the codec the frontend's generated call-artifact projection writes for one field.
+
+    A field the generator leaves to a hand-written or composite codec has no entry, so its rows stay unsupported.
+    """
+    if selector in [
+        "body_ir_factory_owner_types",
+        "body_ir_constructor_types",
+        "inferred_constructor_types",
+        "inferred_call_result_types",
+        "race_arm_binding_types",
+    ]:
+        return Some(CallArtifactCodec.SpanType)
+    if selector in [
+        "body_ir_factory_result_conflicts",
+        "mutable_receiver_method_calls",
+        "closure_holding_params",
+        "closure_returning_callables",
+        "capturing_callable_bindings",
+    ]:
+        return Some(CallArtifactCodec.SpanSet)
+    if selector in [
+        "body_ir_string_slice_members",
+        "body_ir_self_result_methods",
+        "body_ir_async_call_targets",
+        "body_ir_native_argument_identities",
+        "body_ir_native_codec_members",
+        "source_display_methods",
+    ]:
+        return Some(CallArtifactCodec.SpanIdentity)
+    return None

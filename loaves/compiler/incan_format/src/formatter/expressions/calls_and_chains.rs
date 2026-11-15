@@ -267,7 +267,7 @@ impl Formatter {
         self.writer.write(")");
     }
 
-    /// Format a source expression, retaining triple-quoted literal spelling instead of reconstructing its value.
+    /// Format a source expression, retaining a string literal's spelling instead of reconstructing it from its value.
     ///
     /// Spans distinguish equal-valued literals with different spellings and remain stable during speculative layout.
     pub(in crate::formatter) fn format_spanned_expr(&mut self, expr: &Spanned<Expr>) {
@@ -278,7 +278,9 @@ impl Formatter {
         self.format_expr(&expr.node);
     }
 
-    /// Write an original triple-quoted token verbatim, including content indentation, escapes and delimiters.
+    /// Write an original string token with every escape exactly as spelled: `"\u{1b}"` stays an escape, never a raw
+    /// control character. A triple-quoted token is written verbatim, content indentation included. A single-line
+    /// literal is written between double quotes.
     pub(super) fn write_source_string(&mut self, span: Span) -> bool {
         let Some(raw) = self
             .source
@@ -287,10 +289,38 @@ impl Formatter {
         else {
             return false;
         };
-        if !raw.starts_with("\"\"\"") && !raw.starts_with("'''") {
-            return false;
+        if raw.starts_with("'''") || raw.starts_with('"') {
+            self.writer.write(raw);
+            return true;
         }
-        self.writer.write(raw);
+        let Some(content) = raw.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')) else {
+            return false;
+        };
+        self.writer.write(&double_quoted(content));
         true
     }
+}
+
+/// Respell a single-quoted literal's content between double quotes. Only the quotes change: `\'` needs no escape
+/// there and a bare `"` does; every other escape keeps its spelling.
+fn double_quoted(content: &str) -> String {
+    let mut spelled = String::with_capacity(content.len() + 2);
+    spelled.push('"');
+    let mut characters = content.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next() {
+                Some('\'') => spelled.push('\''),
+                Some(escaped) => {
+                    spelled.push('\\');
+                    spelled.push(escaped);
+                }
+                None => spelled.push('\\'),
+            },
+            '"' => spelled.push_str("\\\""),
+            other => spelled.push(other),
+        }
+    }
+    spelled.push('"');
+    spelled
 }

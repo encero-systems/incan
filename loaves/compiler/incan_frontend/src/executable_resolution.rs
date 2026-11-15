@@ -24,8 +24,7 @@ use incan_semantics_core::executable_representation::{
 };
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
-use crate::library_manifest::LibraryManifest;
-use crate::library_manifest::public_identities::public_executable_identities;
+use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::loaf_index::{LoafIndex, LoafIndexError};
 
 /// Bound temporary storage while verifying the selected executable artifact's content digest.
@@ -108,9 +107,9 @@ pub struct ResolvedExecutableModules {
     pub entries: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
 }
 
-/// One indexed Loaf's manifest and governed-body file.
+/// One indexed Loaf's executable surface and governed-body file.
 struct PackageArtifact {
-    manifest: Arc<LibraryManifest>,
+    surface: Arc<ExecutableSurface>,
     /// The Loaf's `.incnbody`.
     bodies: PathBuf,
 }
@@ -119,8 +118,8 @@ impl PackageArtifact {
     /// Attach package identity to a codec error without relabeling it as a language limitation.
     fn unusable(&self, source: ExecutableRepresentationError) -> ExecutableResolutionError {
         ExecutableResolutionError::UnusableRepresentation {
-            library: self.manifest.name.clone(),
-            version: self.manifest.version.clone(),
+            library: self.surface.name.clone(),
+            version: self.surface.version.clone(),
             source,
         }
     }
@@ -128,8 +127,8 @@ impl PackageArtifact {
     /// Attach package identity and artifact location to an I/O failure.
     fn unreadable(&self, path: PathBuf, error: impl ToString) -> ExecutableResolutionError {
         ExecutableResolutionError::Unreadable {
-            library: self.manifest.name.clone(),
-            version: self.manifest.version.clone(),
+            library: self.surface.name.clone(),
+            version: self.surface.version.clone(),
             path,
             reason: error.to_string(),
         }
@@ -195,8 +194,8 @@ fn demand_package<'a>(
         chain: dependency_chain(declaration, parents),
     };
     let key = catalog.get(library).ok_or_else(unknown)?;
-    let (manifest, bodies) = loaves.execution_artifact(key)?.ok_or_else(unknown)?;
-    Ok(slot.insert(PackageArtifact { manifest, bodies }))
+    let (surface, bodies) = loaves.executable_surface_artifact(key)?.ok_or_else(unknown)?;
+    Ok(slot.insert(PackageArtifact { surface, bodies }))
 }
 
 /// Load every required declaration and its published closure from one package catalog.
@@ -240,7 +239,7 @@ fn resolve_from_catalog(
         }
         resolved
             .package_versions
-            .insert(library.clone(), package.manifest.version.clone());
+            .insert(library.clone(), package.surface.version.clone());
         let surface = opened
             .get_mut(library)
             .ok_or_else(|| package.unusable(malformed("opened surface missing")))?;
@@ -454,10 +453,10 @@ impl OpenSurface {
     /// Accept only the stable version prefix before reading a bounded index, then compare it with the manifest.
     fn open(package: &PackageArtifact, requested: &CanonicalSymbolId) -> Result<Self, ExecutableResolutionError> {
         let path = package.bodies.clone();
-        if package.manifest.contract_metadata.executable_representation.is_none() || !path.is_file() {
+        if package.surface.descriptor.is_none() || !path.is_file() {
             return Err(ExecutableResolutionError::NoPublishedRepresentation {
-                library: package.manifest.name.clone(),
-                version: package.manifest.version.clone(),
+                library: package.surface.name.clone(),
+                version: package.surface.version.clone(),
                 declaration: requested.declaration_name.clone(),
             });
         }
@@ -484,9 +483,8 @@ impl OpenSurface {
         }
         require_supported_version(&version).map_err(|error| package.unusable(error))?;
         let descriptor = package
-            .manifest
-            .contract_metadata
-            .executable_representation
+            .surface
+            .descriptor
             .as_ref()
             .ok_or_else(|| package.unusable(malformed("manifest descriptor disappeared")))?;
         if !incan_semantics_core::executable_representation::supports_version(descriptor.representation_version) {
@@ -528,23 +526,15 @@ impl OpenSurface {
             .map_err(|error| package.unreadable(path.clone(), error))?;
         let index =
             SurfaceIndex::decode(&bytes, file_length - payload_offset).map_err(|error| package.unusable(error))?;
-        if index.library != package.manifest.name || index.package_version != package.manifest.version {
+        if index.library != package.surface.name || index.package_version != package.surface.version {
             return Err(package.unusable(malformed(
                 "representation package identity/version differs from manifest",
             )));
         }
         // The manifest's public surface includes identities this package only re-exports. Admission compares
         // against what this package itself declares, so a facade cannot widen the set a consumer may execute.
-        let public = public_executable_identities(&package.manifest)
-            .into_iter()
-            .filter(|identity| {
-                matches!(
-                    &identity.origin,
-                    SymbolOrigin::Package { library, .. } if library == &package.manifest.name
-                )
-            })
-            .collect::<BTreeSet<_>>();
-        if index.declarations.keys().cloned().collect::<BTreeSet<_>>() != public {
+        let public = &package.surface.public_identities;
+        if index.declarations.keys().cloned().collect::<BTreeSet<_>>() != *public {
             return Err(package.unusable(malformed(
                 "declared representation coverage differs from the manifest public surface",
             )));

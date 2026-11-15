@@ -89,7 +89,7 @@ pub def render(settings: Settings) -> Result[Path, str]:
     driver_value = required_text(manifest, "driver")?
     mut driver = Path(driver_value)
     if not driver_value.startswith("/"):
-        driver = settings.home.joinpath(f"toolchains/0.6.0-dev.8/{driver_value}")
+        driver = settings.home.joinpath(f"toolchains/0.6.0-dev.9/{driver_value}")
     driver_digest = hexlify(file_digest(driver, "sha256").map_err((error) => error.message())?)
     oven_digest = hexlify(file_digest(settings.oven, "sha256").map_err((error) => error.message())?)
     commit = require("git", ["rev-parse", "HEAD"], root)?.stdout.strip()

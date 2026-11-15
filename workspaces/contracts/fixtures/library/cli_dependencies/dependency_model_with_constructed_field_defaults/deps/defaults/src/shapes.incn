@@ -1,0 +1,36 @@
+"""A model with a literal default and two defaults that construct models."""
+
+pub const LIMIT: int = 3
+
+
+pub model Inner:
+    """A field type with its own literal default."""
+
+    pub count: int = 0
+
+
+pub model Credits:
+    """A field type constructed with an argument."""
+
+    pub limit: int
+
+
+pub model Outer:
+    """One literal default, one construction default and one construction with an argument."""
+
+    pub label: str = "outer"
+    pub inner: Inner = Inner()
+    pub budget: Credits = Credits(limit=LIMIT)
+
+
+pub def described(value: Outer) -> str:
+    """
+    Describe every field of one value.
+
+    Args:
+        value: The value to describe.
+
+    Returns:
+        The label, the inner count and the budget limit.
+    """
+    return f"{value.label} {value.inner.count} {value.budget.limit}"

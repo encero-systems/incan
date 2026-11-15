@@ -1,11 +1,12 @@
 """Resolve, compare and atomically publish the one oven.lock owned by a root project."""
 
 from std.fs import Path
+from std.json import JsonValue
 from c_interop import parse_c_targets
 from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader, read_manifest_snapshot
+from intake import ManifestReader, read_digests, read_manifest_snapshot
 from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
@@ -21,8 +22,10 @@ from lock_format import (
     validate_mode,
     write_lock,
 )
-from observation import trace
+from json_fields import required_text
+from observation import file_digest, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
+from retained_readings import recall, retain_content
 from rust_activation import DependencyDomain
 from semver_req import parse_requirement, parse_version, requirement_matches
 from rust_registry import read_registry_units, registry_selection, resolve_registry
@@ -30,6 +33,9 @@ from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
 from unit import discovered_project
 from unit_freshness import compiler_fingerprint
+
+# The selection under which a root lock's last no-change reconciliation is retained beside the lock.
+const SETTLED_LOCK: str = "incan.oven.settled-lock/2"
 
 
 pub model LockResult:
@@ -39,6 +45,8 @@ pub model LockResult:
     pub version: str
     pub mode: str
     pub changed: bool
+    # The C interop contracts the lock records; their declared files are identified by bytes, not by a manifest.
+    pub interop: int = 0
 
 
 pub model LockCommand:
@@ -86,12 +94,109 @@ pub def ensure_project_lock(
     reader: ManifestReader,
     locked: bool,
 ) -> Result[None, str]:
-    """Refresh a run, build or test root's lock silently, or prove `--locked` needs no change."""
+    """
+    Refresh a run, build or test root's lock silently, or prove `--locked` needs no change.
+
+    1. A lock last reconciled to no change, under the same question, is not resolved again while it and the one
+       manifest that reconciliation read keep the identities they had.
+    2. Otherwise reconcile, and retain a no-change result for the next command.
+    """
     match root_project(path)?:
         None => return Ok(None)
         Some(root) =>
-            _ = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            # 1. An edit to a source changes nothing a lock is resolved from.
+            question = settled_question(profile, request, substitutes, locked)?
+            mut lock = ""
+            if lock_path(root).is_file():
+                lock = content_identity(lock_path(root))?
+            if settled(root, question, lock)?:
+                return Ok(None)
+            # 2. Only a no-change result is retained, for the lock bytes it compared against.
+            result = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            if not result.changed and result.interop == 0:
+                remember_settled(root, question, reader, lock)
             return Ok(None)
+
+
+def settled_question(
+    profile: str,
+    request: FeatureRequest,
+    substitutes: Dict[str, str],
+    locked: bool,
+) -> Result[str, str]:
+    """
+    Everything a root's lock is resolved from besides its own manifest and lock: the request, the toolchain and the
+    registry closure it ships, as one selection.
+    """
+    toolchain = load_toolchain()?
+    closure = observe(Path(toolchain.registry_units))?
+    mut parts = [SETTLED_LOCK, TOOLCHAIN, compiler_fingerprint(toolchain)?, toolchain.registry_units_identity]
+    parts.append(closure.stamp)
+    parts.append(profile)
+    parts.append(",".join(request.features))
+    parts.append(f"{request.default_features} {request.all_features} {locked}")
+    for name in sorted([key for key in substitutes.keys()]):
+        parts.append(f"{name}={substitutes[name]}")
+    return Ok("\n".join(parts))
+
+
+def content_identity(path: Path) -> Result[str, str]:
+    """A file's identity by its bytes alone; a restored modification time or an unchanged size hides no edit."""
+    return Ok(f"sha256:{file_digest(path)?}")
+
+
+def settled(root: Path, question: str, lock: str) -> Result[bool, str]:
+    """
+    Whether the root's lock, whose bytes have identity `lock`, was last reconciled to no change under `question`, and
+    the root manifest that reconciliation read still has the bytes it read.
+    """
+    if lock == "":
+        return Ok(false)
+    path = lock_path(root)
+    match recall(path, question, lock):
+        None => return Ok(false)
+        Some(value) =>
+            manifest = root.joinpath("loaf.toml")
+            if required_text(value, "manifest").unwrap_or("") != manifest.0 or not manifest.is_file():
+                return Ok(false)
+            if content_identity(manifest)? != required_text(value, "digest").unwrap_or(""):
+                return Ok(false)
+            trace(f"lock settled {path.0}")
+            return Ok(true)
+
+
+def remember_settled(root: Path, question: str, reader: ManifestReader, lock: str) -> None:
+    """
+    Retain a no-change reconciliation of the lock with identity `lock` when it read one manifest, the root's, and that
+    manifest and the lock still hold the bytes it read. A project with path dependencies is reconciled every time.
+    """
+    # 1. Every manifest the reader parsed must be the root's, however its path was spelled, with one set of bytes.
+    digests = read_digests(reader)
+    manifest = root.joinpath("loaf.toml")
+    mut read = ""
+    for spelled in digests.keys():
+        match Path(spelled).resolve():
+            Err(_) => return
+            Ok(resolved) =>
+                if resolved.0 != manifest.0 or (read != "" and read != digests[spelled]):
+                    return
+                read = digests[spelled]
+    if read == "" or lock == "":
+        return
+    # 2. Neither file changed since the reconciliation read it.
+    match content_identity(manifest):
+        Err(_) => return
+        Ok(current) =>
+            if current != f"sha256:{read}":
+                return
+    path = lock_path(root)
+    match content_identity(path):
+        Err(_) => return
+        Ok(current) =>
+            if current != lock:
+                return
+    value = JsonValue.object({"manifest": JsonValue.string(manifest.0), "digest": JsonValue.string(f"sha256:{read}")})
+    retain_content(path, question, lock, value)
 
 
 def root_project(path: Path) -> Result[Option[Path], str]:
@@ -163,7 +268,15 @@ def reconcile(
     if write and changed:
         write_lock(path, generated)?
         trace(f"lock refreshed {path.0} graph={generated.graph}")
-    return Ok(LockResult(name=root_entry.name, version=root_entry.version, mode=mode, changed=changed))
+    return Ok(
+        LockResult(
+            name=root_entry.name,
+            version=root_entry.version,
+            mode=mode,
+            changed=changed,
+            interop=len(generated.interop),
+        ),
+    )
 
 
 pub def local_interop(

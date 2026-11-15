@@ -11,8 +11,8 @@ format bytes without naming host paths:
 - `STORE_ID`: the persistent physical bakery identity; moving its locator does not change the store.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
 - `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
-- `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
-  root of each view.
+- `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction and the index root of each view, in
+  bytes that do not grow with the generations: the segments a generation reaches are named by its views' indexes.
 - `segments/<sha256>.seg`: immutable segments of frames: full key and value, or full key alone for a tombstone.
 - `indexes/<sha256>.page`: immutable copy-on-write B+tree pages from full keys to frame locations (`crate.store.index`).
 - `payloads/<aa>/<sha256>`: content-named objects, exposed as files by the disk placement.
@@ -47,7 +47,9 @@ from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
-from crate.store.index import search as index_search
+from crate.store.index import entries_for_keys as index_entries_for_keys
+from crate.store.index import entries_with_prefix as index_entries_with_prefix
+from crate.store.index import read_page as index_page, search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 from crate.store.files import (
     StoreError,
@@ -143,7 +145,7 @@ pub model Snapshot:
     One committed generation seen through one view; it never changes after it is taken.
 
     A snapshot is a descriptor, not a cache: it names the generation, the view and that view's index root, and the
-    generation's segment inventory and view roots for publication. An opened nonempty view owns its placement lease
+    generation's view roots for publication. An opened nonempty view owns its placement lease
     through the descriptor's lifetime. It holds no decoded records.
     """
 
@@ -152,7 +154,6 @@ pub model Snapshot:
     pub digest: str
     pub view: str
     pub index: str
-    pub segments: list[str]
     pub views: list[ViewRoot]
     pub pin: Option[Rc[LockGuard]] = None
 
@@ -177,7 +178,7 @@ pub model ReadCounts:
 
     `records` frames found, `bytes` frame bytes checked in place and `pages` index pages read; `copied` bytes copied
     out of mapped pages and frames by lookups (keys compared and locations decoded, never a value); `decoded` bytes of
-    found values copied into owned bytes by `owned`.
+    found values copied into owned bytes by `owned`; `listed` keys returned by whole and prefix listings.
     """
 
     pub records: int
@@ -185,6 +186,7 @@ pub model ReadCounts:
     pub pages: int
     pub copied: int
     pub decoded: int
+    pub listed: int = 0
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -230,6 +232,7 @@ pub def read_counts() -> ReadCounts:
         pages=page_reads(),
         copied=counted.get("copied", 0) + copied_index_bytes(),
         decoded=counted.get("decoded", 0),
+        listed=counted.get("listed", 0),
     )
 
 
@@ -250,7 +253,7 @@ pub def snapshot(root: Path, view: str = HOME_VIEW) -> Result[Snapshot, StoreErr
 
 def empty_snapshot(root: Path, view: str) -> Snapshot:
     """An absent selection owns no stored objects and needs neither a lease nor a placement mutation."""
-    return Snapshot(root=root, generation=0, digest="", view=view, index="", segments=[], views=[])
+    return Snapshot(root=root, generation=0, digest="", view=view, index="", views=[])
 
 
 def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
@@ -270,7 +273,8 @@ def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
         Some(generation) =>
             mut selected = read_manifest(root, generation, fields[1], view)?
             if selected.index != "":
-                selected.pin = Some(Rc.new(lease_registered(selected)?))
+                # The lease names the root just decoded from this manifest under the same gate; it needs no second read.
+                selected.pin = Some(Rc.new(register_lease(selected)?))
             return Ok(selected)
 
 
@@ -292,7 +296,6 @@ pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreEr
         digest=selected.digest,
         view=name,
         index=index,
-        segments=selected.segments,
         views=selected.views,
     )
     if result.generation > 0 and result.index != "":
@@ -342,7 +345,15 @@ pub def manifest_path(root: Path, generation: int, digest: str) -> Path:
 
 
 pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
-    """One committed generation, after checking its manifest's digest, seen through `view`."""
+    """One committed generation, after checking its manifest's digest, seen through `view`; traced as one read."""
+    clock = begin_work()
+    selected = checked_manifest(root, generation, digest, view)
+    record_work(Operation.StoreManifestRead, manifest_path(root, generation, digest).value, clock)
+    return selected
+
+
+def checked_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
+    """Read, check and decode one committed generation's manifest."""
     path = manifest_path(root, generation, digest)
     data = path.store_read_bytes().map_err((error) => failure("integrity", path.value, error.message()))?
     if hexlify(sha256.digest(data)) != digest:
@@ -353,13 +364,14 @@ pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Re
             lines = text.strip().split("\n")
             if len(lines) < 4 or lines[0] != MANIFEST_SCHEMA or lines[1] != f"generation {generation}":
                 return Err(failure("integrity", path.value, "malformed manifest"))
-            mut segments: list[str] = []
             mut views: list[ViewRoot] = []
             mut index = ""
             for line in lines[4:]:
                 fields = line.split(" ")
                 if len(fields) == 2 and fields[0] == "segment":
-                    segments.append(fields[1])
+                    # A manifest written before segments were named only by the indexes still lists them; its views'
+                    # indexes name the same segments.
+                    continue
                 elif len(fields) == 3 and fields[0] == "view":
                     check_view_key(fields[1])?
                     views.append(ViewRoot(view=fields[1], root=fields[2]))
@@ -377,7 +389,6 @@ pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Re
                     digest=digest,
                     view=view,
                     index=index,
-                    segments=segments,
                     views=views,
                 ),
             )
@@ -534,13 +545,58 @@ pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
                 if not location.tombstone:
                     live.append(entry.key)
             None => pass
+    counted["listed"] = counted.get("listed", 0) + len(live)
     return Ok(live)
 
 
+pub def index_levels(view: Snapshot) -> Result[int, StoreError]:
+    """How many levels the view's index has, root to leaves; an empty view has none. Reads the root page."""
+    if view.index == "":
+        return Ok(0)
+    return Ok(index_page(view.root, view.index).map_err(index_failure)?.level + 1)
+
+
+pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:
+    """
+    Every full key starting with `prefix` whose state in the view is a value, sorted, reading only the index pages of
+    that key range: what a request reads stays the same however many other records the store holds.
+    """
+    mut live: list[str] = []
+    for entry in index_entries_with_prefix(view.root, view.index, prefix).map_err(index_failure)?:
+        match entry.location:
+            Some(location) =>
+                if not location.tombstone:
+                    live.append(entry.key)
+            None => pass
+    counted["listed"] = counted.get("listed", 0) + len(live)
+    return Ok(live)
+
+
+pub def segments(view: Snapshot) -> Result[list[str], StoreError]:
+    """
+    The segments the generation's views reach, sorted: each segment one of their indexes locates a frame in.
+
+    A manifest does not list them, so the manifest a commit writes does not grow with the generations; verification
+    and tests walk the indexes instead, and collection already marks segments by that walk.
+    """
+    mut found: set[str] = set()
+    for entry in view.views:
+        if entry.root == "":
+            continue
+        for leaf in index_entries(view.root, entry.root).map_err(index_failure)?:
+            if let Some(location) = leaf.location:
+                found.add(location.segment)
+    return Ok(sorted([name for name in found]))
+
+
 pub def verify_segments(view: Snapshot) -> list[StoreError]:
-    """Read every byte of every segment retained by the generation and report content-name damage."""
+    """Read every byte of every segment the generation's views reach and report content-name damage."""
     mut damaged: list[StoreError] = []
-    for digest in view.segments:
+    mut reached: list[str] = []
+    match segments(view):
+        Ok(names) => reached = names
+        Err(error) => damaged.append(error)
+    for digest in reached:
         path = view.root.joinpath("segments").joinpath(f"{digest}.seg")
         match file_digest(path, "sha256"):
             Err(error) => damaged.append(failure("integrity", path.value, error.message()))
@@ -695,16 +751,13 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     ensure_directory(staged)?
     publication_boundary("staging-created")
     # 2. The old manifest remains selected until all views have been staged.
-    mut segments = latest.segments
     mut views = latest.views
     for name in sorted([view for view in changed.keys()]):
         directory = staged.joinpath(hexlify(sha256.digest(name.encode("utf-8"))))
-        index, segment = stage_view(root, view_snapshot(latest, name)?, changed[name], directory)?
-        if segment not in segments:
-            segments.append(segment)
+        index = stage_view(root, view_snapshot(latest, name)?, changed[name], directory)?
         views = with_view(views, name, index)
     # 3. One switch is the only visibility and durability boundary for the entire request.
-    published = publish_switch(root, latest, segments, views, first.id, execution_view)?
+    published = publish_switch(root, latest, views, first.id, execution_view)?
     remove_tree(staged)
     return Ok(published)
 
@@ -714,19 +767,23 @@ pub def durable_commits() -> int:
     return counted.get("durable_commits", 0)
 
 
-def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[tuple[str, str], StoreError]:
+def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[str, StoreError]:
     """Install a view's immutable objects without selecting them; the caller holds publication's lock."""
+    staging = begin_work()
     encoded = encoded_frames(writes)?
     delta = staged.joinpath("delta.seg")
     place_synced(delta, encoded.data)?
     segment = install_segment(root, encoded.data, delta)?
+    record_work(Operation.StoreDeltaStage, delta.value, staging)
     publication_boundary("segment-installed")
+    paging = begin_work()
     pages = staged.joinpath("pages")
     index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
     install_pages(root, pages, [index])?
+    record_work(Operation.StorePagesStage, pages.value, paging)
     publication_boundary("pages-installed")
-    return Ok((index, segment))
+    return Ok(index)
 
 
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
@@ -739,7 +796,6 @@ def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged:
     published = switch(
         root,
         latest,
-        latest.segments,
         with_view(latest.views, transaction.fork, latest.index),
         transaction.id,
     )?
@@ -757,18 +813,48 @@ def with_view(views: list[ViewRoot], view: str, index: str) -> list[ViewRoot]:
 
 
 def pending_writes(latest: Snapshot, writes: list[Write]) -> Result[list[Write], StoreError]:
-    """The writes not already committed in `latest`, after checking each one's precondition."""
+    """
+    The writes not already committed in `latest`, after checking each one's precondition.
+
+    The index is searched once for every written key; a damaged page falls back to one lookup per key, so each write
+    meets its own key's damage as its precondition says.
+    """
+    mut located: Dict[str, Location] = {}
+    match index_entries_for_keys(latest.root, latest.index, [write.key for write in writes]):
+        Err(_) => return pending_each(latest, writes)
+        Ok(found) =>
+            for entry in found:
+                match entry.location:
+                    Some(location) => located[entry.key] = location
+                    None => pass
     mut remaining: list[Write] = []
     for write in writes:
-        match lookup(latest, write.key):
-            Err(error) =>
-                if write.expect not in [EXPECT_ABSENT_OR_DAMAGED, EXPECT_REPAIR] or error.kind != "integrity":
-                    return Err(error)
-                remaining.append(write)
-            Ok(found) =>
-                if needed(write, found)?:
-                    remaining.append(write)
+        mut found: Result[Lookup, StoreError] = Ok(Lookup.Absent)
+        if write.key in located:
+            counted["records"] = counted.get("records", 0) + 1
+            found = read_frame(latest.root, write.key, located[write.key])
+        if kept(write, found)?:
+            remaining.append(write)
     return Ok(remaining)
+
+
+def pending_each(latest: Snapshot, writes: list[Write]) -> Result[list[Write], StoreError]:
+    """The writes not already committed in `latest`, each key looked up on its own."""
+    mut remaining: list[Write] = []
+    for write in writes:
+        if kept(write, lookup(latest, write.key))?:
+            remaining.append(write)
+    return Ok(remaining)
+
+
+def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
+    """Whether `write` stays pending given its key's lookup, refusing it when its precondition no longer holds."""
+    match found:
+        Err(error) =>
+            if write.expect not in [EXPECT_ABSENT_OR_DAMAGED, EXPECT_REPAIR] or error.kind != "integrity":
+                return Err(error)
+            return Ok(true)
+        Ok(outcome) => return needed(write, outcome)
 
 
 def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
@@ -822,28 +908,25 @@ def install_pages(root: Path, pages: Path, roots: list[str]) -> Result[None, Sto
 pub def switch(
     root: Path,
     latest: Snapshot,
-    segments: list[str],
     views: list[ViewRoot],
     transaction: str,
 ) -> Result[Snapshot, StoreError]:
     """Switch a generation through the same publication boundary, without an execution pin."""
-    return publish_switch(root, latest, segments, views, transaction, "").map((published) => published.snapshot)
+    return publish_switch(root, latest, views, transaction, "").map((published) => published.snapshot)
 
 
 def publish_switch(
     root: Path,
     latest: Snapshot,
-    segments: list[str],
     views: list[ViewRoot],
     transaction: str,
     execution_view: str,
 ) -> Result[Publication, StoreError]:
     """Write and sync the next manifest, then replace `CURRENT`; the caller holds the publication lock."""
+    writing = begin_work()
     following = latest.generation + 1
     mut lines = [MANIFEST_SCHEMA, f"generation {following}", f"parent {latest.generation} {latest.digest}"]
     lines.append(f"transaction {transaction}")
-    for name in segments:
-        lines.append(f"segment {name}")
     for entry in views:
         if entry.root == "":
             lines.append(f"view {entry.view}")
@@ -854,16 +937,19 @@ def publish_switch(
     manifest = manifest_path(root, following, digest)
     ensure_directory(manifest.parent())?
     place_synced(manifest, document)?
+    record_work(Operation.StoreManifestWrite, manifest.value, writing)
     sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
-    # Order every referenced object and name before one drive flush, before CURRENT can name the graph.
+    # Order every referenced object and name ahead of CURRENT on stable storage before CURRENT can name the graph.
+    # CURRENT's own flush below is the request's one drive flush: it makes the graph and the selection durable
+    # together, and a crash before it leaves the previous selection, whose graph was flushed with it.
     sync_directory(root)?
     sync_directory(root.parent())?
-    sync_durable(manifest)?
-    publication_boundary("objects-durable")
+    sync_graph(manifest)?
+    publication_boundary("objects-ordered")
     # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
     mut returned_view = latest.view
     if execution_view != "":
@@ -878,7 +964,6 @@ def publish_switch(
         digest=digest,
         view=returned_view,
         index=selected_index,
-        segments=segments,
         views=views,
     )
     pinned = pinned_publication(selected, execution_view)?
@@ -936,17 +1021,26 @@ pub def lease(view: Snapshot) -> Result[LockGuard, StoreError]:
 
 def lease_registered(view: Snapshot) -> Result[LockGuard, StoreError]:
     """Register a validated immutable root while its caller holds the lifecycle gate; expired roots cannot reopen."""
-    check_retained(view)?
-    leases = view.root.joinpath("leases")
-    ensure_directory(leases)?
-    name = hexlify(sha256.digest(view.view.encode("utf-8")))
-    path = leases.joinpath(f"{view.generation}-{view.digest}-{name}")
-    held = path.store_lock_shared().map_err((error) => io_failure(path, error))?
+    held = register_lease(view)?
     if view.generation > 0:
         checked = read_manifest(view.root, view.generation, view.digest, view.view)?
         if checked.index != view.index:
-            return Err(failure("integrity", path.value, "lease disagrees with its immutable manifest"))
+            return Err(failure("integrity", lease_path(view).value, "lease disagrees with its immutable manifest"))
     return Ok(held)
+
+
+def register_lease(view: Snapshot) -> Result[LockGuard, StoreError]:
+    """Hold the lease of a root the caller decoded from its manifest under the lifecycle gate; expired roots refuse."""
+    check_retained(view)?
+    path = lease_path(view)
+    ensure_directory(path.parent())?
+    return path.store_lock_shared().map_err((error) => io_failure(path, error))
+
+
+def lease_path(view: Snapshot) -> Path:
+    """The lock file naming one generation, manifest digest and view."""
+    name = hexlify(sha256.digest(view.view.encode("utf-8")))
+    return view.root.joinpath("leases").joinpath(f"{view.generation}-{view.digest}-{name}")
 
 
 # ---- Compaction ----
@@ -989,7 +1083,7 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
         index = build(staged.joinpath("pages"), relocated).map_err(index_failure)?
         views.append(ViewRoot(view=entry.view, root=index))
     install_pages(root, staged.joinpath("pages"), [view.root for view in views])?
-    published = switch(root, latest, [name], views, "compaction")?
+    published = switch(root, latest, views, "compaction")?
     remove_tree(staged)
     return Ok(published)
 
@@ -1067,6 +1161,23 @@ pub def sync_durable(path: Path) -> Result[None, StoreError]:
 pub def durable_syncs() -> int:
     """Completed strong storage barriers in this process, independent of ordinary file and directory ordering."""
     return counted.get("durable_syncs", 0)
+
+
+pub def sync_graph(path: Path) -> Result[None, StoreError]:
+    """
+    Order a published graph ahead of the selection that will name it: the placement's barrier, with no drive-cache
+    flush. The selection's own `sync_durable` then makes both durable before the request is answered.
+    """
+    clock = begin_work()
+    path.store_barrier().map_err((error) => io_failure(path, error))?
+    counted["graph_barriers"] = counted.get("graph_barriers", 0) + 1
+    record_work(Operation.StoreGraphBarrier, path.value, clock)
+    return Ok(None)
+
+
+pub def graph_barriers() -> int:
+    """Completed graph-ordering barriers in this process, each ahead of a selection's one drive flush."""
+    return counted.get("graph_barriers", 0)
 
 
 # ---- Explicit obsolete-layout collection ----

@@ -151,7 +151,12 @@ pub def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name:
     """Validate authored facet metadata even when local intake does not execute it."""
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
-        allowed(rust_facet, ["name", "type", "edition", "source", "bin", "lib", "build-script"], manifest, ["rust"])?
+        allowed(
+            rust_facet,
+            ["name", "type", "edition", "source", "bin", "lib", "build-script", "lints"],
+            manifest,
+            ["rust"],
+        )?
         for key in ["name", "type", "edition"]:
             if key in rust_facet:
                 value = required(rust_facet, key, manifest, ["rust", key])?

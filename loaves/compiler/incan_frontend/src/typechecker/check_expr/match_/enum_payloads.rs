@@ -230,7 +230,7 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let layout = self.checked_rust_enum_layout(&path, &info)?;
+        let layout = self.checked_rust_enum_layout(&path, info)?;
         let (_, _, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
         let names = names.clone();
         let fields = self

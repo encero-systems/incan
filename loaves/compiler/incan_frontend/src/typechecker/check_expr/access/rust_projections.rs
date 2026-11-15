@@ -120,7 +120,7 @@ impl TypeChecker {
             }
             _ => return None,
         };
-        let owner = self.rust_storage_owner(ty, &info, &path);
+        let owner = self.rust_storage_owner(ty, info, &path);
         let mut candidates = Vec::new();
         let trait_identity = self.rust_trait_identity(trait_path);
         for implementation in &info.implemented_traits {
@@ -168,7 +168,7 @@ impl TypeChecker {
                 && let RustItemKind::Type(info) = &metadata.kind
             {
                 let native = ResolvedType::RustPath(Self::compact_rust_display(&display));
-                let storage = self.rust_storage_owner(&native, &info, &path);
+                let storage = self.rust_storage_owner(&native, info, &path);
                 if let Some(arguments) = self.rust_owner_type_args(&storage, &path) {
                     value = ResolvedType::RustPath(render_resolved_type_as_rust_arg(&ResolvedType::Generic(
                         path, arguments,

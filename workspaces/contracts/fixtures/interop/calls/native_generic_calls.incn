@@ -14,6 +14,7 @@
 #   ea
 #   typed channel
 #   thread 42
+#   bytes 3
 #   stored 3
 #   3
 #   2
@@ -82,6 +83,12 @@ model Entry:
     """One model element retained through an Arc slice view."""
 
     value: int
+
+
+class ThreadEntry:
+    """One mutable source owner whose native fields are safe to move onto a Rust thread."""
+
+    pub value: int
 
 
 model NestedGenericCache:
@@ -187,13 +194,38 @@ def retained_callback() -> () -> str:
     return () => text
 
 
+def retained_entry_count(entries: Arc[Mutex[list[Entry]]]) -> int:
+    """Lock source models retained behind nested native synchronization and collection carriers."""
+    match entries.lock():
+        Ok(_) => return 1
+        Err(_) => return 0
+
+
 def show_thread_capture() -> None:
-    """Join direct and locally retained Rust callbacks that own integer and string captures."""
+    """Join direct and locally retained Rust callbacks that own scalar, byte and model captures."""
     number = 42
     text = "thread"
     worker = spawn(() => f"{text} {number}")
     match worker.join():
         Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    payload = b"abc"
+    bytes_worker = spawn(() => f"bytes {len(payload)}")
+    match bytes_worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    entries: Arc[Mutex[list[Entry]]] = Arc.new(Mutex.new([Entry(value=7)]))
+    model_worker = spawn(() => retained_entry_count(entries))
+    match model_worker.join():
+        Ok(value) => assert value == 1
+        Err(_) =>
+            assert false
+    class_entry = ThreadEntry(value=9)
+    class_worker = spawn(() => class_entry.value)
+    match class_worker.join():
+        Ok(value) => assert value == 9
         Err(_) =>
             assert false
     count = 3

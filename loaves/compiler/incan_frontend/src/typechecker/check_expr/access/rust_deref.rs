@@ -535,11 +535,11 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let owner = self.rust_trait_owner(owner, &info, &path);
+        let owner = self.rust_trait_owner(owner, info, &path);
         let trait_path = if mutable { DEREF_MUT_TRAIT } else { DEREF_TRAIT };
         let implementation = self.rust_adjustment_implementation(info, &owner, trait_path)?;
         let method = if mutable { "deref_mut" } else { "deref" };
-        let owner = self.rust_storage_owner(&owner, &info, &path);
+        let owner = self.rust_storage_owner(&owner, info, &path);
         let reference = |ty: ResolvedType| {
             if mutable {
                 ResolvedType::RefMut(Box::new(ty))

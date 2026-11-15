@@ -16,6 +16,7 @@ from engine_messages import Complete, CompletionStatus, Message, Release, Submit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
+from overlay_hover import overlay_hover
 from engine_state import Identity
 from engine_wire import Refusal
 from files import json_text
@@ -45,6 +46,8 @@ from pub::incan_platform.trace import Operation
 
 # The schema of the document an overlay request answers with.
 const OVERLAY_DIAGNOSTICS_SCHEMA: str = "incan.overlay-diagnostics/1"
+# The schema of the document an overlay hover answers with.
+const OVERLAY_HOVER_SCHEMA: str = "incan.overlay-hover/1"
 # While an overlay request runs, its console is collected here instead of being relayed to the terminal.
 static console_capture: dict[str, str] = {}
 
@@ -127,14 +130,20 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     document = absolute.0[len(program.0) + 1:]
     if not entry.0.startswith(program.0 + "/"):
         return Err(f"the program entry {entry.0} lies outside {program.0}")
+    # A hover reads records and the buffer; it needs no mirror and no engine request.
+    if request.hover_line > 0:
+        return hover_answer(store, editor, program, entry, document, text, request)
     # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
     overlay = store.parent().joinpath("editor").joinpath(editor)
     _ = mirror_overlay(program, overlay, document, text)?
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":
         fork_project_view(store, HOME_VIEW, editor)?
-    # 3. A check runs no lowering, planning or native compile.
+    # 3. A keystroke's check runs no lowering, planning or native compile. A save builds the overlay instead, so the
+    # project's next build of the same bytes finds its unit.
     target = overlay.joinpath(entry.0[len(program.0) + 1:])
+    if request.build:
+        return built_overlay(editor, target, request)
     checked = submit_check(channel, store, editor, target, request.profile, request.report)?
     # 4. Diagnostics name the editor's documents, never the overlay root.
     mut entries: list[JsonValue] = []
@@ -148,6 +157,52 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     if request.report:
         fields["work"] = checked.work
     return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+def hover_answer(
+    store: Path,
+    editor: str,
+    program: Path,
+    entry: Path,
+    document: str,
+    text: str,
+    request: OverlayRequest,
+) -> Result[str, str]:
+    """Answer a hover from the editor view's records, or from the home view's before the editor view's first request."""
+    mut view = editor
+    if snapshot(store, editor).map_err((error) => error.message())?.index == "":
+        view = str(HOME_VIEW)
+    mut hover = JsonValue.null()
+    if let Some(signature) = overlay_hover(
+        store,
+        view,
+        program,
+        entry,
+        document,
+        text,
+        request.hover_line,
+        request.hover_column,
+    )?:
+        hover = JsonValue.string(signature)
+    answer = {"schema": JsonValue.string(OVERLAY_HOVER_SCHEMA), "version": JsonValue.int(request.version), "editor_view": JsonValue.string(
+        editor,
+    ), "hover": hover}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
+
+
+def built_overlay(editor: str, target: Path, request: OverlayRequest) -> Result[str, str]:
+    """Build a saved overlay in its editor view, collecting the compiler's console instead of relaying it."""
+    console_capture["capturing"] = "yes"
+    console_capture["captured"] = ""
+    console_capture["errors"] = ""
+    built = execute_in("build", target, request.profile, [], None, "", false, editor, None)
+    console_capture["capturing"] = ""
+    code = built?
+    none: list[JsonValue] = []
+    answer = {"schema": JsonValue.string(OVERLAY_DIAGNOSTICS_SCHEMA), "version": JsonValue.int(request.version), "ok": JsonValue.bool(
+        code == 0,
+    ), "editor_view": JsonValue.string(editor), "built": JsonValue.bool(true), "diagnostics": JsonValue.array(none)}
+    return JsonValue.object(answer).to_json().map_err((error) => error.message())
 
 
 def submit_check(

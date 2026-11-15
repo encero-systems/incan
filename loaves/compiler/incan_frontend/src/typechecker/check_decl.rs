@@ -41,7 +41,7 @@ use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, S
 use std::collections::{HashMap, HashSet};
 
 use super::ownership_contracts::mutation;
-use super::{AnnotationOwner, PUBLIC_LIBRARY_NAMESPACE, ownership_contracts, reachability, type_info};
+use super::{AnnotationOwner, ownership_contracts, reachability, type_info};
 
 mod callables;
 mod classes;

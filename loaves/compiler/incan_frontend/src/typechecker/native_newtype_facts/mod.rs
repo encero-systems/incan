@@ -73,19 +73,19 @@ impl NativeFactGuard {
             }
             Self::Expression(span, ty, identities) => {
                 info.expr_type(*span) == Some(ty)
-                    && info.expressions.expression_type_identities.get(&span) == identities.as_ref()
+                    && info.expressions.expression_type_identities.get(span) == identities.as_ref()
             }
             Self::Assignment(span, ty) => info.assignment_binding_type(*span) == Some(ty),
             Self::Constructor(span, binding) => info.constructor_field_binding(*span) == Some(binding),
-            Self::Method(span, binding) => info.declarations.method_bindings_by_span.get(&span) == Some(binding),
+            Self::Method(span, binding) => info.declarations.method_bindings_by_span.get(span) == Some(binding),
             Self::MethodSelection(identity, span) => unique_method_span(identity, info) == Some(*span),
             Self::TargetDeclarations(declarations) => declarations
                 .iter()
-                .all(|(span, identity)| info.declarations.declaration_identities.get(&span) == Some(identity)),
-            Self::Function(span, binding) => info.declarations.function_bindings_by_span.get(&span) == Some(binding),
+                .all(|(span, identity)| info.declarations.declaration_identities.get(span) == Some(identity)),
+            Self::Function(span, binding) => info.declarations.function_bindings_by_span.get(span) == Some(binding),
             Self::Parameters(span, params) => info.call_site_callable_params(*span) == Some(params.as_slice()),
             Self::Owner(span, name, identity, construction, parameter, binder_identity) => {
-                info.declarations.declaration_identities.get(&span) == Some(identity)
+                info.declarations.declaration_identities.get(span) == Some(identity)
                     && info.declarations.named_type_identities.get(name) == Some(identity)
                     && info.declarations.newtype_construction.get(name) == Some(construction.as_ref())
                     && info.declarations.named_type_identities.get(parameter) == binder_identity.as_ref()

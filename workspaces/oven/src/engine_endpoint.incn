@@ -14,6 +14,8 @@ from engine_state import Identity
 from engine_wire import Refusal, RefusalKind, zero_id
 from owner_endpoint import bindable, prepare_directory, socket_prefix
 from unit_freshness import fingerprint
+from files import discard_file
+from publication import publish
 
 const STARTUP_POLLS: int = 2500
 # A handshake that has not completed in five seconds is a stuck peer, not engine work to wait for.
@@ -64,6 +66,13 @@ pub def connect_with(root: Path, identity: Identity, executable: str, idle: int 
         Err(_) => pass
     # The service holds this lock for its entire lifetime, including its final drain.
     if not service_available(selected.lock)?:
+        # A service started under another runtime directory listens elsewhere; the store records where. The handshake
+        # still requires this caller's full identity there.
+        if let Some(recorded) = recorded_endpoint(root):
+            if recorded != selected.socket:
+                match dial(recorded):
+                    Ok(transport) => return handshake(Channel(transport=transport), identity)
+                    Err(_) => pass
         return Err(
             Refusal(kind=RefusalKind.Identity, detail="another engine generation owns this store; drain it first"),
         )
@@ -137,3 +146,31 @@ def service_available(path: str) -> Result[bool, Refusal]:
     """Probe and release the lifetime lock before spawning a child that must acquire it itself."""
     available = Path(path).try_lock_exclusive().map_err((error) => transport(error.message()))?
     return Ok(available is not None)
+
+
+pub def record_endpoint(root: Path, socket: str) -> Result[None, Refusal]:
+    """
+    Record where the store's service listens, for callers whose runtime directory names another socket path. The
+    socket path depends on the caller's environment; this record depends only on the store.
+    """
+    return publish(root.joinpath("engine/endpoint"), socket + "\n").map_err(transport)
+
+
+pub def withdraw_endpoint(root: Path, socket: str) -> None:
+    """Withdraw the record when it still names this service's socket."""
+    match recorded_endpoint(root):
+        Some(recorded) =>
+            if recorded == socket:
+                discard_file(root.joinpath("engine/endpoint"))
+        None => pass
+
+
+def recorded_endpoint(root: Path) -> Option[str]:
+    """The socket the store's service recorded, or `None` without a readable record."""
+    match root.joinpath("engine/endpoint").read_text("utf-8", "strict"):
+        Ok(text) =>
+            recorded = text.strip()
+            if recorded.startswith("/"):
+                return Some(recorded)
+            return None
+        Err(_) => return None

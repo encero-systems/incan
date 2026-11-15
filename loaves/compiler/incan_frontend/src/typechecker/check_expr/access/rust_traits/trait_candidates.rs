@@ -661,7 +661,7 @@ impl TypeChecker {
             let RustItemKind::Type(info) = &metadata.kind else {
                 return false;
             };
-            let actual = self.rust_closed_owner(&actual, &info, &path);
+            let actual = self.rust_closed_owner(&actual, info, &path);
             let identity = self.rust_trait_identity(&bound.path);
             if !info
                 .implemented_traits

@@ -3,7 +3,17 @@
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, keys, stage_put
+from pub::incan_platform.store import (
+    Snapshot,
+    Transaction,
+    begin,
+    commit,
+    get,
+    keys_with_prefix,
+    stage_delete,
+    stage_put,
+)
+from pub::incan_platform.store.codec import KIND_TOMBSTONE
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -191,12 +201,15 @@ pub def reusable_evaluation(
 
 
 pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
-    """Select every witnessed value in one family/profile from the graph's engine-owned output index."""
+    """
+    Select every witnessed value in one family/profile from the graph's engine-owned output index, reading only that
+    family's range of it: the index holds every edit's records, so a whole listing grew with each edit.
+    """
     if family == "" or profile == "" or "\t" in family or "\t" in profile:
         return Err("reusable compiler family selection requires delimiter-free family and profile names")
     prefix = "incan.engine.output\t" + profile + "\t"
     mut records: list[ReusableRecord] = []
-    for indexed in keys(selected).map_err((error) => error.message())?:
+    for indexed in keys_with_prefix(selected, prefix + family + "\t").map_err((error) => error.message())?:
         if not indexed.startswith(prefix):
             continue
         key = decode_record_key(indexed[len(prefix):])?
@@ -209,14 +222,14 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
 
 
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
-    """Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check."""
+    """
+    Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check,
+    reading only each changed record's range of edges.
+    """
     mut readers: Dict[str, RecordKey] = {}
-    selected_keys = keys(selected).map_err((error) => error.message())?
     for target in changed:
         prefix = "incan.engine.edge-in\t" + encode_record_key(target)? + "\t"
-        for indexed in selected_keys:
-            if not indexed.startswith(prefix):
-                continue
+        for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
             edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
                 (error) => error.message(),
             )?
@@ -225,6 +238,62 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
             reader = required_text(edge, "reader")?
             readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
+    """
+    Retire the outputs and edges that a transaction's new evaluations replace, so each slot indexes one output and each
+    record's readers are its current evaluations.
+
+    An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
+    evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
+    index together with its evaluation's edges. An output written again under its own key keeps it, but the edges its
+    earlier evaluation read leave unless the transaction writes them again: what it read now carries new evidence, so
+    the incoming entries are new keys. A family selection and a reader lookup then meet one output per slot and one
+    edge per current read instead of one per earlier edit. The superseded values, evaluations and receipts stay,
+    content named.
+    """
+    mut writing: set[str] = set()
+    for write in transaction.writes:
+        if write.kind != KIND_TOMBSTONE:
+            writing.add(write.key)
+    mut slots: set[str] = set()
+    for key in writing:
+        fields = key.split("\t")
+        if key.startswith("incan.engine.output\t") and len(fields) == 8:
+            slots.add("\t".join(fields[:7]) + "\t")
+    for slot in sorted([item for item in slots]):
+        for old in keys_with_prefix(selected, slot).map_err((error) => error.message())?:
+            if old not in writing:
+                stage_delete(transaction, old)
+            evaluation = required_value(selected, old)?.decode().map_err(
+                (_) => "compiler output index entry is not UTF-8",
+            )?
+            retire_edges(selected, transaction, evaluation, writing)?
+    return Ok(None)
+
+
+def retire_edges(
+    selected: Snapshot,
+    mut transaction: Transaction,
+    evaluation_key: str,
+    writing: set[str],
+) -> Result[None, str]:
+    """Remove an earlier evaluation's outgoing edges and their incoming entries, except those written again."""
+    for outgoing in keys_with_prefix(selected, "incan.engine.edge-out\t" + evaluation_key + "\t").map_err(
+        (error) => error.message(),
+    )?:
+        encoded = required_value(selected, outgoing)?
+        edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+            (error) => error.message(),
+        )?
+        if outgoing not in writing:
+            stage_delete(transaction, outgoing)
+        target = required_text(edge, "target")?
+        incoming = f"incan.engine.edge-in\t{target}\t{required_text(edge, "kind")?}\t{digest(encoded)}"
+        if incoming not in writing:
+            stage_delete(transaction, incoming)
+    return Ok(None)
 
 
 pub def evaluation_record_key(profile: str, output: str) -> str:

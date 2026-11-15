@@ -65,6 +65,16 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     return Ok(reading)
 
 
+pub def retain_content(source: Path, selection: str, identity: str, value: JsonValue) -> None:
+    """
+    Retain `value` for `source` under a content `identity`, such as `sha256:<digest>` of its bytes, which the caller
+    computed from what its work read; no filesystem time enters it, so it needs no settling.
+    """
+    match reading_record(source, selection):
+        None => return
+        Some(record) => _ = remember(record, source, selection, identity, value)
+
+
 pub def installed_digest(source: Path) -> Result[str, str]:
     """
     The SHA-256 of an installed file's bytes, hashed once per file generation for the whole home.

@@ -68,7 +68,10 @@ impl<'a> CheckedInputBody<'a> {
     /// parentheses: the local's loan is a carried call's result loan and its own type is that carrier. `?` and a
     /// `match` read it through that loan rather than consume it, and the view they take reborrows it, keyed to the
     /// same call; a view bound with `view = call()?` has the payload's type instead.
-    pub(crate) fn carrier_loan(&self, expression: &Spanned<Expr>) -> Option<(super::flow::LoanId, &super::flow::Loan)> {
+    pub(in crate::typechecker) fn carrier_loan(
+        &self,
+        expression: &Spanned<Expr>,
+    ) -> Option<(super::flow::LoanId, &super::flow::Loan)> {
         let local = super::super::builtins::view_call(expression);
         if !matches!(local.node, Expr::Ident(_))
             || !self

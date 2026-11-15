@@ -12,7 +12,7 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 
-pub const TOOLCHAIN_NAME: str = "0.6.0-dev.8"
+pub const TOOLCHAIN_NAME: str = "0.6.0-dev.9"
 
 
 pub model BenchmarkToolchain:

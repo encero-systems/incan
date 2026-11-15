@@ -151,7 +151,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         match meta.modified():
             Ok(value) => return _system_time_to_unix(self.path, value)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(err) => return Err(_io_error(self.path, "metadata", err))
 
     pub def accessed_unix(self) -> Result[int, IoError]:
         """
@@ -163,7 +163,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         match meta.accessed():
             Ok(value) => return _system_time_to_unix(self.path, value)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(err) => return Err(_io_error(self.path, "metadata", err))
 
     pub def created_unix(self) -> Result[int, IoError]:
         """
@@ -175,7 +175,7 @@ pub model PathStat:
         meta = _path_stat_metadata(self.path, self.follow_symlinks)?
         match meta.created():
             Ok(value) => return _system_time_to_unix(self.path, value)
-            Err(err) => return Err(_io_error(self.path, err))
+            Err(err) => return Err(_io_error(self.path, "metadata", err))
 
 
 @derive(Clone)
@@ -212,10 +212,10 @@ def _path_stat_metadata(path: Path, follow_symlinks: bool) -> Result[RustMetadat
     if follow_symlinks:
         match metadata(RustPath.new(path.0)):
             Ok(meta) => return Ok(meta)
-            Err(err) => return Err(_io_error(path, err))
+            Err(err) => return Err(_io_error(path, "metadata", err))
     match symlink_metadata(RustPath.new(path.0)):
         Ok(meta) => return Ok(meta)
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "metadata", err))
 
 
 def _system_time_to_unix(path: Path, value: RustSystemTime) -> Result[int, IoError]:
@@ -231,4 +231,4 @@ def _system_time_to_unix(path: Path, value: RustSystemTime) -> Result[int, IoErr
     """
     match value.duration_since(UNIX_EPOCH):
         Ok(duration) => return Ok(int(duration.as_secs()))
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "metadata", err))

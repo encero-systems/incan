@@ -57,6 +57,7 @@ fn publish_private_record(path: &Path, bytes: &[u8], suffix: &str) -> std::io::R
 
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
+use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::library_manifest::{ExportIdentity, ExportIdentityKind, LibraryManifest};
 
 /// The extension of a Loaf's library manifest, `<name>.incnlib`.
@@ -459,12 +460,34 @@ impl LoafIndex {
         Ok(Some((indexed.execution_manifest()?, indexed.bodies_path())))
     }
 
+    /// Read what executable resolution needs of one Loaf, and locate its governed bodies sidecar.
+    pub(crate) fn executable_surface_artifact(
+        &self,
+        key: &str,
+    ) -> Result<Option<(Arc<ExecutableSurface>, PathBuf)>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some((indexed.executable_surface()?, indexed.bodies_path())))
+    }
+
     /// Read the authenticated manifest projection needed to resolve executable declarations.
     pub fn execution_manifest(&self, key: &str) -> Result<Option<Arc<LibraryManifest>>, LoafIndexError> {
         let Some(indexed) = self.entries.get(key) else {
             return Ok(None);
         };
         Ok(Some(indexed.execution_manifest()?))
+    }
+
+    /// Read the runtime callables native lowering binds in one Loaf, without its contract metadata.
+    pub fn runtime_bindings(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(indexed.runtime_bindings()?))
     }
 
     /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be

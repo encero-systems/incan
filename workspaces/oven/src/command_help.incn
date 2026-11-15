@@ -20,6 +20,7 @@ from feature_inspection import FEATURES_USAGE, features_help
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const INCAN_RUN_OPERANDS: str = "run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_OPERANDS: str = "check [PATH] [--format text|json] [UNIT OPTIONS]"
+const LINT_OPERANDS: str = "lint [PATH] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
 const BUILD_OPERANDS: str = "build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const EXPLAIN_USAGE: str = "incan explain CODE [--format text|json]"
@@ -42,7 +43,12 @@ pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
 
 pub def usage(surface: str) -> str:
     """The surface's overview, composed from the same synopses each command's detailed help uses."""
-    project = [f"{surface} --version", f"{surface} {run_operands(surface)}", f"{surface} {CHECK_OPERANDS}"]
+    project = [
+        f"{surface} --version",
+        f"{surface} {run_operands(surface)}",
+        f"{surface} {CHECK_OPERANDS}",
+        f"{surface} {LINT_OPERANDS}",
+    ]
     if surface == OVEN:
         return overview(
             surface,
@@ -90,7 +96,7 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     """
     if owner_of(command, arguments) not in ["", surface]:
         return None
-    if command in ["run", "check", "test", "describe-unit", "build"]:
+    if command in ["run", "check", "lint", "test", "describe-unit", "build"]:
         if requested(arguments, unit_valued()):
             return Some(unit_help(surface, command))
     elif command == "explain" and requested(arguments, ["--format"]):
@@ -231,6 +237,8 @@ def unit_help(surface: str, command: str) -> str:
             options + ["  --format text|json    Report format (default text)."],
             f"{surface} check src/main.incn --format json",
         )
+    if command == "lint":
+        return render(f"{surface} {LINT_OPERANDS}", options, f"{surface} lint loaves/kernel/incan_lang")
     if command == "test":
         return render(
             f"{surface} {TEST_OPERANDS}",

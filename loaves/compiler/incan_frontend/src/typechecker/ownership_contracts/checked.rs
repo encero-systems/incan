@@ -114,9 +114,7 @@ impl TypeChecker {
             }) {
             super::InputCallKind::Explicit
         } else {
-            if self.current_body_identity().is_none() {
-                return None;
-            }
+            self.current_body_identity()?;
             super::InputCallKind::Ordinary
         };
         let call = super::InputCall {

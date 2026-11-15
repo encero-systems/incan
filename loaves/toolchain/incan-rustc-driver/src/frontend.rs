@@ -874,6 +874,7 @@ fn lower_compilation_plan(
     let mut retry_indices: Option<Vec<usize>> = None;
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
+        tracing::debug!(target: "incan::invocation", held = %held_modules(&program.modules), "lowering Body IR modules");
         let mut attempt_unions = Vec::new();
         let planning = match continuation.take() {
             Some(preserved) => {
@@ -941,6 +942,15 @@ fn lower_compilation_plan(
     report_missing_entrypoint(source)?;
     receipt.deterministic();
     Err(SourceFailure::MissingEntrypoint.into())
+}
+
+/// Name each Body IR module one lowering attempt holds, with its body count, for an invocation trace.
+fn held_modules(modules: &[BodyIrModule]) -> String {
+    modules
+        .iter()
+        .map(|module| format!("{}:{}", module.module_id.path(), module.bodies.len()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Copy only the changed runtime modules and aligned provenance into one continuation boundary value.

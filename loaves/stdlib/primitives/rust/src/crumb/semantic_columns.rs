@@ -357,7 +357,7 @@ fn next_key(
 ) -> Result<Value, Refused> {
     if let KeyType::Integer(..) | KeyType::Decimal(..) = node {
         let raw = cursor.frame(budget)?;
-        if index % 16 == 0 {
+        if index.is_multiple_of(16) {
             return numeric_cell(node, raw, budget);
         }
         let difference = positive_difference(raw, budget)?;
@@ -368,7 +368,7 @@ fn next_key(
     if index == 0 && prefix != 0 {
         return Err("invalid_prefix");
     }
-    if index % 16 == 0 && prefix != 0 {
+    if index.is_multiple_of(16) && prefix != 0 {
         return Err("restart_prefix");
     }
     let before: Vec<u8> = match (index % 16, previous) {
@@ -384,7 +384,7 @@ fn next_key(
     budget.bytes((prefix + suffix.len()) as u64)?;
     let mut raw = before[..prefix].to_vec();
     raw.extend_from_slice(suffix);
-    if index % 16 != 0 {
+    if !index.is_multiple_of(16) {
         let longest = before
             .iter()
             .zip(&raw)

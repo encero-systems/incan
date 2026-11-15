@@ -1,17 +1,20 @@
 //! The installed compiler records of one Loaf and their two digests (RFC 179).
 //!
 //! The toolchain's driver exports these records once at installation: one record per exported declaration and
-//! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation and
-//! its Rust ABI, and the Loaf's metadata record, which carries the digests.
+//! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation, its
+//! Rust ABI, its executable descriptor and public executable identities (all executable resolution reads besides the
+//! metadata), its runtime callable bindings (all native lowering reads of it), and the Loaf's metadata record, which
+//! carries the digests.
 //!
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
 //! - The **semantic facts digest** covers every record except documentation: each record's key, kind, model description
-//!   hash and canonical hash, in key order. A canonical hash leaves out source positions: anchor spans and the spans
-//!   inside canonical identities. The metadata record's canonical value also leaves out its publication fields: the
-//!   Loaf's version, the version of the toolchain that checked it and the digest of the manifest file, which covers
-//!   docstrings. Republishing a Loaf under another version, or changing only its documentation, whatever its length,
-//!   keeps its semantic facts digest.
+//!   hash and canonical hash, in key order. A canonical hash leaves out source positions: anchor spans, the spans
+//!   inside canonical identities, and the executable descriptor's digest of the governed bodies' bytes, whose Body IR
+//!   carries spans. The metadata record's canonical value also leaves out its publication fields: the Loaf's version,
+//!   the version of the toolchain that checked it and the digest of the manifest file, which covers docstrings.
+//!   Republishing a Loaf under another version, or changing only its documentation, whatever its length, keeps its
+//!   semantic facts digest.
 //!
 //! The digest fields themselves are left out of the metadata value both digests cover.
 
@@ -19,6 +22,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use super::executable_surface::{own_public_identities, runtime_bindings};
 use super::{LibraryManifest, LibraryManifestError};
 
 /// The record identity and value schema every installed compiler record follows.
@@ -29,6 +33,9 @@ const PUBLICATION_FIELDS: [&str; 3] = ["version", "incan_version", "manifest_dig
 
 /// The fields that hold source positions: an anchor's span and a canonical identity's declaration span.
 const POSITION_FIELDS: [&str; 2] = ["span", "declaration_span"];
+
+/// The executable descriptor's field naming the governed bodies by the digest of their bytes, which carry positions.
+const BODIES_DIGEST_FIELD: &str = "content_digest";
 
 /// The closed record families of one Loaf's installed compiler records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +57,12 @@ pub enum RecordFamily {
     SoftKeyword,
     ContractMetadata,
     Documentation,
+    /// The executable descriptor executable resolution checks a reached Loaf against.
+    ExecutableDescriptor,
+    /// The public executable identities a Loaf declares itself.
+    PublicIdentities,
+    /// The runtime callables native lowering binds by their public path.
+    RuntimeBindings,
     RustAbi,
 }
 
@@ -74,6 +87,9 @@ impl RecordFamily {
             Self::SoftKeyword => "soft-keyword",
             Self::ContractMetadata => "contract-metadata",
             Self::Documentation => "documentation",
+            Self::ExecutableDescriptor => "executable-descriptor",
+            Self::PublicIdentities => "public-identities",
+            Self::RuntimeBindings => "runtime-bindings",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -134,6 +150,19 @@ impl LibraryManifest {
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
         }
+        // Executable resolution reads these two, never the whole contract metadata (RFC 179).
+        if let Some(descriptor) = &self.contract_metadata.executable_representation {
+            records.push(record(RecordFamily::ExecutableDescriptor, 0, &self.name, descriptor)?);
+        }
+        let identities = own_public_identities(self);
+        records.push(record(RecordFamily::PublicIdentities, 0, &self.name, &identities)?);
+        // Native lowering reads this one by name, never the contract metadata it is derived from.
+        records.push(record(
+            RecordFamily::RuntimeBindings,
+            0,
+            &self.name,
+            &runtime_bindings(self),
+        )?);
         if let Some(rust_abi) = &self.rust_abi {
             records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
         }
@@ -283,7 +312,7 @@ fn digests(
         .iter()
         .filter(|record| record.family != RecordFamily::Documentation)
     {
-        semantic.push(semantic_entry(record, &canonical_value(&record.value)?));
+        semantic.push(semantic_entry(record, &canonical_value(record.family, &record.value)?));
     }
     semantic.push(semantic_entry(&metadata_record, &metadata_canonical));
     content.sort();
@@ -299,24 +328,50 @@ fn digests(
 /// Spans locate a declaration in its producer's source, and a declaration's canonical identity carries its span; a
 /// docstring that changes length moves every later one. What a declaration is stays in its identity's namespace,
 /// origin and name, the parts `StableDeclarationId` keeps, and in the rest of its record.
-fn canonical_value(value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
+///
+/// The executable descriptor names the governed bodies by the digest of their `.incnbody` bytes, and their Body IR
+/// carries spans and node identities derived from spans, so a longer docstring changes that digest while every body
+/// stays what it was. The descriptor's representation version stays a compile fact; what the bodies execute is
+/// identified by the content of the native library compiled from the same checked bodies, which a consumer's unit
+/// identity folds beside these facts.
+fn canonical_value(family: RecordFamily, value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
     let mut decoded: Value = LibraryManifest::decode_compiler_record_value(value)?;
     without_positions(&mut decoded);
+    let descriptor = match family {
+        RecordFamily::ExecutableDescriptor => Some(&mut decoded),
+        RecordFamily::ContractMetadata => decoded.get_mut("executable_representation"),
+        _ => None,
+    };
+    if let Some(Value::Object(descriptor)) = descriptor {
+        descriptor.remove(BODIES_DIGEST_FIELD);
+    }
     LibraryManifest::encode_compiler_record_value(&decoded)
 }
 
-/// Remove every source position from a decoded record value.
+/// Remove every source position from a decoded record value: the `span` and `declaration_span` fields, and any field
+/// whose value is itself a source span, such as a decorator's `anchor`.
 fn without_positions(value: &mut Value) {
     match value {
         Value::Object(fields) => {
-            for field in POSITION_FIELDS {
-                fields.remove(field);
+            let positions = fields
+                .iter()
+                .filter(|(name, field)| POSITION_FIELDS.contains(&name.as_str()) || is_span(field))
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            for name in positions {
+                fields.remove(&name);
             }
             fields.values_mut().for_each(without_positions);
         }
         Value::Array(items) => items.iter_mut().for_each(without_positions),
         _ => {}
     }
+}
+
+/// Whether a decoded value is a source span: an object of exactly `start`, `end` and `expansion`.
+fn is_span(value: &Value) -> bool {
+    matches!(value, Value::Object(fields)
+        if fields.len() == 3 && ["start", "end", "expansion"].iter().all(|key| fields.contains_key(*key)))
 }
 
 /// One record's semantic facts entry: key, kind, model description hash and canonical hash.

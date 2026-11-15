@@ -89,13 +89,14 @@ impl SemanticNodeBindings {
                 ));
             }
         }
+        // A generic owner is checked once against its own binders, so its records are as exact as a plain owner's;
+        // each instance is closed later, by lowering.
         if !function.decorators.is_empty()
             || !function.surface_modifiers.is_empty()
-            || !function.type_params.is_empty()
             || declaration.span.expansion.is_some()
             || !declaration.required_features.is_empty()
         {
-            return Err(NodeBindingError::Unsupported("modified, generic, or generated owner"));
+            return Err(NodeBindingError::Unsupported("modified or generated owner"));
         }
         let canonical = checker
             .declaration_view()
@@ -167,6 +168,7 @@ impl SemanticNodeBindings {
                 canonical.kind,
                 incan_semantics_core::SemanticSourceTargetKind::Local
                     | incan_semantics_core::SemanticSourceTargetKind::Parameter
+                    | incan_semantics_core::SemanticSourceTargetKind::GenericBinder
             ) {
                 return Err(NodeBindingError::Unsupported("nested declaration kind"));
             }

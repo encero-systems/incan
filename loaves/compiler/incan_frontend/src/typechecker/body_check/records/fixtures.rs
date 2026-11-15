@@ -7,11 +7,12 @@ use super::*;
 pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
     let (_, checker, owner) = fixture(source, name)?;
     if declaration {
-        return checker
-            .produced_declaration_records
-            .get(&owner)
-            .cloned()
-            .ok_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()));
+        return match checker.produced_declaration_records.get(&owner) {
+            Some(fields) => Ok(fields.clone()),
+            None => Err(checker
+                .declaration_record_refusal(owner)
+                .unwrap_or_else(|| NodeBindingError::InvalidField("fixture declaration record is absent".into()))),
+        };
     }
     match checker.produced_final_record(owner) {
         Some(fields) => Ok(fields.clone()),
@@ -82,7 +83,7 @@ fn verify_checked_fixture(
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
     drop(checker);
-    let restored = restore(&positions, &program, owner, &fields)?;
+    let restored = restore(&positions, &program, owner, fields)?;
     compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));

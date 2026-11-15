@@ -4,6 +4,7 @@ from std.toml import TomlValue
 from toolchain_access import ToolchainAccess
 from c_facet import CFacet
 from c_interop import CInteropTarget
+from rust_lints import RustLints
 
 
 pub model ManifestEvidence:
@@ -94,6 +95,8 @@ pub model ProjectIntent:
     pub vocab_entry: Option[str] = None
     # The rustc-internal access `[build]` declares for the Loaf's Incan units.
     pub toolchain_access: ToolchainAccess = ToolchainAccess()
+    # The `[rust.lints]` levels for the Loaf's Rust units, in the order their flags apply.
+    pub rust_lints: RustLints = RustLints()
 
 
 pub model ManifestSnapshot:

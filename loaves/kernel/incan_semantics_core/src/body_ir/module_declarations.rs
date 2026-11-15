@@ -3,8 +3,9 @@
 
 use super::*;
 
-/// One authenticated public runtime facade and the declaration selected by its Loaf identity graph.
-#[derive(Debug, Clone, PartialEq)]
+/// One authenticated public runtime facade and the declaration selected by its Loaf identity graph. A Loaf's installed
+/// compiler records publish its bindings as a record of their own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeCallableBinding {
     /// Public runtime ABI path introduced by lowering.
     pub path: String,

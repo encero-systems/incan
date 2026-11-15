@@ -1,6 +1,6 @@
 [project]
 name = "incan_platform"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 description = "The OS-facing layer below std: thin wrappers over OS and Rust facilities"
 
 [rust]

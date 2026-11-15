@@ -38,7 +38,7 @@ const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sys
 def installed_home(scratch: Path) -> Result[AdmittedHome, str]:
     """A home with an installed toolchain, standard Loaf sources and artifacts, and a content-named store."""
     root = scratch.joinpath("home")
-    toolchain = root.joinpath("toolchains").joinpath("0.6.0-dev.8")
+    toolchain = root.joinpath("toolchains").joinpath("0.6.0-dev.9")
     for directory in ["loaves/core/debug", "native/runtime-1", "rust-abi", "bin"]:
         make_directory(toolchain.joinpath(directory))?
     write(toolchain.joinpath("toolchain.json"), PIN)?

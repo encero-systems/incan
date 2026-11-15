@@ -136,10 +136,10 @@ impl TypeChecker {
             .and_then(|identity| self.type_info.declarations.ownership_contracts.get(identity))
         {
             for mode in &contract.modes {
-                if mode.component.children.is_empty() {
-                    if let Some(parameter) = mode.component.parameter.and_then(|slot| found.params.get_mut(slot)) {
-                        parameter.ty.clone_from(&mode.underlying);
-                    }
+                if mode.component.children.is_empty()
+                    && let Some(parameter) = mode.component.parameter.and_then(|slot| found.params.get_mut(slot))
+                {
+                    parameter.ty.clone_from(&mode.underlying);
                 }
             }
         }
@@ -198,13 +198,13 @@ impl TypeChecker {
         let mut slots = BTreeMap::new();
         for mode in inherited {
             let Some(slot) = mode.component.parameter else { continue };
-            if let Some(previous) = slots.insert(slot, mode.clone()) {
-                if previous != mode {
-                    return Err(input_conflict(
-                        "Adopted traits require conflicting input ownership for this method",
-                        span,
-                    ));
-                }
+            if let Some(previous) = slots.insert(slot, mode.clone())
+                && previous != mode
+            {
+                return Err(input_conflict(
+                    "Adopted traits require conflicting input ownership for this method",
+                    span,
+                ));
             }
             let parameter = header
                 .params
@@ -323,10 +323,10 @@ fn normalize_parameters(header: &mut MethodInfo, contract: &CheckedOwnershipCont
         if !mode.component.children.is_empty() {
             continue;
         }
-        if let Some(parameter) = header.params.get_mut(slot) {
-            if parameter.ty == mode.underlying {
-                parameter.ty = ResolvedType::Generic(mode.mode.as_str().into(), vec![parameter.ty.clone()]);
-            }
+        if let Some(parameter) = header.params.get_mut(slot)
+            && parameter.ty == mode.underlying
+        {
+            parameter.ty = ResolvedType::Generic(mode.mode.as_str().into(), vec![parameter.ty.clone()]);
         }
     }
 }

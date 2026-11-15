@@ -163,11 +163,11 @@ pub fn compile(
         // Rustc's relative `-Crpath` entries would name the store from the staged output, not from the viewed copy.
         args.push("-Cprefer-dynamic".into());
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
-        // The adapter interposes its own executable only to give every object a content-derived store path before
-        // forwarding the otherwise unchanged argument vector to ld. Darwin records those paths in the debug map.
+        // The development linker gives every object a content-derived store path before forwarding the otherwise
+        // unchanged argument vector to ld. Darwin records those paths in the debug map.
         let darwin = identity.target.ends_with("-apple-darwin");
         if darwin {
-            let linker = std::env::current_exe().map_err(|error| {
+            let linker = development_linker().map_err(|error| {
                 DriverError::Invocation(format!("cannot locate stable development linker: {error}"))
             })?;
             args.push(format!("-Clinker={}", linker.display()));
@@ -240,6 +240,24 @@ pub fn compile(
     }
     callbacks.timing.mark("loader_witness");
     Ok(())
+}
+
+/// The program a development link runs as its linker: the dedicated `incan-link` installed beside this driver under
+/// the same suffix, or this driver itself where none is installed. The dedicated program is small and never relinked,
+/// so a link pays neither the driver's start nor a first-run check.
+pub(crate) fn development_linker() -> std::io::Result<PathBuf> {
+    let driver = std::env::current_exe()?;
+    if let Some(suffix) = driver
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("incan-rustc-driver"))
+    {
+        let linker = driver.with_file_name(format!("incan-link{suffix}"));
+        if linker.is_file() {
+            return Ok(linker);
+        }
+    }
+    Ok(driver)
 }
 
 /// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.

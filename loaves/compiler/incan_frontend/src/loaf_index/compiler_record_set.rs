@@ -26,9 +26,19 @@ use crate::library_manifest::{
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
 use crate::api_metadata::ApiDocumentation;
+use crate::library_manifest::executable_surface::ExecutableSurface;
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
+
+mod runtime_bindings;
+pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
+/// The record families of a Loaf's executable surface besides its metadata, and its runtime callable bindings; a
+/// manifest projection never selects them.
+const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
+const PUBLIC_IDENTITIES: &str = "public-identities";
+const RUNTIME_BINDINGS: &str = "runtime-bindings";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -62,6 +72,10 @@ struct RecordSet {
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
     /// Inventory summaries this process already read and authenticated, by metadata key prefix.
     summaries: Mutex<BTreeMap<String, Summary>>,
+    /// Executable surfaces this process already read and authenticated, by package prefix.
+    surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
+    /// Runtime callable bindings this process already read, by record key prefix.
+    bindings: Mutex<BTreeMap<String, (Arc<Vec<RuntimeCallableBinding>>, String)>>,
 }
 
 /// One authenticated, decoded record group and the manifest digest its metadata names.
@@ -92,13 +106,14 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
+        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS);
         match self {
-            Self::Complete => family != DOCUMENTATION,
+            Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
                 family,
                 "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
             ),
-            Self::Documented => true,
+            Self::Documented => !surface,
         }
     }
 
@@ -123,6 +138,8 @@ impl RecordSet {
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
+            surfaces: Mutex::new(BTreeMap::new()),
+            bindings: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -275,6 +292,97 @@ pub(super) fn read_documented(
     name: &str,
 ) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
     read_selected(dir, name, Projection::Documented)
+}
+
+/// Read what executable resolution needs of one installed Loaf: its name, version, descriptor and public identities.
+pub(super) fn read_surface(dir: &Path, name: &str) -> Result<Option<(Arc<ExecutableSurface>, String)>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    read_surface_in(set, dir, name)
+}
+
+/// Read one Loaf group's executable surface from `set`: its metadata, descriptor and public identities records only.
+///
+/// A set converted before surfaces were published has no public-identities record; the caller then derives the
+/// surface from the executable projection.
+fn read_surface_in(
+    set: &RecordSet,
+    dir: &Path,
+    name: &str,
+) -> Result<Option<(Arc<ExecutableSurface>, String)>, LoafIndexError> {
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/");
+    if let Some(found) = set.surfaces.lock().unwrap_or_else(PoisonError::into_inner).get(&prefix) {
+        return Ok(Some(found.clone()));
+    }
+    let entries = set
+        .entries
+        .iter()
+        .filter(|entry| entry.key.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    let selected = select_records(entries, &prefix, dir, name)?
+        .into_iter()
+        .filter(|(family, _, _)| matches!(*family, "metadata" | EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES))
+        .collect::<Vec<_>>();
+    if !selected.iter().any(|(family, _, _)| *family == PUBLIC_IDENTITIES) {
+        return Ok(None);
+    }
+    validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
+    let mut metadata: Option<Metadata> = None;
+    let mut surface = ExecutableSurface {
+        name: name.to_owned(),
+        version: String::new(),
+        descriptor: None,
+        public_identities: BTreeSet::new(),
+    };
+    for (family, _, entry) in selected {
+        if entry.revision != entry.value {
+            return Err(unreadable(
+                dir,
+                name,
+                format!(
+                    "compiler-record `{}` has distinct revision and value identities",
+                    entry.key
+                ),
+            ));
+        }
+        let bytes = open_value(&set.root, &entry.value)
+            .map_err(|reason| unreadable(dir, name, record_failure(&entry.key, reason)))?;
+        set.count_read(bytes.len());
+        let invalid = |error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}"));
+        match family {
+            "metadata" => metadata = Some(LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?),
+            EXECUTABLE_DESCRIPTOR => {
+                surface.descriptor = Some(LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?)
+            }
+            _ => surface.public_identities = LibraryManifest::decode_compiler_record_value(&bytes).map_err(invalid)?,
+        }
+    }
+    let metadata = metadata.ok_or_else(|| {
+        unreadable(
+            dir,
+            name,
+            "compiler-record metadata requires exactly one value".to_owned(),
+        )
+    })?;
+    if metadata.name != name {
+        return Err(unreadable(
+            dir,
+            name,
+            format!("compiler records name the Loaf `{}`", metadata.name),
+        ));
+    }
+    surface.version = metadata.version;
+    let found = (Arc::new(surface), metadata.manifest_digest);
+    set.surfaces
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, found.clone());
+    Ok(Some(found))
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -616,14 +724,20 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
 /// Compare a payload with its canonical SHA-256 spelling without allocating another hexadecimal string.
 fn digest_matches(bytes: &[u8], expected: &str) -> bool {
     let actual = Sha256::digest(bytes);
-    expected.as_bytes().chunks_exact(2).zip(actual).all(|(encoded, byte)| {
-        let decode = |digit: u8| match digit {
-            b'0'..=b'9' => digit - b'0',
-            b'a'..=b'f' => digit - b'a' + 10,
-            _ => u8::MAX,
-        };
-        decode(encoded[0]) << 4 | decode(encoded[1]) == byte
-    })
+    expected
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(actual)
+        .all(|(encoded, byte)| {
+            let decode = |digit: u8| match digit {
+                b'0'..=b'9' => digit - b'0',
+                b'a'..=b'f' => digit - b'a' + 10,
+                _ => u8::MAX,
+            };
+            decode(encoded[0]) << 4 | decode(encoded[1]) == byte
+        })
 }
 
 /// Read one immutable value after the installed set receipt named it; the value itself is authenticated on open.
@@ -814,11 +928,16 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary};
+    use super::runtime_bindings::read_runtime_bindings_in;
+    use super::{
+        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
+        read_surface_in,
+    };
     use crate::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     };
-    use crate::library_manifest::{LibraryContractMetadata, LibraryManifest};
+    use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+    use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
 
     /// The canonical lowercase SHA-256 spelling of `bytes`.
     fn content_name(bytes: &[u8]) -> String {
@@ -1032,6 +1151,94 @@ mod tests {
             set.reads(),
             expected,
             "a summary this process already authenticated is not read or hashed again"
+        );
+        Ok(())
+    }
+
+    /// What executable resolution may read of a reached Loaf: its metadata, descriptor and public identities.
+    const SURFACE_BOUND: usize = 4096;
+
+    /// A library whose executable surface is small beside its contract metadata: a function, a model with a method,
+    /// a descriptor, and a checked API repeated until the contract metadata is well over the bound.
+    fn surfaced_library() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+        let source = "pub def price() -> int:\n    return 1999\n\npub model Money:\n    cents: int\n\n    pub def doubled(self) -> int:\n        return self.cents * 2\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let exports = crate::library_exports::collect_checked_public_exports(&program, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("prices", "0.1.0", &exports);
+        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![module; 200],
+            public_namespaces: Vec::new(),
+        });
+        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
+            representation_version: 1,
+            content_digest: content_name(b"prices bodies"),
+        });
+        Ok(manifest)
+    }
+
+    /// Install every compiler record of `manifest` as its Loaf group in a fresh payload directory under `root`.
+    fn installed_library(root: &Path, manifest: &LibraryManifest) -> Result<RecordSet, Box<dyn std::error::Error>> {
+        fs::create_dir(root.join("payloads"))?;
+        let mut entries = Vec::new();
+        for record in manifest.compiler_records(&content_name(b"prices manifest"))?.records {
+            let digest = content_name(&record.value);
+            fs::write(root.join("payloads").join(&digest), &record.value)?;
+            entries.push(RecordEntry {
+                key: format!("loaf/debug/{}/{}", manifest.name, record.key()),
+                revision: digest.clone(),
+                value: digest,
+            });
+        }
+        Ok(RecordSet::new(root.to_path_buf(), entries))
+    }
+
+    #[test]
+    fn executable_resolution_reads_only_a_reached_loafs_executable_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library()?;
+        let set = installed_library(root.path(), &manifest)?;
+        let (surface, _) =
+            read_surface_in(&set, &root.path().join("debug"), "prices")?.ok_or("the Loaf is installed")?;
+        assert_eq!(
+            *surface,
+            ExecutableSurface::of(&manifest),
+            "the surface the manifest describes"
+        );
+        let read = set.reads();
+        assert!(
+            read.bytes <= SURFACE_BOUND,
+            "executable resolution read {} records, {} bytes; the bound is {SURFACE_BOUND}",
+            read.records,
+            read.bytes
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_lowering_reads_a_loafs_runtime_bindings_by_name() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library()?;
+        let set = installed_library(root.path(), &manifest)?;
+        let dir = root.path().join("debug");
+        // The index admits an installed Loaf by its inventory summary before anything demands its records.
+        read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+        let indexed = set.reads();
+        let (bindings, _) = read_runtime_bindings_in(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+        let expected = runtime_bindings(&manifest);
+        assert!(!expected.is_empty(), "`prices::price` is a runtime callable");
+        assert_eq!(*bindings, expected, "the bindings the manifest describes");
+        let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+        assert_eq!(
+            records, 1,
+            "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
         );
         Ok(())
     }

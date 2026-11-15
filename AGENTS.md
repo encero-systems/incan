@@ -111,6 +111,7 @@ The compiler is built and run through Oven: `incan run`, `check`, `build`, `test
 | `make examples`      | Run the repository examples through installed Incan                                    |
 | `make test`       | Run all eight contract families                                                             |
 | `make fmt`     | Format the workspace's Rust sources with nightly rustfmt (file-scoped)                      |
+| `make lint`    | Check every Rust library facet with clippy through `incan lint`, at each Loaf's `[rust.lints]` levels |
 | `make docs`       | Generate and strictly build the documentation site                                          |
 | `make pre-commit` | Check formatting, spelling, rustdoc, agent docs, contributor paths and reference contracts |
 | `incan inspect codegraph PATH --query defs\|refs\|callers\|callees\|imports TERM` | Find declarations and their relationships across Incan and Rust (RFC 106) before reaching for grep |
@@ -248,7 +249,7 @@ fn my_test() -> Result<(), Box<dyn std::error::Error>> {
 
 ### No Cargo tools
 
-The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo fmt` do not apply. Format Rust with `make fmt`, which runs nightly rustfmt file by file. Prove behavior with the contract families.
+The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo fmt` do not apply. Format Rust with `make fmt`, which runs nightly rustfmt file by file, and lint it with `make lint`, which runs clippy through `incan lint`. Prove behavior with the contract families.
 
 ## Compiler Pipeline
 

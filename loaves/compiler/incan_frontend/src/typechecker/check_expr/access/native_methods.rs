@@ -298,7 +298,7 @@ impl TypeChecker {
         }
         Some(self.validate_rust_function_call_with_expected(
             &path,
-            &signature,
+            signature,
             call.args,
             call.span,
             call.expected_return_ty,

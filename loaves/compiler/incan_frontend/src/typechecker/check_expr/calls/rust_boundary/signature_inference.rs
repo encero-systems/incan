@@ -117,12 +117,11 @@ impl TypeChecker {
         map_resolved_type_leaves(ty, &|leaf| {
             match leaf {
                 ResolvedType::Unknown | ResolvedType::CallSiteInfer => open.set(true),
-                ResolvedType::RustPath(display) => {
+                ResolvedType::RustPath(display)
                     if syn::parse_str::<syn::Type>(display)
-                        .is_ok_and(|parsed| Self::rust_type_has_open_native_binder(&parsed))
-                    {
-                        open.set(true);
-                    }
+                        .is_ok_and(|parsed| Self::rust_type_has_open_native_binder(&parsed)) =>
+                {
+                    open.set(true);
                 }
                 _ => {}
             }
@@ -370,7 +369,7 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        if !self.complete_rust_owner_arguments(&info, &mut arguments) {
+        if !self.complete_rust_owner_arguments(info, &mut arguments) {
             return None;
         }
         let expanded = ResolvedType::Generic(base.to_owned(), arguments);
@@ -718,7 +717,7 @@ impl TypeChecker {
         if let Some(metadata) = self.known_rust_metadata_for_path(&path)
             && let RustItemKind::Type(info) = &metadata.kind
         {
-            return Some(self.rust_storage_owner(ty, &info, &path));
+            return Some(self.rust_storage_owner(ty, info, &path));
         }
         None
     }

@@ -52,7 +52,7 @@ pub def prepare_report(
             produced.lowering_demand_evaluations,
         ), "lowering_demand_reuses": JsonValue.int(produced.lowering_demand_reuses), "native_interface_evaluations": JsonValue.int(
             produced.native_interface_evaluations,
-        )},
+        ), "index_pages": JsonValue.int(produced.index_pages), "keys_listed": JsonValue.int(produced.keys_listed)},
     )
     selected = snapshot(store).map_err((error) => error.message())?
     return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))

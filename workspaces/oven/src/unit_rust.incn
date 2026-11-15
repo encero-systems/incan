@@ -247,6 +247,10 @@ pub def prepare_native(
 
     1. Prepare the shared local graph, or resolve a standalone unit's declared Rust imports.
     2. Bind the selected artifacts and toolchain inputs to the unit.
+
+    A standalone unit's imports are asked of its linked description. Without Rust imports that description is the
+    prepared unit, so the source graph the same compiler activation reported is the one the prepared unit is keyed by,
+    and keying it asks the compiler nothing more.
     """
     # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
     mut unit = described
@@ -254,7 +258,11 @@ pub def prepare_native(
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         unit = resolve_dependencies(unit, toolchain)?
     else:
-        for native in standalone_crates(unit, toolchain)?:
+        linked = prepare_linked(unit, toolchain)?
+        natives = standalone_crates(unit, toolchain, Some(linked))?
+        if len(natives) == 0:
+            return Ok(linked)
+        for native in natives:
             unit = add_rust_root(unit, native)?
     # 2. No source graph is selected again while the prepared unit is linked.
     return prepare_linked(unit, toolchain)

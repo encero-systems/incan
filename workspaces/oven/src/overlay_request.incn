@@ -1,7 +1,7 @@
 """
 `incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
-[--engine-report]`, and `incan check --overlay-serve [--profile debug|release]`, which answers one such request per
-JSON line on standard input.
+[--engine-report] [--build] [--hover LINE:COLUMN]`, and `incan check --overlay-serve [--profile debug|release]`, which
+answers one such request per JSON line on standard input.
 """
 
 from std.json import parse
@@ -16,10 +16,15 @@ pub model OverlayRequest:
     pub profile: str
     # Whether the answer carries the engine's work counters.
     pub report: bool = false
+    # Whether the overlay is built, as on a save, so the project's next build finds its unit, instead of only checked.
+    pub build: bool = false
+    # A hover's one-based line and column in the buffer; 0 asks for diagnostics instead.
+    pub hover_line: int = 0
+    pub hover_column: int = 0
 
 
 pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
-    """Read one served request line: `{"source": …, "buffer": …, "version": N}`."""
+    """Read one served request line: `{"source": …, "buffer": …, "version": N}`, with `"build": true` on a save."""
     request = parse(line).map_err((error) => error.message())?
     source = request.require("source").map_err((error) => error.message())?.expect_str().map_err(
         (error) => error.message(),
@@ -32,7 +37,16 @@ pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
     )?
     if version < 0:
         return Err(f"a document version is a non-negative integer, got {version}")
-    return Ok(OverlayRequest(source=source, buffer=buffer, version=version, profile=profile))
+    mut answered = OverlayRequest(source=source, buffer=buffer, version=version, profile=profile)
+    if let Some(selected) = request.get("build"):
+        answered.build = selected.expect_bool().map_err((error) => error.message())?
+    if let Some(position) = request.get("hover"):
+        place = position.expect_array().map_err((error) => error.message())?
+        if len(place) != 2:
+            return Err("a hover names a line and a column")
+        answered.hover_line = place[0].expect_int().map_err((error) => error.message())?
+        answered.hover_column = place[1].expect_int().map_err((error) => error.message())?
+    return Ok(answered)
 
 
 pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
@@ -41,16 +55,25 @@ pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == "--engine-report":
-            request.report = true
+        if argument in ["--engine-report", "--build"]:
+            if argument == "--build":
+                request.build = true
+            else:
+                request.report = true
             index += 1
             continue
-        if argument in ["--overlay", "--document-version", "--profile", "--format"]:
+        if argument in ["--overlay", "--document-version", "--profile", "--format", "--hover"]:
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
             value = arguments[index + 1]
             if argument == "--overlay":
                 request.buffer = value
+            elif argument == "--hover":
+                place = value.split(":")
+                if len(place) != 2 or not decimal(place[0]) or not decimal(place[1]):
+                    return Err(f"`--hover` is LINE:COLUMN, got `{value}`")
+                request.hover_line = int(place[0])
+                request.hover_column = int(place[1])
             elif argument == "--document-version":
                 if not decimal(value):
                     return Err(f"`--document-version` is a non-negative integer, got `{value}`")

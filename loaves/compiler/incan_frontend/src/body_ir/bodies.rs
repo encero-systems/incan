@@ -3,7 +3,6 @@
 use super::*;
 use crate::symbols::ResolvedType;
 use crate::typechecker::FunctionBindingInfo;
-use incan_lang::lang::decorators::{self, DecoratorId};
 
 /// Retain a nominal owner's methods and concrete property getters under their independent checked identities.
 pub(super) fn lower_owner_member_bodies(

@@ -1,0 +1,16 @@
+# behavior: a consumer constructs a dependency's model whose field defaults construct other models, omitting all of them or some, and each omitted field gets the dependency's default
+# expect-stdout:
+#   outer 0 3
+#   given 0 3
+#   outer 5 3
+#   outer 0 3
+
+from pub::defaults.shapes import Credits, Inner, Outer, described
+
+
+def main() -> None:
+    println(described(Outer()))
+    println(described(Outer(label="given")))
+    println(described(Outer(inner=Inner(count=5))))
+    built = Outer()
+    println(f"{built.label} {built.inner.count} {built.budget.limit}")

@@ -9,7 +9,7 @@ from std.fs import Path
 from pub::incan_platform.ipc import Listener, listen, session_id, stale
 from decimal_text import digits_only
 from engine_channel import Channel, Envelope, SendOutcome
-from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, transport
+from engine_endpoint import HANDSHAKE_SECONDS, endpoint, owner_uid, record_endpoint, transport, withdraw_endpoint
 from engine_messages import (
     Accepted,
     Cancelled,
@@ -84,8 +84,12 @@ pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None
         return Err(transport("another engine owns this store"))
     withdraw_stale(selected.socket)?
     mut listener = listen(selected.socket, false).map_err(transport)?
+    # A caller whose runtime directory names another socket path finds this one through the store; without the
+    # record only callers sharing this environment can.
+    _ = record_endpoint(root, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
     outcome = event_loop(listener, state, idle)
+    withdraw_endpoint(root, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
 

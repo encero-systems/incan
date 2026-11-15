@@ -1,6 +1,6 @@
 [project]
 name = "incan_worker_host"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 description = "The compiler worker host: versioned compile and record protocols and the worker process lifecycle"
 
 [dependencies]

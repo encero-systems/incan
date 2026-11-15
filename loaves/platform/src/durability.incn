@@ -3,6 +3,7 @@
 from rust::std::fs import File
 from rust::std::os::fd import AsFd
 from rust::rustix::fs import fsync
+from rust::incan_platform_clock import barrier_sync
 
 
 pub def sync_ordered(path: str) -> Result[None, str]:
@@ -10,9 +11,19 @@ pub def sync_ordered(path: str) -> Result[None, str]:
     Submit a file's data or a directory's entries with ordinary filesystem synchronization.
 
     This establishes filesystem ordering without requesting an Apple drive-cache flush for every object. A durable
-    publisher must still flush the completed dependency graph before selecting it, and the selection before replying.
-    Errors preserve the path and OS error; this operation never substitutes success for an unsupported filesystem.
+    publisher must still order the completed dependency graph before selecting it (`barrier`), and flush the selection
+    before replying. Errors preserve the path and OS error; this operation never substitutes success for an
+    unsupported filesystem.
     """
     file = File.open(path).map_err((error) => f"{path}: {error}")?
     fsync(file.as_fd()).map_err((error) => f"{path}: {error}")?
     return Ok(None)
+
+
+pub def barrier(path: str) -> Result[None, str]:
+    """
+    Synchronize a file and order every write issued before it ahead of every write issued after it on stable storage,
+    without a drive-cache flush: Apple's `F_BARRIERFSYNC`. A filesystem that refuses the barrier is flushed instead,
+    which is stronger; elsewhere `fsync` already reaches stable storage in order.
+    """
+    return barrier_sync(path).map_err((error) => f"{path}: {error}")

@@ -178,12 +178,8 @@ impl TypeChecker {
     /// This is also the source relation generic call inference uses to close a method type parameter from `Self`.
     /// The trait identity is checked before exposing arguments so a distinct same-shaped trait grants no capability.
     pub(in crate::typechecker) fn active_trait_self_bound(&self, required: &TypeBoundInfo) -> Option<TypeBoundInfo> {
-        let Some(trait_name) = self.current_trait_name.as_ref() else {
-            return None;
-        };
-        let Some(trait_info) = self.lookup_semantic_trait_info(trait_name) else {
-            return None;
-        };
+        let trait_name = self.current_trait_name.as_ref()?;
+        let trait_info = self.lookup_semantic_trait_info(trait_name)?;
         let active = TypeBoundInfo {
             name: trait_name.clone(),
             source_name: self.trait_bound_source_name(trait_name),

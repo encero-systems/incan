@@ -892,6 +892,18 @@ mod tests {
         Ok(())
     }
 
+    /// A generic function, its neighbor and the caller that instantiates it at two types all publish reusable values,
+    /// so a shifted program re-checks none of their bodies.
+    #[test]
+    fn generic_owner_and_its_caller_publish_reusable_values() -> Result<(), Box<dyn std::error::Error>> {
+        reusable_ordinary_calls(concat!(
+            "def pick[T](items: list[T]) -> T:\n    return items[0]\n\n",
+            "def unrelated(value: int) -> int:\n    return value + 1\n\n",
+            "def main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n",
+            "    println(unrelated(41))\n",
+        ))
+    }
+
     /// A nominal expression retains its canonical type identity without excluding an otherwise reusable owner.
     #[test]
     fn nominal_expression_type_identities_publish_reusable_owner() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,6 @@
 [project]
 name = "incan_lsp"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 private = true
 license = "Apache-2.0"
 description = "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio"

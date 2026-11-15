@@ -1,7 +1,10 @@
 """Format-1 oven.lock contracts for serialization, identity and tamper refusal."""
 
+from rust::std::fs import OpenOptions, metadata
+from std.fs import Path
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
-from files import read, write
+from features import FeatureRequest
+from files import make_directory, read, write
 from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
 from lock_format import (
@@ -15,8 +18,9 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import local_interop
+from project_lock import ensure_project_lock, local_interop
 from scratch import scratch_directory
+from trace_adapter import count_work, finish_counting
 
 
 def example_lock() -> Result[OvenLock, str]:
@@ -252,4 +256,61 @@ pub def test_an_artifact_s_origin_and_license_are_locked() -> Result[None, str]:
     relicensed.origin = Some(CArtifactOrigin(source=origin.source, revision=origin.revision, license="Apache-2.0"))
     changed = locked_interop(root.0, [CInteropTarget(target="aarch64-apple-darwin", artifacts=[relicensed])])?
     assert interop_difference(locked, changed) == "static artifact `bridge` of `aarch64-apple-darwin`"
+    return Ok(None)
+
+
+def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
+    """Replace a file's bytes where they are with `text`, then put its modification time back as it was."""
+    prefix = f"{path.0}: "
+    before = metadata(path.0).map_err((error) => f"{prefix}{error}")?.modified().map_err((error) => f"{prefix}{error}")?
+    write(path, text)?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(path.0).map_err((error) => f"{prefix}{error}")?
+    file.set_modified(before).map_err((error) => f"{prefix}{error}")?
+    return Ok(None)
+
+
+pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> Result[None, str]:
+    """
+    A root lock reconciled to no change is not resolved again by the next command while it and its manifest keep
+    their bytes; an edited manifest is resolved again, even one that keeps its size and modification time.
+
+    1. The first command writes the lock; the second reconciles it to no change, with no wait for the files to settle.
+    2. The next command parses no manifest.
+    3. A rewritten manifest is parsed and resolved again.
+    4. So is one rewritten in place to bytes of the same size, with its modification time put back.
+
+    Work is counted under the project's physical path, the spelling the lock is resolved under, so a temporary
+    directory reached through a symbolic link still counts every parse.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("app")
+    make_directory(root.joinpath("src"))?
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src/main.incn"), "def main() -> None:\n    println(\"app\")\n")?
+    physical = root.resolve().map_err((error) => error.message())?.0 + "/"
+    # 1. The second command's no-change reconciliation is retained at once: it is keyed by bytes, not by time.
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    # 2. Nothing the lock is resolved from changed.
+    count_work(physical)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    settled = finish_counting()
+    assert settled.parses == 0, f"an unchanged lock was resolved again: {settled.parses} manifest parses"
+    # 3. An edit to the manifest is resolved again.
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"edited\"\n")?
+    count_work(physical)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    edited = finish_counting()
+    assert edited.parses > 0, "an edited manifest was not resolved again"
+    # 4. The same size and modification time do not hide an edit.
+    count_work(physical)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    assert finish_counting().parses == 0, "the edited manifest's no-change reconciliation was not retained"
+    rewrite_in_place(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndescription = \"EDITED\"\n")?
+    count_work(physical)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
+    rewritten = finish_counting()
+    assert rewritten.parses > 0, "a manifest rewritten to the same size and modification time was not resolved again"
     return Ok(None)

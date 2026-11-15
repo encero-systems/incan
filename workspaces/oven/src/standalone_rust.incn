@@ -28,17 +28,25 @@ from jec import begin, record
 const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
 
 
-pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
+pub def standalone_crates(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    asked: Option[UnitDescription] = None,
+) -> Result[list[NativeCrate], str]:
     """
     Resolve standalone Rust imports against the toolchain's compiled registry. Their transitive dependencies are found
     through the toolchain's search index, which names every registry directory.
 
-    1. Ask the compiler for import syntax from the ordinary source graph.
+    1. Ask the compiler for import syntax from the ordinary source graph, of `asked` when the caller names the
+       description it will key the unit by, else of `described`.
     2. Merge each crate's version and feature requests, using known defaults for omitted versions.
     3. Bind one exact registry artifact per crate.
     """
     # 1. Parsing, including local module discovery, belongs to the compiler.
-    requests = source_requests(described, toolchain)?
+    mut parsed = described
+    if let Some(linked) = asked:
+        parsed = linked
+    requests = source_requests(parsed, toolchain)?
     # 2. A crate has one version requirement and the union of its requested features.
     selections = merged_requests(requests)?
     if len(selections) == 0:

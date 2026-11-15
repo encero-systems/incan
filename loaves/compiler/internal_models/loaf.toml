@@ -1,6 +1,6 @@
 [project]
 name = "internal_models"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 description = "The compiler's shared record contracts: canonical checker records, scoped record reads and the producer interface"
 
 [dependencies]

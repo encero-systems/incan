@@ -23,6 +23,7 @@ from release_support import (
     append_bytes,
     append_timing_file,
     check_baseline,
+    digest,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
@@ -37,6 +38,7 @@ from release_support import (
     reserved_admitted,
     require_candidate_census,
     same_bytes,
+    seed_toolchain_directory,
     shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
@@ -260,6 +262,23 @@ def test_reference_cache_identity_covers_seed_and_reference_source_trees() -> Re
     assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
     assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")? != original
+    return Ok(None)
+
+
+def test_a_missing_file_is_refused_by_its_path() -> Result[None, str]:
+    """A digest of a file that does not exist names that file, as does every identity built from such digests."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    missing = temporary.path().joinpath("toolchain.json")
+    match digest(missing):
+        Ok(found) => return Err(f"a missing file digested to {found}")
+        Err(reason) =>
+            assert reason.startswith(f"cannot digest {missing.0}: "), reason
+    present = temporary.path().joinpath("incan")
+    present.write_bytes(b"oven-a").map_err((error) => error.message())?
+    match reference_cache_identity(present, present, missing, "contracts-a", "stdlib-a"):
+        Ok(found) => return Err(f"an identity over a missing seed manifest digested to {found}")
+        Err(reason) =>
+            assert missing.0 in reason, reason
     return Ok(None)
 
 
@@ -620,4 +639,36 @@ def test_relocation_audit_reads_anchored_native_references() -> Result[None, str
     anchored = "{\"externs\": " + externs + ", \"macro_externs\": " + macros + ", \"search\": [\"sibling:.\"]}\n"
     closure.write_text(anchored, "utf-8", "strict", None).map_err((error) => error.message())?
     audit_relocation(home, [])?
+    return Ok(None)
+
+
+def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -> Result[None, str]:
+    """
+    A release reads its seed by the version the seed installed, which may precede the line it builds.
+
+    1. A seed home with one installed version selects that version's directory, not the candidate's.
+    2. A home with no installed toolchain, or two, is refused by name.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    # 1. The seed installed the line's previous version.
+    seed.joinpath("toolchains/0.6.0-dev.8").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.8/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    assert seed_toolchain_directory(seed)? == "toolchains/0.6.0-dev.8"
+    assert seed_toolchain_directory(seed)? != TOOLCHAIN_DIRECTORY
+    # 2. Nothing installed, or more than one generation, names no seed.
+    empty = temporary.path().joinpath("empty")
+    empty.joinpath("toolchains").mkdir(true, true).map_err((error) => error.message())?
+    match seed_toolchain_directory(empty):
+        Ok(found) => return Err(f"an empty seed home selected {found}")
+        Err(reason) => assert "no installed toolchain" in reason, reason
+    seed.joinpath("toolchains/0.6.0-dev.7").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.7/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    match seed_toolchain_directory(seed):
+        Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
+        Err(reason) => assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
     return Ok(None)

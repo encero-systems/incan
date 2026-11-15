@@ -13,8 +13,8 @@ from std.hash import file_digest, sha256
 from std.json import JsonValue
 from std.regex import Regex
 
-pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.8"
-pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.8"
+pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.9"
+pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.9"
 pub const FAMILIES: FrozenList[str] = [
     "behavior",
     "check",
@@ -440,8 +440,8 @@ pub def release_receipt(
 
 
 pub def digest(path: Path) -> Result[str, str]:
-    """Return a file's lowercase SHA-256 digest."""
-    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+    """Return a file's lowercase SHA-256 digest; a file that cannot be read is named in the refusal."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => f"cannot digest {path.0}: {error.message()}")?))
 
 
 pub def reference_cache_identity(
@@ -458,6 +458,22 @@ pub def reference_cache_identity(
         hasher.update(f"{len(encoded)}:".encode("utf-8"))
         hasher.update(encoded)
     return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def seed_toolchain_directory(seed_home: Path) -> Result[str, str]:
+    """
+    The seed's toolchain directory, named by the version the seed installed rather than the line this release builds.
+
+    A seed of the previous dev line builds the next one, so the two names differ exactly when the line's version moved.
+    """
+    toolchains = seed_home.joinpath("toolchains")
+    entries = toolchains.iterdir().map_err((error) => error.message())?
+    versions = sorted([entry.name() for entry in entries if entry.joinpath("toolchain.json").is_file()])
+    if len(versions) == 0:
+        return Err(f"no installed toolchain in the seed home {seed_home.0}")
+    if len(versions) > 1:
+        return Err(f"the seed home {seed_home.0} installs more than one toolchain: {", ".join(versions)}")
+    return Ok(f"toolchains/{versions[0]}")
 
 
 pub def reference_cache_root(seed_home: Path) -> Path:

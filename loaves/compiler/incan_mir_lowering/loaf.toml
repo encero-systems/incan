@@ -1,6 +1,6 @@
 [project]
 name = "incan_mir_lowering"
-version = "0.6.0-dev.8"
+version = "0.6.0-dev.9"
 
 [dependencies]
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
