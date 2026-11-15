@@ -258,3 +258,67 @@ pub def test_local_graph_does_not_visit_inactive_targets() -> Result[None, str]:
         for edge in facet.local:
             assert edge.alias != "absent"
     return Ok(None)
+
+
+def profiled_fixture(name: str, entry: str, dependencies: list[str], profile: str) -> RegistryUnit:
+    """A compiled producer of one profile whose library is its own entry, so binding a root reads no file."""
+    mut unit = registry_fixture(name, entry, dependencies, [])
+    unit.profile = profile
+    unit.artifact = f"{entry}.rlib"
+    return unit
+
+
+def registry_demand(name: str) -> RegistryDemand:
+    """A target request for any 1.x release of one crate, without features."""
+    return RegistryDemand(
+        selection=RegistrySelection(loaf=f"crates-io/{name}", requirement="1", features=[]),
+        domain="target",
+    )
+
+
+def refuses_profile(registry: RegistryUnits, demand: RegistryDemand, profile: str, loaf: str, other: str) -> None:
+    """The selection is refused, naming the crate, the consumer's profile and the profile the registry holds."""
+    match registry.select([demand], profile):
+        Ok(_) => fail(f"a {profile} consumer was given a {other} entry of {loaf}")
+        Err(reason) =>
+            assert loaf in reason, reason
+            assert f"at {profile}" in reason and f"only at {other}" in reason, reason
+
+
+pub def test_a_consumer_links_entries_of_its_own_profile_or_is_refused_by_name() -> Result[None, str]:
+    """
+    A release consumer selects a release entry for every crate in its closure and a debug consumer a debug one. A crate
+    the registry holds only at another profile is refused, naming the crate and both profiles: whether it is a root, a
+    dependency a producer pins, a procedural macro, or a recorded or installed choice.
+    """
+    core_release = profiled_fixture("serde_core", "core-release", [], "release")
+    core_debug = profiled_fixture("serde_core", "core-debug", [], "debug")
+    json_release = profiled_fixture("serde_json", "json-release", ["core-release"], "release")
+    json_debug = profiled_fixture("serde_json", "json-debug", ["core-debug"], "debug")
+    registry = RegistryUnits(units=[core_debug, json_debug, core_release, json_release], search=[])
+    json = registry_demand("serde_json")
+    for profile in ["release", "debug"]:
+        selected = registry.select([json], profile)?
+        assert selected.bindings[json.key()] == f"json-{profile}"
+        assert [unit.profile for unit in selected.units] == [profile, profile]
+    # A crate held only at debug is no release root.
+    snap = profiled_fixture("snap", "snap-debug", [], "debug")
+    snap_only = RegistryUnits(units=[snap], search=[])
+    refuses_profile(snap_only, registry_demand("snap"), "release", "crates-io/snap", "debug")
+    # A release producer that pins a debug dependency does not bring it into a release closure.
+    tracing = profiled_fixture("tracing", "tracing-release", ["core-debug"], "release")
+    pinned = RegistryUnits(units=[tracing, core_debug], search=[])
+    refuses_profile(pinned, registry_demand("tracing"), "release", "crates-io/serde_core", "debug")
+    # A procedural macro runs in the compiler, and a release closure still takes it at release.
+    mut derive_debug = profiled_fixture("serde_derive", "derive-debug", [], "debug")
+    derive_debug.kind = "proc-macro"
+    serde = profiled_fixture("serde", "serde-release", ["derive-debug"], "release")
+    macros = RegistryUnits(units=[serde, derive_debug], search=[])
+    refuses_profile(macros, registry_demand("serde"), "release", "crates-io/serde_derive", "debug")
+    # Neither a project lock nor the installation's selection picks another profile for the consumer.
+    release_only = [json_release, core_release]
+    recorded = RegistryUnits(units=release_only, search=[], recorded_bindings=[("target", "json-release")])
+    refuses_profile(recorded, json, "debug", "crates-io/serde_json", "release")
+    installed = RegistryUnits(units=release_only, search=[], installation_bindings=[("target", "json-release")])
+    refuses_profile(installed, json, "debug", "crates-io/serde_json", "release")
+    return Ok(None)
