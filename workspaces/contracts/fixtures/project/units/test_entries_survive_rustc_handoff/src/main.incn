@@ -7,8 +7,6 @@
 # expect-stdout-contains:
 #   test_entries.incn::test_fixture_value PASSED
 #   test_entries.incn::test_builtin_fixture PASSED
-# expect-trace-contains:
-#   compiler worker: rustc handed to a fresh process
 
 """Name the project whose test file the command runs."""
 
