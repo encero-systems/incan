@@ -24,7 +24,7 @@ pub def resolve_local_activation(home: str, evaluation: Evaluate) -> Result[Loca
     return read_local_activation(resolve_checking_activation(home, evaluation)?)
 
 
-pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[LocalActivationInputs, str]:
+pub def read_local_activation(activation: &ResolvedCheckingActivation) -> Result[LocalActivationInputs, str]:
     """
     Construct the prepared reader and store source from one activation, then decode only its declared inputs.
 
@@ -100,8 +100,8 @@ pub def stage_local_result(
     home: str,
     snapshot: str,
     value: bytes,
-    receipt: ReadReceipt,
-    semantic: str,
+    receipt: &ReadReceipt,
+    semantic: &str,
 ) -> Result[Produced, str]:
     """Stage one produced value and its canonical evidence pages, then return only their content roots."""
-    return stage_checking_result(home, snapshot, value, receipt, semantic)
+    return stage_checking_result(home, snapshot, value, receipt, str(semantic))
