@@ -4,7 +4,7 @@ from rust::std::fs import remove_dir_all
 from rust::std::string import String as RustString
 from std.encoding.hex import hexlify
 from std.fs import Path
-from bakery_records import Fact, claim_file, record_key, staging_root, stored_unit, store_failure
+from bakery_records import Fact, claim_file, decode_fact, record_key, staging_root, store_failure
 from files import make_directory, read
 from observation import trace
 from publication import publish
@@ -252,7 +252,7 @@ pub def preview_collection(store: Path) -> Result[Collectable, str]:
             None => pass
             Some(value) =>
                 if key.startswith("incan.bakery.unit\t") and key[len("incan.bakery.unit\t"):] in expired:
-                    if let Some(fact) = stored_unit(value):
+                    if let Some(fact) = decode_fact(value):
                         for file in fact.files:
                             leaving[file.digest] = file.size
                 else:
@@ -368,7 +368,7 @@ pub def unit_facts(store: Path) -> Result[dict[str, Fact], str]:
         match get(current, key).map_err(store_failure)?:
             None => pass
             Some(value) =>
-                match stored_unit(value):
+                match decode_fact(value):
                     None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
                     Some(fact) => facts[fact.identity] = fact
     return Ok(facts)
@@ -383,7 +383,7 @@ def unit_reaches(view: Snapshot) -> Result[dict[str, list[str]], str]:
         match get(view, key).map_err(store_failure)?:
             None => pass
             Some(value) =>
-                match stored_unit(value):
+                match decode_fact(value):
                     None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
                     Some(fact) => reaches[fact.identity] = fact.reaches
     return Ok(reaches)
@@ -407,7 +407,7 @@ pub def reached_from(roots: list[str], reaches: dict[str, list[str]]) -> dict[st
 def payload_references(key: str, value: bytes) -> Result[list[str], StoreError]:
     """Decode payload ownership at its family's boundary; malformed units abort collection before any unlink."""
     if key.startswith("incan.bakery.unit\t"):
-        match stored_unit(value):
+        match decode_fact(value):
             None => return Err(StoreError(kind="integrity", object=key, detail="invalid unit payload references"))
             Some(fact) => return Ok([file.digest for file in fact.files])
     return sealed_payload_references(key, value)

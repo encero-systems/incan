@@ -9,7 +9,6 @@ from bakery import (
     claim,
     fact_file,
     find,
-    find_selected,
     forget_verified,
     verification_entries,
     view,
@@ -22,7 +21,7 @@ from bakery import (
     verify_all,
     repair_derived,
 )
-from bakery_records import Fact, claim_file, payload_selection, staging_root
+from bakery_records import Fact, claim_file, staging_root
 from bakery_roots import collect, lease_unit, leased_units, register_root
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Snapshot, begin, commit, delete, fork, get, keys, put, segments
@@ -266,16 +265,13 @@ pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_
     assert bake(store, identity, "first producer")?
     first = stored_payload(store, identity, "payload")?
     viewed = scratch.path().joinpath("project").joinpath("dep")
-    original = match find(store, identity)?:
+    match find(store, identity)?:
         None => return Err("the first bake was not found")
-        Some(fact) => fact
-
-    view_directory(store, original, viewed)?
+        Some(fact) => view_directory(store, fact, viewed)?
     receipt = library_directory(store, viewed)?
     assert read(receipt.joinpath("payload"))? == "first producer"
     # 1. The second producer holds the claim and publishes a valid bake of the same identity.
-    added = second_producer(store, identity, "second producer")?
-    second = payload_path(store, added.files[0].digest)
+    second = second_producer(store, identity, "second producer")?
     assert second.0 != first.0
     assert read(first)? == "first producer", "the second producer's payload replaced the first"
     assert read(second)? == "second producer"
@@ -296,12 +292,9 @@ pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_
             assert false, "a view that names only the unit identity selected a payload"
         Err(error) =>
             assert "ambiguous-payload" in error, error
-    # 3. A receipt names its exact payloads, so it is never asked to choose again and never gets the other variant.
+    # 3. The receipt names its exact payloads, so it is not asked to choose again.
     assert library_directory(store, receipt)?.0 == receipt.0
     assert read(receipt.joinpath("payload"))? == "first producer"
-    assert selected_text(store, identity, payload_selection(original))? == "first producer"
-    assert selected_text(store, identity, payload_selection(added))? == "second producer"
-    assert find_selected(store, identity, digest_of("77"))? is None, "an unknown selection was given a variant"
     # 4. Both variants are referenced, so collection reclaims neither.
     collected = collect(store, -1)?
     assert collected.payloads_removed == 0, f"collection removed {collected.payloads_removed} variant payloads"
@@ -315,22 +308,15 @@ pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_
     return Ok(None)
 
 
-def second_producer(store: Path, identity: str, content: str) -> Result[Fact, str]:
-    """Publish another valid bake of `identity` under its claim, as a second producer does."""
+def second_producer(store: Path, identity: str, content: str) -> Result[Path, str]:
+    """Publish another valid bake of `identity` under its claim, as a second producer does, and locate its payload."""
     held = claim(store, identity)?
     staged = staging(store, identity)?
     write(staged.joinpath("payload"), content)?
-    return seal(store, identity, staged, "library", f"dep\t{identity}", [], "second producer")
-
-
-def selected_text(store: Path, identity: str, selection: str) -> Result[str, str]:
-    """The payload text of the bake of `identity` that a receipt pinned as `selection`."""
-    match find_selected(store, identity, selection)?:
-        None => return Err(f"no bake of {identity[:12]} holds the payloads {selection[:12]}")
-        Some(fact) =>
-            match fact_file(store, fact, "payload"):
-                None => return Err("the selected bake has no payload")
-                Some(path) => return read(path)
+    baked = seal(store, identity, staged, "library", f"dep\t{identity}", [], "second producer")?
+    match fact_file(store, baked, "payload"):
+        None => return Err("the second bake has no payload")
+        Some(path) => return Ok(path)
 
 
 pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:

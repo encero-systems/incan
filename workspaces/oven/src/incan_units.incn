@@ -251,9 +251,6 @@ pub def obtain_executable(
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
-    # A sealed executable that reached this point cannot start any more, a shared carrier it loads being gone. This link
-    # replaces it; any other stored bake stays beside a second producer's (RFC 124).
-    supersedes = find(store, identity)? is not None
     # 4. A failed bake publishes nothing; its staging directory goes with it.
     staged = staging(store, identity, prior_size(store, unit_name(unit)))?
     code = compile_staged(
@@ -284,7 +281,6 @@ pub def obtain_executable(
             unit_name(unit),
             reaches,
             f"incan {unit.kind} {unit.profile}",
-            supersedes,
         )?
         record_work(Operation.EngineFactSeal, identity, sealing)
         view_executable(store, prepared.fact, output, unit.kind, shared)?
@@ -300,16 +296,7 @@ pub def obtain_executable(
                 identity=identity,
             ),
         )
-    fact = seal(
-        store,
-        identity,
-        staged,
-        unit.kind,
-        unit_name(unit),
-        reaches,
-        f"incan {unit.kind} {unit.profile}",
-        supersedes,
-    )?
+    fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
     launch = viewed(store, fact, output, unit.kind, shared)?.launch
     return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity))
 
