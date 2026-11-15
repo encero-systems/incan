@@ -1,0 +1,163 @@
+"""
+The sources `oven compile-closure` compiles: each locked registry Loaf's source archive, admitted against the digest
+its lock records before it is unpacked (RFC 125 archive intake), with the index's manifest of the locked revision.
+
+An archive lives at `SOURCES/blobs/sha256/<hex>.tar`, named by the lock's `checksum`. The index checkout's sparse line
+for the Loaf version must name the same archive digest and revision, and its manifest, which carries the Loaf's build
+facts, replaces the archive's own. The committed generated files the index keeps beside the manifest (`out/`) come
+along.
+"""
+
+from rust::std::fs import copy as copy_file
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue
+from files import make_directory
+from lock_format import LockLoaf
+from observation import file_digest
+
+
+pub model LockedLoaf:
+    """One registry Loaf version a lock selects, with the index line and archive it names."""
+
+    pub loaf: str
+    pub version: str
+    pub registry: str
+    pub revision: int
+    pub checksum: str
+
+    pub def key(self) -> str:
+        """The substitute key a build names this Loaf version by."""
+        return f"{self.loaf}@{self.version}"
+
+
+pub def locked_loaf(entry: LockLoaf) -> Result[LockedLoaf, str]:
+    """A lock's registry entry, refused when it names no registry, revision or archive digest."""
+    mut missing: list[str] = []
+    if entry.registry == "":
+        missing.append("registry")
+    if entry.revision < 1:
+        missing.append("revision")
+    if entry.checksum == "":
+        missing.append("checksum")
+    if len(missing) > 0:
+        return Err(f"{entry.name} {entry.version}: the lock records no {", ".join(missing)}; run `oven lock`")
+    return Ok(
+        LockedLoaf(
+            loaf=entry.name,
+            version=entry.version,
+            registry=entry.registry,
+            revision=entry.revision,
+            checksum=entry.checksum,
+        ),
+    )
+
+
+pub def stage_source(loaf: LockedLoaf, sources: Path, index: Path, staging: Path) -> Result[Path, str]:
+    """
+    Stage one Loaf version's source and return its directory.
+
+    1. Admit its archive by the digest the lock records, before anything reads it.
+    2. Require the index line of the version to name the same archive and revision.
+    3. Unpack the archive, then give it the index's manifest and committed generated files.
+    """
+    # 1. An archive whose bytes are not the locked digest is never unpacked.
+    named = f"{loaf.loaf} {loaf.version}"
+    archive = archive_path(sources, loaf)?
+    actual = "sha256:" + file_digest(archive)?
+    if actual != loaf.checksum:
+        return Err(f"{named}: archive {archive.0} has digest {actual}; the lock records {loaf.checksum}")
+    # 2. The index decides the manifest; its line must agree with what the lock pinned.
+    line = index_line(index, loaf)?
+    current = line_revision(line, loaf)?
+    indexed = text(line, "cksum")?
+    if indexed != loaf.checksum or loaf.revision > current:
+        locked = f"{loaf.checksum} at revision {loaf.revision}"
+        return Err(f"{named}: the index line names {indexed} at revision {current}; the lock records {locked}")
+    # 3. The archive's own manifest has no build facts; the index's of the locked revision does.
+    name = loaf.loaf.split("/")[-1]
+    directory = staging.joinpath(f"{name}-{loaf.version}")
+    make_directory(directory)?
+    unpack(archive, directory)?
+    version_root = index.joinpath(loaf.loaf).joinpath(loaf.version)
+    mut manifest = version_root.joinpath("loaf.toml")
+    if loaf.revision < current:
+        manifest = version_root.joinpath(f"r{loaf.revision}").joinpath("loaf.toml")
+    if not manifest.is_file():
+        return Err(f"{loaf.loaf} {loaf.version}: the index has no manifest at {manifest.0}")
+    replace_file(manifest, directory.joinpath("loaf.toml"))?
+    if version_root.joinpath("out").is_dir():
+        copy_tree(version_root.joinpath("out"), directory.joinpath("out"))?
+    return Ok(directory)
+
+
+def archive_path(sources: Path, loaf: LockedLoaf) -> Result[Path, str]:
+    """The archive the lock's digest names in the sources directory."""
+    if not loaf.checksum.startswith("sha256:"):
+        return Err(f"{loaf.loaf} {loaf.version}: the lock's checksum `{loaf.checksum}` is not a `sha256:` digest")
+    archive = sources.joinpath("blobs").joinpath("sha256").joinpath(f"{loaf.checksum[7:]}.tar")
+    if not archive.is_file():
+        return Err(f"{loaf.loaf} {loaf.version}: no source archive {archive.0}")
+    return Ok(archive)
+
+
+def index_line(index: Path, loaf: LockedLoaf) -> Result[JsonValue, str]:
+    """The one sparse-index line of the Loaf version."""
+    path = index.joinpath("index").joinpath(loaf.loaf)
+    if not path.is_file():
+        return Err(f"{loaf.loaf} {loaf.version}: the index has no line file {path.0}")
+    content = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    mut found: list[JsonValue] = []
+    for row in content.split("\n"):
+        if row.strip() == "":
+            continue
+        line = JsonValue.parse(row).map_err((error) => f"{path.0}: {error.message()}")?
+        if text(line, "vers")? == loaf.version:
+            found.append(line)
+    if len(found) != 1:
+        return Err(f"{loaf.loaf} {loaf.version}: the index has {len(found)} lines for the version; expected one")
+    return Ok(found[0])
+
+
+def line_revision(line: JsonValue, loaf: LockedLoaf) -> Result[int, str]:
+    """The manifest revision an index line names."""
+    adopted = line.require("adopted").map_err((error) => f"{loaf.loaf} {loaf.version}: {error.message()}")?
+    return adopted.require("revision").and_then((value) => value.expect_int()).map_err(
+        (error) => f"{loaf.loaf} {loaf.version}: revision: {error.message()}",
+    )
+
+
+def unpack(archive: Path, directory: Path) -> Result[None, str]:
+    """Unpack a source archive into its staging directory."""
+    output = Command.new("tar").arg("-xf").arg(archive.0).arg("-C").arg(directory.0).output().map_err(
+        (error) => f"cannot run tar: {error.to_string()}",
+    )?
+    if not output.status.success():
+        return Err(f"cannot unpack {archive.0}: {RustString.from_utf8_lossy(output.stderr).into_owned()}")
+    return Ok(None)
+
+
+pub def replace_file(source: Path, destination: Path) -> Result[None, str]:
+    """Replace one staged file with another's bytes."""
+    if destination.exists():
+        destination.unlink().map_err((error) => f"cannot remove {destination.0}: {error.message()}")?
+    copy_file(source.0, destination.0).map_err((error) => f"cannot copy {source.0}: {error.to_string()}")?
+    return Ok(None)
+
+
+def copy_tree(source: Path, destination: Path) -> Result[None, str]:
+    """Copy a directory of committed generated files, keeping its relative layout."""
+    make_directory(destination)?
+    for child in source.iterdir().map_err((error) => f"cannot read {source.0}: {error.message()}")?:
+        target = destination.joinpath(child.name())
+        if child.is_dir():
+            copy_tree(child, target)?
+        else:
+            replace_file(child, target)?
+    return Ok(None)
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """One required JSON string."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => f"{key}: {error.message()}")

@@ -27,6 +27,7 @@ const OVEN_COMMANDS: FrozenList[str] = [
     "update",
     "trust",
     "interop",
+    "compile-closure",
 ]
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "interop-plan", "run", "features", "oven"]
 # Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.

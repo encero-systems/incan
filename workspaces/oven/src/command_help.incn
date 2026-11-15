@@ -29,6 +29,7 @@ const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
+const COMPILE_CLOSURE_USAGE: str = "oven compile-closure LOCK... --profile debug|release --sources DIR --index DIR --out RESULT"
 const ADD_USAGE: str = "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"
 const DEPENDENCY_USAGE: str = "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"
 const UPDATE_USAGE: str = "oven update [NAME] [--project PATH]"
@@ -64,6 +65,7 @@ pub def usage(surface: str) -> str:
                 DEPENDENCIES_USAGE,
                 INTEROP_USAGE,
                 LOCK_USAGE,
+                COMPILE_CLOSURE_USAGE,
                 ADD_USAGE,
                 DEPENDENCY_USAGE,
                 UPDATE_USAGE,
@@ -112,6 +114,19 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                 EXPLAIN_USAGE,
                 ["  --format text|json  Explanation format (default text)."],
                 "incan explain INCAN-T0001",
+            ),
+        )
+    elif command == "compile-closure" and requested(arguments, ["--profile", "--sources", "--index", "--out"]):
+        return Some(
+            render(
+                COMPILE_CLOSURE_USAGE,
+                [
+                    "  --profile debug|release  The profile every unit is compiled at.",
+                    "  --sources DIR            Source archives at DIR/blobs/sha256/<hex>.tar.",
+                    "  --index DIR              A loaves.pub index checkout; its manifests carry the build facts.",
+                    "  --out RESULT             The new directory the closure document and its entries go to.",
+                ],
+                "oven compile-closure oven.lock --profile release --sources stage --index index --out closure",
             ),
         )
     elif command == "lock" and requested(arguments, ["--versions"]):

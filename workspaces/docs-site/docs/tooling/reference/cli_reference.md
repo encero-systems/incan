@@ -11,6 +11,7 @@ oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license L
 oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]
 oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
+oven compile-closure LOCK... --profile debug|release --sources DIR --index DIR --out RESULT
 oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
 oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]
 oven update [NAME] [--project PATH]
@@ -179,6 +180,12 @@ Resolves the root project at `PATH` and atomically writes its generated [`oven.l
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
+
+## `oven compile-closure`
+
+Compiles the registry Loaves one or more locks select into units and writes them as a registry closure (RFC 124, RFC 125). Every option is required. `LOCK` is an [`oven.lock`](lock_file.md); each names its registry entries with `registry`, `revision` and `checksum`, and an entry without them is refused by name. `--profile` is `debug` or `release`. `--sources DIR` holds each source archive at `DIR/blobs/sha256/<hex>.tar`, named by the entry's `checksum`; an archive whose SHA-256 differs is refused before it is unpacked, naming the Loaf and both digests. `--index DIR` is a loaves.pub index checkout: the line `DIR/index/<loaf>` for the entry's version must name the same `cksum` and revision, and the manifest `DIR/<loaf>/<version>/loaf.toml` (`r<N>/loaf.toml` for a superseded revision), with its `out/` files, replaces the archive's own. `--out RESULT` is a directory the command creates; an existing one is refused.
+
+Each lock is compiled as its own graph, with its locked features. A Loaf whose build script has no `[[rust.facts]]` record for its exact binding, or whose record declares `link` or `tool` work, is refused, and so is every Loaf that links a refused one. The command writes `RESULT/closure.json` (`incan.oven.closure/1`: `profile`, `toolchain`, `locks`, `units`, `externs`, `refused`) and one entry per unit, `RESULT/entries/sha256-<hex>/`, holding `artifact.json` and `artifacts/` with the library, its checked graph and `library.portable-inputs`. A unit's `entry` is the identity this Oven computed for it, and its `dependencies` name the entries it linked. Success prints `compiled N units into RESULT; refused M` and exits `0`.
 
 ## `oven add`
 

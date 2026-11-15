@@ -62,6 +62,7 @@ from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
+from closure_compile import closure_options, compile_closure_command
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from unit_options import Options, parse_options, program_arguments
 from surfaces import INSPECT_OVEN_MOVED, INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
@@ -287,6 +288,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "describe-unit":
         describe_unit(rest)
+        return
+    if command == "compile-closure":
+        match closure_options(rest):
+            Err(reason) => syntax_error("compile-closure", reason)
+            Ok(options) => finish("compile-closure", compile_closure_command(options))
         return
     if command == "fmt":
         match format_options(rest):
