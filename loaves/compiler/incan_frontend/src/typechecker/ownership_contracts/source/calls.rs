@@ -176,7 +176,7 @@ impl Builder<'_> {
                     reason: "builtin place method needs positional arguments".into(),
                 });
             };
-            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            if !self.fresh_or_copy_field(value) && !call_result(value) {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "a non-Copy builtin method argument needs checked ownership transfer materialization"
@@ -1265,5 +1265,14 @@ impl Builder<'_> {
             .projection
             .extend(relation.fields.iter().cloned().map(Projection::Field));
         Ok(place)
+    }
+}
+
+/// Whether an expression is a call's own result, through grouping and the success payload `?` takes out of it.
+fn call_result(expression: &Spanned<Expr>) -> bool {
+    match &expression.node {
+        Expr::Call(..) | Expr::MethodCall(..) => true,
+        Expr::Paren(inner) | Expr::Try(inner) => call_result(inner),
+        _ => false,
     }
 }
