@@ -13,6 +13,9 @@ from graph_inspection import graph_response
 from json_fields import required_items, required_text, string_value
 from unit import project_root_of
 
+# The text report of a source or project that declares no binding, as 0.5.1 printed it.
+const NO_BINDINGS: str = "No checked C bindings."
+
 
 pub model BindingOptions:
     """The selected source or project, the output format and, for a receipt, the joined target."""
@@ -107,8 +110,9 @@ pub def inspect_bindings(options: BindingOptions) -> Result[i32, str]:
     mut lines: list[str] = []
     for binding in ordered:
         lines.extend(binding_lines(binding)?)
-    if len(lines) > 0:
-        println("\n".join(lines))
+    if len(lines) == 0:
+        lines.append(NO_BINDINGS)
+    println("\n".join(lines))
     return Ok(0)
 
 

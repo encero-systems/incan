@@ -1,6 +1,7 @@
 """Pack the installed toolchain's named closure, rewriting paths at the archive boundary."""
 
 from pub::incan_platform.trace import Operation
+from archive_decompression import plain_archive
 from rust::std::fs import create_dir, remove_dir_all, rename
 from rust::std::os::unix::fs import symlink
 from rust::std::process import Command, id
@@ -9,7 +10,7 @@ from std.environ import get_or
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
-from files import json_text, make_directory, read, read_json, write
+from files import json_text, make_directory, read, read_json, remove, write
 from home import TOOLCHAIN, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
@@ -732,7 +733,8 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     Verify a staged archive before replacing the installed toolchain; a refused archive preserves the old one.
 
     1. Unpack the archive into a staging directory beside the installation.
-    2. Verify the staged toolchain and publish it, then remove the staging directory whatever happened.
+    2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
+       whatever happened.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
     """
     target = toolchain_directory()?
@@ -740,10 +742,13 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
+    plain = target.parent().joinpath(f".install-{TOOLCHAIN}.tar")
     # 2. The stage is verified and published, and removed whatever the outcome.
-    result = install_staged(archive, stage, target)
+    result = install_staged(archive, plain, stage, target)
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
+    if plain.is_file():
+        remove(plain)?
     result?
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
@@ -751,11 +756,12 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str]:
+def install_staged(archive: Path, plain: Path, stage: Path, target: Path) -> Result[None, str]:
     """
     Unpack, bind the machine's pinned sysroot and prove driver identity before publishing any installation.
 
-    1. Refuse an archive with a member outside the stage or one that supplies the sysroot link.
+    1. Read a zstd archive through its copy decompressed at `plain`, and refuse an archive with a member outside the
+       stage or one that supplies the sysroot link.
     2. Unpack it.
     3. It is a toolchain of this Oven, and its manifest paths are portable.
     4. Every artifact the manifest names is present.
@@ -764,7 +770,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
-    listing = command_text("tar", ["-tf", archive.0]).map_err(
+    readable = plain_archive(archive, plain)?
+    listing = command_text("tar", ["-tf", readable.0]).map_err(
         (error) => f"cannot inventory toolchain archive {archive.0}: {error}",
     )?
     record(Operation.ArchiveInventory, archive.0, clock)
@@ -773,7 +780,7 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
             admit_archive_member(entry)?
     # 2. The archive is unpacked into the stage.
     clock = begin()
-    run_command("tar", ["-xf", archive.0, "-C", stage.0]).map_err(
+    run_command("tar", ["-xf", readable.0, "-C", stage.0]).map_err(
         (error) => f"cannot unpack toolchain archive {archive.0} into {stage.0}: {error}",
     )?
     record(Operation.ArchiveUnpack, archive.0, clock)

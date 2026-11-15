@@ -1,9 +1,14 @@
-"""Explicit collection of a segment store's obsolete layouts and unreferenced payloads under live leases."""
+"""
+Explicit collection of a segment store's obsolete layouts and unreferenced payloads under live leases, after the live
+pages of mostly-dead index packs are rewritten into one new pack.
+"""
 
+from rust::std::process import id
 from crate.store import (
     HOME_VIEW,
     Lookup,
     Snapshot,
+    ViewRoot,
     current,
     lease_token,
     manifest_path,
@@ -11,11 +16,13 @@ from crate.store import (
     read_frame,
     read_manifest,
     snapshot,
+    switch,
     sync_durable,
 )
 from crate.store.files import StoreError, ensure_directory, failure, index_failure, io_failure, natural, place_synced
-from crate.store.files import sync_directory
-from crate.store.index import page_file, read_page
+from crate.store.files import publication_boundary, remove_tree, sync_directory
+from crate.store.index import PageWriter, install_pack, installed_reference, pack_path, pack_usage, page_directory
+from crate.store.index import page_file, read_page, repacked
 from crate.store.path import StorePath as Path
 
 
@@ -59,7 +66,8 @@ pub def collect_records(
     """
     Reclaim obsolete storage while current views, live readers and active preparations retain their content.
 
-    1. Pause publication and trace current views through their owning codecs.
+    1. Pause publication, rewrite mostly-dead packs' live pages into one pack, and trace current views through their
+       owning codecs.
     2. Mark newly registered old readers, then expire all unretained historical descriptors atomically.
     3. Remove obsolete layouts and unreferenced payloads whose preparation locks are free.
 
@@ -70,7 +78,12 @@ pub def collect_records(
     # 1. Writers keep computing; canonical publication waits for this explicit maintenance operation.
     ensure_directory(root.joinpath("locks"))?
     writer = root.joinpath("locks/publication").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-    latest = snapshot(root)?
+    mut latest = snapshot(root)?
+    compacted = compacted_packs(root, latest)?
+    if compacted.generation != latest.generation:
+        # The replaced generation stays live only for the readers that still hold it, not for this collector.
+        latest.pin = None
+        latest = compacted
     mut marked = Marked()
     for entry in latest.views:
         mark_snapshot(marked, read_manifest(root, latest.generation, latest.digest, entry.view)?, references)?
@@ -90,6 +103,45 @@ pub def collect_records(
         for selected in pending:
             mark_snapshot(marked, selected, references)?
     return Err(failure("busy", root.value, "collection deferred because new snapshot leases kept arriving"))
+
+
+def compacted_packs(root: Path, latest: Snapshot) -> Result[Snapshot, StoreError]:
+    """
+    Rewrite the live pages of mostly-dead index packs into one new pack and switch every view to the roots that name
+    it, so the sweep that follows drops the old packs; `latest` itself when no pack is mostly dead.
+
+    A commit's pack holds every page it wrote and later commits replace most of them, so one live page used to keep a
+    whole pack. A pack is mostly dead when less than half its bytes are pages the current views reach. The rewritten
+    pages hold the same entries, so every lookup answers as before. The new pack is installed and its name ordered
+    before the switch, the store's one visibility boundary: a process stopped before `CURRENT` names the compacted
+    generation leaves the previous one, whose packs are all still present. The caller holds publication's lock.
+    """
+    usage = pack_usage(root, [entry.root for entry in latest.views]).map_err(index_failure)?
+    mut moving: set[str] = set()
+    for pack in usage.keys():
+        path = pack_path(root, pack)
+        size = path.store_stat().map_err((error) => io_failure(path, error))?.store_size().map_err(
+            (error) => io_failure(path, error),
+        )?
+        if usage[pack] * 2 < size:
+            moving.add(pack)
+    if len(moving) == 0:
+        return Ok(latest)
+    staged = root.joinpath("staging").joinpath(f"repack-{id()}")
+    ensure_directory(staged)?
+    publication_boundary("staging-created")
+    writer = PageWriter()
+    mut built: list[ViewRoot] = []
+    for entry in latest.views:
+        built.append(ViewRoot(view=entry.view, root=repacked(root, entry.root, writer, moving).map_err(index_failure)?))
+    publication_boundary("pages-staged")
+    pack = install_pack(root, writer, staged.joinpath("pages")).map_err(index_failure)?
+    sync_directory(page_directory(root))?
+    publication_boundary("pages-installed")
+    views = [ViewRoot(view=entry.view, root=installed_reference(entry.root, pack)) for entry in built]
+    published = switch(root, latest, views, f"pack-compaction-{id()}")?
+    remove_tree(staged)
+    return Ok(published)
 
 
 def collect_handshake(root: Path, latest: Snapshot, mut marked: Marked) -> Result[list[Snapshot], StoreError]:

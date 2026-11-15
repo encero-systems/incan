@@ -1,0 +1,45 @@
+"""A case's independent commands run side by side in its project, up to its jobs, and come back in command order."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from files import make_directory, read, write
+from run import invoke_side_by_side, set_case_jobs
+
+
+def executable(path: Path, text: str) -> Path:
+    """Write `text` to `path` and make it executable."""
+    write(path, text).unwrap()
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().unwrap().success()
+    return path
+
+
+def counting_incan(scratch: Path) -> Path:
+    """
+    An `incan` that prints its first argument after a second. It holds a marker while it runs and records how many
+    markers it saw before it lets go, so two commands that ran at once both record 2.
+    """
+    markers = scratch.joinpath("running").0
+    seen = scratch.joinpath("seen").0
+    mut script = f"#!/bin/sh\ntouch '{markers}/'$$\nsleep 1\nls '{markers}' | wc -l | tr -d ' ' >> '{seen}'\n"
+    script += f"rm '{markers}/'$$\necho \"$1\"\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def test_a_case_s_independent_commands_run_side_by_side() -> None:
+    """
+    Graph queries that read the same built graph do not depend on each other, so with two jobs two of them run at once
+    in the case's project, and each outcome comes back in the position of its command.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    make_directory(scratch.path().joinpath("running")).unwrap()
+    project = scratch.path().joinpath("project")
+    make_directory(project).unwrap()
+    incan = counting_incan(scratch.path())
+    set_case_jobs(2)
+    outcomes = invoke_side_by_side(incan.0, [["first"], ["second"]], project)
+    seen = read(scratch.path().joinpath("seen")).unwrap().strip().split("\n")
+    assert "2" in seen, "the commands ran one at a time: " + ", ".join(seen)
+    assert outcomes[0].unwrap().stdout == "first\n"
+    assert outcomes[1].unwrap().stdout == "second\n"

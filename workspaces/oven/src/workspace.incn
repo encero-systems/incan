@@ -4,23 +4,29 @@ workspace inspect` and `--workspace` and `--member` on project commands.
 
 A `loaf.toml` with a `[workspace]` table is a workspace root: with `[project]` it is a rooted workspace, whose root
 project is a member, and without it a virtual one. Membership is explicit: `members` lists member directories relative
-to the root, each with its own `loaf.toml`. `--workspace` selects every member, `--member` (or `-p`) a member by its
-project name or root-relative path, and `--exclude` removes members from that set.
+to the root, each with its own `loaf.toml`, or glob patterns that name every such directory they match. `--workspace`
+selects every member, `--member` (or `-p`) a member by its project name or root-relative path, and `--exclude`
+removes members from that set.
 """
 
 from std import toml
 from std.fs import Path
+from std.fs.glob import matches
 from std.json import JsonValue
 from std.toml import TomlValue
 from cli_help import render
 from files import read
 from intake import read_project, source_root_of
-from workspace_shared import member_tables, shared_tables
+from lock_format import LOCK_NAME, read_lock
+from workspace_shared import member_tables, shared_tables, unused_shared
 from rust::std::env import current_exe
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 
 pub const INSPECT_USAGE: str = "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."
+# 0.5.1's workspace capability report: capabilities still apply per member.
+const CAPABILITY_STATUS: str = "member_local_only"
+const CAPABILITY_REASON: str = "workspace capability application remains unavailable until scoped mutation planning and policy evaluation are implemented"
 # The workspace table's keys.
 pub const WORKSPACE_KEYS: FrozenList[str] = ["members", "default-members", "exclude"]
 # `run` and `version` act on one project; a selection of several members is refused, as in 0.5.1.
@@ -65,6 +71,8 @@ pub model Workspace:
     pub default_members: list[str]
     # The declared `exclude` directories, which are never members.
     pub excluded: list[str] = []
+    # The `members` glob patterns that matched no directory holding a `loaf.toml`.
+    pub unmatched: list[str] = []
 
 
 pub def selected(selection: Selection) -> bool:
@@ -124,13 +132,24 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
         members.append(Member(name=name, relative=".", root=root, is_root_member=true))
     excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
+    mut directories: list[str] = []
+    mut unmatched: list[str] = []
     for item in listed:
-        relative = normalized(item)
-        if relative in excluded:
+        if has_glob(item):
+            matched = matched_members(root, normalized(item))?
+            if len(matched) == 0:
+                unmatched.append(item)
+            for relative in matched:
+                if relative not in directories:
+                    directories.append(relative)
+        elif normalized(item) not in directories:
+            directories.append(normalized(item))
+    for relative in directories:
+        if is_excluded(relative, excluded):
             continue
         member_manifest = root.joinpath(relative).joinpath("loaf.toml")
         if not member_manifest.is_file():
-            return Err(f"{manifest.0}: workspace member `{item}` has no loaf.toml")
+            return Err(f"{manifest.0}: workspace member `{relative}` has no loaf.toml")
         member_document = toml
             .parse(read(member_manifest)?)
             .map_err((error) => f"{member_manifest.0}: {error.message()}")?
@@ -142,7 +161,16 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     if len(members) == 0:
         return Err(f"{manifest.0}: a virtual workspace must declare at least one member")
     defaults = [normalized(item) for item in strings(document, "workspace.default-members", manifest)]
-    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults, excluded=excluded))
+    return Ok(
+        Workspace(
+            root=root,
+            manifest=manifest,
+            members=members,
+            default_members=defaults,
+            excluded=excluded,
+            unmatched=unmatched,
+        ),
+    )
 
 
 def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
@@ -151,6 +179,73 @@ def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
         Ok(Some(values)) => return values
         Ok(None) => return []
         Err(_) => return []
+
+
+def unmatched_warnings(workspace: Workspace) -> list[JsonValue]:
+    """One `unmatched_glob` warning, in 0.5.1's shape, for each `members` pattern that names no member."""
+    mut warnings: list[JsonValue] = []
+    for pattern in workspace.unmatched:
+        warnings.append(
+            JsonValue.object({"kind": JsonValue.string("unmatched_glob"), "pattern": JsonValue.string(pattern)}),
+        )
+    return warnings
+
+
+def has_glob(pattern: str) -> bool:
+    """Whether a member or exclusion declaration is a glob pattern rather than one directory."""
+    return "*" in pattern or "?" in pattern or "[" in pattern
+
+
+def matched_members(root: Path, pattern: str) -> Result[list[str], str]:
+    """
+    The root-relative directories a member glob names, in sorted order: those that match it segment by segment and
+    hold a `loaf.toml`. A wildcard never crosses a `/`, and a pattern that matches nothing names no member.
+    """
+    mut found: list[str] = [""]
+    for segment in pattern.split("/"):
+        mut next: list[str] = []
+        for prefix in found:
+            mut directory = root
+            if prefix != "":
+                directory = root.joinpath(prefix)
+            if not has_glob(segment):
+                next.append(joined(prefix, segment))
+                continue
+            if not directory.is_dir():
+                continue
+            children = directory.glob(segment).map_err((error) => f"{directory.0}: {error.message()}")?
+            for child in sorted([child.name() for child in children if child.is_dir()]):
+                if not child.startswith("."):
+                    next.append(joined(prefix, child))
+        found = next
+    return Ok([relative for relative in found if root.joinpath(relative).joinpath("loaf.toml").is_file()])
+
+
+def joined(prefix: str, name: str) -> str:
+    """A root-relative path extended by one segment."""
+    if prefix == "":
+        return name
+    return f"{prefix}/{name}"
+
+
+def is_excluded(relative: str, excluded: list[str]) -> bool:
+    """Whether a member directory is one `exclude` names, literally or by a glob matched segment by segment."""
+    for pattern in excluded:
+        if pattern == relative:
+            return true
+        if has_glob(pattern) and segments_match(relative.split("/"), pattern.split("/")):
+            return true
+    return false
+
+
+def segments_match(parts: list[str], patterns: list[str]) -> bool:
+    """Whether each path segment matches the pattern segment at its position."""
+    if len(parts) != len(patterns):
+        return false
+    for index in range(len(parts)):
+        if not matches(parts[index], patterns[index]):
+            return false
+    return true
 
 
 def normalized(path: str) -> str:
@@ -290,7 +385,7 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
         return Err(f"`--format` is text or json, got `{format}`")
     workspace = find_workspace(Path("."))?
     origin, members = select_members(workspace, selection)?
-    lock = workspace.root.joinpath("oven.lock")
+    lock = workspace.root.joinpath(LOCK_NAME)
     if format == "json":
         return inspection_document(workspace, origin, members, lock)
     mut lines = [
@@ -299,9 +394,47 @@ pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
         f"Selected scope ({origin.value()})",
     ]
     for member in members:
-        lines.append(f"  - {member.name} ({member.relative})")
+        lines.append(f"  - {member.name} ({member.root.0})")
     lines.append(f"Canonical lock: {lock.0}")
+    stale = stale_locks(workspace)
+    if len(stale) > 0:
+        lines.append("Stale member-local locks:")
+        for path in stale:
+            lines.append(f"  - {path}")
     return Ok("\n".join(lines))
+
+
+def stale_locks(workspace: Workspace) -> list[str]:
+    """Each non-root member's own `oven.lock`: the workspace root holds the one lock (RFC 117), so a member's is stale."""
+    mut found: list[str] = []
+    for member in workspace.members:
+        path = member.root.joinpath(LOCK_NAME)
+        if not member.is_root_member and path.is_file():
+            found.append(path.0)
+    return found
+
+
+def lock_report(workspace: Workspace, lock: Path) -> JsonValue:
+    """
+    The canonical lock as 0.5.1 reported it: its path, whether it is a file, the stale member-local locks, and its
+    `state`: `missing`, `invalid` with the reader's `error`, or `present` with the lock's graph identity as its
+    `fingerprint`.
+    """
+    mut state: Dict[str, JsonValue] = {"status": JsonValue.string("missing")}
+    if lock.exists():
+        match read_lock(lock):
+            Ok(found) =>
+                state["status"] = JsonValue.string("present")
+                state["fingerprint"] = JsonValue.string(found.graph)
+            Err(reason) =>
+                state["status"] = JsonValue.string("invalid")
+                state["error"] = JsonValue.string(reason)
+    mut report: Dict[str, JsonValue] = {}
+    report["canonical_path"] = JsonValue.string(lock.0)
+    report["exists"] = JsonValue.bool(lock.is_file())
+    report["state"] = JsonValue.object(state)
+    report["stale_member_local_locks"] = JsonValue.array([JsonValue.string(path) for path in stale_locks(workspace)])
+    return JsonValue.object(report)
 
 
 def inspection_document(
@@ -320,8 +453,9 @@ def inspection_document(
         entry["root"] = JsonValue.string(member.root.0)
         entry["manifest_path"] = JsonValue.string(member.root.joinpath("loaf.toml").0)
         entry["is_root_member"] = JsonValue.bool(member.is_root_member)
+        entry["capabilities"] = JsonValue.array([])
         declared.append(JsonValue.object(entry))
-    scope = [JsonValue.object({"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative)}) for member in members]
+    scope = [JsonValue.object({"name": JsonValue.string(member.name), "root": JsonValue.string(member.root.0)}) for member in members]
     mut fields: Dict[str, JsonValue] = {
         "schema_version": JsonValue.int(1),
         "workspace": JsonValue.object(
@@ -332,10 +466,13 @@ def inspection_document(
         "selected_scope": JsonValue.object(
             {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
         ),
-        "lock": JsonValue.object(
-            {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
-        ),
+        "lock": lock_report(workspace, lock),
     }
+    fields["capabilities"] = JsonValue.object(
+        {"status": JsonValue.string(CAPABILITY_STATUS), "reason": JsonValue.string(CAPABILITY_REASON)},
+    )
+    unused = unused_shared(workspace.root, [member.root for member in workspace.members])?
+    fields["warnings"] = JsonValue.array(unmatched_warnings(workspace) + unused)
     fields["exclusions"] = JsonValue.array([JsonValue.string(item) for item in workspace.excluded])
     working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
     fields["invocation"] = JsonValue.object({"current_dir": JsonValue.string(working.0)})

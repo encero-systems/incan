@@ -205,8 +205,7 @@ def refuse_stale_standard(unit: UnitDescription, toolchain: Toolchain) -> Result
     """
     Refuse a linked standard Loaf of this toolchain that another compiler produced.
 
-    Standard Loaves are built where no compiler record pin exists, so each records the compiler without one. A relink
-    keeps the Loaves but replaces the compiler, and its new compiler may not read their records.
+    A relink keeps the Loaves but replaces the compiler, and its new compiler may not read their records.
     """
     standard = Path(toolchain.driver).parent().parent().joinpath("loaves").0 + "/"
     mut current = ""
@@ -214,9 +213,7 @@ def refuse_stale_standard(unit: UnitDescription, toolchain: Toolchain) -> Result
         if not loaf.dir.startswith(standard):
             continue
         if current == "":
-            mut unpinned = toolchain.installed()
-            unpinned.compiler_records = None
-            current = compiler_fingerprint(unpinned.select())?
+            current = compiler_fingerprint(toolchain)?
         match stale_standard_refusal(loaf.name, Path(loaf.dir), current)?:
             Some(message) => return Err(message)
             None => pass
@@ -262,6 +259,10 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
        units that read or link them, through `selected_unit_compiler`.
     4. Bind the native-closure schemas the compiler and Oven publish, so records from an earlier closure form are
        misses rather than closures this generation cannot resolve.
+
+    The compiler-record pin stays out: it selects how the compiler reads the standard Loaves, whose own identities key
+    each unit that links them, and every pack seals a set of its own, so a home installed from a pack would otherwise
+    reuse nothing its builder compiled.
     """
     # 1. Installed selections carry the identities admitted with their immutable page. Synthetic and staged
     # toolchains without a page retain the direct fact lookup used by installation preparation and focused tests.
@@ -270,9 +271,6 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
         facts = [toolchain.compiler_facts[0]] + toolchain_cache_identities(toolchain)?
     else:
         facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
-    match toolchain.compiler_records:
-        Some(pin) => facts.append(f"compiler-records {pin.digest}")
-        None => pass
     # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
     natives = native_identities(toolchain.externs)?
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.

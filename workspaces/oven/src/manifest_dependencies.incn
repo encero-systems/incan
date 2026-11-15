@@ -10,6 +10,7 @@ from manifest_fields import (
     allowed,
     first_key,
     flag,
+    requirement as version_requirement,
     refusal,
     request_flag,
     requested_features,
@@ -18,7 +19,7 @@ from manifest_fields import (
     table,
     text,
 )
-from manifest_models import LocalDependency, RustInputRequest
+from manifest_models import LocalDependency, ProviderRequirement, RustInputRequest
 from workspace_inheritance import inherited
 
 
@@ -120,6 +121,9 @@ pub def parse_dependencies(
                         ),
                     )
                 entry = table(value, manifest, [group, alias])?
+                # A `provider`-kind entry is a provider requirement, read by `parse_providers`, never a Loaf edge.
+                if "provider" in entry:
+                    continue
                 if "standard" in entry:
                     return Err(
                         refusal(
@@ -368,3 +372,60 @@ pub def rust_request(alias: str, value: TomlValue, manifest: str, group: str) ->
             path=local_path,
         ),
     )
+
+
+pub def parse_providers(root: Dict[str, TomlValue], manifest: str) -> Result[list[ProviderRequirement], IntakeError]:
+    """
+    The `provider`-kind entries of `[dependencies]` (RFC 117), in alias order.
+
+    1. An entry names its provider and a version requirement, the shape of a registry Loaf entry, and may add
+       `features`, `optional` and `target`.
+    2. It names no Loaf, path or other source: a provider requirement is satisfied by an Oven-managed provider.
+    """
+    mut providers: list[ProviderRequirement] = []
+    if "dependencies" not in root:
+        return Ok(providers)
+    values = table(root["dependencies"], manifest, ["dependencies"])?
+    for alias in sorted([key for key in values.keys()]):
+        value = values[alias].clone()
+        if value.kind() != TomlKind.Table:
+            continue
+        field = ["dependencies", alias]
+        entry = table(value, manifest, field)?
+        if "provider" not in entry:
+            continue
+        # 2. A Loaf or a path would make the entry a Loaf dependency as well.
+        for source in ["loaf", "path"]:
+            if source in entry:
+                detail = f"a dependency names a provider or a Loaf, not both: remove `{source}` or `provider`"
+                return Err(refusal(manifest, field + [source], IntakeErrorKind.Invalid, detail))
+        allowed(entry, ["provider", "version", "features", "optional", "target"], manifest, field)?
+        # 1. The provider's name follows the identity rules of a Loaf, and its requirement is a version requirement.
+        provider = required(entry, "provider", manifest, field + ["provider"])?
+        validate_loaf_identity(provider).map_err(
+            (error) => refusal(manifest, field + ["provider"], IntakeErrorKind.Invalid, error),
+        )?
+        if "version" not in entry:
+            return Err(refusal(manifest, field, IntakeErrorKind.Missing, "version requirement is required"))
+        version_requirement(entry["version"], manifest, field + ["version"])?
+        mut target: Option[str] = None
+        if "target" in entry:
+            predicate = required(entry, "target", manifest, field + ["target"])?
+            validate_target(predicate).map_err(
+                (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+            )?
+            target = Some(predicate)
+        mut features: list[str] = []
+        if "features" in entry:
+            features = requested_features(entry["features"], manifest, field)?
+        providers.append(
+            ProviderRequirement(
+                alias=alias,
+                provider=provider,
+                version=required(entry, "version", manifest, field + ["version"])?,
+                features=features,
+                optional=flag(entry, "optional", false, manifest, field)?,
+                target=target,
+            ),
+        )
+    return Ok(providers)

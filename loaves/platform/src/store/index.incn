@@ -15,6 +15,13 @@ Page layout (little-endian): magic, level (0 for a leaf), entry count, then per 
 then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte, or for an inner page the child's
 reference: its length and bytes (a page file's page: the child's 64-character name). Entries are sorted by key, and
 an inner entry's key is the smallest key below its child.
+
+A process checks each page against its content digest once. It keeps each page it has checked, at most
+`CHECKED_PAGE_LIMIT` of them, laid out over its own copy of the checked bytes and kept by that digest, and a later read
+of a page with the same digest uses that layout instead of mapping, hashing and laying out its file again. The digest
+names those bytes wherever the page lies, so a page found in another pack, as after a compaction, reuses them too; a
+read takes its pack from its own reference, as `located_page` names it. Damage to a file after its page was checked
+cannot reach an answer.
 """
 
 from rust::std::cell import RefCell
@@ -23,13 +30,15 @@ from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
-from std.primitives.views import MappedView
+from std.primitives.views import MappedFile, MappedView
 from crate.store.bytes import append_bytes, append_u64
 from crate.store.path import StorePath as Path
 
 const FANOUT: int = 32
 const NAME_BYTES: int = 64
 const DIGEST_BYTES: int = 32
+# The checked pages one process keeps; a process that meets more starts again from none.
+const CHECKED_PAGE_LIMIT: int = 2048
 
 
 pub model Location:
@@ -124,13 +133,42 @@ model PackState:
     placed: Dict[str, str] = {}
 
 
+model CheckedPages:
+    """
+    Each index page this process has checked against its content digest, laid out over its own copy of the checked
+    bytes, by that digest.
+    """
+
+    pages: Dict[str, Layout] = {}
+
+    def checked(self, digest: str) -> Option[Layout]:
+        """The page whose content digest is `digest`, when this process has checked it."""
+        if digest not in self.pages:
+            return None
+        return Some(self.pages[digest])
+
+    def keep(mut self, digest: str, page: Layout) -> None:
+        """Keep one checked page; past `CHECKED_PAGE_LIMIT` pages the process starts again from none."""
+        if len(self.pages) >= CHECKED_PAGE_LIMIT:
+            self.pages = {}
+        self.pages[digest] = page
+
+
 # Index pages this process has read, and the bytes it copied out of them, for measuring what a lookup touches.
 static pages_read: dict[str, int] = {}
+# The pages this process has checked. A lookup reads them in place through the model's own methods: reading a key of a
+# static dictionary would copy the whole dictionary.
+static CHECKED: CheckedPages = CheckedPages()
 
 
 pub def page_reads() -> int:
     """How many index pages this process has read."""
     return pages_read.get("pages", 0)
+
+
+pub def pages_checked() -> int:
+    """How many index pages this process has mapped and hashed to check them against their content digest."""
+    return pages_read.get("checked", 0)
 
 
 pub def copied_index_bytes() -> int:
@@ -347,11 +385,18 @@ pub def read_page(root: Path, reference: str) -> Result[Page, IndexError]:
 
 def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
     """
-    The page `reference` names, mapped and hashed in place, checked against its content digest, and laid out.
+    The page `reference` names, checked against its content digest and laid out in the pack `reference` names: mapped
+    and hashed in place on this process's first read of that digest, and kept over a copy of its checked bytes for
+    every later one.
 
     Packs and page files are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
     """
     location = located_page(root, reference)?
+    pages_read["pages"] = pages_read.get("pages", 0) + 1
+    if let Some(checked) = CHECKED.checked(location.digest):
+        mut found = checked
+        found.pack = location.pack
+        return Ok(found)
     path = location.file
     mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
     mut length = location.length
@@ -360,10 +405,24 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
     match mapped.view(location.offset, length):
         None => return Err(malformed(path, "the page lies outside its file"))
         Some(view) =>
-            pages_read["pages"] = pages_read.get("pages", 0) + 1
+            pages_read["checked"] = pages_read.get("checked", 0) + 1
             if hexlify(view_digest(view)) != location.digest:
                 return Err(IndexError(object=path.value, detail="index page does not match its digest"))
-            return layout(view, location.pack).map_err((detail) => malformed(path, detail))
+            CHECKED.keep(
+                location.digest,
+                layout(checked_copy(path, view)?, location.pack).map_err((detail) => malformed(path, detail))?,
+            )
+            match CHECKED.checked(location.digest):
+                Some(checked) => return Ok(checked)
+                None => return Err(malformed(path, "a checked page was not kept"))
+
+
+def checked_copy(path: Path, view: MappedView) -> Result[MappedView, IndexError]:
+    """A whole view of this process's own copy of a page's checked bytes, which the kept layout reads."""
+    copy = MappedFile.owned(view.to_bytes()).map_err((detail) => malformed(path, detail))?
+    match copy.view(0, copy.len()):
+        None => return Err(malformed(path, "the page copy has no whole view"))
+        Some(whole) => return Ok(whole)
 
 
 pub def view_digest(view: MappedView) -> bytes:
@@ -647,6 +706,76 @@ def pack_bytes(state: &PackState) -> bytes:
     for page in state.pages:
         append_bytes(data, page)
     return data
+
+
+# ---- Repacking ----
+
+
+pub def pack_usage(root: Path, tops: list[str]) -> Result[Dict[str, int], IndexError]:
+    """The bytes of the pages reachable from `tops` that each pack holds, every page counted once."""
+    mut usage: Dict[str, int] = {}
+    for reference in tree_order(root, tops)?.order:
+        location = located_page(root, reference)?
+        if location.pack != "":
+            usage[location.pack] = usage.get(location.pack, 0) + location.length
+    return Ok(usage)
+
+
+pub def repacked(root: Path, top: str, writer: PageWriter, moving: set[str]) -> Result[str, IndexError]:
+    """
+    The root of `top`'s index once every page that lies in a `moving` pack is placed again in `writer`'s pack, together
+    with the pages above it, whose child references change. Every other page is shared and every entry is unchanged, so
+    every lookup answers as before. Returns `top` when no page below it moves.
+
+    A page placed again with its bytes unchanged, as every leaf is, keeps its content name in the new pack. A page above
+    a moved one holds new child references, so it is a new page under a new name: no page's bytes change under its name.
+    Pages are placed children first, from the end of the breadth-first order, so a parent meets its moved children's
+    new references.
+    """
+    if top == "":
+        return Ok(top)
+    tree = tree_order(root, [top])?
+    mut moved: Dict[str, str] = {}
+    for back in range(len(tree.order)):
+        reference = tree.order[len(tree.order) - 1 - back]
+        page = tree.pages[reference]
+        mut changes = located_page(root, reference)?.pack in moving
+        mut entries: list[Entry] = []
+        for entry in page.entries:
+            if page.level > 0 and entry.child in moved:
+                changes = true
+                entries.append(Entry(key=entry.key, location=None, child=moved[entry.child]))
+            else:
+                entries.append(entry)
+        if changes:
+            moved[reference] = write_page(writer, Page(level=page.level, entries=entries))?
+    return Ok(moved.get(top, top))
+
+
+model TreeOrder:
+    """The pages reachable from some roots, each once, in breadth-first order, and each page decoded."""
+
+    order: list[str] = []
+    pages: Dict[str, Page] = {}
+
+
+def tree_order(root: Path, tops: list[str]) -> Result[TreeOrder, IndexError]:
+    """Every page reachable from `tops`, each read once, parents before their children."""
+    mut tree = TreeOrder()
+    mut pending = tops
+    mut position = 0
+    while position < len(pending):
+        reference = pending[position]
+        position += 1
+        if reference == "" or reference in tree.pages:
+            continue
+        page = read_page(root, reference)?
+        tree.order.append(reference)
+        if page.level > 0:
+            for entry in page.entries:
+                pending.append(entry.child)
+        tree.pages[reference] = page
+    return Ok(tree)
 
 
 # ---- Encoding ----

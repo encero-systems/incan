@@ -48,6 +48,21 @@ pub model RustInputRequest:
 
 
 @derive(Eq)
+pub model ProviderRequirement:
+    """
+    A `provider`-kind `[dependencies]` entry (RFC 117): a target-specific library, SDK, toolchain, runtime or deployment
+    requirement that an Oven-managed provider satisfies, never a Loaf.
+    """
+
+    pub alias: str
+    pub provider: str
+    pub version: str
+    pub features: list[str] = []
+    pub optional: bool = false
+    pub target: Option[str] = None
+
+
+@derive(Eq)
 pub model FeatureDeclaration:
     """One `[project.features]` entry, compact and expanded forms normalized into the same edges."""
 
@@ -97,6 +112,8 @@ pub model ProjectIntent:
     pub toolchain_access: ToolchainAccess = ToolchainAccess()
     # The `[rust.lints]` levels for the Loaf's Rust units, in the order their flags apply.
     pub rust_lints: RustLints = RustLints()
+    # The `provider`-kind `[dependencies]` entries (RFC 117), by alias.
+    pub providers: list[ProviderRequirement] = []
 
 
 pub model ManifestSnapshot:

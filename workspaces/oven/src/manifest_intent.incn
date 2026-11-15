@@ -19,7 +19,7 @@ from jec import begin, record, text_size
 from c_facet import parse_c_facet
 from c_interop import parse_c_targets
 from manifest_fields import allowed, flag, required, requirement
-from manifest_dependencies import parse_dependencies
+from manifest_dependencies import parse_dependencies, parse_providers
 from manifest_environments import parse_environment_dependencies
 from manifest_features import parse_features
 from manifest_tables import parse_c_headers, parse_vocab_entry, refuse_moved_tables, validate_facets, validate_workspace
@@ -33,6 +33,7 @@ pub from manifest_models import (
     ManifestEvidence,
     ManifestSnapshot,
     ProjectIntent,
+    ProviderRequirement,
     RustInputRequest,
 )
 
@@ -239,5 +240,6 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             vocab_entry=parse_vocab_entry(root, manifest)?,
             toolchain_access=access,
             rust_lints=declared_lints(root, manifest)?,
+            providers=parse_providers(root, manifest)?,
         ),
     )

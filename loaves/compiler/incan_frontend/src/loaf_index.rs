@@ -316,11 +316,27 @@ impl LoafEntry {
     /// The path this Loaf's public modules are bound under: `["pub", key]` for a dependency, `["std"]` for a standard
     /// package, whose manifest spells its modules without the `std` root.
     pub fn binding_root(&self) -> Vec<String> {
-        match &self.namespace {
-            LoafNamespace::Dependency { key } => vec!["pub".to_owned(), key.clone()],
-            LoafNamespace::Standard { .. } => vec!["std".to_owned()],
-        }
+        binding_root(&self.namespace)
     }
+}
+
+/// The path a Loaf owning `namespace` binds its public modules under (see [`LoafEntry::binding_root`]).
+fn binding_root(namespace: &LoafNamespace) -> Vec<String> {
+    match namespace {
+        LoafNamespace::Dependency { key } => vec!["pub".to_owned(), key.clone()],
+        LoafNamespace::Standard { .. } => vec!["std".to_owned()],
+    }
+}
+
+/// What the index admitted of one Loaf before anything demands its manifest: its key, binding root and package name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedLoaf {
+    /// The key the entry is indexed by.
+    pub key: String,
+    /// The path its public modules are bound under (see [`LoafEntry::binding_root`]).
+    pub binding_root: Vec<String>,
+    /// Its package name, which names its artifacts and its records.
+    pub name: String,
 }
 
 /// A Loaf the index cannot hold.
@@ -502,6 +518,61 @@ impl LoafIndex {
             return Ok(None);
         };
         Ok(Some(indexed.declaration_facts(facet, declaration)?))
+    }
+
+    /// One public namespace of the Loaf indexed as `key`, by its path, from its own record without demanding the
+    /// Loaf's manifest. `None` when the installed set holds no such record; the caller then reads the manifest.
+    pub fn public_namespace(&self, key: &str, path: &[String]) -> Result<Option<serde_json::Value>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        indexed.public_namespace(path)
+    }
+
+    /// Whether the Loaf indexed as `key` may export `name` at its package root: `Some(false)` only when its installed
+    /// set proves it does not, from record names alone (an exported enum's variants are not named by records, so a
+    /// Loaf exporting any enum is never proven). `None` when only its manifest can tell.
+    pub fn may_export_at_root(&self, key: &str, name: &str) -> Result<Option<bool>, LoafIndexError> {
+        use crate::library_manifest::compiler_records::RecordFamily;
+        const EXPORTS: [RecordFamily; 10] = [
+            RecordFamily::Alias,
+            RecordFamily::Partial,
+            RecordFamily::Model,
+            RecordFamily::Class,
+            RecordFamily::Function,
+            RecordFamily::Trait,
+            RecordFamily::TypeAlias,
+            RecordFamily::Newtype,
+            RecordFamily::Const,
+            RecordFamily::Static,
+        ];
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        let Some(enums) = indexed.names_record(&[RecordFamily::Enum.as_str()], None)? else {
+            return Ok(None);
+        };
+        if enums {
+            return Ok(Some(true));
+        }
+        let exports = EXPORTS.map(RecordFamily::as_str);
+        indexed.names_record(&exports, Some(name))
+    }
+
+    /// What the index admitted of the entry indexed as `key`, without demanding its manifest.
+    pub fn admitted(&self, key: &str) -> Option<AdmittedLoaf> {
+        let indexed = self.entries.get(key)?;
+        Some(AdmittedLoaf {
+            key: indexed.key.clone(),
+            binding_root: binding_root(&indexed.namespace),
+            name: indexed.summary.identity.name.clone(),
+        })
+    }
+
+    /// What the index admitted of the one entry owning `module`, without demanding its manifest.
+    pub fn admitted_owner_of(&self, module: &[String]) -> Option<AdmittedLoaf> {
+        let indexed = self.entries.values().find(|entry| entry.owns(module))?;
+        self.admitted(&indexed.key)
     }
 
     /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be

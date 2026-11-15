@@ -10,6 +10,9 @@ from native_build import NativeContext, build_support_tool
 from relink_driver import install_driver, prepare_compiler_home, readmit
 from release_support import TOOLCHAIN_DIRECTORY
 
+# The fields of an installed manifest every compiler home needs, before its registry fields.
+const MANIFEST_HEAD: str = "{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[],"
+
 
 def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
     """
@@ -40,12 +43,13 @@ def test_compiler_home_reports_each_manifest_change() -> Result[None, str]:
     return Ok(None)
 
 
-def test_the_compiler_home_reads_its_registry_through_its_own_link() -> Result[None, str]:
+def test_the_compiler_home_reads_an_installed_registry_through_its_own_link() -> Result[None, str]:
     """
-    The compiler home names the installed registry through its own `registry` link, the spelling a Loaf's native
-    closure names registry artifacts by, so its re-admission admits each artifact where its builds read it.
+    An installed toolchain keeps its registry closure and its producer selection inside its own `registry` tree. The
+    compiler home names both through its own `registry` link, the spelling a packed Loaf's native closure names
+    registry artifacts by, so its re-admission admits each artifact where its builds read it.
 
-    1. The closure and lock an installed manifest names inside `registry/` resolve under the compiler home's link.
+    1. The closure and lock the installed manifest names inside `registry/` resolve under the compiler home's link.
     2. The closure read there is the installed one.
     3. A registry the installation names by an absolute path elsewhere stays as written.
     """
@@ -55,9 +59,8 @@ def test_the_compiler_home_reads_its_registry_through_its_own_link() -> Result[N
     toolchain = installed.joinpath(TOOLCHAIN_DIRECTORY)
     toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
     toolchain.joinpath("registry/closure.json").write_bytes(b"installed closure").map_err((error) => error.message())?
-    head = "{\"driver\":\"bin/incan-rustc-driver-a\",\"sysroot\":\"sysroot\",\"externs\":[],"
     registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry/selected.json\"}"
-    write_manifest(toolchain, head + registry)?
+    write_manifest(toolchain, MANIFEST_HEAD + registry)?
     _ = prepare_compiler_home(installed, compiler)?
     # 1. Both resolve against the compiler home's own toolchain directory, inside its `registry` link.
     selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
@@ -68,10 +71,44 @@ def test_the_compiler_home_reads_its_registry_through_its_own_link() -> Result[N
     # 2. The link selects the installed tree, not a copy.
     assert Path(units).read_bytes().map_err((error) => error.message())? == b"installed closure"
     # 3. An absolute registry outside the installation is not the compiler home's to rename.
-    write_manifest(toolchain, head + "\"registry_units\":\"/elsewhere/closure.json\"}")?
+    write_manifest(toolchain, MANIFEST_HEAD + "\"registry_units\":\"/elsewhere/closure.json\"}")?
     _ = prepare_compiler_home(installed, compiler)?
     elsewhere = manifest_path(selected, "registry_units")?
     assert elsewhere == "/elsewhere/closure.json", elsewhere
+    return Ok(None)
+
+
+def test_the_compiler_home_reads_a_release_candidates_registry_where_the_candidate_names_it() -> Result[None, str]:
+    """
+    A release's candidate home writes its own registry closure over another producer's entries, and names that
+    producer's selection outside `registry/`, under `registry-producer/`. Its Loaves are built in the candidate home,
+    so they name registry artifacts under the candidate's own toolchain directory. The compiler home names the closure
+    and the selection there too, by absolute path, so its builds find each artifact admitted where they read it.
+
+    1. The closure resolves in the candidate's toolchain directory, not under the compiler home's link.
+    2. The producer's selection resolves in the candidate's toolchain directory too.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    producer = temporary.path().joinpath("seed/registry")
+    producer.joinpath("entries").mkdir(true, true).map_err((error) => error.message())?
+    candidate = temporary.path().joinpath("build-home")
+    compiler = candidate.joinpath("compiler-build")
+    toolchain = candidate.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("registry").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("registry/closure.json").write_bytes(b"candidate closure").map_err((error) => error.message())?
+    toolchain.joinpath("registry/entries").symlink_to(producer.joinpath("entries")).map_err((error) => error.message())?
+    toolchain.joinpath("registry-producer").symlink_to(producer).map_err((error) => error.message())?
+    registry = "\"registry_units\":\"registry/closure.json\",\"registry_lock\":\"registry-producer/selected.json\"}"
+    write_manifest(toolchain, MANIFEST_HEAD + registry)?
+    _ = prepare_compiler_home(candidate, compiler)?
+    selected = compiler.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    named = candidate.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    # 1. The candidate's own closure, where the candidate's Loaves name its units.
+    units = manifest_path(selected, "registry_units")?
+    assert units == named.joinpath("registry/closure.json").0, units
+    # 2. The producer's selection, as the candidate names it.
+    lock = manifest_path(selected, "registry_lock")?
+    assert lock == named.joinpath("registry-producer/selected.json").0, lock
     return Ok(None)
 
 

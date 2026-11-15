@@ -5,7 +5,7 @@
 INCAN ?= incan
 INCAN_LSP ?= incan-lsp
 CONTRACT_SCRATCH ?= target/contracts
-CONTRACT_JOBS ?= 4
+CONTRACT_JOBS ?= 12
 
 # Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
 RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'

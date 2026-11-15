@@ -100,7 +100,7 @@ impl TypeChecker {
             && path.segments.len() > 1
             && !self.owns_standard_module(&path.segments)
             && !is_typechecker_only_stdlib(&path.segments)
-            && self.loaves.owner_of(&path.segments).is_none()
+            && self.loaves.admitted_owner_of(&path.segments).is_none()
     }
 
     /// Collect a plain module import.
