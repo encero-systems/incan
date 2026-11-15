@@ -1,6 +1,15 @@
 """Lower closed instances of generic frames and decorator frames, and merge their external signatures."""
 
-from pub::incan_mir_plan import Carrier, ExternalFunction, Function, GenericLoan, EnumDeclaration, StaticCell, PlanType
+from pub::incan_mir_plan import (
+    Carrier,
+    ExternalFunction,
+    Function,
+    GenericLoan,
+    EnumDeclaration,
+    StaticCell,
+    PlanType,
+    UnitNominals,
+)
 from layout_types import native_source_type
 from signature_lifetimes import signature_lifetimes, generic_loans
 from rust::incan_semantics_core import IncanType as RustType
@@ -30,6 +39,8 @@ from lowering import BodyIrModule
 from checked_values import location
 from program_refusals import append_generator_constructor
 from function_frames import lower_function
+from instance_products import InstanceProducts, product_directory, retain_instance_product, reused_instance
+from nominal_records import product_nominal_table, sync_carriers
 
 
 def retain_generic_decorator_frames(
@@ -137,6 +148,7 @@ pub def lower_instances(
     mut intrinsics: list[EnumDeclaration],
     mut nominal_instances: list[NominalInstance],
     mut cells: list[StaticCell],
+    products: Option[InstanceProducts] = None,
 ) -> Result[RuntimeRetention, str]:
     """
     Drain checked instances through an explicit foreign mutable loan and append native layouts in place.
@@ -154,6 +166,7 @@ pub def lower_instances(
     mut runtime_unions = list(unions)
     mut redirects = runtime_redirects()
     mut names = function_names()
+    mut nominals = product_nominal_table(program, intrinsics, product_directory(products))
     governed_runtime = len(context.runtime_callable_bindings) != 0 or governed_runtime_module(owners)
     if governed_runtime:
         retain_runtime_instances(
@@ -219,6 +232,8 @@ pub def lower_instances(
             functions,
             names,
             externals,
+            products,
+            nominals,
         )?
         enqueue_instances(queue, scheduled)
         if governed_runtime:
@@ -260,8 +275,22 @@ def lower_instance_frame(
     mut functions: list[Function],
     mut names: FunctionNames,
     mut externals: list[ExternalFunction],
+    products: &Option[InstanceProducts],
+    mut nominals: UnitNominals,
 ) -> Result[list[Instance], str]:
-    """Lower one closed instance frame, retain it with the functions it synthesizes, and return its own requests."""
+    """
+    Lower one closed instance frame, retain it with the functions it synthesizes, and return its own requests.
+
+    In a records request, an unchanged generic body and request identity reuse the instance's own product instead.
+    """
+    if let Some(transport) = products:
+        sync_carriers(nominals, program, intrinsics)
+        if let Some(product) = reused_instance(transport, context, request, body, source, file, nominals)?:
+            retain_instance(functions, names, product.function)?
+            append_synthesized(functions, names, product.frames)?
+            append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
+            _ = merge_externals(externals, product.runtime)?
+            return Ok(product.requests)
     diagnostic_context = f"{body.name} at {file}"
     function, runtime, pending, synthesized = lower_function(
         context,
@@ -277,6 +306,11 @@ def lower_instance_frame(
     mut retained_function = function
     retained_function.signature_lifetimes = lifetimes
     retained_function.generic_loans = instance_loans(program, context, request, runtime_unions, intrinsics)?
+    if let Some(transport) = products:
+        sync_carriers(nominals, program, intrinsics)
+        retain_instance_product(
+            transport, context, request, retained_function, runtime, synthesized, pending, source, file, nominals,
+        )?
     retain_instance(functions, names, retained_function)?
     append_synthesized(functions, names, synthesized)?
     append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?

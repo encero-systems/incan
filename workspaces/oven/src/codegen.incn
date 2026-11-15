@@ -1,10 +1,10 @@
 """Select optimization flags for native units and frame the flags the Incan compiler receives."""
 
 from rust::std::process import id
-from rust::std::env import current_dir
 from rust::std::env::consts import OS
 from std.environ import get_or
 from std.fs import Path
+from request_directory import working_directory
 
 pub const SOURCE_PREFIX: str = "source"
 pub const TOOLCHAIN_PREFIX: str = "toolchain"
@@ -120,9 +120,9 @@ pub def remap_arguments(
     sysroot: str = "",
 ) -> Result[list[str], str]:
     """Keep compiler source filenames independent of the checkout and selected toolchain locations."""
-    working = current_dir().map_err((error) => f"native compiler working directory: {error}")?
+    working = working_directory()?
     mut mappings: list[Tuple[str, str]] = [
-        (working.to_string_lossy().into_owned(), str(WORKSPACE_PREFIX)),
+        (working, str(WORKSPACE_PREFIX)),
         (project, str(SOURCE_PREFIX)),
     ]
     for name, root in dependencies:

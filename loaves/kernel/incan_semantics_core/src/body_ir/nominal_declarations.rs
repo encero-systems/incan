@@ -422,6 +422,83 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         .collect()
 }
 
+/// The Rust items the fields of a constructed layout name, beyond those `held` already lists. A construction writes
+/// every field, so each field's type needs storage even when no body names it, as when a program passes `None` for an
+/// `Option` of an item only a dependency declares. A layout no body of `modules` constructs adds nothing, and an item
+/// `held` already lists keeps its argument count.
+pub fn constructed_rust_field_items(
+    modules: &[BodyIrModule],
+    layouts: &[NominalDeclaration],
+    held: &[NominalDeclaration],
+) -> Vec<NominalDeclaration> {
+    let mut constructed = std::collections::BTreeSet::<String>::new();
+    for module in modules {
+        for body in &module.bodies {
+            note_constructed_rust_items(&body.block.stmts, &mut constructed);
+        }
+        for storage in &module.static_declarations {
+            if let StaticInitializer::Computed(body) = &storage.initial {
+                note_constructed_rust_items(&body.block.stmts, &mut constructed);
+            }
+        }
+    }
+    let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
+    for layout in layouts {
+        if native_opaque_name(&layout.canonical).is_some_and(|path| constructed.contains(&path)) {
+            for ty in &layout.field_types {
+                record_held_rust_items(ty, &mut arities);
+            }
+        }
+    }
+    arities
+        .into_iter()
+        .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
+        .filter(|item| !held.iter().any(|known| known.canonical == item.canonical))
+        .collect()
+}
+
+/// Note the path of every Rust item a statement sequence constructs, descending into nested blocks, closure and
+/// generator bodies and `match` arms.
+fn note_constructed_rust_items(stmts: &[Statement], constructed: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StatementKind::Assign { rvalue, .. } => match rvalue {
+                Rvalue::Aggregate(AggregateKind::Constructor(target), _) => {
+                    if let Some(path) = target.canonical.as_ref().and_then(native_opaque_name) {
+                        constructed.insert(path);
+                    }
+                }
+                Rvalue::Closure { body, .. } => note_constructed_rust_items(&body.stmts, constructed),
+                Rvalue::Generator { body, .. } => note_constructed_rust_items(&body.stmts, constructed),
+                Rvalue::Match { arms, .. } => {
+                    for arm in arms {
+                        note_constructed_rust_items(&arm.guard_stmts, constructed);
+                        note_constructed_rust_items(&arm.body_stmts, constructed);
+                    }
+                }
+                _ => {}
+            },
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                note_constructed_rust_items(&then_block.stmts, constructed);
+                if let Some(block) = else_block {
+                    note_constructed_rust_items(&block.stmts, constructed);
+                }
+            }
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                note_constructed_rust_items(&body.stmts, constructed);
+            }
+            StatementKind::Race { arms, .. } => {
+                for arm in arms {
+                    note_constructed_rust_items(&arm.body.stmts, constructed);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Retain every declared storage type in an executable or imported default frame without granting its statements
 /// execution.
 pub(super) fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&IncanType)) {

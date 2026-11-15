@@ -1,0 +1,16 @@
+from std.async.sync import Error
+
+
+model SyncFailure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub def sync_line() -> str:
+    """Adopt the Error name `std.async.sync` published in 0.5.1."""
+    return f"sync {SyncFailure(detail="sync failed").message()}"

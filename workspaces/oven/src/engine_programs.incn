@@ -41,7 +41,7 @@ from unit_compiler import (
 from unit_rust import prepare_native
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
-from shared_link import development_link, linkage_key, library_witness
+from shared_link import carriers_present, development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -75,6 +75,8 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
+    # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
+    pub body_reuses: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
@@ -176,8 +178,8 @@ pub def obtain(
     if not listing_refusals:
         match read_program(store, handle)?:
             Some(unit) =>
-                restore_program(store, unit)?
-                return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+                if restore_program(store, unit)?:
+                    return Ok(ProgramOutcome(code=0, unit=Some(unit)))
             None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     opening = begin_work()
@@ -191,8 +193,8 @@ pub def obtain(
     selector = standalone_selector(epoch, producer)?
     if not listing_refusals:
         if let Some(unit) = indexed_program(store, epoch, selector)?:
-            restore_program(store, unit)?
-            return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
+            if restore_program(store, unit)?:
+                return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
 
     home = program_home(selected_home)?
@@ -286,9 +288,11 @@ pub def obtain(
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
         native = None
     mut body_evaluations = 0
+    mut body_reuses = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
+        # The compiler's report names the bodies it restored; a selected record it refused was checked afresh.
         reading_checker_sidecar = begin_work()
         checker_counts = checker_record_counts(ready, compiled_key)?
         record_work(
@@ -303,9 +307,11 @@ pub def obtain(
             Some(plan_record_report_path(ready, compiled_key)),
             Some(graph),
             retained_bodies,
+            checker_counts.restored,
         )?
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations
+        body_reuses = bodies.body_reuses
         body_ir_evaluations = bodies.body_ir_evaluations
     # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
     supersede_outputs(graph, request_transaction)?
@@ -326,6 +332,7 @@ pub def obtain(
             unit=Some(unit),
             evaluations=produced.evaluations,
             body_evaluations=body_evaluations,
+            body_reuses=body_reuses,
             body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
@@ -447,10 +454,16 @@ def decoded_program(text: str) -> Result[NativeUnit, str]:
     )
 
 
-pub def restore_program(store: Path, unit: NativeUnit) -> Result[None, str]:
-    """Validate the selected immutable unit and restore only missing or changed derived executable views."""
+pub def restore_program(store: Path, unit: NativeUnit) -> Result[bool, str]:
+    """
+    Validate the selected immutable unit and restore only missing or changed derived executable views. A unit whose
+    executable loads a shared carrier that is gone is not restored: false tells the caller to link it again.
+    """
     fact = unit_record(store, unit)?
-    return view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)
+    if not carriers_present(store, fact, Path(unit.binary))?:
+        return Ok(false)
+    view_executable(store, fact, Path(unit.binary), "program", loader_witness(store, fact, unit) is not None)?
+    return Ok(true)
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:

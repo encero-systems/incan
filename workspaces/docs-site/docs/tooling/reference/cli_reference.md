@@ -8,6 +8,8 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
+oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
+oven update [NAME] [--project PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check [PATH] [--format text|json] [UNIT OPTIONS]
@@ -65,11 +67,31 @@ Unknown features, invalid feature edges and unknown options fail the command. Fe
 
 ## `oven lock`
 
-Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. A generated write adds no other stdout or stderr.
+Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. After that line, it prints one `untested lower bound: LOAF BOUND is not published; locked VERSION` line for each local requirement whose lower bound names a version the registry does not publish, because the bound itself was not tested. A requirement's lower bound is the version its `^`, `~`, `>=`, `=` or partial wildcard comparator names, with a missing minor or patch as `0`. A generated write adds no other stdout or stderr.
 
-`--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing same-toolchain lock keeps its recorded mode; otherwise the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
+`--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
+
+## `oven add`
+
+Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. A name without a scope is refused with every published full name that ends in it, since several Loaves can share a short name.
+
+The requirement is `--version REQUIREMENT`, or else the newest version the toolchain's registry publishes, spelled in full. The key is `--key KEY`, or else the name's last part with `-` as `_`. A key the table already has is refused. When that key names the same Loaf, the refusal names `oven update`; when it names another Loaf, it names `--key`.
+
+One line, `KEY = { loaf = "NAME", version = "REQUIREMENT" }`, is written after the table's last entry. A manifest without the table gains it at its end. Nothing else in `loaf.toml` changes. Success prints `added NAME, version = "REQUIREMENT"`, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven add`.
+
+## `oven update`
+
+Raises registry requirements in the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. With `NAME`, a full Loaf name, only the entries naming that Loaf are raised; without it, every registry entry is. A name with a capital letter is refused, and a name without a scope is refused with the project's registry dependencies that end in it.
+
+A requirement is raised only when it has exactly one `^`, `~` or `>=` comparator; a bare version is `^`. That comparator's version becomes the newest published version the requirement already admits, so a raise never crosses an incompatible release. The operator stays, and so does the upper bound: a raise that would lower it, such as `~1` to `~1.4.2`, is not made. Only the requirement's quoted value changes. Every other line of `loaf.toml` stays, and the lock keeps every other locked version.
+
+Success prints one `NAME OLD → NEW` line per raised requirement and one `NAME REQUIREMENT: kept, REASON` line per requirement it can't raise, or `nothing to raise`. When `loaf.toml` changed, the lock's report follows. The command then exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven update`.
 
 ## `oven trust`
 
@@ -93,7 +115,7 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 ## `oven lint`
 
-Checks the Rust libraries of the Loaf at `PATH`, or of the Loaf at or above the current directory, with `clippy-driver` from the installed toolchain's pinned Rust toolchain; `incan lint` runs the same command. It first builds the Loaf's Rust graph as [`oven build`](#oven-build) does, then checks each local Rust library unit in that graph once, with the arguments the build compiled it with, emitting metadata only and adding the unit's Loaf's [`[rust.lints]`](project_configuration.md#rust) levels last. Nothing it writes is a build product, and it launches no Cargo. It prints each library's findings, then one line per library, `lint CRATE (PATH): N warnings, M errors`, then `lint: N findings`. It exits `0` when no library reported an error, and `1` when one did, naming the crates; a unit that does not compile fails the build step first. Without clippy in the pinned Rust toolchain it exits `1` and names `rustup component add --toolchain 1.98.0 clippy`.
+Checks the Rust libraries of the Loaf at `PATH`, or of the Loaf at or above the current directory, with `clippy-driver` from the installed toolchain's pinned Rust toolchain; `incan lint` runs the same command. It first builds the Loaf's Rust graph as [`oven build`](#oven-build) does, then checks each local Rust library unit in that graph once, with the arguments the build compiled it with, emitting metadata only and adding the unit's Loaf's [`[rust.lints]`](project_configuration.md#rust) levels last. Nothing it writes is a build product, and it launches no Cargo. A Rust library the installed toolchain ships prebuilt whose sources in the graph differ from the ones it was built from is still checked from those sources, while the libraries that depend on it build against the prebuilt one; where [`oven build`](#oven-build) refuses that graph, `oven lint` does not. It prints each library's findings, then one line per library, `lint CRATE (PATH): N warnings, M errors`, then `lint: N findings`. It exits `0` when no library reported an error, and `1` when one did, naming the crates; a unit that does not compile fails the build step first. Without clippy in the pinned Rust toolchain it exits `1` and names `rustup component add --toolchain 1.98.0 clippy`.
 
 ## `incan explain`
 

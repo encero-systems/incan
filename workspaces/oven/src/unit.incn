@@ -90,6 +90,13 @@ pub model UnitDescription:
     # Further test modules a test unit compiles beside its entry, in run order: the modules that share a plain
     # session-scoped conftest fixture with it, whose tests run in one process.
     pub test_batch: list[str] = []
+    # The key a test unit binds its project's shared library under (see `project_library`); the compiler then reads
+    # a project-local import of any library module as an import of that library.
+    pub project_library: Option[str] = None
+    # The test modules a project's shared library leaves out, and which a test unit linking it compiles as its own.
+    pub excluded_sources: list[str] = []
+    # Whether a library is checked as its project's program is: a shared library publishes no API.
+    pub program_checks: bool = false
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
     pub vocabulary: bool = false
@@ -148,6 +155,12 @@ pub model UnitDescription:
             fields["c_abi_target"] = target.to_json()
         if len(self.test_batch) > 0:
             fields["test_batch"] = texts(self.test_batch)
+        if let Some(library) = self.project_library:
+            fields["project_library"] = JsonValue.string(library)
+        if len(self.excluded_sources) > 0:
+            fields["excluded_sources"] = texts(self.excluded_sources)
+        if self.program_checks:
+            fields["program_checks"] = JsonValue.bool(true)
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:

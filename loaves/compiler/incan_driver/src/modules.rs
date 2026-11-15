@@ -15,11 +15,11 @@ use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
-use incan_frontend::ast::{ImportKind, ImportPath, Program};
+use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
     MissingSourceModule, SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
     logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,
-    resolve_source_module_path, self_import_diagnostic_message,
+    resolve_source_module_import_from_source_file, resolve_source_module_path, self_import_diagnostic_message,
 };
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
@@ -169,11 +169,18 @@ pub fn library_source_seeds(
     let own_roots = session
         .own_standard_package()
         .map(|policy| policy.namespace_roots.as_slice());
+    // A project's shared library omits the sources its description excludes: the project's test modules.
+    let excluded = session
+        .unit()
+        .excluded_sources
+        .iter()
+        .map(|source| source.canonicalize().unwrap_or_else(|_| source.clone()))
+        .collect::<BTreeSet<_>>();
     let mut logical_sources = BTreeMap::<Vec<String>, PathBuf>::new();
     let mut seeds = vec![(path.to_path_buf(), "main".to_string(), vec!["main".to_string()])];
     for source_file in source_files {
         let canonical = source_file.canonicalize().unwrap_or_else(|_| source_file.clone());
-        if canonical == entry_path {
+        if canonical == entry_path || excluded.contains(&canonical) {
             continue;
         }
         let Some(path_segments) = logical_module_segments_from_file(&session.source_root, &source_file) else {
@@ -262,7 +269,7 @@ fn collect_modules_detailed_from_seeds(
             None => read_source_for_diagnostics(&file_path)?,
         };
         let file_path_obj = Path::new(&file_path);
-        let (ast, gated_exports) =
+        let (mut ast, gated_exports) =
             match session
                 .parse_source_unprojected(file_path_obj, &source, true)
                 .and_then(|unprojected| {
@@ -286,6 +293,7 @@ fn collect_modules_detailed_from_seeds(
             };
 
         let current_base = file_path_obj.parent().unwrap_or(base_dir);
+        respell_project_library_imports(&mut ast, current_base, session);
         let mut missing_modules = Vec::new();
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             let span = resolved.span;
@@ -355,6 +363,64 @@ fn collect_modules_detailed_from_seeds(
     }
 
     Ok(topologically_sort_modules(modules, &dependency_edges)?)
+}
+
+/// Respell each project-local import of a module the project's shared library provides as an import of that
+/// library, so the module is linked rather than compiled again. The library provides every source-root module but
+/// the excluded ones and the root entry files, as [`library_source_seeds`] selects them. Only the import's kind
+/// changes: its span, alias and items stay, so diagnostics and panic locations still name the authored file and line.
+fn respell_project_library_imports(ast: &mut Program, base_dir: &Path, session: &CompilationSession) {
+    let unit = session.unit();
+    let Some(library) = &unit.project_library else {
+        return;
+    };
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = canonical(&session.source_root);
+    let entry = canonical(&unit.source);
+    let excluded = unit
+        .excluded_sources
+        .iter()
+        .map(|source| canonical(source))
+        .collect::<BTreeSet<_>>();
+    let current_source_file = ast.source_path.clone().map(PathBuf::from);
+    for declaration in &mut ast.declarations {
+        let Declaration::Import(import) = &mut declaration.node else {
+            continue;
+        };
+        if !matches!(import.kind, ImportKind::From { .. } | ImportKind::Module(_)) {
+            continue;
+        }
+        let SourceModuleImportResolution::Local(module_ref) = resolve_source_module_import_from_source_file(
+            base_dir,
+            Some(&session.source_root),
+            current_source_file.as_deref(),
+            import,
+        ) else {
+            continue;
+        };
+        let file = canonical(&module_ref.file_path);
+        if !file.starts_with(&root)
+            || excluded.contains(&file)
+            || is_unselected_package_entrypoint(&root, &file, &entry)
+        {
+            continue;
+        }
+        let Some(path) = logical_module_segments_from_file(&root, &file) else {
+            continue;
+        };
+        let kind = std::mem::replace(&mut import.kind, ImportKind::Python(String::new()));
+        import.kind = match kind {
+            ImportKind::From { items, .. } => ImportKind::PubFrom {
+                library: library.clone(),
+                path,
+                items,
+            },
+            _ => ImportKind::PubLibrary {
+                library: library.clone(),
+                path,
+            },
+        };
+    }
 }
 
 /// The physical source module a standard package's own `std.<root>.…` import names, when the session is that

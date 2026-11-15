@@ -23,6 +23,7 @@ from pub::internal_models import (
     record_root,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
     PreparationEvidence,
     ReadReceipt,
@@ -120,7 +121,7 @@ class CompiledBodyFrames:
             return Err("compiled body output ends inside a frame prefix")
         prefix = self.file
             .read_exact(8)
-            .map_err((error) => f"cannot read compiled body frame prefix: {error.message()}")?
+            .map_err((error) => f"compiled body frame prefix: cannot {error.message()}")?
         size = compiled_body_frame_size(prefix).map_err((error) => f"compiled body output refused: {error:?}")?
         converted: Option[u64] = size.try_resize()
         frame_bytes = match converted:
@@ -131,7 +132,7 @@ class CompiledBodyFrames:
             return Err("compiled body output ends inside an owner frame")
         payload = self.file
             .read_exact(size)
-            .map_err((error) => f"cannot read compiled body owner frame: {error.message()}")?
+            .map_err((error) => f"compiled body owner frame: cannot {error.message()}")?
         self.remaining -= frame_bytes + 8u64
         self.count += 1
         if self.count > MAX_COMPILED_BODY_FRAMES:
@@ -210,6 +211,8 @@ pub model PreparedCompiledBodies:
     pub fallbacks: int
     pub checking_evaluations: int
     pub body_ir_evaluations: int
+    # Bodies the compiler restored from selected records instead of checking them.
+    pub body_reuses: int = 0
 
 
 pub model PublishedSourceInputs:
@@ -289,7 +292,7 @@ def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[
 
 def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
     """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
-    physical = Path(root).resolve().map_err((error) => f"cannot resolve captured source root {root}: {error.message()}")?
+    physical = Path(root).resolve().map_err((error) => f"captured source root: cannot {error.message()}")?
     prefix = physical.0 + "/"
     if path.startswith(prefix):
         return Ok(Some(path[len(prefix):]))
@@ -335,9 +338,13 @@ pub def prepare_compiled_bodies(
     plan_output: Option[Path] = None,
     selected: Option[Snapshot] = None,
     retained: list[SelectedBodyRecord] = [],
+    restored: list[str] = [],
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
+
+    `retained` are the records the engine selected for the compiler; `restored` names the owners the compiler reports
+    it restored from them. Only those were reused: a selected record the compiler refused was checked afresh.
 
     1. Authenticate the bounded sidecar through the shared checker codec.
     2. Stage each source projection and declaration value before any body receipt reads them.
@@ -349,10 +356,13 @@ pub def prepare_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
-    retained_identities = set([record.identity for record in retained])
+    restored_identities = set([owner for owner in restored])
     mut owner_evaluations = len(outputs.fallbacks)
+    mut owner_reuses = 0
     for value in outputs.values:
-        if value.identity not in retained_identities:
+        if value.identity in restored_identities:
+            owner_reuses += 1
+        else:
             owner_evaluations += 1
     origin = source_origin(unit)
     if projection_refusal_mode()? == ProjectionRefusalMode.List:
@@ -637,6 +647,7 @@ pub def prepare_compiled_bodies(
             fallbacks=len(outputs.fallbacks),
             checking_evaluations=owner_evaluations,
             body_ir_evaluations=owner_evaluations,
+            body_reuses=owner_reuses,
         ),
     )
 
@@ -865,25 +876,27 @@ def prepare_lowering_records(
         if is_entry_event(event)?:
             continue
         event_identity = required_event_text(event, "identity")?
-        if fallback_lowering_event(unit, fallbacks, event_identity)?:
+        # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
+        runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
+        if not runtime and fallback_lowering_event(unit, fallbacks, event_identity)?:
             continue
         key = required_event_text(event, "key")?
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
-        body = body_value(bodies, fallbacks, event_identity)?
-        # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
-        # when a linked Rust unit changed without changing the checked source body or its callable signature.
-        identity = body.identity
-        body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+        mut identity = event_identity
+        mut signature_reads: list[RecordRequest] = []
+        mut body_reads: list[RecordRequest] = []
+        if not runtime:
+            body = body_value(bodies, fallbacks, event_identity)?
+            # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
+            # when a linked Rust unit changed without changing the checked source body or its callable signature.
+            identity = body.identity
+            signature_reads = [prepared_product_request(key) for key in body.signature_reads]
+            body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+            body_reads = [prepared_product_request(body_ir_key)] + signature_reads
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        signature_reads = [prepared_product_request(key) for key in body.signature_reads]
-        demand_receipt = prepared_receipt(
-            staged_source,
-            scope,
-            demand_key,
-            [prepared_product_request(body_ir_key)] + signature_reads,
-        )?
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, body_reads)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,

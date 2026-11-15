@@ -1,0 +1,94 @@
+"""A project's test units link its shared library, which every test source of the project describes the same way."""
+
+from std.fs import Path
+from files import make_directory, write
+from project_library import LIBRARY_SUFFIX, library_loaf, library_output, shared_library, with_project_library
+from scratch import scratch_directory
+from unit import UnitDescription
+from unit_freshness import description_digest
+
+const MODULES: FrozenList[str] = [
+    "main.incn",
+    "reader.incn",
+    "test_reader.incn",
+    "test_writer.incn",
+    "nested/conftest.incn",
+    "nested/shape.incn",
+    "nested/shape_test.incn",
+]
+
+
+def project_unit(root: Path, source: str, kind: str = "test") -> UnitDescription:
+    """A unit of the project at `root` whose entry is `src/<source>`."""
+    return UnitDescription(
+        source=root.joinpath("src").joinpath(source).0,
+        project_root=root.0,
+        source_root=root.joinpath("src").0,
+        package="demo-app",
+        version="1",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+        kind=kind,
+    )
+
+
+def demo_project(root: Path) -> Result[None, str]:
+    """A project whose source root holds a program entry, two plain modules and four test modules."""
+    make_directory(root.joinpath("src/nested"))?
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"demo-app\"\nversion = \"1\"\n")?
+    for name in MODULES:
+        write(root.joinpath("src").joinpath(name), "\"\"\"A module.\"\"\"\n")?
+    return Ok(None)
+
+
+pub def test_a_test_unit_links_its_projects_shared_library() -> Result[None, str]:
+    """A project's test module names the shared library and leaves out every test module of the source root."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    linked = with_project_library(project_unit(root, "test_reader.incn"))?
+    assert linked.project_library == Some("demo_app" + LIBRARY_SUFFIX)
+    src = root.joinpath("src")
+    assert linked.excluded_sources == [
+        src.joinpath("nested/conftest.incn").0,
+        src.joinpath("nested/shape_test.incn").0,
+        src.joinpath("test_reader.incn").0,
+        src.joinpath("test_writer.incn").0,
+    ]
+    description = linked.to_json()
+    assert description.get("project_library") != None
+    assert with_project_library(project_unit(root, "main.incn", "program"))?.project_library == None
+    assert with_project_library(project_unit(root, "reader.incn"))?.project_library == None
+    # A source root of tests and entry files alone has nothing to share.
+    for name in ["reader.incn", "nested/shape.incn"]:
+        root.joinpath("src").joinpath(name).unlink().map_err((error) => error.message())?
+    assert with_project_library(project_unit(root, "test_reader.incn"))?.project_library == None
+    return Ok(None)
+
+
+pub def test_two_test_sources_share_one_shared_library() -> Result[None, str]:
+    """Every test unit of a project describes one shared library, checked as a program, so it compiles once."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    demo_project(root)?
+    key = "demo_app" + LIBRARY_SUFFIX
+    first = with_project_library(project_unit(root, "test_reader.incn"))?
+    second = with_project_library(project_unit(root, "nested/shape_test.incn"))?
+    reading = shared_library(first, key)?
+    shaping = shared_library(second, key)?
+    assert reading.kind == "library"
+    assert reading.package == key
+    assert reading.program_checks
+    assert reading.project_library == None
+    assert reading.source == shaping.source
+    assert Path(reading.source).is_file()
+    assert reading.excluded_sources == shaping.excluded_sources
+    assert description_digest(reading)? == description_digest(shaping)?
+    assert library_output(first, key, key).0 == library_output(second, key, key).0
+    assert library_loaf(first, key, library_output(first, key, key)).key == key
+    return Ok(None)

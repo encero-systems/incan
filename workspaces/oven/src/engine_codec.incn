@@ -211,6 +211,7 @@ def encode_submit(value: Submit) -> Result[bytes, Refusal]:
                 text(value.requested_roots)?,
                 text(value.options)?,
                 text(value.observation_policy)?,
+                text(value.directory)?,
             ],
         ),
     )
@@ -224,6 +225,7 @@ def decode_submit(mut reader: Decoder) -> Result[Submit, Refusal]:
     requested_roots = reader.text()?
     options = reader.text()?
     observation_policy = reader.text()?
+    directory = reader.text()?
     return Ok(
         Submit(
             command=command,
@@ -232,6 +234,7 @@ def decode_submit(mut reader: Decoder) -> Result[Submit, Refusal]:
             requested_roots=requested_roots,
             options=options,
             observation_policy=observation_policy,
+            directory=directory,
         ),
     )
 

@@ -1,7 +1,11 @@
 """Contract batch scheduling keeps semantic incompatibility separate from elapsed compilation time."""
 
+from rust::std::process import Command
 from std.fs import Path
-from batch import SHARED_ENTRIES_REFUSED, compilation_refusal, group_compilation_request
+from std.tempfile import TemporaryDirectory
+from batch import SHARED_ENTRIES_REFUSED, compilation_refusal, group_compilation_request, run_batches
+from files import make_directory, read, write
+from fixture import Fixture
 from run import Outcome
 
 
@@ -18,11 +22,9 @@ def test_an_engine_without_shared_entries_is_not_a_semantic_refusal() -> None:
     An engine that cannot select program entries refuses every shared compilation alike, so its refusal says nothing
     about which cases are incompatible and must not be bisected; a compiler's refusal of the cases still is.
     """
-    engine = Outcome(
-        stdout="",
-        stderr="incan build: unit records do not implement feature, substitution or program-entry options\n",
-        code=Some(1),
-    )
+    # Oven's refusal since `--interop-target` joined the options the records engine does not implement.
+    options = "feature, substitution, program-entry or interop-target options"
+    engine = Outcome(stdout="", stderr=f"incan build: unit records do not implement {options}\n", code=Some(1))
     refusal, evidence = compilation_refusal(Ok(engine))
     assert refusal == SHARED_ENTRIES_REFUSED
     assert "program-entry" in evidence
@@ -32,3 +34,137 @@ def test_an_engine_without_shared_entries_is_not_a_semantic_refusal() -> None:
     assert "case_3" in diagnostics
     clean, nothing = compilation_refusal(Ok(Outcome(stdout="", stderr="", code=Some(0))))
     assert clean == "" and nothing == ""
+
+
+def executable(path: Path, text: str) -> Path:
+    """Write `text` to `path` and make it executable."""
+    write(path, text).unwrap()
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(path.0).status().unwrap().success()
+    return path
+
+
+def warning_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records each command it runs. A shared build succeeds, warns about its second case and leaves a
+    program that prints the case it was started for; a case's own command prints `own command`.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    mut script = f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{scratch.joinpath("commands").0}'\n"
+    script += "if [ \"$1\" = build ]; then\n  mkdir -p target/incan/debug/bin\n"
+    script += f"  cp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    script += "  echo \"warning: $(dirname \"$2\")/case_1.incn:1:1: unused binding\" >&2\n  exit 0\nfi\n"
+    script += "echo 'own command'\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def behavior_case(root: Path, name: str) -> Fixture:
+    """A behavior program `name` that prints its name."""
+    path = root.joinpath(f"{name}.incn")
+    write(
+        path,
+        f"# behavior: prints its name\n# expect-stdout:\n#   {name}\n\ndef main() -> None:\n    println(\"{name}\")\n",
+    ).unwrap()
+    return Fixture(family="behavior", area="area", name=name, shape="file", entry=path, program=path)
+
+
+def stdout_of(outcomes: dict[str, Result[Outcome, str]], name: str) -> str:
+    """What the case `behavior/area/<name>` printed, or why it has no outcome."""
+    match outcomes[f"behavior/area/{name}"]:
+        Ok(outcome) => return outcome.stdout
+        Err(reason) => return reason
+
+
+def test_a_successful_shared_build_that_warns_is_kept_for_the_cases_it_does_not_name() -> None:
+    """
+    A shared build that succeeds and prints a warning about one case still built every case's program: the cases the
+    warning does not name run from it, and only the named case runs its own command to own the warning.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    fixtures = [behavior_case(root, name) for name in ["a", "b", "c"]]
+    incan = warning_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 1)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert len([command for command in commands if command == "build"]) == 1, " ".join(commands)
+    assert len([command for command in commands if command == "run"]) == 1, " ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "b") == "own command\n"
+    assert stdout_of(batch.outcomes, "c") == "case 2\n"
+
+
+def slow_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records the commands it finishes. The build of the group that starts with case `a` takes two
+    seconds and succeeds quietly, any other build refuses its first case, and a case's own command prints
+    `own command`.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    log = scratch.joinpath("commands").0
+    mut script = f"#!/bin/sh\nif [ \"$1\" != build ]; then\n  echo run >> '{log}'\n  echo 'own command'\n  exit 0\nfi\n"
+    script += f"mkdir -p target/incan/debug/bin\ncp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    script += f"case \"$2\" in\n  */batch-behavior-area-a-2/src/main.incn)\n    sleep 2\n    echo 'slow build' >> '{log}'\n"
+    script += "    exit 0 ;;\nesac\necho \"error: $(dirname \"$2\")/case_0.incn:1:1: refused\" >&2\nexit 1\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def test_a_refused_group_is_retried_while_another_group_still_compiles() -> None:
+    """
+    The retries a refused shared build calls for start as soon as it is refused: they do not wait for a slower build of
+    another group to finish.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    fixtures = [behavior_case(root, name) for name in ["a", "b", "c", "d"]]
+    incan = slow_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 2)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands == ["run", "run", "slow build"], " ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "b") == "case 1\n"
+    assert stdout_of(batch.outcomes, "c") == "own command\n"
+    assert stdout_of(batch.outcomes, "d") == "own command\n"
+
+
+def queued_incan(scratch: Path) -> Path:
+    """
+    An `incan` that records the commands it finishes, by case. The build of the group that starts with case `a` takes
+    two seconds and succeeds quietly, any other build refuses its first case, and each own command of a case named
+    `x...` takes a second.
+    """
+    program = executable(scratch.joinpath("program"), "#!/bin/sh\necho \"case $INCAN_CONTRACT_CASE\"\n")
+    log = scratch.joinpath("commands").0
+    mut script = "#!/bin/sh\nif [ \"$1\" != build ]; then\n  case \"$PWD\" in\n    *-x*) sleep 1 ;;\n  esac\n"
+    script += f"  echo \"run $(basename \"$PWD\")\" >> '{log}'\n  echo 'own command'\n  exit 0\nfi\n"
+    script += f"mkdir -p target/incan/debug/bin\ncp '{program.0}' target/incan/debug/bin/contract_batch\n"
+    script += f"case \"$2\" in\n  */batch-behavior-area-a-2/src/main.incn)\n    sleep 2\n    echo 'slow build' >> '{log}'\n"
+    script += "    exit 0 ;;\nesac\necho \"error: $(dirname \"$2\")/case_0.incn:1:1: refused\" >&2\nexit 1\n"
+    return executable(scratch.joinpath("incan"), script)
+
+
+def decorated_case(root: Path, name: str) -> Fixture:
+    """A behavior program `name` with a decorator, which keeps its own command."""
+    path = root.joinpath(f"{name}.incn")
+    write(path, f"# behavior: runs alone\n# expect-stdout:\n#   {name}\n\n@inline\ndef main() -> None:\n    pass\n").unwrap()
+    return Fixture(family="behavior", area="area", name=name, shape="file", entry=path, program=path)
+
+
+def test_a_refused_group_is_retried_before_the_commands_queued_behind_it() -> None:
+    """
+    A refused shared build's retries start before the own commands that were already queued: each retry may unlock a
+    group, while a queued own command unlocks nothing.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    root = scratch.path().joinpath("fixtures")
+    make_directory(root).unwrap()
+    mut fixtures = [behavior_case(root, name) for name in ["a", "b", "c", "d"]]
+    fixtures.extend([decorated_case(root, name) for name in ["x1", "x2", "x3", "x4"]])
+    incan = queued_incan(scratch.path())
+    batch = run_batches(incan.0, scratch.path().joinpath("work"), fixtures, 2)
+    commands = read(scratch.path().joinpath("commands")).unwrap().strip().split("\n")
+    assert commands.index("run behavior-area-c") < commands.index("slow build"), ", ".join(commands)
+    assert commands.index("run behavior-area-d") < commands.index("slow build"), ", ".join(commands)
+    assert stdout_of(batch.outcomes, "a") == "case 0\n"
+    assert stdout_of(batch.outcomes, "x4") == "own command\n"

@@ -77,13 +77,13 @@ pub def discover(
 
 pub def portable_dependencies(project: Path, dependencies: Path) -> Result[bool, str]:
     """External source locations have no declared portable binding, so their graph is produced without retention."""
-    root = project.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    root = project.resolve().map_err((error) => f"cannot {error.message()}")?
     paths, _ = dependency_inputs(read(dependencies)?)?
     for path in paths:
         mut selected = Path(path)
         if not path.startswith("/"):
             selected = project.joinpath(path)
-        canonical = selected.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        canonical = selected.resolve().map_err((error) => f"cannot {error.message()}")?
         if not canonical.0.startswith(root.0 + "/"):
             return Ok(false)
     return Ok(true)

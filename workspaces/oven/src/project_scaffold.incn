@@ -158,7 +158,7 @@ def project_name(request: ScaffoldRequest, directory: Path) -> Result[str, str]:
         if request.command == ScaffoldCommand.New:
             derived = name
     if derived == "":
-        absolute = directory.absolute().map_err((error) => f"cannot resolve {directory.0}: {error.message()}")?
+        absolute = directory.absolute().map_err((error) => f"cannot {error.message()}")?
         derived = absolute.name()
     return Ok(derived.replace(" ", "_").lower())
 

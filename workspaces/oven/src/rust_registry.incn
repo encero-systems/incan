@@ -140,8 +140,8 @@ def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Resul
     toolchain = load_toolchain()?
     if toolchain.registry_lock == "":
         return Ok([])
-    actual = source.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
-    selected = Path(toolchain.registry_units).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+    actual = source.resolve().map_err((error) => f"cannot {error.message()}")?.0
+    selected = Path(toolchain.registry_units).resolve().map_err((error) => f"cannot {error.message()}")?.0
     if actual != selected:
         return Ok([])
     return registry_record(units, Path(toolchain.registry_lock))
@@ -250,12 +250,26 @@ pub def selected_registry(
     return Ok(selected)
 
 
-pub def resolve_registry(registry: RegistryUnits, facets: list[LocalFacet], profile: str) -> Result[RegistryUnits, str]:
-    """Resolve exact registry producers without importing their payloads, as `oven lock` requires."""
+pub def resolve_registry(
+    registry: RegistryUnits,
+    facets: list[LocalFacet],
+    profile: str,
+    root: str = "",
+) -> Result[RegistryUnits, str]:
+    """
+    Resolve exact registry producers without importing their payloads, as `oven lock` requires. With `root`, only the
+    root facet's requirements are the project's own; without it, every requirement is.
+    """
     mut demands: list[RegistryDemand] = []
     for facet in facets:
         for record in facet.registry:
-            demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
+            demands.append(
+                RegistryDemand(
+                    selection=registry_selection(record)?,
+                    domain=facet.domain.value(),
+                    direct=root == "" or facet.project == root,
+                ),
+            )
     return registry.select(demands, profile)
 
 

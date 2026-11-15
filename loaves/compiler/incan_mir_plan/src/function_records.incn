@@ -8,7 +8,7 @@ position in the unit's tables. Places, operands, operations and statements cross
 
 from rust::serde import Serialize, Deserialize
 from rust::serde_json import to_string, from_str, Error as JsonError
-from _plan import ExternalFunction, Function
+from _plan import ExternalFunction, Function, GenericLoan
 from _types import PlanType, SourceSpan
 from nominal_identities import (
     NominalKind,
@@ -55,6 +55,9 @@ from _body import (
     TerminatorKind,
     Unwind,
 )
+
+# The Incan import prefix a Rust standard-library function keeps in a product.
+const RUST_BINDING: str = "rust::"
 
 
 @derive(Serialize, Deserialize)
@@ -127,8 +130,18 @@ model StoredParameter:
 
 
 @derive(Serialize, Deserialize)
+model StoredLoan:
+    """One type parameter's occurrence in a closed instance's signature, with its concrete type."""
+
+    slot: int
+    path: list[int]
+    parameter: int
+    ty: StoredType
+
+
+@derive(Serialize, Deserialize)
 model StoredFunction:
-    """A versioned complete ordinary function; unsupported native attributes and instances refuse."""
+    """A versioned complete function, a closed generic instance included; unsupported native attributes refuse."""
 
     schema: int
     name: str
@@ -138,6 +151,7 @@ model StoredFunction:
     blocks: list[StoredBlock]
     span: StoredSpan
     lifetimes: list[list[str]]
+    loans: list[StoredLoan]
     retained_result_source: int
 
 
@@ -344,14 +358,15 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
     """
     Encode one complete function's native storage, control flow and source locations.
 
-    1. Refuse attributes, coroutine state and generic loan provenance this codec cannot preserve.
-    2. Encode every plan field explicitly, translating nominal positions through `remap`.
+    1. Refuse attributes and coroutine state this codec cannot preserve.
+    2. Encode every plan field explicitly, a closed instance's generic loans included, translating nominal positions
+       through `remap`.
     """
     # 1. No invocation-only function field may disappear through a default during replay.
     if function.is_async or function.future_callee is not None:
         return Err("scalar function products refuse coroutine state")
-    if len(function.attributes) != 0 or len(function.generic_loans) != 0:
-        return Err("scalar function products refuse attributes and generic loans")
+    if len(function.attributes) != 0:
+        return Err("scalar function products refuse attributes")
     # 2. Every plan field crosses the codec explicitly.
     mut parameters: list[StoredParameter] = []
     for value in function.parameters:
@@ -362,8 +377,13 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
     mut blocks: list[StoredBlock] = []
     for value in function.blocks:
         blocks.append(store_block(value, remap)?)
+    mut loans: list[StoredLoan] = []
+    for loan in function.generic_loans:
+        loans.append(
+            StoredLoan(slot=loan.slot, path=list(loan.path), parameter=loan.parameter, ty=store_type(loan.ty, remap)?),
+        )
     stored = StoredFunction(
-        schema=5,
+        schema=6,
         name=function.name,
         parameters=parameters,
         result=store_type(function.return_type, remap)?,
@@ -371,6 +391,7 @@ def encode_function(function: &Function, mut remap: NominalRemap) -> Result[str,
         blocks=blocks,
         span=store_span(function.span),
         lifetimes=function.signature_lifetimes,
+        loans=loans,
         retained_result_source=function.retained_result_source,
     )
     return to_string(stored).map_err((error) => str(error))
@@ -381,13 +402,13 @@ def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]
     Restore a function only from a recognized complete record.
 
     1. Decode the producer's versioned wire record.
-    2. Restore its exact native fields and source locations, binding nominal ordinals through `remap`.
+    2. Restore its exact native fields, generic loans and source locations, binding nominal ordinals through `remap`.
     """
     # 1. Malformed or unfamiliar records are cache misses at the caller.
     stored = decode_record(text).map_err((error) => str(error))?
-    if stored.schema != 5:
+    if stored.schema != 6:
         return Err("unknown scalar function product schema")
-    # 2. Native attributes, coroutine fields and generic loans were refused by the producer.
+    # 2. Native attributes and coroutine fields were refused by the producer.
     mut parameters: list[Parameter] = []
     for value in stored.parameters:
         parameters.append(restore_parameter(value, remap)?)
@@ -397,6 +418,11 @@ def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]
     mut blocks: list[BasicBlock] = []
     for value in stored.blocks:
         blocks.append(restore_block(value, remap)?)
+    mut loans: list[GenericLoan] = []
+    for value in stored.loans:
+        loans.append(
+            GenericLoan(slot=value.slot, path=list(value.path), parameter=value.parameter, ty=restore_type(value.ty, remap)?),
+        )
     return Ok(
         Function(
             name=stored.name,
@@ -406,6 +432,7 @@ def decode_function(text: str, mut remap: NominalRemap) -> Result[Function, str]
             blocks=blocks,
             span=restore_span(stored.span),
             signature_lifetimes=stored.lifetimes,
+            generic_loans=loans,
             retained_result_source=stored.retained_result_source,
         ),
     )
@@ -497,6 +524,11 @@ def store_binding(path: str) -> Result[str, str]:
         return Ok("std::" + path[len(primitives):])
     if path.startswith(standard):
         return Ok("std::" + path[len(standard):])
+    # A Rust standard-library function keeps the identity Incan source imports it by, as a runtime generic's
+    # `from rust::std::vec import Vec` does. Other crates stay outside this bounded schema.
+    for root in ["std", "core", "alloc"]:
+        if path.startswith(root + "::"):
+            return Ok(RUST_BINDING + path)
     return Err("scalar function products refuse an external without an Incan binding identity")
 
 
@@ -508,6 +540,8 @@ def restore_binding(identity: str) -> Result[str, str]:
         _ => pass
     runtime = "builtin::runtime::"
     standard = "std::"
+    if identity.startswith(RUST_BINDING):
+        return Ok(identity[len(RUST_BINDING):])
     if identity.startswith(runtime):
         return Ok("incan_native_runtime::" + identity[len(runtime):])
     if identity.startswith(standard):

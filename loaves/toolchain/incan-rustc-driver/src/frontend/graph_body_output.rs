@@ -23,6 +23,8 @@ struct PendingBodyValue {
     final_value: Vec<u8>,
     body_ir: Vec<u8>,
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
+    /// Whether the checker restored this body from a selected record instead of checking its statements.
+    restored: bool,
 }
 
 /// One complete namespace value awaiting its whole-module Body IR frame.
@@ -39,6 +41,12 @@ struct PendingBodyFallback {
     module: String,
     name: String,
     identity: Option<String>,
+    reason: String,
+    artifact_refusals: Vec<String>,
+}
+
+/// Why one compiler-produced owner could not be encoded, with the artifact fields whose rows the codec refused.
+struct BodyValueRefusal {
     reason: String,
     artifact_refusals: Vec<String>,
 }
@@ -148,13 +156,16 @@ impl GraphBodyOutput {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
                     match encoded_body_value(&module_path, &fields) {
-                        Ok(value) => self.values.push(value),
-                        Err(reason) => self.fallbacks.push(PendingBodyFallback {
+                        Ok(value) => self.values.push(PendingBodyValue {
+                            restored: checker.restored_body_record(fields.span),
+                            ..value
+                        }),
+                        Err(refusal) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
                             identity: fallback_identity(Some(fields.identity)),
-                            reason,
-                            artifact_refusals: Vec::new(),
+                            reason: refusal.reason,
+                            artifact_refusals: refusal.artifact_refusals,
                         }),
                     }
                 }
@@ -271,12 +282,20 @@ impl GraphBodyOutput {
         } else {
             format!("{reusable_declarations}/{all_declarations} reusable declarations; refusals {refusal_text}")
         };
+        // A selected record the checker refused is not restored: that body was checked afresh, and Oven counts it so.
+        let restored = self
+            .values
+            .iter()
+            .filter(|value| value.restored)
+            .map(|value| value.identity.clone())
+            .collect::<Vec<_>>();
         let report = serde_json::to_vec(&serde_json::json!({
             "schema": "incan.checker-reuse/1",
             "summary": summary,
             "reusable_declarations": reusable_declarations,
             "all_declarations": all_declarations,
             "artifact_refusals": artifact_refusals,
+            "restored": restored,
         }))
         .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
@@ -336,16 +355,16 @@ impl GraphBodyOutput {
 fn encoded_body_value(
     module: &str,
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
-) -> Result<PendingBodyValue, String> {
+) -> Result<PendingBodyValue, BodyValueRefusal> {
     let declaration = internal_models::from_native_fields(&fields.declaration)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("declaration record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("declaration", &fields.declaration, error))?;
     let local = internal_models::from_native_local_fields(&fields.local)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("local record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("local", &fields.local, error))?;
     let final_value = internal_models::from_native_final_fields(&fields.final_value)
         .and_then(internal_models::encode_record)
-        .map_err(|error| format!("final record output refused: {error:?}"))?;
+        .map_err(|error| record_refusal("final", &fields.final_value, error))?;
     let mut dependency_reads = fields
         .dependency_reads
         .iter()
@@ -390,7 +409,27 @@ fn encoded_body_value(
         final_value,
         body_ir: Vec::new(),
         dependency_reads,
+        restored: false,
     })
+}
+
+/// Explain one record codec refusal. An unsupported row names its artifact field, so the checker reuse report groups
+/// a field the record schema refuses beside the fields the frontend refuses.
+fn record_refusal(stage: &str, rows: &[Vec<String>], error: internal_models::CodecFault) -> BodyValueRefusal {
+    let mut artifact_refusals = Vec::new();
+    if let internal_models::CodecFault::Unsupported(name) = &error {
+        artifact_refusals = rows
+            .iter()
+            .filter(|row| row.first() == Some(name) || row.get(2) == Some(name))
+            .filter_map(|row| incan_frontend::checker_records::record_row_artifact_field(row))
+            .collect();
+        artifact_refusals.sort();
+        artifact_refusals.dedup();
+    }
+    BodyValueRefusal {
+        reason: format!("{stage} record output refused: {error:?}"),
+        artifact_refusals,
+    }
 }
 
 /// Render the compiler's canonical package module path in the logical source-key spelling shared with Oven.

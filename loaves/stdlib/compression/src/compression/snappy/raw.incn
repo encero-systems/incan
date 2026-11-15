@@ -6,7 +6,8 @@ from `std.compression` autodetection because raw blocks have no stable stream si
 """
 
 from rust::snap::raw import Decoder as RawDecoder, Encoder as RawEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _reject_level
+pub from std.compression._core import Codec, CompressionError
+from std.compression._core import _codec_error, _reject_level
 
 
 pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:

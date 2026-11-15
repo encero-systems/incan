@@ -283,7 +283,7 @@ def source_graphs(
         Some(sources) =>
             mut paths: list[GraphUnit] = []
             for source in sources:
-                project = root.joinpath(source).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+                project = root.joinpath(source).resolve().map_err((error) => f"cannot {error.message()}")?
                 if project.0 in ancestors + [root.0]:
                     return Err(f"cyclic codegraph source selection: {project.0}")
                 if project.0 in preparation.sources:

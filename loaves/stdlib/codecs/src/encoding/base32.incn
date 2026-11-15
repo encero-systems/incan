@@ -9,8 +9,8 @@ rolling bit buffer, five-bit groups become alphabet symbols, and `=` padding onl
 eight-character quantum.
 """
 
+pub from std.encoding._shared import EncodingError
 from std.encoding._shared import (
-    EncodingError,
     _ascii_bytes,
     _ascii_text,
     _encoding_error,
@@ -20,8 +20,9 @@ from std.encoding._shared import (
     _write_sink_bytes,
     _write_stream_bytes,
 )
-from std.fs import Path
-from std.io import BytesIO, _BytesIO
+pub from std.fs import Path
+pub from std.io import BytesIO
+from std.io import _BytesIO
 from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"

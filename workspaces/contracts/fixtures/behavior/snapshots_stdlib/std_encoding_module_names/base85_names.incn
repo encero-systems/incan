@@ -1,0 +1,30 @@
+from std.encoding.base85 import BytesIO, EncodingError, Path, b85decode, encode_stream
+
+
+pub def refusal_line(text: str) -> str:
+    """Name the refusal `std.encoding.base85` gives malformed text, through the names it publishes."""
+    match b85decode(text):
+        Ok(_) => return "base85 accepted"
+        Err(error) => return describe(error)
+
+
+def describe(error: EncodingError) -> str:
+    """Report the refusal's encoding and whether it explains itself."""
+    return f"base85 {error.encoding} {len(error.detail) > 0}"
+
+
+pub def stream_line(data: bytes) -> str:
+    """Encode through the module's stream helper between two BytesIO buffers."""
+    source = BytesIO(data)
+    target = BytesIO(b"")
+    match encode_stream(source, target):
+        Ok(_) => return f"base85 stream {len(target.getvalue()) > 0}"
+        Err(error) => return describe(error)
+
+
+pub def no_path() -> bool:
+    """Hold the path type the module's path helpers take, empty."""
+    slot: Option[Path] = None
+    match slot:
+        Some(_) => return false
+        None => return true

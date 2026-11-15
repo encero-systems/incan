@@ -2,11 +2,14 @@
 
 from rust::std::fs import OpenOptions, metadata
 from std.fs import Path
+from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
+from dependency_plans import plan_add, plan_update
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
+from loaf_local_graph import LocalFacet
 from lock_format import (
     LockDependency,
     LockFeatures,
@@ -18,7 +21,10 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop
+from project_lock import ensure_project_lock, local_interop, selected_mode, untested_bounds
+from registry_units import RegistryUnit, RegistryUnits
+from rust_activation import DependencyDomain
+from rust_registry import resolve_registry
 from scratch import scratch_directory
 from trace_adapter import count_work, finish_counting
 
@@ -313,4 +319,228 @@ pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> R
     ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), false)?
     rewritten = finish_counting()
     assert rewritten.parses > 0, "a manifest rewritten to the same size and modification time was not resolved again"
+    return Ok(None)
+
+
+pub def test_a_loaf_name_with_a_capital_letter_is_refused_not_folded() -> Result[None, str]:
+    """
+    RFC 125: a Loaf name has no capital letter, and Oven refuses one rather than fold its case. A lock whose graph
+    identity matches its entries is still refused when an entry or an edge names a Loaf with a capital.
+    """
+    scratch = scratch_directory()?
+    path = scratch.path().joinpath("oven.lock")
+    mut lock = example_lock()?
+    lock.loaves[4].name = "acme/Published"
+    lock.loaves[0].dependencies[3].loaf = "acme/Published"
+    lock.graph = graph_identity(lock)?
+    write(path, lock_text(lock)?)?
+    match read_lock(path):
+        Ok(_) => return Err("a Loaf name with a capital letter was accepted")
+        Err(message) =>
+            assert "`acme/Published` has a capital letter" in message, message
+    return Ok(None)
+
+
+pub def test_a_recorded_version_mode_survives_a_toolchain_change() -> Result[None, str]:
+    """
+    RFC 125: a later `oven lock` without `--versions` keeps the mode the lock records, so another toolchain cannot
+    quietly switch it back to `lowest`.
+    """
+    mut lock = example_lock()?
+    lock.mode = "newest"
+    lock.graph = graph_identity(lock)?
+    assert selected_mode(Some(lock), "") == "newest"
+    assert selected_mode(Some(lock), "lowest-direct") == "lowest-direct"
+    assert selected_mode(None, "") == "lowest"
+    return Ok(None)
+
+
+def versioned_unit(name: str, version: str) -> RegistryUnit:
+    """A source-free compiled producer of one version of `crates-io/NAME`, with no dependencies."""
+    entry = f"{name}-{version}"
+    return RegistryUnit(
+        loaf=f"crates-io/{name}",
+        version=version,
+        domain="target",
+        directory=entry,
+        entry=entry,
+        profile="release",
+    )
+
+
+def requesting_facet(project: str, loaves: list[str], requirement: str = "1") -> LocalFacet:
+    """A local target facet that requests each of `loaves` at `requirement`."""
+    requests = [JsonValue.object(
+        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
+    ) for loaf in loaves]
+    return LocalFacet(
+        project=project,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=requests,
+        registry_aliases=[loaf.split("/")[-1] for loaf in loaves],
+    )
+
+
+def published_pairs() -> list[RegistryUnit]:
+    """1.0.0 and 1.1.0 of `crates-io/alpha` and of `crates-io/beta`."""
+    mut units: list[RegistryUnit] = []
+    for name in ["alpha", "beta"]:
+        for version in ["1.0.0", "1.1.0"]:
+            units.append(versioned_unit(name, version))
+    return units
+
+
+def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
+    """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
+    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
+    selected = resolve_registry(registry, facets, "release", "/app")?
+    return Ok(sorted([f"{unit.loaf}@{unit.version}" for unit in selected.units]))
+
+
+pub def test_lowest_direct_takes_the_lowest_version_for_the_project_s_own_dependencies_only() -> Result[None, str]:
+    """
+    RFC 125: `lowest-direct` selects the lowest satisfying version for the project's own dependencies and the highest
+    for everything else, while `lowest` and `newest` select one end everywhere.
+
+    1. The root `/app` asks for alpha and its path dependency for beta, each at `1`.
+    2. A requirement the root also declares is the project's own, whichever facet comes first.
+    """
+    app = requesting_facet("/app", ["crates-io/alpha"])
+    helper = requesting_facet("/app/deps/helper", ["crates-io/beta"])
+    # 1. Only the root's requirement takes the lowest version under `lowest-direct`.
+    split = selected_versions("lowest-direct", [app, helper])?
+    assert split == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"lowest-direct selected {split}"
+    lowest = selected_versions("lowest", [app, helper])?
+    assert lowest == ["crates-io/alpha@1.0.0", "crates-io/beta@1.0.0"], f"lowest selected {lowest}"
+    newest = selected_versions("newest", [app, helper])?
+    assert newest == ["crates-io/alpha@1.1.0", "crates-io/beta@1.1.0"], f"newest selected {newest}"
+    # 2. The root's own declaration keeps a shared requirement direct.
+    shared = requesting_facet("/app/deps/helper", ["crates-io/alpha", "crates-io/beta"])
+    first = selected_versions("lowest-direct", [app, shared])?
+    assert first == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root first selected {first}"
+    last = selected_versions("lowest-direct", [shared, app])?
+    assert last == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root last selected {last}"
+    return Ok(None)
+
+
+pub def test_oven_lock_reports_a_lower_bound_that_is_not_published() -> Result[None, str]:
+    """
+    RFC 125: when a lower bound names a version that is not published, the lowest published version that satisfies
+    the requirement is locked, and the report of `oven lock` shows that the bound itself was not tested.
+
+    1. `1.0.5` is not published, so 1.1.0 is locked and reported; `1`'s bound, 1.0.0, is published and tested.
+    2. A bound the registry publishes is not reported under any mode.
+    """
+    facets = [
+        requesting_facet("/app", ["crates-io/alpha"], "1.0.5"),
+        requesting_facet("/app/deps/helper", ["crates-io/beta"]),
+    ]
+    # 1. Only the unpublished bound is reported, with the version locked in its place.
+    for mode in ["lowest", "lowest-direct"]:
+        registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
+        selected = resolve_registry(registry, facets, "release", "/app")?
+        reported = untested_bounds(facets, registry.units, selected)?
+        expected = ["untested lower bound: crates-io/alpha 1.0.5 is not published; locked 1.1.0"]
+        assert reported == expected, f"{mode} reported {reported}"
+    # 2. A published bound is tested whenever `lowest` selects it.
+    exact = [requesting_facet("/app", ["crates-io/alpha", "crates-io/beta"], "1.1")]
+    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode="newest")
+    selected = resolve_registry(registry, exact, "release", "/app")?
+    assert untested_bounds(exact, registry.units, selected)? == []
+    return Ok(None)
+
+
+def published_units() -> list[RegistryUnit]:
+    """Published versions of four Loaves, two of them sharing the short name `getrandom`."""
+    mut units = [versioned_unit("getrandom", version) for version in ["0.2.3", "0.2.17", "0.3.4"]]
+    units = units + [versioned_unit("serde", version) for version in ["1.0.228", "1.0.230"]]
+    units = units + [versioned_unit("tilde", version) for version in ["1.0.0", "1.4.2"]]
+    units.append(RegistryUnit(loaf="acme/getrandom", version="1.0.0", domain="target", directory="acme", entry="acme"))
+    return units
+
+
+pub def test_oven_add_records_the_newest_published_version_and_never_guesses_a_short_name() -> Result[None, str]:
+    """
+    RFC 125: `oven add` writes the newest published version as the requirement, unless one is named, under the last
+    part of the name as its key. It never guesses a full name from a short one, and refuses a capital.
+
+    1. A project without `[dependencies]` gains the table and one line.
+    2. A short name lists every published full name it ends; a capital is refused.
+    3. The line goes after the table's last entry; a taken key is refused, naming `oven update` or `--key`.
+    """
+    units = published_units()
+    project = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n"
+    # 1. The newest published version, spelled in full.
+    added = plan_add("crates-io/getrandom", "", "", project, "loaf.toml", units)?
+    line = "getrandom = { loaf = \"crates-io/getrandom\", version = \"0.3.4\" }"
+    assert added.text == project + "\n[dependencies]\n" + line + "\n", added.text
+    assert added.report == ["added crates-io/getrandom, version = \"0.3.4\""], f"{added.report}"
+    named = plan_add("crates-io/getrandom", "0.2", "", project, "loaf.toml", units)?
+    assert "version = \"0.2\" }" in named.text, named.text
+    # 2. Oven never guesses, and never folds a capital.
+    match plan_add("getrandom", "", "", project, "loaf.toml", units):
+        Ok(_) => return Err("a short name was resolved")
+        Err(reason) =>
+            assert "name one of: acme/getrandom, crates-io/getrandom" in reason, reason
+    match plan_add("crates-io/Getrandom", "", "", project, "loaf.toml", units):
+        Ok(_) => return Err("a name with a capital letter was accepted")
+        Err(reason) =>
+            assert "has a capital letter" in reason, reason
+    # 3. One more line in the existing table, before the next one.
+    existing = added.text + "\n[tool.other]\nkey = 1\n"
+    second = plan_add("crates-io/serde", "", "", existing, "loaf.toml", units)?
+    serde = "serde = { loaf = \"crates-io/serde\", version = \"1.0.230\" }"
+    assert second.text == existing.replace(line + "\n", line + "\n" + serde + "\n"), second.text
+    match plan_add("crates-io/getrandom", "", "", existing, "loaf.toml", units):
+        Ok(_) => return Err("a key naming the same Loaf was added twice")
+        Err(reason) =>
+            assert "raise it with `oven update crates-io/getrandom`" in reason, reason
+    match plan_add("acme/getrandom", "", "", existing, "loaf.toml", units):
+        Ok(_) => return Err("a taken key was replaced")
+        Err(reason) =>
+            assert "choose another with `--key KEY`" in reason, reason
+    keyed = plan_add("acme/getrandom", "", "acme_random", existing, "loaf.toml", units)?
+    assert "acme_random = { loaf = \"acme/getrandom\", version = \"1.0.0\" }" in keyed.text, keyed.text
+    return Ok(None)
+
+
+pub def test_oven_update_raises_a_requirement_within_its_bounds_and_changes_nothing_else() -> Result[None, str]:
+    """
+    RFC 125: `oven update` raises a requirement on request to the newest published version it admits, keeping its
+    operator and upper bound, and changes only that requirement's quoted value.
+
+    1. A named Loaf's requirement alone is raised.
+    2. Without a name, every registry requirement is raised or reported as kept.
+    3. A raised manifest has nothing more to raise; a short name lists the dependencies it ends.
+    """
+    units = published_units()
+    head = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
+    random = "getrandom = { loaf = \"crates-io/getrandom\", version = \"0.2\" }\n"
+    serde = "serde = { loaf = \"crates-io/serde\", version = \"1.0.228\", features = [\"derive\"] }\n"
+    pinned = "pinned = { loaf = \"crates-io/getrandom\", version = \"=0.2.3\" }\nhelper = { path = \"../helper\" }\n"
+    tilde = "\n[dependencies.tilde]\nloaf = \"crates-io/tilde\"\nversion = \"~1\"\n"
+    manifest = head + random + serde + pinned + tilde
+    # 1. Only the named requirement's value changes.
+    named = plan_update("crates-io/serde", manifest, "loaf.toml", units)?
+    assert named.text == manifest.replace("\"1.0.228\"", "\"1.0.230\""), named.text
+    assert named.report == ["crates-io/serde 1.0.228 → 1.0.230"], f"{named.report}"
+    # 2. `0.2` stays below 0.3; a pin and a narrowing raise are kept.
+    every = plan_update("", manifest, "loaf.toml", units)?
+    expected = manifest.replace("\"0.2\"", "\"0.2.17\"").replace("\"1.0.228\"", "\"1.0.230\"")
+    assert every.text == expected, every.text
+    assert every.report == [
+        "crates-io/getrandom 0.2 → 0.2.17",
+        "crates-io/getrandom =0.2.3: kept, it has no `^`, `~` or `>=` bound to raise",
+        "crates-io/serde 1.0.228 → 1.0.230",
+        "crates-io/tilde ~1: kept, raising it to 1.4.2 would lower its upper bound",
+    ], f"{every.report}"
+    # 3. Nothing more to raise, and no guessing.
+    again = plan_update("crates-io/serde", every.text, "loaf.toml", units)?
+    assert again.text == every.text and again.report == ["nothing to raise"], f"{again.report}"
+    match plan_update("serde", manifest, "loaf.toml", units):
+        Ok(_) => return Err("a short name was resolved")
+        Err(reason) =>
+            assert "name one of: crates-io/serde" in reason, reason
     return Ok(None)

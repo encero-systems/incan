@@ -286,6 +286,6 @@ def observe(
         publish_unchecked(path, unit_name, "contributing no facts", "Rust analysis failed\n" + "\n".join(failure))?
         return Ok(None)
     # 3. A completed analysis publishes its whole graph, and only a complete one is ever visible at the final name.
-    publish_binary(path, output.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
+    publish_binary(path, output.read_bytes().map_err((error) => f"cannot {error.message()}")?)?
     remove(output)?
     return Ok(None)

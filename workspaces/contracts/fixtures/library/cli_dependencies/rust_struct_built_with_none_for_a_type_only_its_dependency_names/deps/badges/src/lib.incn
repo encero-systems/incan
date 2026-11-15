@@ -1,0 +1,15 @@
+"""Describe badges; this library names their scope type."""
+
+from rust::scopes import Badge, Scope
+
+
+pub def scope_depth(scope: Option[Scope]) -> int:
+    """The scope's depth, or -1 without one."""
+    match scope:
+        Some(found) => return found.depth
+        None => return -1
+
+
+pub def described(badge: Badge) -> str:
+    """The badge's number and scope depth."""
+    return f"badge {badge.id} depth {scope_depth(badge.scope)}"

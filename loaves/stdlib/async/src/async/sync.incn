@@ -1,5 +1,6 @@
 """Compatibility exports for foundational async synchronization primitives."""
 
+pub from std.traits.error import Error
 pub from std.primitives.async.sync import (
     Barrier,
     Mutex,

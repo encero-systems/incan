@@ -29,7 +29,8 @@ from rust_registry import read_registry_units
 from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
-from project_lock import ensure_project_lock, lock_project, parse_lock_command
+from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
+from dependency_commands import DependencyVerb, dependency_command, parse_dependency_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import (
@@ -78,6 +79,22 @@ from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace, notice_former_compiler_variables
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+
+# The commands that begin an installation command record before they read the installation.
+const INSTALLATION_COMMANDS: FrozenList[str] = [
+    "run",
+    "check",
+    "lint",
+    "test",
+    "build",
+    "describe-unit",
+    "fmt",
+    "inspect",
+    "lock",
+    "add",
+    "update",
+    "trust",
+]
 
 
 def main() -> None:
@@ -165,7 +182,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(version_text(invoked()))
         return
-    if command in ["run", "check", "lint", "test", "build", "describe-unit", "fmt", "inspect", "lock", "trust"]:
+    if command in INSTALLATION_COMMANDS:
         begin_installation_command()
     # A build binds the home's own view of its bakery the first time the home builds (BE-01).
     if command in ["run", "test", "build", "lint"]:
@@ -224,8 +241,8 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "explain":
         explain(rest)
         return
-    if command == "lock":
-        lock(rest)
+    if command in ["lock", "add", "update"]:
+        lock(command, rest)
         return
     if command == "run":
         own, _passed = program_arguments(rest)
@@ -422,14 +439,35 @@ def workspace_command(arguments: list[str]) -> None:
         Ok(text) => println(text)
 
 
-def lock(arguments: list[str]) -> None:
-    """Resolve and report the root project's generated lock."""
-    match parse_lock_command(arguments):
-        Err(reason) => syntax_error("lock", reason)
-        Ok(command) =>
-            match lock_project(command):
-                Err(reason) => fail(f"oven lock: {reason}", 1)
-                Ok(result) => println(f"locked {result.name} {result.version} ({result.mode})")
+def lock(command: str, arguments: list[str]) -> None:
+    """
+    `oven lock`, or a dependency command that changes `loaf.toml` and then locks: print each report line, the lock's
+    lower bounds it could not test among them. A dependency command first meets the project's `requires-incan`
+    (RFC 073), naming the project its `--project` option selects.
+    """
+    mut outcome: Result[list[str], str] = Err("")
+    if command == "lock":
+        match parse_lock_command(arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match lock_project(request):
+                    Err(reason) => outcome = Err(reason)
+                    Ok(result) => outcome = Ok(locked_report(result))
+    else:
+        mut verb = DependencyVerb.Add
+        if command == "update":
+            verb = DependencyVerb.Update
+        match parse_dependency_command(verb, arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match command_admission(command, [request.project]):
+                    Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+                    Ok(_) => outcome = dependency_command(request)
+    match outcome:
+        Err(reason) => fail(f"oven {command}: {reason}", 1)
+        Ok(lines) =>
+            for line in lines:
+                println(line)
 
 
 def syntax_error(command: str, reason: str) -> None:
@@ -585,7 +623,7 @@ def located(command: str, options: Options) -> Options:
 
 def enclosing_loaf(directory: Path) -> Result[Path, str]:
     """The nearest directory at or above `directory` that holds a `loaf.toml`."""
-    mut current = directory.absolute().map_err((error) => f"cannot resolve {directory.0}: {error.message()}")?
+    mut current = directory.absolute().map_err((error) => f"cannot {error.message()}")?
     while true:
         if current.joinpath("loaf.toml").is_file():
             return Ok(current)
@@ -713,7 +751,7 @@ def test(arguments: list[str]) -> None:
                         # A directory's project is found from the directory itself, so it is named absolutely.
                         match Path(selected.path).absolute():
                             Ok(absolute) => selected.path = absolute.0
-                            Err(error) => fail(f"{invoked()} test: cannot resolve {error.message()}", 1)
+                            Err(error) => fail(f"{invoked()} test: cannot {error.message()}", 1)
                     prepared_lock("test", selected)
                     finish("test", tested(selected, runner))
 
@@ -1160,12 +1198,12 @@ def delivered(options: Options, code: i32, binary: Path) -> Result[i32, str]:
     if code != 0 or options.output == "":
         return Ok(code)
     directory = Path(options.output)
-    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     destination = directory.joinpath(binary.name())
     # A new file rather than one rewritten in place, so a program that ran from it is never replaced under itself.
     if destination.exists():
-        destination.unlink().map_err((error) => f"cannot replace {destination.0}: {error.message()}")?
-    _ = binary.copy(destination, true, true).map_err((error) => f"cannot copy {binary.0}: {error.message()}")?
+        destination.unlink().map_err((error) => f"cannot {error.message()}")?
+    _ = binary.copy(destination, true, true).map_err((error) => f"cannot {error.message()}")?
     return Ok(0)
 
 

@@ -35,7 +35,7 @@ pub def bind_home_view(home: Path, location: BakeryLocation) -> Result[Option[st
     """
     if location.source == BAKERY_OVERRIDE:
         return Ok(None)
-    store = location.path.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
+    store = location.path.absolute().map_err((error) => f"cannot {error.message()}")?
     root = store_path(store)
     mut identity = ""
     match read_store_identity(root):
@@ -75,7 +75,7 @@ def bound_view(descriptor: Path, store: Path, identity: str) -> Result[Option[st
     """
     if not descriptor.is_file():
         return Ok(None)
-    text = descriptor.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
+    text = descriptor.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
     document = JsonValue.parse(text).map_err((error) => f"{descriptor.0}: {error.message()}")?
     bound = StoreView(
         store_id=descriptor_field(document, "store_id"),

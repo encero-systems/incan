@@ -305,7 +305,7 @@ pub def prepare_inspection(selected: GraphOptions) -> Result[PreparedInspection,
     3. Otherwise prepare it, watching the inputs its answer will be paged with.
     """
     # 1. Path and installation failures are execution errors after syntax has been admitted.
-    path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
     toolchain = load_toolchain()?
     key = page_key(selected, path, toolchain)?
     # 2. A warm request reads its page and checks its inputs' metadata.
@@ -335,7 +335,7 @@ def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Resu
     """
     # 1. Path failures are execution errors after syntax has been admitted.
     started = Instant.now()
-    path = Path(selected.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    path = Path(selected.path).resolve().map_err((error) => f"cannot {error.message()}")?
     if key != "":
         watch_inputs()
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.

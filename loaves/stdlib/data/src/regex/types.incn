@@ -5,8 +5,8 @@ The regex engine yields borrowed match views. This module defines the owned publ
 Incan callers: matches, capture sets, and iterators over collected results.
 """
 
-from std.derives.collection import Iterator
-from std.derives.copying import Clone
+pub from std.derives.collection import Iterator
+pub from std.derives.copying import Clone
 from rust::incan_std_primitives::strings import str_slice_byte_range, str_slice_from_byte_offset
 
 

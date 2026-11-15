@@ -27,7 +27,15 @@ from observation import file_digest, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
 from retained_readings import recall, retain_content
 from rust_activation import DependencyDomain
-from semver_req import parse_requirement, parse_version, requirement_matches
+from semver_req import (
+    Version,
+    compare_versions,
+    lower_bound,
+    parse_requirement,
+    parse_version,
+    requirement_matches,
+    version_text,
+)
 from rust_registry import read_registry_units, registry_selection, resolve_registry
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
@@ -47,6 +55,13 @@ pub model LockResult:
     pub changed: bool
     # The C interop contracts the lock records; their declared files are identified by bytes, not by a manifest.
     pub interop: int = 0
+    # One line for each local requirement whose lower bound is not published, so that bound was not tested (RFC 125).
+    pub untested: list[str] = []
+
+
+pub def locked_report(result: LockResult) -> list[str]:
+    """What `oven lock` prints: `locked NAME VERSION (MODE)`, then each untested lower bound."""
+    return [f"locked {result.name} {result.version} ({result.mode})"] + result.untested
 
 
 pub model LockCommand:
@@ -199,13 +214,13 @@ def remember_settled(root: Path, question: str, reader: ManifestReader, lock: st
     retain_content(path, question, lock, value)
 
 
-def root_project(path: Path) -> Result[Option[Path], str]:
+pub def root_project(path: Path) -> Result[Option[Path], str]:
     """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
     if path.is_dir() and path.joinpath("loaf.toml").is_file():
-        return Ok(Some(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
+        return Ok(Some(path.resolve().map_err((error) => f"cannot {error.message()}")?))
     match discovered_project(path)?:
         None => return Ok(None)
-        Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
+        Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot {error.message()}")?))
 
 
 def reconcile(
@@ -222,7 +237,7 @@ def reconcile(
     Resolve today's local and shipped-unit graph, retain valid pins, then compare or publish the generated lock.
 
     1. Read and authenticate an existing lock before it can constrain selection.
-    2. Choose the explicit, sticky or default mode, resetting to the default after a toolchain change.
+    2. Choose the explicit mode, else the one the existing lock records under any toolchain, else the default.
     3. Resolve with valid existing producer pins and construct the complete format-1 graph.
     4. Refuse a locked change, or publish a changed lock without changing command output.
     """
@@ -240,7 +255,7 @@ def reconcile(
                 return Err(
                     f"{path.0} records toolchain {known.toolchain.version} ({known.toolchain.identity}), not {TOOLCHAIN} ({identity}); run `oven lock`",
                 )
-    mode = selected_mode(existing, requested_mode, identity)
+    mode = selected_mode(existing, requested_mode)
     rustc = rust_compiler(toolchain)
     configuration = target_configuration(rustc)?
     demand = LocalDemand(
@@ -256,7 +271,7 @@ def reconcile(
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
-    selected = resolve_registry(registry, facets, profile)?
+    selected = resolve_registry(registry, facets, profile, root.0)?
     mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
     projects = [("", root.0)] + [(facet_package(facet), facet.project) for facet in facets]
     generated.interop = local_interop(root.0, projects, reader)?
@@ -275,8 +290,42 @@ def reconcile(
             mode=mode,
             changed=changed,
             interop=len(generated.interop),
+            untested=untested_bounds(facets, registry.units, selected)?,
         ),
     )
+
+
+pub def untested_bounds(
+    facets: list[LocalFacet],
+    published: list[RegistryUnit],
+    selected: RegistryUnits,
+) -> Result[list[str], str]:
+    """
+    RFC 125: each local requirement whose lower bound names a version that is not published, with the version locked
+    in its place, so the report shows that the bound itself was not tested.
+    """
+    mut lines: list[str] = []
+    for facet in facets:
+        for record in facet.registry:
+            selection = registry_selection(record)?
+            match lower_bound(parse_requirement(selection.requirement)?):
+                None => pass
+                Some(bound) =>
+                    demand = RegistryDemand(selection=selection, domain=facet.domain.value())
+                    if not published_version(published, selection.loaf, bound)? and demand.key() in selected.bindings:
+                        unit = unit_for(selected.bindings[demand.key()], selected.units)?
+                        line = f"untested lower bound: {selection.loaf} {version_text(bound)} is not published; locked {unit.version}"
+                        if line not in lines:
+                            lines.append(line)
+    return Ok(lines)
+
+
+def published_version(units: list[RegistryUnit], loaf: str, version: Version) -> Result[bool, str]:
+    """Whether the registry publishes exactly `version` of `loaf`."""
+    for unit in units:
+        if unit.loaf == loaf and unit.refusal == "" and compare_versions(parse_version(unit.version)?, version) == 0:
+            return Ok(true)
+    return Ok(false)
 
 
 pub def local_interop(
@@ -315,13 +364,15 @@ def project_interop(root: Path, reader: ManifestReader) -> Result[list[LockInter
     return locked_interop(root.0, targets)
 
 
-def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
-    """Use an explicit mode, otherwise keep a same-toolchain lock's mode or take the default."""
+pub def selected_mode(existing: Option[OvenLock], requested: str) -> str:
+    """
+    Use an explicit mode, otherwise keep the mode an existing lock records, under any toolchain, so nothing switches
+    it back quietly (RFC 125); a project without a lock takes the default.
+    """
     if requested != "":
         return requested
     if let Some(known) = existing:
-        if known.toolchain.version == TOOLCHAIN and known.toolchain.identity == identity:
-            return known.mode
+        return known.mode
     return DEFAULT_MODE
 
 

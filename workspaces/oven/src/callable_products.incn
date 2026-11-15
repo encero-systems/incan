@@ -305,6 +305,6 @@ def native_artifact(path: str) -> bool:
 def physical_path(path: Path) -> Result[Path, str]:
     """Resolve one path to its physical spelling, traced as one resolution of that path."""
     clock = begin()
-    resolved = path.resolve().map_err((error) => f"cannot resolve {error.message()}")
+    resolved = path.resolve().map_err((error) => f"cannot {error.message()}")
     record(Operation.PathResolve, path.0, clock)
     return resolved

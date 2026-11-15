@@ -29,6 +29,12 @@ Oven prepares the active path libraries before the consumer. Their artifacts liv
 
 ## Add a Rust requirement
 
+```bash
+oven add crates-io/regex
+```
+
+`oven add` writes the dependency line with the newest version the installed registry publishes, then locks the project. Name the Loaf in full. `oven add regex` doesn't pick one: it lists every published Loaf named `regex` for you to choose from. You can also write the line yourself:
+
 ```toml
 [dependencies]
 regex = { loaf = "crates-io/regex", version = "1" }
@@ -63,6 +69,16 @@ oven build --locked .
 ```
 
 A missing or stale lock is refused and names `oven lock`. Ordinary run, build and test commands create or refresh the root lock silently.
+
+## Raise a requirement
+
+A newly published version never reaches your project on its own. Raise a requirement when you want it:
+
+```bash
+oven update crates-io/regex
+```
+
+`oven update` moves the requirement to the newest published version it already admits, so a requirement of `1` can rise to a later `1.x.y` but never to `2`. Then it locks the project again. Every other dependency keeps its locked version. Without a name, `oven update` raises every registry requirement.
 
 ## Inspect the selection
 
