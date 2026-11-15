@@ -199,6 +199,7 @@ def receiver_layout(
             source.local += offset
             match place_type(locals, source):
                 PlanType.Enum(index, _name) => return Ok(index)
+                PlanType.EnumRef(index, _name) => return Ok(index)
                 _ => pass
         _ => pass
     return Ok(-1)

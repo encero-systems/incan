@@ -7,6 +7,7 @@ from pub::incan_mir_plan import (
     Operand,
     Place,
     PlanType,
+    Projection,
     RvalueKind,
     SourceSpan,
     TerminatorKind,
@@ -55,9 +56,21 @@ def value_enum_receiver_place(
     argument: RustArgumentElement,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Keep the checked receiver's dereference and field projections before reading its native enum discriminant."""
+    """
+    Keep the checked receiver's dereference and field projections before reading its native enum discriminant. A
+    receiver held as a loan, an indexed element's field, is read through that loan (#2995).
+    """
     match argument.as_one():
-        Some(RustOperand.Place(read)) => return scalar_place(builder, read.place, span)
+        Some(RustOperand.Place(read)) =>
+            source = scalar_place(builder, read.place, span)?
+            match place_type(builder.locals, source):
+                PlanType.EnumRef(index, name) =>
+                    if source.projection != Projection.Whole:
+                        return Err("unsupported Body IR projected borrowed value enum receiver")
+                    return Ok(
+                        Place(local=source.local, projection=Projection.Deref(PlanType.Enum(index, name)), span=span),
+                    )
+                _ => return Ok(source)
         _ => return Err("unsupported Body IR nonplace value enum receiver")
 
 
