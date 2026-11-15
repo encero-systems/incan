@@ -23,6 +23,7 @@ from native_build import (
     build_source_interfaces,
     build_standard_packages,
     build_support_tool,
+    publish_support,
     readmit_build_home,
     require_unique_runtime_root,
     standard_profiles,
@@ -176,12 +177,43 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
 
 
 def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
-    """Readmit the relinked compiler, then rebuild the interfaces, runtime and standard Loaves through it, as a release."""
+    """
+    Withdraw the installed providers and readmit the relinked compiler, then build the support crates, interfaces,
+    runtime and standard Loaves through it, as a release builds them in a fresh candidate home.
+
+    The support crates are built again too: a standard Loaf's Rust facet whose source changed would otherwise be built
+    alone, while the installed crates that depend on it still name the installed one (E0460).
+    """
+    withdraw_installed_providers(context.home)?
     readmit_build_home(context, helper, "relink-driver-readmit")?
+    publish_support(context, helper)?
     interfaces = build_source_interfaces(context, helper, "relink-")?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     return build_standard_packages(context, helper, "relink-", standard_profiles(StandardGeneration.Candidate))
+
+
+pub def withdraw_installed_providers(home: Path) -> Result[None, str]:
+    """
+    Withdraw an installed home's support, runtime and standard providers, as a release's candidate home starts: the
+    manifest names no extern and no search directory, and the standard Loaves and any earlier support generation are
+    removed. Every other manifest field stays. The installed `native/` trees stay on disk, named by nothing the
+    relink builds, because the compiler home links them.
+    """
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    loaves = toolchain.joinpath("loaves")
+    if loaves.is_symlink():
+        loaves.unlink().map_err((error) => error.message())?
+    elif loaves.exists():
+        loaves.remove_tree().map_err((error) => error.message())?
+    support = home.joinpath("native-support")
+    if support.exists():
+        support.remove_tree().map_err((error) => error.message())?
+    mut fields = read_manifest(toolchain)?.expect_object().map_err((error) => error.message())?
+    fields["externs"] = JsonValue.array([])
+    fields["search"] = JsonValue.array([])
+    text = JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?
+    return replace_text(toolchain.joinpath("toolchain.json"), text)
 
 
 pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Result[bool, str]:
