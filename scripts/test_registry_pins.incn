@@ -1,0 +1,146 @@
+"""A release pins each registry Loaf version to its loaves.pub index line: its registry, revision and archive digest."""
+
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root
+from registry_pins import REGISTRY_PINS, is_sha256, pinned_closure, pins_from_index, write_pinned_registry
+
+# One fixture index line each: the archive digest `cksum` and the upstream crate digest `adopted.checksum` differ.
+const HEX_ARCHIVE: str = "sha256:8aaf6eed3d6cbe70c2c20d5b5b7ae889dedcd02ae07b00de2bb3e1d988af4181"
+const HEX_UPSTREAM: str = "sha256:7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+const LIBC_ARCHIVE: str = "sha256:3fec3f472ffb15d260e8fc2fe33ed7601db935fcfc7cf5a9b277af6967cc3e71"
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create one fixture file and its directory."""
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def index_line(name: str, version: str, revision: int, archive: str, upstream: str) -> str:
+    """One sparse-index line as the loaves.pub index projects it, reduced to the fields a pin reads."""
+    adopted = (
+        "{\"checksum\": \""
+        + upstream
+        + "\", \"package\": \""
+        + name
+        + "\", \"registry\": \"crates-io\", \"revision\": "
+        + str(revision)
+        + ", \"version\": \""
+        + version
+        + "\"}"
+    )
+    named = "\"name\": \"crates-io/" + name + "\", \"vers\": \"" + version + "\""
+    return "{\"adopted\": " + adopted + ", \"cksum\": \"" + archive + "\", " + named + "}\n"
+
+
+def text_field(value: JsonValue, key: str) -> Result[str, str]:
+    """One required string field of a JSON object."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+def int_field(value: JsonValue, key: str) -> Result[int, str]:
+    """One required integer field of a JSON object."""
+    return value.require(key).and_then((field) => field.expect_int()).map_err((error) => f"{key}: {error.message()}")
+
+
+def fixture_index(root: Path) -> Result[Path, str]:
+    """An index checkout with hex at two versions and libc at one."""
+    index = root.joinpath("index")
+    other = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    hex_lines = index_line("hex", "0.4.2", 1, other, other) + index_line("hex", "0.4.3", 2, HEX_ARCHIVE, HEX_UPSTREAM)
+    write(index.joinpath("index/crates-io/hex"), hex_lines)?
+    write(index.joinpath("index/crates-io/libc"), index_line("libc", "0.2.190", 1, LIBC_ARCHIVE, other))?
+    return Ok(index)
+
+
+pub def test_a_release_closure_takes_registry_revision_and_archive_digest_from_the_index() -> Result[None, str]:
+    """
+    RFC 125: the release pins each Loaf version of its closure to the one loaves.pub index line of that version.
+
+    1. The pins generated from an index checkout name the registry, the line's manifest revision and its archive
+       digest (`cksum`), never the upstream crate digest, at the named index commit; a Loaf version the index has no
+       line for is refused by name.
+    2. The candidate home's closure carries each unit's pin, and the seed's closure stays as it was.
+    3. An unpinned Loaf version, and a recorded checksum that is not the pin, are refused.
+    4. The release's own pin file names an index commit and pins `sha256:` archive digests of loaves.pub.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    index = fixture_index(root)?
+    closure_text = """{"externs": {}, "schema": "incan.oven.closure/1", "units": [
+{"domain": "target", "entry": "sha256:aa", "loaf": "crates-io/hex", "version": "0.4.3"},
+{"domain": "host", "entry": "sha256:bb", "loaf": "crates-io/hex", "version": "0.4.3"},
+{"domain": "target", "entry": "sha256:cc", "loaf": "crates-io/libc", "version": "0.2.190"}]}
+"""
+    closure = JsonValue.parse(closure_text).map_err((error) => error.message())?
+    # 1. One line per Loaf version decides its pin.
+    pins = pins_from_index(index, closure, "185251e88")?
+    pins_text = pins.to_pretty_json().map_err((error) => error.message())?
+    assert "\"index\": \"185251e88\"" in pins_text, pins_text
+    assert HEX_ARCHIVE in pins_text and LIBC_ARCHIVE in pins_text, pins_text
+    assert HEX_UPSTREAM not in pins_text, pins_text
+    absent = JsonValue.parse("{\"units\": [{\"loaf\": \"crates-io/hex\", \"version\": \"9.9.9\"}]}").map_err(
+        (error) => error.message(),
+    )?
+    match pins_from_index(index, absent, "185251e88"):
+        Ok(_) => return Err("a Loaf version with no index line was pinned")
+        Err(reason) =>
+            assert "crates-io/hex 9.9.9" in reason, reason
+    # 2. The candidate's closure carries the pins; the seed's entries and selection are linked, its closure unchanged.
+    seed = root.joinpath("seed/registry")
+    seed.joinpath("entries/sha256-aa/artifacts").mkdir(true, true).map_err((error) => error.message())?
+    write(seed.joinpath("selected.json"), "{\"units\": []}\n")?
+    write(seed.joinpath("closure.json"), closure_text)?
+    pin_file = root.joinpath("registry-pins.json")
+    write(pin_file, pins_text)?
+    candidate = root.joinpath("candidate")
+    manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
+    write(candidate.joinpath("toolchain.json"), manifest)?
+    write_pinned_registry(candidate, pin_file)?
+    written = JsonValue.parse(
+        candidate.joinpath("registry/closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?,
+    ).map_err((error) => error.message())?
+    units = written.require("units").and_then((value) => value.expect_array()).map_err((error) => error.message())?
+    mut recorded: list[str] = []
+    for unit in units:
+        revision = int_field(unit, "revision")?
+        recorded.append(f"{text_field(unit, "registry")?} {revision} {text_field(unit, "checksum")?}")
+    expected = [f"loaves.pub 2 {HEX_ARCHIVE}", f"loaves.pub 2 {HEX_ARCHIVE}", f"loaves.pub 1 {LIBC_ARCHIVE}"]
+    assert recorded == expected, f"the candidate closure records {recorded}"
+    assert candidate.joinpath("registry/entries").is_symlink(), "the seed's entries were not linked"
+    kept = seed.joinpath("closure.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert kept == closure_text, "the seed's closure was written"
+    # 3. A closure the pins do not cover, or one that records another digest, is refused.
+    unpinned = JsonValue.parse("{\"units\": [{\"loaf\": \"crates-io/rand\", \"version\": \"0.9.2\"}]}").map_err(
+        (error) => error.message(),
+    )?
+    match pinned_closure(unpinned, pins):
+        Ok(_) => return Err("a closure with an unpinned Loaf version was accepted")
+        Err(reason) =>
+            assert "crates-io/rand 0.9.2" in reason and REGISTRY_PINS in reason, reason
+    disagreeing_text = "{\"units\": [{\"loaf\": \"crates-io/libc\", \"version\": \"0.2.190\", \"checksum\": \""
+    disagreeing = JsonValue.parse(disagreeing_text + HEX_UPSTREAM + "\"}]}").map_err((error) => error.message())?
+    match pinned_closure(disagreeing, pins):
+        Ok(_) => return Err("a recorded checksum that differs from its pin was accepted")
+        Err(reason) =>
+            assert HEX_UPSTREAM in reason and LIBC_ARCHIVE in reason, reason
+    # 4. The checked-in pins name their index commit and only loaves.pub archive digests.
+    released = JsonValue.parse(
+        repository_root()?.joinpath(REGISTRY_PINS).read_text("utf-8", "strict").map_err((error) => error.message())?,
+    ).map_err((error) => error.message())?
+    commit = text_field(released, "index")?
+    assert len(commit) >= 9, f"{REGISTRY_PINS} names index commit `{commit}`"
+    loaves = released.require("pins").map_err((error) => error.message())?
+    mut count = 0
+    for loaf in loaves.keys():
+        versions = loaves.require(loaf).map_err((error) => error.message())?
+        for version in versions.keys():
+            pin = versions.require(version).map_err((error) => error.message())?
+            digest = text_field(pin, "checksum")?
+            registry = text_field(pin, "registry")?
+            assert is_sha256(digest) and registry == "loaves.pub", f"{REGISTRY_PINS} pins {loaf} {version}: {digest}"
+            count += 1
+    assert count > 0, f"{REGISTRY_PINS} pins nothing"
+    return Ok(None)
