@@ -49,7 +49,7 @@ from checked_values import reference_value_read, scalar_operand, scalar_place
 from operators import operand_type
 from formatting import display_operand, display_plan_operand
 from static_storage import read_static
-from list_values import checked_list_argument, list_borrow, value_operand
+from list_values import checked_list_argument, has_slice_projection, list_borrow, value_operand
 
 
 pub def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
@@ -83,7 +83,9 @@ pub def borrow_slice_operand(
     """
     Lend exact vector storage through its native slice conversion.
 
-    Nested element layouts and checked exclusive-access authority remain unchanged.
+    Nested element layouts and checked exclusive-access authority remain unchanged. A sliced sequence, `raw[start:end]`,
+    is the fresh owner slicing makes, lent as that owner's slice; an exclusive loan of one is refused, since a change to
+    it could never reach the sliced sequence (#3036).
     """
     if len(elements) != 1:
         return Err("invalid Body IR native slice element arity")
@@ -92,6 +94,16 @@ pub def borrow_slice_operand(
         reference_type = PlanType.SliceMutRef(elements)
     match value:
         RustOperand.Place(read) =>
+            if has_slice_projection(read.place):
+                if mutable:
+                    return Err("unsupported Body IR mutable borrow through a list slice")
+                return list_slice_view(
+                    builder,
+                    checked_list_argument(builder, value, false, span)?,
+                    elements,
+                    false,
+                    span,
+                )
             place = scalar_place(builder, read.place, span)?
             actual = place_type(builder.locals, place)
             match borrow_array_slice(builder, place, elements, mutable, read.fact, span)?:
