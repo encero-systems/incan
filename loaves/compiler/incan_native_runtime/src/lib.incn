@@ -39,6 +39,7 @@ pub from frozen_collections import (
     frozen_dict_contains,
 )
 pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys
+pub from frozen_collections import frozen_list_contains_text, frozen_set_list
 pub from raises_assertions import assert_raises_deferred
 pub from rust::incan_std_primitives::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
 pub from newtype_constraints import validate_newtype_constraint

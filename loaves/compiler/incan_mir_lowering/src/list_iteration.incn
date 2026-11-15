@@ -69,7 +69,6 @@ from list_values import collection_read_storage, list_base_place, list_borrow, v
 from list_methods import argument_value, call_destination, materialized_receiver, shared_receiver_place
 from hashed_collections import iterable_call
 from sequence_builtins import argument_type
-from call_arguments import call_argument_operand
 
 
 pub def operand_list_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
@@ -733,7 +732,7 @@ pub def frozen_text_membership(
         frozen = read_place(listed, false, span)
     mut needle = literal(Constant.Unit, span)
     match arguments[1].as_one():
-        Some(value) => needle = call_argument_operand(builder, value, PlanType.StringRef, span, false)?
+        Some(value) => needle = borrow_text_operand(builder, value, span)?
         None => return Err("unsupported Body IR frozen membership needle spread")
     output = call_destination(builder, destination, PlanType.Bool, span)?
     instantiated_external_call(
