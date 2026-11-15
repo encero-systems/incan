@@ -55,6 +55,22 @@ def test_a_completed_plan_folds_carrier_positions_in_place() -> Result[None, str
     return Ok(None)
 
 
+def test_a_completed_plan_releases_retry_state_before_publication() -> Result[None, str]:
+    """A completed lowering attempt releases the retry-only snapshot before it assembles the published plan."""
+    source = repository_root()?.joinpath(
+        "loaves/compiler/incan_mir_lowering/src/lowering.incn",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    release = """RuntimeRetention.Complete =>
+            drop(retry_intrinsic_layouts)
+            drop(retry_functions)
+            drop(retry_externals)
+            drop(retry_instances)
+            drop(retry_emitted_frames)
+            drop(retry_statics)"""
+    assert release in source, "completed lowering retains the retry-only plan snapshot through publication"
+    return Ok(None)
+
+
 def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
     """The gate compares bytes while the human report alone renders MiB and whole seconds."""
     under = measured("oven", 1, 2048 * MIB, 90_000)
