@@ -390,8 +390,8 @@ fn decoded_owner(checker: &TypeChecker, program: &Program, fields: &Fields) -> R
     Err(NodeBindingError::MissingOwner)
 }
 
-/// The local profile proves every unsupported semantic collection empty. Traversal offsets are invocation bindings
-/// that settlement reconstructs from owner-relative events, so they never enter a reusable value.
+/// The local profile proves every unsupported semantic collection empty. Diagnostic slots are invocation-local writer
+/// offsets, not semantic facts; settlement stores their anchored values in the paired final record.
 pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> {
     let BodyLocal {
         owner: _,
@@ -418,14 +418,23 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
     unsupported::rust_interop_artifacts(&local.rust)?;
     unsupported::trait_artifacts(&local.traits)?;
     unsupported::cabi_interop_artifacts(&local.c_abi)?;
-    if !local.iterator_sum_items.is_empty()
-        || !local.dictionary.is_empty()
-        || !local.diagnostic_slots.is_empty()
-        || !local.warning_slots.is_empty()
-    {
+    if !local.iterator_sum_items.is_empty() || !local.dictionary.is_empty() {
         return Err(NodeBindingError::Unsupported("pending local decisions"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invocation_local_diagnostic_slots_do_not_refuse_a_local_record() {
+        let mut local = BodyLocal::default();
+        local.diagnostic_slots.push(0);
+        local.warning_slots.push(1);
+        assert_eq!(validate_local(&local), Ok(()));
+    }
 }
 
 /// One conversion path owns all local field primitives, independently of whether settlement has completed.
