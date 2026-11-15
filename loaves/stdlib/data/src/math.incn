@@ -61,10 +61,7 @@ Geometry:
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
-from rust::incan_std_primitives::num import (
-    gcd_i64 as rust_gcd,
-    lcm_i64 as rust_lcm,
-)
+from rust::incan_std_primitives::num import lcm_i64 as rust_lcm
 from rust::libm import (
     sqrt as rust_sqrt,
     fabs as rust_abs,
@@ -88,6 +85,8 @@ from rust::libm import (
     tanh as rust_tanh,
     hypot as rust_hypot,
 )
+# `gcd` is the Rust helper itself, so a caller reaches it without a wrapper call in between.
+pub from rust::incan_std_primitives::num import gcd_i64 as gcd
 
 pub const PI: float = RUST_PI
 pub const E: float = RUST_E
@@ -99,10 +98,6 @@ pub const NAN: float = RUST_NAN
 # ============================================================================
 # Integer functions
 # ============================================================================
-pub def gcd(a: int, b: int) -> int:
-    return rust_gcd(a, b)
-
-
 pub def lcm(a: int, b: int) -> int:
     return rust_lcm(a, b)
 
