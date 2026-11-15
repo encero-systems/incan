@@ -82,7 +82,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Copy the accepting checker's physical field path, including native extractor forwarding.
     /// Ordinary fields retain their existing checked projection; no wrapper is recognized from its name or shape.
-    fn lower_checked_field_projections(
+    pub(super) fn lower_checked_field_projections(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
