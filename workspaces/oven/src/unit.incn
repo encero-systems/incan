@@ -93,7 +93,8 @@ pub model UnitDescription:
     # The key a test unit binds its project's shared library under (see `project_library`); the compiler then reads
     # a project-local import of any library module as an import of that library.
     pub project_library: Option[str] = None
-    # The test modules a project's shared library leaves out, and which a test unit linking it compiles as its own.
+    # The modules a project's shared library leaves out: its test modules, which a test unit linking it compiles as its
+    # own, and the modules of a project nested in its source root.
     pub excluded_sources: list[str] = []
     # Whether a library is checked as its project's program is: a shared library publishes no API.
     pub program_checks: bool = false

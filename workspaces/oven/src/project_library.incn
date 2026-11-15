@@ -1,7 +1,8 @@
 """
-A project's shared library unit: every module of its source root but its test modules and root entry files, compiled
-once per project and profile. Each test unit of the project links it, and the compiler reads the test's project-local
-imports of those modules as imports of the library, so the test unit compiles only its own modules.
+A project's shared library unit: every module of its source root but its test modules, its root entry files and the
+modules of a project nested in it, compiled once per project and profile. Each test unit of the project links it, and
+the compiler reads the test's project-local imports of those modules as imports of the library, so the test unit
+compiles only its own modules.
 """
 
 from std.fs import Path
@@ -34,12 +35,12 @@ pub def with_project_library(unit: UnitDescription) -> Result[UnitDescription, s
     for package in standard_packages(unit.manifests)?:
         if package.name == unit.package:
             return Ok(unit)
-    tests, provided = source_modules(Path(unit.source_root))?
+    excluded, provided = source_modules(Path(unit.source_root))?
     if len(provided) == 0:
         return Ok(unit)
     mut linked = unit
     linked.project_library = Some(library_key(unit.package))
-    linked.excluded_sources = tests
+    linked.excluded_sources = excluded
     return Ok(linked)
 
 
@@ -94,18 +95,22 @@ pub def is_test_module(name: str) -> bool:
 
 pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]], str]:
     """
-    The test modules under a source root and the modules its shared library provides, each in byte order. Root
-    `main.incn` and `lib.incn` are entry files of neither; the walk skips what the compiler's collection skips.
+    The modules under a source root that its shared library leaves out and the modules it provides, each in byte
+    order. It leaves out the test modules and every module of a project nested in the source root: a directory with
+    its own `loaf.toml` declares its own dependencies, which this project's library cannot use. Root `main.incn` and
+    `lib.incn` are entry files of neither; the walk skips what the compiler's collection skips.
     """
-    mut tests: list[str] = []
+    mut excluded: list[str] = []
     mut provided: list[str] = []
     if not source_root.is_dir():
-        return Ok((tests, provided))
+        return Ok((excluded, provided))
     mut pending = [source_root]
+    mut nested: list[bool] = [false]
     mut index = 0
     while index < len(pending):
         directory = pending[index]
         at_root = index == 0
+        other_project = nested[index]
         index += 1
         for entry in directory.iterdir().map_err((error) => f"cannot list {directory.0}: {error.message()}")?:
             name = entry.name()
@@ -114,8 +119,11 @@ pub def source_modules(source_root: Path) -> Result[tuple[list[str], list[str]],
             if entry.is_dir():
                 if name not in UNCOLLECTED:
                     pending.append(entry)
-            elif is_test_module(name):
-                tests.append(entry.0)
-            elif name.endswith(".incn") and not (at_root and name in ROOT_ENTRIES):
+                    nested.append(other_project or entry.joinpath("loaf.toml").is_file())
+            elif not name.endswith(".incn"):
+                continue
+            elif other_project or is_test_module(name):
+                excluded.append(entry.0)
+            elif not (at_root and name in ROOT_ENTRIES):
                 provided.append(entry.0)
-    return Ok((sorted(tests), sorted(provided)))
+    return Ok((sorted(excluded), sorted(provided)))
