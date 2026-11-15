@@ -612,10 +612,48 @@ enum PipeFailure {
     Malformed(String),
 }
 
+/// The program that starts a process under a Seatbelt profile on macOS.
+const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+
+/// The Seatbelt profile of a compile-time worker's empty grant (RFC 160): no network, no local IPC beyond its pipes
+/// to the compiler, no writes, and reads limited to the worker itself, the system's libraries and two devices.
+fn seatbelt_profile(worker: &Path) -> Result<String, String> {
+    let name = worker.to_str().unwrap_or("");
+    if !name.starts_with('/') || name.contains('"') || name.contains('\\') {
+        return Err(format!(
+            "cannot contain native worker {}: its path cannot be named in a containment profile",
+            worker.display()
+        ));
+    }
+    Ok(format!(
+        "(version 1)(deny default)(allow process-exec (literal \"{name}\"))(allow file-read* (literal \"{name}\") \
+         (literal \"/\") (subpath \"/System\") (subpath \"/usr/lib\") (subpath \"/private/var/db/dyld\") \
+         (literal \"/dev/null\") (literal \"/dev/urandom\"))(allow file-read-metadata)(allow sysctl-read)"
+    ))
+}
+
+/// The command that starts a worker under its empty grant: on macOS under the grant's Seatbelt profile, which is in
+/// force before the worker's first instruction; a macOS host that cannot start it so refuses the worker.
+fn contained(worker: &Path) -> Result<Command, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(Command::new(worker));
+    }
+    if !Path::new(SANDBOX_EXEC).is_file() {
+        return Err(format!(
+            "cannot contain native worker {}: {SANDBOX_EXEC} is missing",
+            worker.display()
+        ));
+    }
+    let mut command = Command::new(SANDBOX_EXEC);
+    command.arg("-p").arg(seatbelt_profile(worker)?).arg(worker);
+    Ok(command)
+}
+
 impl Worker {
-    /// Start a host-native worker with no inherited environment, stdin protocol and drained private stderr.
+    /// Start a host-native worker under its empty grant, with no inherited environment, stdin protocol and drained
+    /// private stderr.
     fn start(path: &Path) -> Result<Self, String> {
-        let mut child = Command::new(path)
+        let mut child = contained(path)?
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
