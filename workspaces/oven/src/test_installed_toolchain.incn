@@ -5,7 +5,6 @@ standard Loaf is incomplete is refused at admission, and a zstd archive needs no
 
 from rust::std::process import Command
 from std.fs import Path
-from std.testing import xfail
 from archive_decompression import plain_archive
 from files import make_directory, write as write_file
 from freshness_fixtures import make_executable, write
@@ -70,41 +69,6 @@ pub def test_a_zstd_toolchain_archive_is_read_without_a_zstd_program() -> Result
     assert "./toolchain.json" in decoded(listed.stdout), decoded(listed.stdout)
     # 3. An uncompressed archive is its own readable form.
     assert plain_archive(readable, scratch.path().joinpath("again.tar"))?.0 == readable.0
-    return Ok(None)
-
-
-@xfail("its rule was reverted in 036c2e7c6; the admission lane lands the rule and this test again together")
-pub def test_an_installation_with_an_incomplete_standard_loaf_is_refused_at_admission() -> Result[None, str]:
-    """
-    A standard Loaf is admitted whole or not at all: its native library, interface, bodies and native description,
-    each with its producer record. A native library alone never stands for the Loaf.
-
-    1. The complete Loaf is admitted, every member under its producer record.
-    2. A member without its producer record refuses the installation, and names the member.
-    3. A missing semantic member refuses it even though the native library and its record are present.
-    """
-    scratch = scratch_directory()?
-    # 1. Four members, four admitted payloads.
-    complete = staged_installation(scratch.path().joinpath("complete"))?
-    _, admission = prepare_installation(complete)?
-    assert len(admission.payloads) == len(executable_set()), f"{len(admission.payloads)} payloads were admitted"
-    # 2. The library is there, but nothing says who produced it.
-    unrecorded = staged_installation(scratch.path().joinpath("unrecorded"))?
-    library = unrecorded.joinpath(PROVIDER).joinpath("libfixture.rlib")
-    record_path(library).unlink().map_err((error) => error.message())?
-    match prepare_installation(unrecorded):
-        Ok(_) => return Err("an installation was admitted with a native library that has no producer record")
-        Err(reason) =>
-            assert "incomplete standard Loaf" in reason and library.0 in reason, reason
-    # 3. The bodies and their record are gone together, so no remaining record points at a missing file.
-    bodiless = staged_installation(scratch.path().joinpath("bodiless"))?
-    bodies = bodiless.joinpath(PROVIDER).joinpath("fixture.incnbody")
-    bodies.unlink().map_err((error) => error.message())?
-    record_path(bodies).unlink().map_err((error) => error.message())?
-    match prepare_installation(bodiless):
-        Ok(_) => return Err("an installation was admitted with a native library and no bodies")
-        Err(reason) =>
-            assert "incomplete standard Loaf" in reason and bodies.0 in reason, reason
     return Ok(None)
 
 
