@@ -535,6 +535,7 @@ pub def toolchain_entry(
             version=unit.version,
             origin="toolchain",
             registry=unit.registry,
+            revision=unit.revision,
             checksum=unit.source_digest,
             entry=unit.entry,
             dependencies=dependencies,
