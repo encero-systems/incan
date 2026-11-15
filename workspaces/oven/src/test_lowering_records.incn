@@ -134,6 +134,13 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     return verify_rust_source_edit_rebuild(binary, scratch.path())
 
 
+pub def test_path_dependency_body_evaluations_are_reported() -> Result[None, str]:
+    """A body edit compiled in an Incan path dependency contributes to the build's body-evaluation total."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return verify_path_dependency_body_evaluations(binary, scratch.path())
+
+
 pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
     """
     Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
@@ -574,6 +581,35 @@ def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str
     assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
     assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
+    return stop_example_engine(binary, store)
+
+
+def verify_path_dependency_body_evaluations(binary: str, root: Path) -> Result[None, str]:
+    """Build a pure-Incan path dependency, edit its only body and require that dependency work in the root report."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(provider.joinpath("loaf.toml"), "[project]\nname = \"body_count_provider\"\nversion = \"0.1.0\"\n")?
+    library = provider.joinpath("src/lib.incn")
+    write(library, "pub def value() -> int:\n    return 42\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"body_count_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nbody_count_provider = { path = \"../provider\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::body_count_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
+    )?
+    store = root.joinpath("store")
+    _ = rust_source_probe_build(binary, app, store)?
+    executable = app.joinpath("target/incan/debug/bin/body_count_app")
+    require_probe_output(executable, "42")?
+    write(library, "pub def value() -> int:\n    return 43\n")?
+    edited = rust_source_probe_build(binary, app, store)?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    require_probe_output(executable, "43")?
+    assert proof_count(edited, "body_evaluations")? == 1, diagnostic
     return stop_example_engine(binary, store)
 
 
