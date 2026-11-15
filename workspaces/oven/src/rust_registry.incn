@@ -13,7 +13,7 @@ from observation import Observation, observe
 from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits
-from registry_metadata import COMPLETION, complete_legacy, completion_selection
+from registry_metadata import complete_legacy, completion_selection
 from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
 from registry_pages import current as catalog_current
 from toolchain import load_toolchain, located, rust_compiler
@@ -21,6 +21,7 @@ from unit_freshness import compiler_fingerprint
 from unit_freshness import record
 from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
+from frozen_inputs import REGISTRY_COMPLETION
 
 # The schema of the registry closure a toolchain ships.
 const CLOSURE_SCHEMA: str = "incan.oven.closure/1"
@@ -47,7 +48,7 @@ pub def read_registry_units(
     mut selection = ""
     if frozen:
         observed = Observation(stamp=toolchain.registry_units_identity, newest=0)
-        selection = f"{COMPLETION}:{rust_compiler(toolchain)}:{toolchain.rustc_observation}"
+        selection = f"{REGISTRY_COMPLETION}:{rust_compiler(toolchain)}:{toolchain.rustc_observation}"
     else:
         observed = observe(path)?
         selection = completion_selection(rust_compiler(toolchain))?

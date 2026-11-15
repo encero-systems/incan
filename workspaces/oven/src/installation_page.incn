@@ -148,6 +148,10 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
                 page.payloads,
                 page.paths,
                 page.stamps,
+                page.toolchain.registry_units,
+                page.toolchain.registry_units_identity,
+                Path(page.toolchain.sysroot).joinpath("bin/rustc").0,
+                page.toolchain.rustc_observation,
             )
             return Ok(Some(page))
 
@@ -274,6 +278,10 @@ def admit_generation(
         page.payloads,
         page.paths,
         page.stamps,
+        page.toolchain.registry_units,
+        page.toolchain.registry_units_identity,
+        Path(page.toolchain.sysroot).joinpath("bin/rustc").0,
+        page.toolchain.rustc_observation,
     )
     return Ok(page)
 
