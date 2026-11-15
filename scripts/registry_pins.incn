@@ -1,0 +1,222 @@
+"""
+Pin each registry Loaf version of a release's closure to its loaves.pub index line (RFC 125).
+
+The index is the one source of a Loaf version's registry, manifest revision and source archive digest (`cksum`).
+`scripts/registry-pins.json` records them, at a named index commit, for every Loaf version the release's closure holds;
+`pins_from_index` writes it from an index checkout. A release writes the candidate home's own closure with each unit
+carrying its pin, so a lock takes all three from the unit it selects. The upstream crate digest an index line also
+carries is provenance and is never pinned. The seed's compiled entries and producer selection stay shared.
+
+Run `incan run scripts/registry_pins.incn -- INDEX COMMIT CLOSURE` to rewrite the pin file from the index checkout at
+INDEX, at commit COMMIT, for the Loaf versions of the closure document CLOSURE.
+"""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.json import JsonValue
+from check_support import repository_root, write_stderr
+from release_support import write_json
+
+pub const REGISTRY_PINS: str = "scripts/registry-pins.json"
+const PINS_SCHEMA: str = "incan.release.registry-pins/1"
+# The registry an index checkout of loaves.pub publishes; pins name it rather than the upstream registry it adopted.
+const INDEX_REGISTRY: str = "loaves.pub"
+
+
+def main() -> None:
+    """Rewrite the release's pin file from an index checkout; exit 2 for refused arguments and 1 for a failure."""
+    operands = [str(argument) for argument in args()][1:]
+    if len(operands) != 3:
+        write_stderr("usage: incan run scripts/registry_pins.incn -- INDEX COMMIT CLOSURE\n")
+        exit(2)
+    match regenerate(Path(operands[0]), operands[1], Path(operands[2])):
+        Ok(path) => println(f"wrote {path.0}")
+        Err(message) =>
+            write_stderr(f"{message}\n")
+            exit(1)
+
+
+def regenerate(index: Path, commit: str, closure: Path) -> Result[Path, str]:
+    """Write the pins of every Loaf version of `closure` from the index checkout at `index`."""
+    path = repository_root()?.joinpath(REGISTRY_PINS)
+    write_json(path, pins_from_index(index, read_json(closure)?, commit)?)?
+    return Ok(path)
+
+
+pub def pins_from_index(index: Path, closure: JsonValue, commit: str) -> Result[JsonValue, str]:
+    """
+    The pin of every Loaf version a closure holds, each from the one index line of that version.
+
+    A Loaf version with no line, or with more than one, is refused; every such version is named at once.
+    """
+    mut pins: Dict[str, Dict[str, JsonValue]] = {}
+    mut missing: list[str] = []
+    for unit in items(closure, "units")?:
+        loaf = text(unit, "loaf")?
+        version = text(unit, "version")?
+        if loaf in pins and version in pins[loaf]:
+            continue
+        match index_line(index, loaf, version)?:
+            None =>
+                if f"{loaf} {version}" not in missing:
+                    missing.append(f"{loaf} {version}")
+            Some(line) =>
+                if loaf not in pins:
+                    pins[loaf] = {}
+                adopted = line.require("adopted").map_err((error) => f"{loaf} {version}: {error.message()}")?
+                pins[loaf][version] = pin(INDEX_REGISTRY, integer(adopted, "revision")?, text(line, "cksum")?)
+    if len(missing) > 0:
+        return Err(f"index {commit} has no line for: {", ".join(sorted(missing))}")
+    mut loaves: Dict[str, JsonValue] = {}
+    for loaf in sorted([name for name in pins.keys()]):
+        loaves[loaf] = JsonValue.object(pins[loaf])
+    mut document: Dict[str, JsonValue] = {"schema": JsonValue.string(PINS_SCHEMA), "index": JsonValue.string(commit)}
+    document["pins"] = JsonValue.object(loaves)
+    return Ok(JsonValue.object(document))
+
+
+def index_line(index: Path, loaf: str, version: str) -> Result[Option[JsonValue], str]:
+    """The one line of `loaf` at `version` in the index's sparse projection, or none when the index has no line."""
+    path = index.joinpath("index").joinpath(loaf)
+    if not path.is_file():
+        return Ok(None)
+    content = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    mut found: list[JsonValue] = []
+    for row in content.split("\n"):
+        if row.strip() == "":
+            continue
+        line = JsonValue.parse(row).map_err((error) => f"{path.0}: {error.message()}")?
+        if text(line, "vers")? == version:
+            found.append(line)
+    if len(found) > 1:
+        return Err(f"{path.0} has {len(found)} lines for {loaf} {version}; expected one")
+    if len(found) == 0:
+        return Ok(None)
+    return Ok(Some(found[0]))
+
+
+def pin(registry: str, revision: int, checksum: str) -> JsonValue:
+    """One Loaf version's pin."""
+    return JsonValue.object(
+        {
+            "registry": JsonValue.string(registry),
+            "revision": JsonValue.int(revision),
+            "checksum": JsonValue.string(checksum),
+        },
+    )
+
+
+pub def write_pinned_registry(toolchain: Path, pins: Path) -> Result[None, str]:
+    """
+    Write the candidate's registry closure with each unit's pin, and name it in the candidate's manifest.
+
+    1. The manifest names the seed's closure by absolute path; a manifest naming none leaves the candidate without a
+       registry.
+    2. Every other file beside the seed's closure, its compiled entries and producer selection among them, is linked.
+    3. The written closure is the seed's with each unit's `registry`, `revision` and `checksum` set from its pin, and
+       the manifest names it relative to the toolchain directory. The seed's own closure is never written.
+    """
+    manifest = toolchain.joinpath("toolchain.json")
+    seed_closure = optional_text(read_json(manifest)?, "registry_units")?
+    if seed_closure == "":
+        return Ok(None)
+    if not seed_closure.startswith("/"):
+        return Err(f"the candidate manifest names its seed registry closure by a relative path: {seed_closure}")
+    source = Path(seed_closure)
+    registry = toolchain.joinpath("registry")
+    registry.mkdir(true, true).map_err((error) => error.message())?
+    for child in source.parent().iterdir().map_err((error) => error.message())?:
+        if child.name() != source.name():
+            registry.joinpath(child.name()).symlink_to(child).map_err((error) => error.message())?
+    write_json(registry.joinpath("closure.json"), pinned_closure(read_json(source)?, read_json(pins)?)?)?
+    mut fields = read_json(manifest)?.expect_object().map_err((error) => error.message())?
+    fields["registry_units"] = JsonValue.string("registry/closure.json")
+    return write_json(manifest, JsonValue.object(fields))
+
+
+pub def pinned_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonValue, str]:
+    """
+    The closure with each unit's `registry`, `revision` and `checksum` set to the pin of its Loaf version.
+
+    Every unit needs a pin, and the refusal names every unpinned Loaf version at once. A unit that already records a
+    checksum keeps it only when it equals the pin's.
+    """
+    pinned = pins.require("pins").map_err((error) => f"{REGISTRY_PINS}: {error.message()}")?
+    mut units: list[JsonValue] = []
+    mut unpinned: list[str] = []
+    for item in items(closure, "units")?:
+        loaf = text(item, "loaf")?
+        version = text(item, "version")?
+        match version_pin(pinned, loaf, version)?:
+            None =>
+                if f"{loaf} {version}" not in unpinned:
+                    unpinned.append(f"{loaf} {version}")
+            Some(found) =>
+                checksum = text(found, "checksum")?
+                recorded = optional_text(item, "checksum")?
+                if recorded != "" and recorded != checksum:
+                    unit_name = f"the registry unit of {loaf} {version}"
+                    return Err(f"{unit_name} records {recorded}; {REGISTRY_PINS} pins {checksum}")
+                mut unit = item.expect_object().map_err((error) => error.message())?
+                unit["registry"] = JsonValue.string(text(found, "registry")?)
+                unit["revision"] = JsonValue.int(integer(found, "revision")?)
+                unit["checksum"] = JsonValue.string(checksum)
+                units.append(JsonValue.object(unit))
+    if len(unpinned) > 0:
+        return Err(f"{REGISTRY_PINS} pins no index line for: {", ".join(sorted(unpinned))}")
+    mut fields = closure.expect_object().map_err((error) => error.message())?
+    fields["units"] = JsonValue.array(units)
+    return Ok(JsonValue.object(fields))
+
+
+def version_pin(pinned: JsonValue, loaf: str, version: str) -> Result[Option[JsonValue], str]:
+    """The pin of one Loaf version, refusing one whose checksum is not a `sha256:` digest."""
+    match pinned.get(loaf):
+        None => return Ok(None)
+        Some(versions) =>
+            match versions.get(version):
+                None => return Ok(None)
+                Some(found) =>
+                    checksum = text(found, "checksum")?
+                    if not is_sha256(checksum):
+                        return Err(f"{REGISTRY_PINS} pins {loaf} {version} to `{checksum}`, not a `sha256:` digest")
+                    return Ok(Some(found))
+
+
+pub def is_sha256(value: str) -> bool:
+    """Whether `value` is `sha256:` followed by 64 lowercase hexadecimal digits."""
+    if not value.startswith("sha256:") or len(value) != 71:
+        return false
+    for character in value[7:]:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """One required JSON array."""
+    return value.require(key).and_then((field) => field.expect_array()).map_err((error) => f"{key}: {error.message()}")
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """One required JSON object string."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => f"{key}: {error.message()}")
+
+
+def integer(value: JsonValue, key: str) -> Result[int, str]:
+    """One required JSON object integer."""
+    return value.require(key).and_then((field) => field.expect_int()).map_err((error) => f"{key}: {error.message()}")
+
+
+def optional_text(value: JsonValue, key: str) -> Result[str, str]:
+    """One optional JSON object string, empty when absent."""
+    match value.get(key):
+        Some(entry) => return entry.expect_str().map_err((error) => f"{key}: {error.message()}")
+        None => return Ok("")
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one UTF-8 JSON document, naming its path on failure."""
+    content = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    return JsonValue.parse(content).map_err((error) => f"{path.0}: {error.message()}")
