@@ -240,6 +240,8 @@ fn candidate_parameters(
     rule: InputRule,
 ) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
+    let copy_nominals = copy_nominal_identities(modules);
+    let published_copy_nominals = HashSet::new();
     for (module_index, module) in modules.iter().enumerate() {
         let trait_implementations = module
             .trait_implementations
@@ -264,17 +266,54 @@ fn candidate_parameters(
                     !trait_implementations.contains(identity) && !method_partial_targets.contains(identity)
                 })
                 && !has_open_trait_receiver(body);
-            if !eligible || (rule == InputRule::NeverConsumed && published_body(modules, module_index, body_index)) {
+            let published = published_body(modules, module_index, body_index);
+            if !eligible || (rule == InputRule::NeverConsumed && published) {
                 continue;
             }
+            // A published signature keeps its established passing of a Copy nominal; every other callable copies one
+            // in, as it does a scalar, under either rule, so the base's hypothesis matches the final decision.
+            let copied = if published {
+                &published_copy_nominals
+            } else {
+                &copy_nominals
+            };
             for (parameter_index, parameter) in body.params.iter().enumerate() {
-                if parameter_is_candidate(body, parameter, rule) {
+                if parameter_is_candidate(body, parameter, rule, copied) {
                     candidates.insert((module_index, body_index, parameter_index));
                 }
             }
         }
     }
     candidates
+}
+
+/// The models, classes, newtypes and enums these modules declare whose checked derives include `Copy`.
+fn copy_nominal_identities(modules: &[bir::BodyIrModule]) -> HashSet<CanonicalSymbolId> {
+    modules
+        .iter()
+        .flat_map(|module| {
+            let nominals = module
+                .nominal_declarations
+                .iter()
+                .filter(|declaration| super::places_and_ownership::derives_copy(&declaration.derives))
+                .map(|declaration| declaration.canonical.clone());
+            let enums = module
+                .enum_declarations
+                .iter()
+                .filter(|declaration| super::places_and_ownership::derives_copy(&declaration.derives))
+                .map(|declaration| declaration.canonical.clone());
+            nominals.chain(enums)
+        })
+        .collect()
+}
+
+/// Whether `ty` names one of `copy_nominals` through the body's retained identity, never its spelling. Such a value is
+/// copied in as a scalar is, so lending it would only turn each owned use into a clone of the referent.
+fn is_copy_nominal(body: &bir::Body, ty: &IncanType, copy_nominals: &HashSet<CanonicalSymbolId>) -> bool {
+    matches!(ty, IncanType::Named(name) if body
+        .named_type_identities
+        .get(name)
+        .is_some_and(|identity| copy_nominals.contains(identity)))
 }
 
 /// Whether this is a trait-owned default body whose receiver is still the open `Self` contract. Abstract trait
@@ -309,14 +348,20 @@ pub(super) fn published_body(modules: &[bir::BodyIrModule], module_index: usize,
     })
 }
 
-/// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values on their established passing
-/// rules. Under the base rule every other type except an explicit reference carrier, callable storage and an open type
-/// parameter may borrow. Under the never-consumed rule only a checked type that lowering gives a shared executable
-/// form (`IncanType::has_shared_executable_form`) may, because lowering materializes its owned uses; every other type
-/// keeps its by-value input, including a generator the callee advances. Function-item adapters may borrow inside their
-/// forwarding body, but callable-valued parameters keep the by-value closure carrier that lowering supports. Defaults
-/// need a retained invocation owner before they can publish a borrowed parameter contract.
-fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam, rule: InputRule) -> bool {
+/// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values (scalars, and the nominals in
+/// `copy_nominals`) on their established passing rules. Under the base rule every other type except an explicit
+/// reference carrier, callable storage and an open type parameter may borrow. Under the never-consumed rule only a
+/// checked type that lowering gives a shared executable form (`IncanType::has_shared_executable_form`) may, because
+/// lowering materializes its owned uses; every other type keeps its by-value input, including a generator the callee
+/// advances. Function-item adapters may borrow inside their forwarding body, but callable-valued parameters keep the
+/// by-value closure carrier that lowering supports. Defaults need a retained invocation owner before they can publish a
+/// borrowed parameter contract.
+fn parameter_is_candidate(
+    body: &bir::Body,
+    parameter: &bir::CallableParam,
+    rule: InputRule,
+    copy_nominals: &HashSet<CanonicalSymbolId>,
+) -> bool {
     let shareable = match rule {
         InputRule::Base => !matches!(
             parameter.ty,
@@ -338,6 +383,7 @@ fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam, rule
         && !parameter.mutable
         && !parameter.native_owned
         && !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
+        && !is_copy_nominal(body, &parameter.ty, copy_nominals)
         && shareable
         && !body
             .locals
