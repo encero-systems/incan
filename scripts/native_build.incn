@@ -494,16 +494,28 @@ def unique_paths(externs: list[JsonValue]) -> Result[list[JsonValue], str]:
 
 
 pub def share_seed_generations(seed: Path, destination: Path, name: str) -> Result[None, str]:
-    """Link one immutable seed tree of generation directories into the candidate home when the seed publishes it."""
+    """
+    Link each generation directory of one immutable seed tree into a directory the candidate home owns, when the seed
+    publishes the tree. The candidate installs its own generations beside the seed's, and nothing it writes there
+    reaches the seed.
+    """
     source = seed.joinpath(name)
-    if source.exists():
-        destination.joinpath(name).symlink_to(source).map_err((error) => error.message())?
+    if not source.exists():
+        return Ok(None)
+    owned = destination.joinpath(name)
+    owned.mkdir(true, true).map_err((error) => error.message())?
+    for generation in source.iterdir().map_err((error) => error.message())?:
+        owned.joinpath(generation.name()).symlink_to(generation).map_err((error) => error.message())?
     return Ok(None)
 
 
 pub def runtime_root(toolchain: Path) -> Path:
-    """The directory of `toolchain` that holds one directory per installed runtime generation."""
-    return toolchain.joinpath("runtime")
+    """
+    The directory of `toolchain` that holds one directory per installed runtime generation: `native/`, where a packed
+    toolchain keeps its runtime. A unit compiled in the building home names the runtime from the toolchain directory,
+    and a home that installs the bundle and reuses that unit from the builder's bakery resolves the same reference.
+    """
+    return toolchain.joinpath("native")
 
 
 def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Path) -> Result[Path, str]:
