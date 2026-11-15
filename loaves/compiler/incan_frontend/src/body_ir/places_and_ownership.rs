@@ -167,27 +167,50 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Place construction does not read the base separately. Generated pattern/range projections instead use
     /// [`Self::ownership_fact_for_place`] directly: several generated reads may implement one source occurrence,
     /// so they must not consume the source countdown. Canonical local identity selects the owner, not field spelling.
-    /// A field read that is its owner's last read takes the field out of the owner
-    /// ([`Self::field_leaves_dead_owner`]).
+    /// A field that may leave its owner ([`Self::field_may_leave_owner`]) is recorded for the liveness pass when its
+    /// read copies an enum value: that pass alone decides whether the read is the owner's last and transfers the
+    /// field there. A model field's read borrows, and what its consumer builds from that depends on the transfer, so
+    /// it is still taken out here, at the owner's last textual read.
     pub(super) fn source_place_operand(&mut self, place: bir::Place, ty: &IncanType) -> bir::Operand {
         if !place.projection.is_empty() {
             let remaining = self.consume_place_read(&place);
-            if remaining == Some(0) && self.field_leaves_dead_owner(&place, ty) {
-                return bir::Operand::place(place, bir::OwnershipFact::Move, true);
+            if self.field_may_leave_owner(&place, ty) {
+                if self.is_checked_enum_value(ty) {
+                    self.record_field_transfer_candidate(&place);
+                } else if remaining == Some(0)
+                    && let Some(local) = place.local_id()
+                    && !self.pending_argument_reads.contains(&local)
+                    && !self.loop_reuses_local(local)
+                {
+                    return bir::Operand::place(place, bir::OwnershipFact::Move, true);
+                }
             }
         }
         let (fact, last_use) = self.ownership_fact_for_place(&place, ty);
         bir::Operand::place(place, fact, last_use)
     }
 
-    /// Whether the last read of an owner may take one field out of it instead of copying that field.
+    /// Record the owner and field of a copied read the liveness pass may turn into a transfer.
+    fn record_field_transfer_candidate(&mut self, place: &bir::Place) {
+        if let Some(local) = place.local_id()
+            && let [
+                bir::PlaceElem::Field {
+                    canonical: Some(field), ..
+                },
+            ] = place.projection.as_slice()
+        {
+            self.field_transfer_candidates.insert((local, field.clone()));
+        }
+    }
+
+    /// Whether an owner's last read may take one field out of it instead of copying that field.
     ///
     /// The owner is a model the frame holds by value in a binding the source declared: never a parameter, a receiver,
-    /// a temporary or the storage a local alias names. It is declared inside the innermost loop, so the read runs once
-    /// for each value, and no pending argument still reads it. The field is one stored field holding a source model or
-    /// enum. The owner keeps its scope-exit drop, which rustc elaborates to the fields this read leaves behind
-    /// (DD-0018). Text, tuples and collections keep their copy, because lowering refuses those partial moves.
-    fn field_leaves_dead_owner(&self, place: &bir::Place, ty: &IncanType) -> bool {
+    /// a temporary or the storage a local alias names. The field is one stored field holding a source model or enum.
+    /// The owner keeps its scope-exit drop, which rustc elaborates to the fields this read leaves behind (DD-0018).
+    /// Text, tuples and collections keep their copy, because lowering refuses those partial moves. Whether the read is
+    /// the owner's last is the caller's question.
+    fn field_may_leave_owner(&self, place: &bir::Place, ty: &IncanType) -> bool {
         let [
             bir::PlaceElem::Field {
                 canonical: Some(_),
@@ -213,8 +236,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && declared(ty, &[SemanticSourceTargetKind::Model, SemanticSourceTargetKind::Enum])
             && !self.reads_as_copy(ty)
             && self.input_aliases.is_empty()
-            && !self.pending_argument_reads.contains(&local)
-            && !self.loop_reuses_local(local)
     }
 
     /// Whether reading a value of `ty` copies it: a scalar, or a model, class, newtype or enum whose checked derives
@@ -302,8 +323,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
     /// remain transfers or reborrows. This differs from a borrowed ABI slot whose logical source type is an owner.
     /// Projected reads (`.field`, `[index]`) never move here, so a non-Copy projected read borrows rather than risking
-    /// an unsound move out of a place the surrounding code still owns; only [`Self::source_place_operand`] takes one
-    /// field out, at the last read of an owner it proves dead.
+    /// an unsound move out of a place the surrounding code still owns; [`Self::source_place_operand`] and the liveness
+    /// pass take one field out, at the last read of an owner.
     /// A checked source enum field instead records an explicit clone when read as a value; reference consumers retain
     /// their ordinary borrow adjustment. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`)
     /// never moves either, for a stronger reason than the projected case: a receiver is always a Rust-level
