@@ -306,6 +306,72 @@ pub def test_a_value_read_once_on_each_path_is_transferred_at_that_read() -> Res
     return Ok(None)
 
 
+const ENDED_LOAN: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def describe(value: Value) -> str:
+    match value:
+        Value.Many(_, items) => return f"{len(items)} items"
+        _ => return "empty"
+
+
+def store(value: Value) -> str:
+    kept = [value]
+    return f"{len(kept)} kept"
+
+
+def lent(size: int, pick: int) -> str:
+    value = make(size)
+    label = describe(value)
+    if pick == 0:
+        return label
+    if pick == 1:
+        return "one"
+    return "other"
+
+
+def moved(size: int, pick: int) -> str:
+    value = make(size)
+    label = store(value)
+    if pick == 0:
+        return label
+    if pick == 1:
+        return "one"
+    return "other"
+
+
+def main() -> None:
+    println(lent(4, 0))
+    println(lent(4, 1))
+    println(moved(4, 0))
+    println(moved(4, 2))
+"""
+
+
+pub def test_a_local_lent_at_its_last_use_is_dropped_after_a_call_that_returns_a_value() -> Result[None, str]:
+    """
+    A large local lent at its last use is dropped once, right after the call, whatever that call returns (#1604).
+
+    `moved` hands the same local to a callee that keeps it, so its own frame never drops it. `lent` lends it to a
+    callee that returns text; dropped after that call, it costs one drop more than `moved`, where holding it to the
+    end of its scope costs one drop on each of the three paths that return.
+    """
+    report = plan_report("ended", ENDED_LOAN, "4 items\none\n1 kept\nother")?
+    lent = plan_counts(report, "lent", ["drops"])?
+    moved = plan_counts(report, "moved", ["drops"])?
+    assert lent <= moved + 1, f"lent holds {lent} drops and moved holds {moved}"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
