@@ -1,0 +1,9 @@
+[project]
+name = "crates-io/sub-app"
+version = "1.0.0"
+
+[dependencies]
+sub = { loaf = "crates-io/sub-leaf", version = "^1.2", features = ["fast"], default-features = false }
+
+[rust]
+type = "lib"
