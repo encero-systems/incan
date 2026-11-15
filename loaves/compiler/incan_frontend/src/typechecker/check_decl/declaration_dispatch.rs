@@ -493,7 +493,9 @@ impl TypeChecker {
         self.record_local_nominal_type_param_bounds(&test_module.body);
         self.infer_hash_key_type_params(&test_module.body, false);
         self.validate_source_type_names = previous_validation_state;
-        if let Some(semantics) = self.testing_marker_semantics.clone() {
+        if let Some(span) = declarations_may_contain_testing_fixture(&test_module.body, &self.symbols)
+            && let Some(semantics) = self.testing_marker_semantics_on_demand(span)
+        {
             self.collect_testing_fixture_names_from_decls(&test_module.body, &semantics);
         }
         for decl in &test_module.body {
