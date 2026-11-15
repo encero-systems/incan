@@ -1,0 +1,370 @@
+"""
+Read a manifest's dependency tables: local edges, Rust-facet Loaf requests, entries inherited from a workspace root,
+and the Loaf form a retired Rust dependency table's refusal names.
+"""
+
+from std.toml import TomlValue, TomlKind
+from manifest_errors import IntakeError, IntakeErrorKind
+from loaf_identity import crate_name, validate_loaf_identity
+from manifest_fields import (
+    allowed,
+    first_key,
+    flag,
+    refusal,
+    request_flag,
+    requested_features,
+    required,
+    string_list,
+    table,
+    text,
+)
+from manifest_models import LocalDependency, RustInputRequest
+from workspace_inheritance import inherited
+
+
+pub def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Render the Loaf dependency form used by a retired-table or retired-key refusal hint."""
+    mut package = alias
+    mut version = "*"
+    if value.kind() == TomlKind.String:
+        version = text(value, manifest, field)?
+    else:
+        entry = table(value, manifest, field)?
+        if "package" in entry:
+            package = text(entry["package"], manifest, field + ["package"])?
+        if "crate" in entry:
+            package = text(entry["crate"], manifest, field + ["crate"])?
+        # A local Cargo crate becomes a local Rust-facet Loaf, never a registry one.
+        if "path" in entry:
+            path = text(entry["path"], manifest, field + ["path"])?
+            local = f"{alias} = {{ loaf = \"{package}\", path = \"{path}\" }}"
+            return Ok(f"{local}, with a {path}/loaf.toml whose [rust] table declares the crate")
+        if "version" in entry:
+            version = text(entry["version"], manifest, field + ["version"])?
+        if "features" in entry:
+            names = string_list(entry["features"], manifest, field + ["features"])?
+            quoted = ", ".join([f"\"{name}\"" for name in names])
+            return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\", features = [{quoted}] }}")
+    return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\" }}")
+
+
+pub def moved_dependencies(
+    value: TomlValue,
+    field: list[str],
+    replacement_table: str,
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Refuse a 0.5.1 Rust dependency table, showing its first entry's Loaf form under the table that replaces it."""
+    entries = table(value, manifest, field)?
+    alias = first_key(entries)
+    mut detail = f"use {replacement_table}"
+    if alias in entries:
+        replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
+        detail = f"use {replacement_table} {replacement}"
+    return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
+
+
+pub def parse_dependencies(
+    root: Dict[str, TomlValue],
+    manifest: str,
+) -> Result[Tuple[list[LocalDependency], list[RustInputRequest]], IntakeError]:
+    """Keep local edges and adopted Loaf target alternatives without resolving either."""
+    mut dependencies: list[LocalDependency] = []
+    mut rust_inputs: list[RustInputRequest] = []
+    if "rust-dependencies" in root:
+        entries = table(root["rust-dependencies"], manifest, ["rust-dependencies"])?
+        alias = first_key(entries)
+        replacement = dependency_replacement(alias, entries[alias], manifest, ["rust-dependencies", alias])?
+        return Err(
+            refusal(manifest, ["rust-dependencies"], IntakeErrorKind.Unsupported, f"use [dependencies] {replacement}"),
+        )
+    if "dependencies" in root:
+        group = "dependencies"
+        values = table(root[group], manifest, [group])?
+        for alias in sorted([key for key in values.keys()]):
+            value = values[alias].clone()
+            if value.kind() == TomlKind.Array:
+                entries = value
+                    .as_array()
+                    .map_err((error) => refusal(manifest, [group, alias], IntakeErrorKind.Invalid, error.message()))?
+                if len(entries) == 0:
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias],
+                            IntakeErrorKind.Invalid,
+                            "target entry array must not be empty",
+                        ),
+                    )
+                for entry in entries:
+                    request = rust_request(alias, entry, manifest, group)?
+                    if request.target is None:
+                        return Err(
+                            refusal(
+                                manifest,
+                                [group, alias, "target"],
+                                IntakeErrorKind.Missing,
+                                "array entries require target",
+                            ),
+                        )
+                    rust_inputs.append(request)
+            else:
+                if value.kind() == TomlKind.String:
+                    replacement = dependency_replacement(alias, value, manifest, [group, alias])?
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias],
+                            IntakeErrorKind.Invalid,
+                            f"dependency must name its Loaf; use {replacement}",
+                        ),
+                    )
+                entry = table(value, manifest, [group, alias])?
+                if "standard" in entry:
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias, "standard"],
+                            IntakeErrorKind.Unsupported,
+                            "standard packages are ambient: a unit reaches every standard package it uses, and none is declared",
+                        ),
+                    )
+                if "workspace" in entry:
+                    edge = inherited_edge(alias, entry, manifest, [group, alias])?
+                    if let Some(local) = edge.local:
+                        dependencies.append(local)
+                    if let Some(request) = edge.facet:
+                        rust_inputs.append(request)
+                elif "path" in entry:
+                    field = [group, alias]
+                    allowed(
+                        entry,
+                        [
+                            "loaf",
+                            "path",
+                            "version",
+                            "optional",
+                            "default-features",
+                            "features",
+                            "target",
+                            "package",
+                            "crate",
+                        ],
+                        manifest,
+                        field,
+                    )?
+                    path = required(entry, "path", manifest, field + ["path"])?
+                    mut features: list[str] = []
+                    if "features" in entry:
+                        features = string_list(entry["features"], manifest, field + ["features"])?
+                    dependencies.append(
+                        LocalDependency(
+                            alias=alias,
+                            path=path,
+                            optional=flag(entry, "optional", false, manifest, field)?,
+                            default_features=flag(entry, "default-features", true, manifest, field)?,
+                            features=features,
+                            rust_facet="loaf" in entry,
+                        ),
+                    )
+                    if "loaf" in entry:
+                        rust_inputs.append(rust_request(alias, value, manifest, group)?)
+                else:
+                    rust_inputs.append(rust_request(alias, value, manifest, group)?)
+    return Ok((dependencies, rust_inputs))
+
+
+pub model InheritedEdge:
+    """A member's inherited dependency: a local edge, a Rust-facet Loaf request, or both."""
+
+    pub local: Option[LocalDependency] = None
+    pub facet: Option[RustInputRequest] = None
+
+
+pub def inherited_edge(
+    alias: str,
+    entry: Dict[str, TomlValue],
+    manifest: str,
+    field: list[str],
+) -> Result[InheritedEdge, IntakeError]:
+    """
+    A member's `{ workspace = true }` edge, taken from its workspace root's `[workspace.dependencies]` entry
+    (`workspace_inheritance`): a local edge's path rebased onto the member, the member's `features` added to the
+    entry's and its `optional` kept. Its own path, Loaf, version or other identity field is refused, as in 0.5.1: the
+    root's entry owns them.
+    """
+    if not flag(entry, "workspace", false, manifest, field)?:
+        detail = "workspace inheritance is spelled `workspace = true`"
+        return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Invalid, detail))
+    for key in ["path", "loaf", "version", "default-features", "package", "crate", "target"]:
+        if key in entry:
+            spelled = f"`{alias}` inherits from the workspace: `{key}` and its other identity fields"
+            detail = f"{spelled} belong to [workspace.dependencies]"
+            return Err(refusal(manifest, field + [key], IntakeErrorKind.Invalid, detail))
+    allowed(entry, ["workspace", "features", "optional"], manifest, field)?
+    shared = inherited(alias, manifest, field)?
+    root_field = ["workspace", "dependencies", alias]
+    root = table(shared.value, shared.root_manifest, root_field)?
+    mut features: list[str] = []
+    if "features" in root:
+        features = string_list(root["features"], shared.root_manifest, root_field + ["features"])?
+    if "features" in entry:
+        features = features + string_list(entry["features"], manifest, field + ["features"])?
+    optional = flag(entry, "optional", false, manifest, field)? or flag(root, "optional", false, manifest, root_field)?
+    match shared.path:
+        Some(path) =>
+            if "loaf" in root:
+                detail = "a workspace path dependency that names a `loaf` is declared in each member"
+                return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Unsupported, detail))
+            local = LocalDependency(
+                alias=alias,
+                path=path,
+                optional=optional,
+                default_features=flag(root, "default-features", true, shared.root_manifest, root_field)?,
+                features=features,
+            )
+            return Ok(InheritedEdge(local=Some(local)))
+        None =>
+            mut request = rust_request(alias, shared.value, shared.root_manifest, "workspace.dependencies")?
+            request.optional = optional
+            request.features = features
+            return Ok(InheritedEdge(facet=Some(request)))
+
+
+pub def validate_target(value: str) -> Result[None, str]:
+    """Admit an exact triple or the RFC 119 canonical cfg grammar without evaluating it."""
+    if not value.startswith("cfg("):
+        if len(value.split("-")) < 3:
+            return Err("target requires an exact triple or canonical cfg(...)")
+        for part in value.split("-"):
+            if part == "":
+                return Err("target triple contains an empty component")
+        for char in value:
+            if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.":
+                return Err("target triple contains an invalid character")
+        return Ok(None)
+    if not value.endswith(")"):
+        return Err("cfg target requires a closing parenthesis")
+    rest = cfg_predicate(value[4:-1], 0)?
+    if rest != "":
+        return Err("cfg target has a trailing or noncanonical construct")
+    return Ok(None)
+
+
+def cfg_predicate(value: str, depth: int) -> Result[str, str]:
+    """Consume one canonical cfg expression and retain the unconsumed suffix."""
+    if depth > 64:
+        return Err("cfg nesting exceeds 64")
+    mut name = ""
+    for char in value:
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_":
+            break
+        name += char
+    if name == "" or name[0] in "0123456789":
+        return Err("cfg requires an identifier")
+    mut rest = value[len(name):]
+    if rest.startswith("("):
+        if name not in ["all", "any", "not"]:
+            return Err("unknown cfg construct: " + name)
+        rest = rest[1:]
+        mut count = 0
+        if not rest.startswith(")"):
+            while true:
+                rest = cfg_predicate(rest, depth + 1)?
+                count += 1
+                if not rest.startswith(", "):
+                    break
+                rest = rest[2:]
+        if not rest.startswith(")"):
+            return Err("cfg requires canonical comma-space separators and closing parenthesis")
+        if name == "not" and count != 1:
+            return Err("cfg not requires exactly one argument")
+        return Ok(rest[1:])
+    if rest.startswith(" = \""):
+        rest = rest[4:]
+        mut escaped = false
+        mut offset = 0
+        for char in rest:
+            if escaped:
+                if char not in ["\\", "\"", "n", "r", "t", "0"]:
+                    return Err("cfg value has an unsupported escape")
+                escaped = false
+            elif char == "\\":
+                escaped = true
+            elif char == "\"":
+                return Ok(rest[offset + 1:])
+            elif char in ["\n", "\r", "\t"]:
+                return Err("cfg value contains a control character")
+            offset += 1
+        return Err("cfg value requires a closing quote")
+    return Ok(rest)
+
+
+pub def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Result[RustInputRequest, IntakeError]:
+    """
+    Normalize one Rust-facet Loaf request without selecting its version or source.
+
+    1. The entry names one syntactically valid Loaf from any registry scope.
+    2. Retired Cargo keys refuse with the adopted Loaf form.
+    3. Target and feature policy remain authored requests until activation.
+    4. A registry request needs a version; a local path is selected by the local graph.
+    """
+    field = [group, alias]
+    entry = table(value, manifest, field)?
+    allowed(
+        entry,
+        ["loaf", "version", "features", "default-features", "optional", "path", "target", "package", "crate"],
+        manifest,
+        field,
+    )?
+    for retired in ["package", "crate"]:
+        if retired in entry:
+            package = required(entry, retired, manifest, field + [retired])?
+            mut requirement = "*"
+            if "version" in entry:
+                requirement = required(entry, "version", manifest, field + ["version"])?
+            detail = f"use {alias} = {{ loaf = \"crates-io/{package}\", version = \"{requirement}\" }}"
+            return Err(refusal(manifest, field + [retired], IntakeErrorKind.Unsupported, detail))
+    identity = required(entry, "loaf", manifest, field + ["loaf"])?
+    validate_loaf_identity(identity).map_err(
+        (error) => refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, error),
+    )?
+    mut version = ""
+    mut features: list[str] = []
+    mut default_features = true
+    mut optional = false
+    mut target: Option[str] = None
+    mut local_path: Option[str] = None
+    # 3. Keep canonical target and feature requests at the intake boundary.
+    if "target" in entry:
+        predicate = required(entry, "target", manifest, field + ["target"])?
+        validate_target(predicate).map_err(
+            (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+        )?
+        target = Some(predicate)
+    if "version" in entry:
+        version = required(entry, "version", manifest, field + ["version"])?
+    if "features" in entry:
+        features = requested_features(entry["features"], manifest, field)?
+    if "default-features" in entry:
+        default_features = request_flag(entry["default-features"], manifest, field)?
+    if "optional" in entry:
+        optional = request_flag(entry["optional"], manifest, field)?
+    if "path" in entry:
+        local_path = Some(required(entry, "path", manifest, field + ["path"])?)
+    # 4. Nothing other than a path can identify a source without a version requirement.
+    if version == "" and local_path is None:
+        return Err(refusal(manifest, field, IntakeErrorKind.Missing, "version requirement is required"))
+    return Ok(
+        RustInputRequest(
+            alias=alias,
+            package=crate_name(identity),
+            loaf=Some(identity),
+            version=version,
+            features=features,
+            default_features=default_features,
+            optional=optional,
+            target=target,
+            path=local_path,
+        ),
+    )

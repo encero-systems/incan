@@ -1,9 +1,10 @@
 """Compare each public CLI invocation in a project case with the case's output and status contract."""
 
 from std.fs import Path
+from std.json import parse
 from compare import compare
 from header import Header
-from run import invoke, surface, trace_file
+from run import Outcome, invoke, surface, trace_file, trace_lines, traced_setting
 from workers import Invocation, invoke_many
 
 
@@ -11,31 +12,47 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     """
     Return the expectations broken by each command, identifying the invocation beside every failure.
 
-    1. Run each whitespace-separated command in the fixture project with the case's declared settings.
+    1. Run each whitespace-separated command in the fixture project with the case's declared settings; under
+       `trace-invariant:` run it traced first, and require the same bytes and status and a trace of every category.
     2. Compare each command's streams and status independently.
     3. Require each declared trace substring in the Oven trace that command added.
     4. Launch the `cli-concurrent:` commands together, comparing each the same way.
     5. Require each `expect-trace-at-most-once:` substring at most once in everything the case traced.
     """
     mut failures: list[str] = []
-    start = trace_text(project)
+    start = trace_lines(trace_file(project))
+    mut index = 0
     for command in header.items("cli-commands"):
-        # 1. Each command runs afresh with its own streams and status.
+        # 1. Each command runs afresh with its own streams and status; under `trace-invariant:` it first runs traced.
         name, arguments = surface(words(command))
-        before = trace_text(project)
-        outcome = invoke(incan, arguments, project, header.items("environment"), name)?
+        mut traced: Option[Outcome] = None
+        channel = project.joinpath("target").joinpath("trace-invariant").joinpath(str(index))
+        index += 1
+        if header.trace_invariant:
+            channel.mkdir(true, true).map_err((error) => error.message())?
+            environment = header.items("environment") + [f"INCAN_ENGINE_TRACE={channel.0}"]
+            traced = Some(invoke(incan, arguments, project, environment, name)?)
+        before = trace_lines(trace_file(project))
+        # Under `trace-invariant:` the comparison run has tracing off.
+        mut plain = settings(project, header)?
+        if header.trace_invariant:
+            plain.append("INCAN_ENGINE_TRACE=")
+        outcome = invoke(incan, arguments, project, plain, name)?
+        if let Some(seen) = traced:
+            for failure in trace_invariance(seen, outcome, channel)?:
+                failures.append(f"{shown(command)}: {failure}")
         # 2. A successful sibling cannot hide another command's failure.
         for failure in compare("cli", header, outcome):
             failures.append(f"{shown(command)}: {failure}")
         # 3. Only the lines this command traced can satisfy its trace expectations.
-        added = trace_text(project)[len(before):]
+        added = since(before, trace_lines(trace_file(project)))
         for expected in header.items("expect-trace-contains"):
             if expected not in added:
                 failures.append(f"{shown(command)}: Oven's trace does not contain `{expected}`")
     # 4. Concurrent commands start at once, each in its own process.
     failures = failures + concurrent(incan, project, header)?
     # 5. Work that must happen once across every command, concurrent ones included.
-    traced = trace_text(project)[len(start):]
+    traced = since(start, trace_lines(trace_file(project)))
     for expected in header.items("expect-trace-at-most-once"):
         count = len(traced.split(expected)) - 1
         if count > 1:
@@ -57,7 +74,7 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
                 arguments=arguments,
                 project=project,
                 selector=None,
-                environment=header.items("environment"),
+                environment=settings(project, header)?,
                 capture=f"-concurrent-{index}",
                 arg0=name,
             ),
@@ -69,6 +86,16 @@ def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], s
         for failure in compare("cli", header, outcome):
             failures.append(f"{shown(commands[index])} (concurrent): {failure}")
     return Ok(failures)
+
+
+def settings(project: Path, header: Header) -> Result[list[str], str]:
+    """
+    A command's declared settings, after the case's channel when the case reads Oven's trace; a case's own
+    `INCAN_ENGINE_TRACE` setting still wins.
+    """
+    if header.declares("expect-trace-contains") or header.declares("expect-trace-at-most-once"):
+        return Ok(traced_setting(project)? + header.items("environment"))
+    return Ok(header.items("environment"))
 
 
 def words(command: str) -> list[str]:
@@ -83,11 +110,58 @@ def shown(command: str) -> str:
     return f"incan {command}"
 
 
-def trace_text(project: Path) -> str:
-    """The Oven trace recorded so far for this case; empty before the first traced command."""
-    trace = trace_file(project)
-    if not trace.is_file():
-        return ""
-    match trace.read_text("utf-8", "strict"):
-        Ok(text) => return text
-        Err(_) => return ""
+def since(before: list[str], after: list[str]) -> str:
+    """The trace lines `after` holds beyond those `before` held, one to a line; a repeated line counts each time."""
+    mut seen: Dict[str, int] = {}
+    for line in before:
+        seen[line] = seen.get(line).unwrap_or(0) + 1
+    mut added: list[str] = []
+    for line in after:
+        count = seen.get(line).unwrap_or(0)
+        if count > 0:
+            seen[line] = count - 1
+        else:
+            added.append(line)
+    return "\n".join(added)
+
+
+
+
+def trace_invariance(traced: Outcome, plain: Outcome, channel: Path) -> Result[list[str], str]:
+    """
+    A command traced into `channel` printed exactly what it printed untraced; its trace holds Oven's reasoning, and
+    every compiler process that wrote to the channel wrote its invocation records there too.
+    """
+    mut failures: list[str] = []
+    if traced.stdout != plain.stdout:
+        failures.append(f"tracing changed stdout: traced `{traced.stdout}`, untraced `{plain.stdout}`")
+    if traced.stderr != plain.stderr:
+        failures.append(f"tracing changed stderr: traced `{traced.stderr}`, untraced `{plain.stderr}`")
+    if traced.code != plain.code:
+        failures.append(f"tracing changed the exit status: traced {traced.exit_text()}, untraced {plain.exit_text()}")
+    mut reasoned = false
+    for path in channel.iterdir().map_err((error) => error.message())?:
+        categories = file_categories(path)?
+        if "reason" in categories:
+            reasoned = true
+        compiler = path.name().startswith("engine-compiler-") or path.name().startswith("engine-worker-")
+        if compiler and "invocation" not in categories:
+            failures.append(f"the compiler's trace file {path.name()} holds no `invocation` record")
+    if not reasoned:
+        failures.append(f"the trace channel {channel.0} holds no `reason` record")
+    return Ok(failures)
+
+
+def file_categories(path: Path) -> Result[list[str], str]:
+    """The `operation` of every record in one trace file."""
+    mut found: list[str] = []
+    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    for line in text.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => f"{path.0}: {error.message()}")?
+        if let Some(value) = record.get("operation"):
+            category = value.expect_str().map_err((error) => error.message())?
+            if category not in found:
+                found.append(category)
+    return Ok(found)

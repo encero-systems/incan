@@ -1,0 +1,79 @@
+"""Read `[tool.incan]`: the keys this toolchain reads, and the others intake tolerates and the selecting command warns of."""
+
+from std import toml
+from std.toml import TomlValue
+from manifest_errors import IntakeError
+from manifest_fields import allowed, string_list, table
+
+# The `[tool.incan]` keys this toolchain reads; `envs` is refused with its successor (`refuse_moved_tables`).
+const TOOL_INCAN_KEYS: FrozenList[str] = ["metadata", "codegraph", "envs"]
+
+
+pub def parse_contract_models(root: Dict[str, TomlValue], manifest: str) -> Result[list[str], IntakeError]:
+    """
+    The model bundles `[tool.incan.metadata] model-bundles` names; other tools' tables are theirs. Other `[tool.incan]`
+    keys are tolerated, as 0.5.1 tolerated them; the command that selects the project warns of each
+    (`unknown_tool_keys`).
+    """
+    if "tool" not in root:
+        return Ok([])
+    tool = table(root["tool"], manifest, ["tool"])?
+    if "incan" not in tool:
+        return Ok([])
+    incan = table(tool["incan"], manifest, ["tool", "incan"])?
+    check_codegraph(incan, manifest)?
+    if "metadata" not in incan:
+        return Ok([])
+    metadata = table(incan["metadata"], manifest, ["tool", "incan", "metadata"])?
+    allowed(metadata, ["model-bundles"], manifest, ["tool", "incan", "metadata"])?
+    if "model-bundles" not in metadata:
+        return Ok([])
+    return string_list(metadata["model-bundles"], manifest, ["tool", "incan", "metadata", "model-bundles"])
+
+
+def check_codegraph(incan: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Validate `[tool.incan.codegraph]`, whose `sources` name further projects to inspect; only inspection reads it."""
+    if "codegraph" not in incan:
+        return Ok(None)
+    field = ["tool", "incan", "codegraph"]
+    codegraph = table(incan["codegraph"], manifest, field)?
+    allowed(codegraph, ["sources"], manifest, field)?
+    if "sources" in codegraph:
+        _ = string_list(codegraph["sources"], manifest, field + ["sources"])?
+    return Ok(None)
+
+
+pub def unknown_tool_keys(source: str) -> list[str]:
+    """
+    The `[tool.incan]` keys of a manifest's text that this toolchain does not read, in name order. 0.5.1 tolerated such
+    keys so that a manifest for a newer toolchain still loads; intake tolerates them too, and the selecting command
+    warns of each. Text that does not parse, or a `[tool.incan]` that is not a table, has none here: intake refuses it.
+    """
+    mut unknown: list[str] = []
+    match toml.parse(source):
+        Err(_) => return unknown
+        Ok(parsed) =>
+            match tool_incan(parsed):
+                None => return unknown
+                Some(incan) =>
+                    for key in sorted([key for key in incan.keys()]):
+                        if key not in TOOL_INCAN_KEYS:
+                            unknown.append(key)
+    return unknown
+
+
+def tool_incan(parsed: TomlValue) -> Option[Dict[str, TomlValue]]:
+    """A parsed manifest's `[tool.incan]` table, when it has one."""
+    match parsed.as_table():
+        Err(_) => return None
+        Ok(root) =>
+            if "tool" not in root:
+                return None
+            match root["tool"].as_table():
+                Err(_) => return None
+                Ok(tool) =>
+                    if "incan" not in tool:
+                        return None
+                    match tool["incan"].as_table():
+                        Err(_) => return None
+                        Ok(incan) => return Some(incan)

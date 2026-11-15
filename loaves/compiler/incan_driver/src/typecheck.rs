@@ -99,7 +99,7 @@ pub fn typecheck_modules(
             )
         })
         .collect();
-    let memory_trace = std::env::var_os("INCAN_TRACE_TYPECHECK_MEMORY").is_some();
+    let memory_trace = incan_frontend::trace_flags::enabled(incan_frontend::trace_flags::Category::TypecheckMemory);
     let mut not_prepared = unit
         .not_prepared_loaves
         .iter()
@@ -337,7 +337,8 @@ fn trace_typecheck_memory(enabled: bool, stage: &str, module: &Path, dependencie
     let live = incan_platform::current_process_live_allocated()
         .map(|bytes| bytes.to_string())
         .unwrap_or_else(|error| format!("unavailable:{error}"));
-    println!(
+    incan_frontend::trace_line!(
+        incan_frontend::trace_flags::Category::TypecheckMemory,
         "typecheck memory: stage={stage} module={} dependencies={dependencies} footprint={footprint} live={live}",
         module.display()
     );

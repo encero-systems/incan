@@ -1,0 +1,150 @@
+"""
+A workspace root's shared tables as `oven workspace inspect --format json` reports them, in 0.5.1's shape (#3141):
+
+1. `shared_dependencies`: `libraries` for local `path` entries, `rust` for registry Loaves, and `rust_dev`, empty
+   because 0.6 declares test dependencies per environment.
+2. `shared_environments`, `shared_policy` and `shared_sources`: `[workspace.envs]`, `[workspace.policy]` and
+   `[workspace.sources]` as declared.
+"""
+
+from std import toml
+from std.fs import Path
+from std.json import JsonValue
+from std.toml import TomlKind, TomlValue
+from files import read
+from loaf_identity import crate_name
+
+
+pub def shared_tables(root: Path, manifest: Path) -> Result[Dict[str, JsonValue], str]:
+    """The four `shared_*` fields of a workspace root's inspection; an absent table reports as empty."""
+    document = toml.parse(read(manifest)?).map_err((error) => f"{manifest.0}: {error.message()}")?
+    mut workspace: Dict[str, TomlValue] = {}
+    match document.as_table():
+        Ok(declared) =>
+            if "workspace" in declared:
+                match declared["workspace"].as_table():
+                    Ok(found) => workspace = found
+                    Err(_) => pass
+        Err(_) => pass
+    mut fields: Dict[str, JsonValue] = {}
+    fields["shared_dependencies"] = shared_dependencies(root, workspace)
+    fields["shared_environments"] = raw_table(workspace, "envs")
+    fields["shared_policy"] = raw_table(workspace, "policy")
+    fields["shared_sources"] = raw_table(workspace, "sources")
+    return Ok(fields)
+
+
+def shared_dependencies(root: Path, workspace: Dict[str, TomlValue]) -> JsonValue:
+    """`[workspace.dependencies]` split as 0.5.1 split it: local libraries by path, registry Loaves by crate."""
+    mut libraries: Dict[str, JsonValue] = {}
+    mut registry: Dict[str, JsonValue] = {}
+    if "dependencies" in workspace:
+        match workspace["dependencies"].as_table():
+            Ok(entries) =>
+                for alias in sorted([alias for alias in entries.keys()]):
+                    match entries[alias].as_table():
+                        Ok(entry) =>
+                            if "path" in entry:
+                                path = JsonValue.string(f"{root.0}/{text_of(entry, "path")}")
+                                libraries[alias] = JsonValue.object({"path": path})
+                            else:
+                                registry[alias] = registry_entry(entry)
+                        Err(_) => pass
+            Err(_) => pass
+    return JsonValue.object(
+        {"libraries": JsonValue.object(libraries), "rust": JsonValue.object(registry), "rust_dev": JsonValue.object({})},
+    )
+
+
+def registry_entry(entry: Dict[str, TomlValue]) -> JsonValue:
+    """One shared registry Loaf with 0.5.1's fields, and the Loaf identity 0.6 names it by."""
+    loaf = text_of(entry, "loaf")
+    mut features: list[str] = []
+    if "features" in entry:
+        match entry["features"].as_array():
+            Ok(items) =>
+                for item in items:
+                    match item.as_str():
+                        Ok(name) => features.append(name)
+                        Err(_) => pass
+            Err(_) => pass
+    return JsonValue.object(
+        {
+            "crate_name": JsonValue.string(crate_name(loaf)),
+            "default_features": JsonValue.bool(flag_of(entry, "default-features", true)),
+            "features": JsonValue.array([JsonValue.string(name) for name in sorted(features)]),
+            "loaf": JsonValue.string(loaf),
+            "optional": JsonValue.bool(flag_of(entry, "optional", false)),
+            "package": JsonValue.null(),
+            "source": JsonValue.object({"kind": JsonValue.string("registry")}),
+            "version": JsonValue.string(text_of(entry, "version")),
+        },
+    )
+
+
+def raw_table(workspace: Dict[str, TomlValue], key: str) -> JsonValue:
+    """A `[workspace.KEY]` table as JSON, empty when it is absent."""
+    if key not in workspace:
+        return JsonValue.object({})
+    return toml_json(workspace[key])
+
+
+pub def toml_json(value: TomlValue) -> JsonValue:
+    """A TOML value as JSON: tables by key, a date or time as its TOML spelling, a float JSON cannot carry as null."""
+    kind = value.kind()
+    if kind == TomlKind.Table:
+        mut entries: Dict[str, JsonValue] = {}
+        match value.as_table():
+            Ok(table) =>
+                for key in sorted([key for key in table.keys()]):
+                    entries[key] = toml_json(table[key])
+            Err(_) => pass
+        return JsonValue.object(entries)
+    if kind == TomlKind.Array:
+        mut items: list[JsonValue] = []
+        match value.as_array():
+            Ok(values) =>
+                for item in values:
+                    items.append(toml_json(item))
+            Err(_) => pass
+        return JsonValue.array(items)
+    if kind == TomlKind.Boolean:
+        match value.as_bool():
+            Ok(flag) => return JsonValue.bool(flag)
+            Err(_) => return JsonValue.null()
+    if kind == TomlKind.Integer:
+        match value.as_int():
+            Ok(number) => return JsonValue.int(number)
+            Err(_) => return JsonValue.null()
+    if kind == TomlKind.Float:
+        match value.as_float():
+            Ok(number) =>
+                match JsonValue.float(number):
+                    Ok(json) => return json
+                    Err(_) => return JsonValue.null()
+            Err(_) => return JsonValue.null()
+    if kind == TomlKind.Datetime:
+        match value.as_datetime():
+            Ok(moment) => return JsonValue.string(moment.as_str())
+            Err(_) => return JsonValue.null()
+    match value.as_str():
+        Ok(text) => return JsonValue.string(text)
+        Err(_) => return JsonValue.null()
+
+
+def text_of(entry: Dict[str, TomlValue], key: str) -> str:
+    """A string field, empty when absent or not a string (intake refuses a malformed one)."""
+    if key not in entry:
+        return ""
+    match entry[key].as_str():
+        Ok(text) => return text
+        Err(_) => return ""
+
+
+def flag_of(entry: Dict[str, TomlValue], key: str, fallback: bool) -> bool:
+    """A boolean field, `fallback` when absent or not a boolean."""
+    if key not in entry:
+        return fallback
+    match entry[key].as_bool():
+        Ok(flag) => return flag
+        Err(_) => return fallback

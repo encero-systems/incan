@@ -15,6 +15,15 @@ use tower_lsp::{LspService, Server};
 
 /// Run standalone flags or the stdio server on threads with the compiler's stack budget.
 fn main() -> ExitCode {
+    // The editor server files its trace records under its own producer name in the tracing channel.
+    incan_frontend::trace_flags::set_producer("lsp");
+    if std::env::var_os("INCAN_TRACE_GRAPH").is_some() {
+        // The former variable still works for one release and names its replacement once, where it writes.
+        eprintln!(
+            "incan-lsp: `INCAN_TRACE_GRAPH` is replaced by `INCAN_ENGINE_TRACE`, whose `lsp_graph` records carry what it \
+             selected; it is read for one more release"
+        );
+    }
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let profile = match handle_cli_args(&args) {
         Ok(profile) => profile,

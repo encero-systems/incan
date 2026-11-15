@@ -7,7 +7,9 @@ changes no record, so it invalidates no checked body or plan.
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
+from std.fs import Path
 from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models import CompiledNamespaceValue
 from pub::internal_models.records import RecordKey, encode_record_key
 from semantic_text import comment_free, documentation_free
 
@@ -237,6 +239,26 @@ def stable_member_declaration(identity: str) -> str:
 pub def declaration_index_key(origin: str, path: str) -> RecordKey:
     """Name the body-independent declaration surface used to invalidate project declaration readers before checking."""
     return source_key("declaration-index", origin, path, "module")
+
+
+pub def import_declaration_indexes(
+    origin: str,
+    project_root: str,
+    namespaces: list[CompiledNamespaceValue],
+    staged: list[str],
+) -> Result[list[SourceProjectionRecord], str]:
+    """Project the declaration index of each namespace import whose module is not among the `staged` projections."""
+    mut indexes: list[SourceProjectionRecord] = []
+    mut projected: list[str] = []
+    for namespace in namespaces:
+        for path in namespace.dependencies:
+            if path not in staged and path not in projected:
+                file = Path(project_root).joinpath(path)
+                source = file.read_text("utf-8", "strict").map_err((error) => error.message())?
+                projection = project_source(origin, path, source)?
+                indexes.append(projection.declarations)
+                projected.append(path)
+    return Ok(indexes)
 
 
 pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:

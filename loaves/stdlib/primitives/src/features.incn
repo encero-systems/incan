@@ -1135,7 +1135,7 @@ static build_test_oven_observability: RegistryEntry[FeatureId, FeatureDescriptor
         since="0.5",
         rfc="RFC 015",
         stability=FeatureStability.Experimental,
-        activation="Set `OVEN_TRACE=-` for preparation traces or request a unit description.",
+        activation="Set `INCAN_ENGINE_TRACE` to an existing directory for preparation traces or request a unit description.",
         summary="Oven traces distinguish compilation, executable reuse and replayed refusals, with the reason for preparing a changed unit.",
         canonical_forms=build_test_oven_observability_forms,
         prefer_over="Inferring compilation or reuse from timestamps and elapsed time alone.",

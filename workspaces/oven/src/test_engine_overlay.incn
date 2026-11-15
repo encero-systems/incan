@@ -1,0 +1,125 @@
+"""Overlay requests: an editor view per project view, a mirrored overlay root and diagnostics in document coordinates."""
+
+from std.fs import Path
+from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, report_diagnostics
+from overlay_request import parse_serve, parse_served
+from scratch import scratch_directory
+
+
+pub def test_editor_views_are_named_per_project_view() -> Result[None, str]:
+    """One project view has one editor view, distinct from the project view and from every other project's."""
+    first = editor_view_name("project-a")?
+    assert first.startswith("editor-"), first
+    assert editor_view_name("project-a")? == first
+    assert editor_view_name("project-b")? != first
+    return Ok(None)
+
+
+pub def test_the_overlay_root_mirrors_the_program_and_places_the_buffer() -> Result[None, str]:
+    """
+    The overlay root holds the program's files with the buffer in place of its document; mirroring again rewrites only
+    files whose bytes differ, and build output under `target/` is never mirrored.
+    """
+    scratch = scratch_directory()?
+    program = scratch.path().joinpath("program")
+    program.joinpath("target").mkdir(true, true).map_err((error) => error.message())?
+    write(program.joinpath("main.incn"), "from helper import value\n")?
+    write(program.joinpath("helper.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(program.joinpath("target/stale.incn"), "stale\n")?
+    overlay = scratch.path().joinpath("overlay")
+    buffer = "from helper import value\n# unsaved\n"
+    first = mirror_overlay(program, overlay, "main.incn", buffer)?
+    assert first == 2, f"{first} files written on the first mirror"
+    assert read(overlay.joinpath("main.incn"))? == buffer
+    assert read(overlay.joinpath("helper.incn"))? == "pub def value() -> int:\n    return 1\n"
+    assert not overlay.joinpath("target").exists(), "build output was mirrored"
+    assert mirror_overlay(program, overlay, "main.incn", buffer)? == 0, "an unchanged mirror rewrote files"
+    write(program.joinpath("helper.incn"), "pub def value() -> int:\n    return 2\n")?
+    assert mirror_overlay(program, overlay, "main.incn", buffer)? == 1
+    return Ok(None)
+
+
+pub def test_diagnostics_are_projected_into_document_coordinates() -> Result[None, str]:
+    """A check report's diagnostics keep message, code, start and end, and name the editor's document paths."""
+    first = "{\"code\": \"INCAN-T0001\", \"severity\": \"error\", \"message\": \"Type 'Point' has no field 'z'\", "
+    first_span = "\"primary_span\": {\"file\": \"/overlay/main.incn\", \"start\": {\"line\": 4, \"column\": 11}, "
+    first_end = "\"end\": {\"line\": 4, \"column\": 12}}}"
+    second = "{\"code\": \"INCAN-W0002\", \"severity\": \"warning\", \"message\": \"Unused 'value'\", "
+    second_span = "\"primary_span\": {\"file\": \"/elsewhere/lib.incn\", \"start\": {\"line\": 2, \"column\": 5}, "
+    second_end = "\"end\": {\"line\": 2, \"column\": 10}}}"
+    report = "{\"schema_version\": 2, \"ok\": false, \"diagnostics\": [" + first + first_span + first_end + ", "
+    found = report_diagnostics(report + second + second_span + second_end + "]}", "/overlay", "/program")?
+    assert len(found) == 2, f"{len(found)} diagnostics"
+    assert found[0].message == "Type 'Point' has no field 'z'", found[0].message
+    assert found[0].code == "INCAN-T0001" and found[0].severity == "error"
+    assert found[0].path == "/program/main.incn", found[0].path
+    assert found[0].line == 4 and found[0].column == 11 and found[0].end_line == 4 and found[0].end_column == 12
+    assert found[1].severity == "warning" and found[1].path == "/elsewhere/lib.incn"
+    assert found[1].line == 2 and found[1].column == 5 and found[1].end_column == 10
+    assert report_diagnostics("", "/overlay", "/program").is_err(), "an empty report was read as no diagnostics"
+    return Ok(None)
+
+
+pub def test_a_package_document_is_answered_through_the_package_entry() -> Result[None, str]:
+    """Every document of a package builds the package's entry; a manifest-free document is its own entry."""
+    scratch = scratch_directory()?
+    package = scratch.path().joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    entry = package.joinpath("src").joinpath("main.incn")
+    write(entry, "from helper import value\n\ndef main() -> None:\n    println(f\"{value()}\")\n")?
+    helper = package.joinpath("src").joinpath("helper.incn")
+    write(helper, "pub def value() -> int:\n    return 1\n")?
+    assert overlay_entry(helper)?.0 == entry.0, "a package module was built as its own entry"
+    assert overlay_entry(entry)?.0 == entry.0
+    loose = scratch.path().joinpath("loose.incn")
+    write(loose, "def main() -> None:\n    pass\n")?
+    assert overlay_entry(loose)?.0 == loose.0
+    return Ok(None)
+
+
+pub def test_a_manifest_free_module_is_answered_through_its_programs_main() -> Result[None, str]:
+    """A module without `main` beside a `main.incn` builds that program; a document with its own `main` is its entry."""
+    scratch = scratch_directory()?
+    program = scratch.path().joinpath("program")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    entry = program.joinpath("main.incn")
+    write(entry, "from helper import value\n\n\ndef main() -> None:\n    println(f\"{value()}\")\n")?
+    helper = program.joinpath("helper.incn")
+    write(helper, "pub def value() -> int:\n    return 1\n")?
+    script = program.joinpath("script.incn")
+    write(script, "def helper_text() -> str:\n    return \"def main(\"\n\n\ndef main() -> None:\n    pass\n")?
+    assert overlay_entry(helper)?.0 == entry.0, "a module without main was built as its own entry"
+    assert overlay_entry(entry)?.0 == entry.0
+    assert overlay_entry(script)?.0 == script.0, "a script with its own main was built through main.incn"
+    lone = scratch.path().joinpath("lone").joinpath("library.incn")
+    lone.parent().mkdir(true, true).map_err((error) => error.message())?
+    write(lone, "pub def value() -> int:\n    return 1\n")?
+    assert overlay_entry(lone)?.0 == lone.0
+    return Ok(None)
+
+
+pub def test_a_served_request_is_one_line_naming_document_buffer_and_version() -> Result[None, str]:
+    """A persistent overlay server takes at most a profile, then reads one JSON line per request."""
+    line = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": 7}"
+    request = parse_served(line, "release")?
+    assert request.source == "/program/main.incn" and request.buffer == "/tmp/buffer"
+    assert request.version == 7 and request.profile == "release"
+    negative = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": -1}"
+    assert parse_served(negative, "debug").is_err(), "a negative document version was accepted"
+    assert parse_served("{\"source\": \"/program/main.incn\"}", "debug").is_err(), "a request without a buffer was read"
+    assert parse_serve(["--overlay-serve"])? == "debug"
+    assert parse_serve(["--overlay-serve", "--profile", "release"])? == "release"
+    assert parse_serve(["--overlay-serve", "main.incn"]).is_err(), "a served session accepted a source"
+    return Ok(None)
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write one fixture file."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read one mirrored file."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())

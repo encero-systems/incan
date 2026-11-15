@@ -9,13 +9,15 @@ those carriers until each consumer moves to these declarations. The adapter must
 Rust `Arc` allocation identity is deliberately absent from this contract. Derived equality owns structural identity.
 """
 
+from rust::serde import Serialize, Deserialize
+
 pub const IDENTITY_ADAPTER_PROFILE: str = "incan.compiler-identities/1"
 pub const IDENTITY_ADAPTER_SOURCE: str = "incan_semantics_core identities at executable representation 53"
 pub const IDENTITY_ADAPTER_GENERATION: int = 1
 pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "remove only after every direct native identity and source-span consumer accepts the Incan-owned declarations"
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum SymbolNamespace:
     """How a checked binding is resolved; equal spellings in different namespaces remain different identities."""
 
@@ -24,7 +26,7 @@ pub enum SymbolNamespace:
     ModulePath
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model PackageIdentity:
     """The selected package name and immutable version owning one published declaration."""
 
@@ -32,7 +34,7 @@ pub model PackageIdentity:
     pub version: str
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum SymbolOrigin:
     """The semantic owner of a declaration, independent of the source spelling used to reach it."""
 
@@ -42,7 +44,7 @@ pub enum SymbolOrigin:
     Builtin
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum DeclarationKind:
     """Every declaration category carried by the native `SemanticSourceTargetKind` source enum."""
 
@@ -72,7 +74,7 @@ pub enum DeclarationKind:
     Other(str)
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model HirSourceSpan:
     """An owned source file, inclusive-exclusive byte range and optional 32-byte expansion identity."""
 
@@ -82,7 +84,7 @@ pub model HirSourceSpan:
     pub expansion: Option[list[int]] = None
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model PlanSourceSpanRecord:
     """The record-boundary projection of a native Plan source location, with allocation sharing removed."""
 
@@ -91,7 +93,7 @@ pub model PlanSourceSpanRecord:
     pub column: int
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model CanonicalSymbolId:
     """One compilation's checked declaration identity, retaining its exact source and expansion origin."""
 
@@ -103,14 +105,14 @@ pub model CanonicalSymbolId:
     pub declaration_span: HirSourceSpan
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model DeclarationSignature:
     """The checked, span-free signature spelling separating declarations that otherwise share one identity."""
 
     pub spelling: str
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model StableDeclarationComponent:
     """One stable owner in a root-to-nearest-owner path, including its ordinal within its own parent when nested."""
 
@@ -122,7 +124,7 @@ pub model StableDeclarationComponent:
     pub signature: Option[DeclarationSignature]
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub enum StableDeclarationLocation:
     """A module-level declaration or a nested declaration with its complete stable owner path and local ordinal."""
 
@@ -130,7 +132,7 @@ pub enum StableDeclarationLocation:
     Nested(list[StableDeclarationComponent], int)
 
 
-@derive(Eq)
+@derive(Eq, Serialize, Deserialize)
 pub model StableDeclarationId:
     """A declaration identity that excludes source positions while preserving owner, kind, scope and signature."""
 

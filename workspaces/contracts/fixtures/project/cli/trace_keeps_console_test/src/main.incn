@@ -1,0 +1,12 @@
+# behavior: `incan test` reports the same results and exits the same with tracing on as with it off, and the trace directory holds Oven's reasoning and the compiler's invocation records (12.4)
+# trace-invariant:
+# cli-commands:
+#   test
+# expect-stdout:
+#   test_traced.incn::test_sum PASSED
+#   test_traced.incn::test_join PASSED
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    println("main")

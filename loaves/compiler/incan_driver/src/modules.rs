@@ -96,12 +96,13 @@ pub struct SourceGraphReads {
     pub absent: Vec<PathBuf>,
 }
 
-/// Collect a command entry's source graph only for what it reads and probes, keeping them when collection refuses: a
-/// refusal is as much a function of those inputs as a graph is, so creating a missing module must reach it.
+/// Collect a command entry's source graph with what it reads and probes, keeping those when collection refuses: a
+/// refusal is as much a function of those inputs as a graph is, so creating a missing module must reach it. The
+/// collected modules are the ones [`collect_modules_detailed_with_session`] collects for the same entry.
 pub fn collect_source_graph_reads(
     path: PathBuf,
     session: &CompilationSession,
-) -> (SourceGraphReads, Result<(), CliDiagnosticFailure>) {
+) -> (SourceGraphReads, Result<Vec<ParsedModule>, CliDiagnosticFailure>) {
     let path_segments = entry_module_segments(&session.source_root, &path);
     let module_name = path_segments.join("_");
     let mut reads = SourceGraphReads::default();
@@ -112,7 +113,7 @@ pub fn collect_source_graph_reads(
         &HashMap::new(),
         &mut reads,
     );
-    (reads, collected.map(|_| ()))
+    (reads, collected)
 }
 
 /// Collect every authored source module for library publication, including modules not imported by `src/lib.incn`.

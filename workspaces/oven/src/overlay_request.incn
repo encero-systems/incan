@@ -1,0 +1,94 @@
+"""
+`incan check SOURCE --overlay BUFFER [--document-version N] [--profile debug|release] [--format json]
+[--engine-report]`, and `incan check --overlay-serve [--profile debug|release]`, which answers one such request per
+JSON line on standard input.
+"""
+
+from std.json import parse
+
+
+pub model OverlayRequest:
+    """One editor overlay request: the document's source path, the file holding its unsaved buffer and its version."""
+
+    pub source: str
+    pub buffer: str
+    pub version: int
+    pub profile: str
+    # Whether the answer carries the engine's work counters.
+    pub report: bool = false
+
+
+pub def parse_served(line: str, profile: str) -> Result[OverlayRequest, str]:
+    """Read one served request line: `{"source": …, "buffer": …, "version": N}`."""
+    request = parse(line).map_err((error) => error.message())?
+    source = request.require("source").map_err((error) => error.message())?.expect_str().map_err(
+        (error) => error.message(),
+    )?
+    buffer = request.require("buffer").map_err((error) => error.message())?.expect_str().map_err(
+        (error) => error.message(),
+    )?
+    version = request.require("version").map_err((error) => error.message())?.expect_int().map_err(
+        (error) => error.message(),
+    )?
+    if version < 0:
+        return Err(f"a document version is a non-negative integer, got {version}")
+    return Ok(OverlayRequest(source=source, buffer=buffer, version=version, profile=profile))
+
+
+pub def parse_overlay(arguments: list[str]) -> Result[OverlayRequest, str]:
+    """Read an overlay request; the answer is always the JSON document, so `--format` may only say `json`."""
+    mut request = OverlayRequest(source="", buffer="", version=0, profile="debug")
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--engine-report":
+            request.report = true
+            index += 1
+            continue
+        if argument in ["--overlay", "--document-version", "--profile", "--format"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            value = arguments[index + 1]
+            if argument == "--overlay":
+                request.buffer = value
+            elif argument == "--document-version":
+                if not decimal(value):
+                    return Err(f"`--document-version` is a non-negative integer, got `{value}`")
+                request.version = int(value)
+            elif argument == "--profile":
+                if value not in ["debug", "release"]:
+                    return Err(f"`--profile` is debug or release, got `{value}`")
+                request.profile = value
+            elif value != "json":
+                return Err(f"an overlay request answers in json, got `--format {value}`")
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(f"unexpected option `{argument}`")
+        if request.source != "":
+            return Err(f"unexpected argument `{argument}`")
+        request.source = argument
+        index += 1
+    if request.source == "" or request.buffer == "":
+        return Err("an overlay request names a source and `--overlay BUFFER`")
+    return Ok(request)
+
+
+def decimal(text: str) -> bool:
+    """Whether `text` is a nonempty decimal number of at most nine digits."""
+    if len(text) == 0 or len(text) > 9:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+pub def parse_serve(arguments: list[str]) -> Result[str, str]:
+    """Read `--overlay-serve [--profile debug|release]` and return the profile every served request checks."""
+    if arguments == ["--overlay-serve"]:
+        return Ok("debug")
+    if len(arguments) == 3 and arguments[0] == "--overlay-serve" and arguments[1] == "--profile":
+        if arguments[2] in ["debug", "release"]:
+            return Ok(arguments[2])
+    return Err("an overlay server takes `--overlay-serve [--profile debug|release]`")

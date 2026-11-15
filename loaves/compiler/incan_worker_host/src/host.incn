@@ -64,6 +64,8 @@ pub model HostSettings:
     pub bounds: Bounds
     # The only user served; `None` serves the user that owns the socket, which is the worker's own.
     pub owner: Option[u32]
+    # The bytes in live allocations after process start; negative when they cannot be read.
+    pub live_baseline: int = -1
 
 
 pub enum Phase:
@@ -147,16 +149,16 @@ pub class WorkerHost:
                         None => pass
         return None
 
-    pub def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
+    pub def complete(mut self, outcome: ActivationOutcome, footprint: int, live: int = -1) -> None:
         """Answer an open compile activation; using this completion for a record request is a protocol fault."""
         if self.active is None:
             return
         if self.active_record is not None:
             self.protocol_fault()
             return
-        self.settle(outcome, footprint)
+        self.settle(outcome, footprint, live)
 
-    pub def complete_record(mut self, reply: RecordMessage, footprint: int) -> None:
+    pub def complete_record(mut self, reply: RecordMessage, footprint: int, live: int = -1) -> None:
         """Answer one record request only with a member of that request's closed reply set."""
         if self.active is None:
             return
@@ -169,15 +171,15 @@ pub class WorkerHost:
                     Err(_) =>
                         self.protocol_fault()
                         return
-                    Ok(accepted) => self.settle_record(accepted, footprint)
+                    Ok(accepted) => self.settle_record(accepted, footprint, live)
 
-    def settle(mut self, outcome: ActivationOutcome, footprint: int) -> None:
+    def settle(mut self, outcome: ActivationOutcome, footprint: int, live: int = -1) -> None:
         """
         Answer the open activation: decide the reply and any retirement, which withdraws the socket before the reply
         is sent, then send the reply and close the activation.
         """
         self.finish_observation()
-        settled = self.policy.settle(outcome, footprint, self.active_light)
+        settled = self.policy.settle(outcome, footprint, self.active_light, live)
         match settled.retirement:
             Some(reason) => self.retire(reason)
             None => pass
@@ -189,10 +191,10 @@ pub class WorkerHost:
         self.active = None
         self.active_record = None
 
-    def settle_record(mut self, reply: RecordMessage, footprint: int) -> None:
+    def settle_record(mut self, reply: RecordMessage, footprint: int, live: int = -1) -> None:
         """Apply ordinary worker lifetime policy, then send the already validated typed record reply."""
         self.finish_observation()
-        settled = self.policy.settle(ActivationOutcome.Exited(0), footprint)
+        settled = self.policy.settle(ActivationOutcome.Exited(0), footprint, false, live)
         match settled.retirement:
             Some(reason) => self.retire(reason)
             None => pass
@@ -348,10 +350,11 @@ pub class WorkerHost:
         self.phase = Phase.Draining
 
 
-pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
+pub def start(arguments: list[str], baseline: int, live_baseline: int = -1) -> Result[WorkerHost, str]:
     """
     Start the worker host of `--resident SOCKET GENERATION READY HOME`, whose physical footprint after process start
-    was `baseline` bytes (negative when unknown). HOME is the private directory of the home the worker serves.
+    was `baseline` bytes, `live_baseline` of them in live allocations (each negative when unknown). HOME is the
+    private directory of the home the worker serves.
 
     1. The endpoints and the home are absolute, because the worker leaves its caller's directory.
     2. A worker can outlive the project that started it, so its own directory is the root.
@@ -372,6 +375,7 @@ pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
             ready=arguments[2],
             home=arguments[3],
             baseline=baseline,
+            live_baseline=live_baseline,
             bounds=Bounds(idle_millis=IDLE_SECONDS * 1000, margin=FOOTPRINT_MARGIN, ceiling=footprint_ceiling()),
             owner=None,
         ),
@@ -399,7 +403,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
         socket=bound,
         listener=listener,
         owner=served_owner(bound.uid, settings.owner),
-        policy=lifecycle(settings.baseline, settings.bounds),
+        policy=lifecycle(settings.baseline, settings.bounds, settings.live_baseline),
         observer=worker_observer(),
     )
     # 2. A worker that cannot announce itself is never sent a request.
@@ -432,17 +436,17 @@ pub def next_activation(mut host: WorkerHost) -> Option[WorkerActivation]:
     return host.next()
 
 
-pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: int) -> None:
+pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: int, live: int = -1) -> None:
     """
-    Answer the open activation with the compiler entry's outcome, given the process's physical footprint after it
-    (negative when unknown), and apply the lifecycle.
+    Answer the open activation with the compiler entry's outcome, given the process's physical footprint and live heap
+    after it (each negative when unknown), and apply the lifecycle.
     """
-    host.complete(outcome, footprint)
+    host.complete(outcome, footprint, live)
 
 
-pub def complete_record(mut host: WorkerHost, reply: RecordMessage, footprint: int) -> None:
+pub def complete_record(mut host: WorkerHost, reply: RecordMessage, footprint: int, live: int = -1) -> None:
     """Validate and answer the open record activation, applying the worker's ordinary lifetime policy."""
-    host.complete_record(reply, footprint)
+    host.complete_record(reply, footprint, live)
 
 
 pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
@@ -451,12 +455,15 @@ pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
 
 
 def worker_observer() -> Option[Emitter]:
-    """Open the requested canonical worker channel once; absent tracing never starts a clock or writer."""
+    """
+    Open the requested canonical worker channel once, in the process's one channel file, which its compiler records
+    share; absent tracing never starts a clock or writer.
+    """
     directory = environment_or("INCAN_ENGINE_TRACE", "")
     if directory == "":
         return None
     match Emitter.open(
-        f"{directory}/engine-worker-{id()}.jsonl",
+        f"{directory}/engine-compiler-{id()}.jsonl",
         "compiler-worker",
         environment_or("INCAN_ENGINE_RUN", ""),
         environment_or("INCAN_ENGINE_REQUEST", ""),

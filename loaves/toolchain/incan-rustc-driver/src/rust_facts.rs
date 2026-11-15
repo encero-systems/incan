@@ -125,7 +125,8 @@ impl RustcFacts {
         }
         // ---- Optional extraction trace ----
         if incan_frontend::trace_flags::trace_rust_facts() {
-            eprintln!(
+            incan_frontend::trace_line!(
+                incan_frontend::trace_flags::Category::RustFacts,
                 "rust facts: {} uncovered paths, {} items in {:?}",
                 paths.len(),
                 facts.len(),

@@ -63,6 +63,7 @@ mod analysis_cache;
 mod api_markdown;
 mod completions;
 mod contract_model_command;
+mod engine_overlay;
 mod graph_navigation;
 mod hover_context;
 mod hovers_and_symbols;

@@ -39,6 +39,9 @@ pub model SourceGraph:
 
     pub read: list[str]
     pub absent: list[str]
+    # The Rust crate requests the same collection found, as `--rust-imports` prints them; `None` when it refused or the
+    # compiler did not report them.
+    pub imports: Option[list[JsonValue]] = None
 
 
 pub def graph_keyed(unit: UnitDescription) -> bool:
@@ -127,6 +130,22 @@ pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
     return Some(SourceGraph(read=unique(read), absent=unique(absent)))
 
 
+pub def recorded_imports(
+    unit: UnitDescription,
+    scope: str,
+    mut project: Ledger,
+) -> Result[Option[list[JsonValue]], str]:
+    """
+    The Rust crate requests the unit's current graph under `scope` was collected with, or `None`. They are what
+    `--rust-imports` prints for the same files, compiler and description, so the graph question already answered them.
+    """
+    if not graph_keyed(unit):
+        return Ok(None)
+    match recorded_graph(graph_location(unit.project_root, unit.profile, unit.kind, unit.source), scope, project)?:
+        Some(graph) => return Ok(graph.imports)
+        None => return Ok(None)
+
+
 def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Option[SourceGraph], str]:
     """The recorded graph of `scope` while it is still current; anything else is a miss, never an error."""
     for entry in recorded_entries(location):
@@ -165,7 +184,7 @@ def current_graph(entry: JsonValue, mut project: Ledger) -> Result[Option[Source
         absent.append(path)
     if len(read) == 0:
         return Ok(None)
-    return Ok(Some(SourceGraph(read=read, absent=absent)))
+    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(entry))))
 
 
 def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
@@ -200,7 +219,14 @@ def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> R
     if len(read) == 0 or "" in read or "" in absent:
         return Ok(None)
     trace(f"unit {unit.package} source graph: collected {len(read)} files, {len(absent)} absent paths")
-    return Ok(Some(SourceGraph(read=read, absent=absent)))
+    return Ok(Some(SourceGraph(read=read, absent=absent, imports=reported_imports(report))))
+
+
+def reported_imports(report: JsonValue) -> Option[list[JsonValue]]:
+    """The Rust crate requests a complete collection reported beside its graph; none from an older compiler."""
+    match required_items(report, "imports"):
+        Ok(records) => return Some(records)
+        Err(_) => return None
 
 
 def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) -> Result[None, str]:
@@ -213,8 +239,13 @@ def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) 
         read.append(
             JsonValue.object({"path": JsonValue.string(path), "digest": JsonValue.string(project.digest(Path(path))?)}),
         )
-    absent = JsonValue.array([JsonValue.string(path) for path in graph.absent])
-    mut graphs = [JsonValue.object({"scope": JsonValue.string(scope), "read": JsonValue.array(read), "absent": absent})]
+    mut fields: Dict[str, JsonValue] = {}
+    fields["scope"] = JsonValue.string(scope)
+    fields["read"] = JsonValue.array(read)
+    fields["absent"] = JsonValue.array([JsonValue.string(path) for path in graph.absent])
+    if let Some(records) = graph.imports:
+        fields["imports"] = JsonValue.array(records)
+    mut graphs = [JsonValue.object(fields)]
     for entry in recorded_entries(location):
         if len(graphs) >= RECORDED_SCOPES:
             break

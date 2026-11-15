@@ -98,7 +98,8 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
         extract_cache(&toolchain, unit, &externs, &directory, &store, &cache)?;
     }
     if incan_frontend::trace_flags::trace_rust_facts() {
-        eprintln!(
+        incan_frontend::trace_line!(
+            incan_frontend::trace_flags::Category::RustFacts,
             "rust ABI cache: {} {} crates in {:?}",
             if reused { "reused" } else { "compiled" },
             externs.len(),
@@ -133,7 +134,11 @@ pub fn cached_path_facts(
         Ok(identity) => identity,
         Err(error) => {
             if incan_frontend::trace_flags::trace_rust_facts() {
-                eprintln!("rust facts cache unavailable: {}", error.message);
+                incan_frontend::trace_line!(
+                    incan_frontend::trace_flags::Category::RustFacts,
+                    "rust facts cache unavailable: {}",
+                    error.message
+                );
             }
             return extract().map_err(CliError::failure);
         }
@@ -154,18 +159,27 @@ pub fn cached_path_facts(
         if let Err(error) = stage_extraction(staging, &identity, &facts)
             && incan_frontend::trace_flags::trace_rust_facts()
         {
-            eprintln!("rust facts cache not staged: {}", error.message);
+            incan_frontend::trace_line!(
+                incan_frontend::trace_flags::Category::RustFacts,
+                "rust facts cache not staged: {}",
+                error.message
+            );
         }
         facts
     };
     if let Err(error) = record_used(staging, &identity)
         && incan_frontend::trace_flags::trace_rust_facts()
     {
-        eprintln!("rust facts use not recorded: {}", error.message);
+        incan_frontend::trace_line!(
+            incan_frontend::trace_flags::Category::RustFacts,
+            "rust facts use not recorded: {}",
+            error.message
+        );
     }
     // ---- Optional retrieval trace ----
     if incan_frontend::trace_flags::trace_rust_facts() {
-        eprintln!(
+        incan_frontend::trace_line!(
+            incan_frontend::trace_flags::Category::RustFacts,
             "rust facts cache: {} {} paths, {} items in {:?}",
             if reused { "reused" } else { "compiled" },
             paths.len(),

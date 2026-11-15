@@ -351,7 +351,8 @@ impl TypeChecker {
         }
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path, false);
         if crate::trace_flags::trace_rust_facts() {
-            eprintln!(
+            crate::trace_line!(
+                crate::trace_flags::Category::RustFacts,
                 "rust trait call: {}.{} owner {owner:?}, {} impls, candidates {:?}",
                 call.rust_path,
                 call.method,

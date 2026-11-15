@@ -1,0 +1,15 @@
+[project]
+name = "workspace_policy_and_sources_are_accepted"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = []
+
+[workspace.policy.release]
+approval = "required"
+
+[workspace.sources.internal]
+url = "https://packages.example.test"

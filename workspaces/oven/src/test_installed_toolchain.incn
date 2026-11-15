@@ -1,0 +1,26 @@
+"""A home without this Oven's toolchain refuses by naming what is missing and how to install it."""
+
+from home_paths import TOOLCHAIN
+from scratch import scratch_directory
+from toolchain import load_toolchain_at
+
+
+pub def test_a_home_without_the_toolchain_names_it_and_the_install_command() -> Result[None, str]:
+    """
+    A copied `incan` whose home has nothing installed refuses before it observes any installed file.
+
+    1. Select this Oven's toolchain directory in a home that has none.
+    2. The refusal names the missing toolchain, the description it looked for and the install command.
+    """
+    scratch = scratch_directory()?
+    # 1. The home exists, but nothing was installed into it.
+    directory = scratch.path().joinpath("home/toolchains").joinpath(TOOLCHAIN)
+    description = directory.joinpath("toolchain.json")
+    # 2. A host "No such file or directory" alone names neither the toolchain nor the way to install it.
+    match load_toolchain_at(directory):
+        Ok(_) => return Err(f"{directory.0}: a home without a toolchain selected one")
+        Err(reason) =>
+            assert f"no toolchain {TOOLCHAIN} is installed" in reason, reason
+            assert description.0 in reason, reason
+            assert "incan toolchain install ARCHIVE" in reason, reason
+    return Ok(None)

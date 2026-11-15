@@ -17,6 +17,7 @@ from rust::std::env import args, current_exe
 from rust::std::env::consts import OS
 from rust::std::process import exit
 from rust::std::time import Instant
+from std.environ import get_or
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
@@ -358,7 +359,11 @@ def family_requests(settings: Settings, scratch: Path, families: list[str], jobs
         if len(selected) == 0:
             selected = [family]
         arguments.extend(selected)
-        requests.append(Invocation(program=program, arguments=arguments, project=project, selector=None))
+        # A family worker records its own work where the runner does; its case commands run untraced.
+        own = [f"INCAN_ENGINE_TRACE={get_or("INCAN_ENGINE_TRACE", "")}"]
+        requests.append(
+            Invocation(program=program, arguments=arguments, project=project, selector=None, environment=own),
+        )
     return Ok(requests)
 
 

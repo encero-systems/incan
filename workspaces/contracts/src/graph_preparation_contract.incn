@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from files import make_directory, parse_json, read, required_text, remove, write
-from run import invoke
+from run import invoke, trace_lines
 
 
 pub def check_registry_preparation(incan: str, project: Path) -> Result[None, str]:
@@ -17,7 +17,7 @@ pub def check_registry_preparation(incan: str, project: Path) -> Result[None, st
     directory = project.joinpath(".preparation-work")
     make_directory(directory)?
     outcome = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project,
-                     [f"INCAN_JEC_TRACE={directory.0}"])?
+                     [f"INCAN_ENGINE_TRACE={directory.0}"])?
     if outcome.code != Some(0):
         return Err(f"preparation inspection failed: {outcome.stderr}")
     # 2. Registry completion is part of the same reading, rather than a second source project's reading.
@@ -31,15 +31,15 @@ pub def check_registry_preparation(incan: str, project: Path) -> Result[None, st
             if line == "":
                 continue
             record = parse_json(line)?
-            if required_text(record, "category")? == "registry_index":
+            if required_text(record, "operation")? == "registry_index":
                 readings += 1
-                closure = required_text(record, "input")?
-            if required_text(record, "category")? == "registry_completion":
+                closure = required_text(record, "key")?
+            if required_text(record, "operation")? == "registry_completion":
                 completions += 1
-            if required_text(record, "category")? == "registry_page":
+            if required_text(record, "operation")? == "registry_page":
                 pages += 1
-            if required_text(record, "category")? == "json_decode":
-                decoded.append(required_text(record, "input")?)
+            if required_text(record, "operation")? == "json_decode":
+                decoded.append(required_text(record, "key")?)
         remove(path)?
     # 3. Observation files never become fixture inputs for a later command.
     directory.rmdir().map_err((error) => error.message())?
@@ -71,9 +71,8 @@ pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]
     write(manifest, original.replace('["context"]', '["context", "./context"]'))?
     directory = project.joinpath(".source-work")
     make_directory(directory)?
-    trace = directory.joinpath("preparation.trace")
     result = invoke(incan, ["inspect", "codegraph", ".", "--query", "refs", "helper"], project,
-                    [f"INCAN_JEC_TRACE={directory.0}", f"OVEN_TRACE={trace.0}"])
+                    [f"INCAN_ENGINE_TRACE={directory.0}"])
     write(manifest, original)?
     outcome = result?
     if outcome.code != Some(0):
@@ -81,7 +80,7 @@ pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]
     if ordinary.code != outcome.code or ordinary.stdout != outcome.stdout:
         return Err("equivalent source selections changed the graph answer")
     # 2. Aliases of a canonical source root contribute its graph only once.
-    discoveries = [line for line in read(trace)?.split("\n")
+    discoveries = [line for line in trace_lines(directory)
                    if line.startswith(f"oven: graph unit discovery {context.0}:")]
     mut manifests: Dict[str, int] = {}
     mut activations: Dict[str, int] = {}
@@ -91,11 +90,11 @@ pub def check_source_preparation(incan: str, project: Path) -> Result[None, str]
                 if line == "":
                     continue
                 record = parse_json(line)?
-                if required_text(record, "category")? == "manifest_parse":
-                    name = required_text(record, "input")?
+                if required_text(record, "operation")? == "manifest_parse":
+                    name = required_text(record, "key")?
                     manifests[name] = manifests.get(name).unwrap_or(0) + 1
-                if required_text(record, "category")? == "graph_resolution":
-                    name = required_text(record, "input")?.split("|")[0]
+                if required_text(record, "operation")? == "graph_resolution":
+                    name = required_text(record, "key")?.split("|")[0]
                     activations[name] = activations.get(name).unwrap_or(0) + 1
         remove(path)?
     directory.rmdir().map_err((error) => error.message())?

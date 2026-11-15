@@ -124,6 +124,10 @@ pub def installation(directory: Path) -> Result[Installation, str]:
     """Read the admitted typed page, or verify and admit a changed installation before selecting any facts."""
     if let Some(page) = recall_installation(directory)?:
         return Ok(page)
+    # A home with nothing installed has no page to admit; say what is missing before observing any of its files.
+    description = directory.joinpath("toolchain.json")
+    if not description.is_file():
+        return Err(not_installed(description))
     clock = begin()
     page = retain_installation(directory, unprepared_toolchain)?
     retire_legacy_admission(directory)?
@@ -181,11 +185,20 @@ pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
     return Ok(toolchain)
 
 
+def not_installed(description: Path) -> str:
+    """The refusal for a home without this Oven's toolchain: what is missing, and the command that installs it."""
+    lines = [
+        f"no toolchain {TOOLCHAIN} is installed: {description.0} does not exist",
+        "  = hint: install the toolchain archive with `incan toolchain install ARCHIVE`",
+    ]
+    return "\n".join(lines)
+
+
 def parsed_toolchain(directory: Path) -> Result[tuple[Toolchain, JsonValue], str]:
     """The toolchain contract and its description document, without admitting anything it names."""
     path = directory.joinpath("toolchain.json")
     if not path.is_file():
-        return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
+        return Err(not_installed(path))
     document = read_json(path)?
     toolchain = described_toolchain(document, directory).map_err((failed) => f"{path.0}: {failed}")?
     return Ok((toolchain, document))

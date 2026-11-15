@@ -21,7 +21,7 @@ from json_fields import array, text_field
 from observation import trace_launch
 from runner_options import ReportFormat, RunnerOptions, count
 from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
-from runner_selection import keyword_matches, markers_match, shuffle_seed, shuffled
+from runner_selection import keyword_matches, keyword_may_select, markers_match, shuffle_seed, shuffled
 from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -70,6 +70,45 @@ def is_test_source(source: Path) -> bool:
     """Whether a source entry is an authored Incan test module: `test_*.incn` or `*_test.incn`."""
     name = source.name()
     return source.is_file() and name.endswith(".incn") and (name.startswith("test_") or name.endswith("_test.incn"))
+
+
+pub def may_select(runner: RunnerOptions, source: Path, file: str) -> Result[bool, str]:
+    """
+    Whether the run's selection may select a test of the module at `source`, named `file` in test identifiers, before
+    the module is compiled; a module it cannot select is never compiled.
+
+    1. Without `-k`, every module may be selected: markers and slow tests are known only from the compiler's report.
+    2. `-k` is matched against the identifiers the module's top-level functions give their tests. A module that
+       mentions parameters may give its tests case ids beyond those identifiers, which keeps undecided terms open.
+    """
+    # 1. Only a keyword decides from the source alone.
+    if runner.keyword == "":
+        return Ok(true)
+    # 2. An unreadable module is compiled, so the compiler reports why.
+    match read(source):
+        Err(_) => return Ok(true)
+        Ok(text) =>
+            identifiers = [f"{file}::{name}" for name in declared_functions(text)]
+            return keyword_may_select(runner.keyword, identifiers, "param" in text)
+
+
+pub def declared_functions(text: str) -> list[str]:
+    """
+    The names a module's top-level functions declare, in order. Tests and fixtures are top-level functions whatever
+    their decorators, so these name every test the module can collect, and possibly more.
+    """
+    mut names: list[str] = []
+    for line in text.split("\n"):
+        if line == "" or line.startswith(" ") or line.startswith("\t"):
+            continue
+        words = [word for word in line.split(" ") if word != ""]
+        for index in range(len(words) - 1):
+            if words[index] == "def":
+                name = words[index + 1].split("(")[0].split("[")[0].split(":")[0]
+                if name != "" and name not in names:
+                    names.append(name)
+                break
+    return names
 
 
 pub def tests_binary(unit: UnitDescription) -> Path:

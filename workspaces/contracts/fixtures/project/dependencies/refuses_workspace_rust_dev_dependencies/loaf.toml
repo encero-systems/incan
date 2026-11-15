@@ -1,0 +1,12 @@
+[project]
+name = "refuses_workspace_rust_dev_dependencies"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = []
+
+[workspace.rust-dev-dependencies]
+insta = "1"

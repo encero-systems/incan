@@ -7,7 +7,8 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from engine_selector import Engine, select as select_engine
-from engine_client import execute as execute_records
+from engine_client import execute as execute_records, execute_overlay, serve_overlays
+from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
 from engine_service import serve as serve_engine, refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
@@ -16,6 +17,8 @@ from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader, entry_source
+from files import read
+from manifest_tolerance import tolerated_warnings
 from unit import describe, project_root_of, retired_refusal, with_c_abi_target
 from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
@@ -34,6 +37,7 @@ from testing import (
     collected_cases,
     compile_tests,
     directory_test_sources,
+    may_select,
     run_session,
     rust_cases,
     test_sources,
@@ -70,7 +74,7 @@ from checked_metadata import checked_metadata, parse_metadata, parse_registry
 from build_report import parse_report, reported_build
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
-from trace_adapter import finish as finish_trace
+from trace_adapter import finish as finish_trace, notice_former_compiler_variables
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -129,6 +133,9 @@ def command_line() -> None:
     if command == "__rust-unit":
         scheduled_unit_command(rest)
         return
+    # A former compiler tracing variable this command set names its replacement once.
+    if not command.startswith("--internal"):
+        notice_former_compiler_variables()
     # 2. A command of the other surface runs nowhere; help never prepares a unit or starts a server.
     match misplaced(surface, command, rest):
         Some(reason) => fail(reason, 2)
@@ -188,6 +195,25 @@ def dispatch(command: str, rest: list[str]) -> None:
         match selected_home_view():
             Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
             Ok(_) => pass
+    # An editor's overlay request: one unsaved buffer, answered by the records engine in the editor view (14.1).
+    if command == "check" and "--overlay-serve" in rest:
+        match parse_serve(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(profile) =>
+                match serve_overlays(profile):
+                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
+                    Ok(_) => return
+        return
+    if command == "check" and "--overlay" in rest:
+        match parse_overlay(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match execute_overlay(request):
+                    Err(reason) => fail(f"{invoked()} check: {reason}", 1)
+                    Ok(document) =>
+                        println(document)
+                        return
+        return
     if command == "--internal-readmit":
         # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
         # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
@@ -694,7 +720,33 @@ def prepared_lock(command: str, options: Options) -> None:
         options.locked,
     ):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
-        Ok(_) => return
+        Ok(_) => warn_tolerated_entries(command, Path(options.path))
+
+
+def warn_tolerated_entries(command: str, path: Path) -> None:
+    """
+    Warn once for each entry of the selected project's manifest that 0.5.1 accepted and this toolchain tolerates
+    without reading (`manifest_tolerance`): so does 0.6, but never silently.
+    """
+    mut root = project_root_of(path)
+    if path.is_dir() and path.joinpath("loaf.toml").is_file():
+        root = Some(path)
+    match root:
+        None => return
+        Some(directory) =>
+            manifest = directory.joinpath("loaf.toml")
+            match read(manifest):
+                Err(_) => return
+                Ok(source) =>
+                    mut ignored: Dict[str, str] = {}
+                    match read_project(directory):
+                        Ok(project) => ignored = project.library_scripts
+                        Err(_) => pass
+                    mut err = stderr()
+                    for warning in tolerated_warnings(manifest.0, source, ignored):
+                        text = f"{invoked()} {command}: warning: {warning}\n"
+                        # A closed standard error cannot be told about, so a failed write is ignored.
+                        _ = err.write_all(RustString.from(text).into_bytes())
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
@@ -818,9 +870,10 @@ def project_cases(options: Options, runner: RunnerOptions) -> Result[Collected, 
 
 def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], root: Path) -> Result[Collected, str]:
     """
-    Compile each test module and collect its tests: listings name a module below `root`, and reports below the working
-    directory. A failed module keeps its compilation status. Under one job, the modules that share a plain session
-    conftest fixture run from one batch unit instead, its cases in place of theirs (`test_batches`).
+    Compile each test module the selection may select and collect its tests: listings name a module below `root`, and
+    reports below the working directory. A module the selection cannot select is never compiled. A failed module keeps
+    its compilation status. Under one job, the modules that share a plain session conftest fixture run from one batch
+    unit instead, its cases in place of theirs (`test_batches`).
     """
     mut here = root
     match Path.cwd():
@@ -829,6 +882,9 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
     mut collected = Collected()
     mut found: list[list[TestCase]] = []
     for source in sources:
+        if not may_select(runner, source, relative_name(source, root))?:
+            found.append([])
+            continue
         mut selected = options
         selected.path = source.0
         code, binary = compiled_tests(selected, runner)?
@@ -941,7 +997,10 @@ def check(arguments: list[str]) -> None:
         fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
     match parse_options(own, "."):
         Err(reason) => syntax_error("check", reason)
-        Ok(options) => finish("check", checked(validated("check", located("check", options)), format), format)
+        Ok(options) =>
+            selected = validated("check", located("check", options))
+            warn_tolerated_entries("check", Path(selected.path))
+            finish("check", checked(selected, format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:

@@ -448,14 +448,6 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
         type_fields(ty, &mut row)?;
         fields.push(row);
     }
-    for span in &local.protocols.loan_free_scrutinees {
-        fields.push(vec![
-            "protocol".into(),
-            positions.nodes.anchor(*span)?.path,
-            "loan-free-scrutinee".into(),
-            "true".into(),
-        ]);
-    }
     inputs::project(positions, local, &mut fields)?;
     for canonical in local.nested.values() {
         fields.push(vec![

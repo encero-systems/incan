@@ -1,0 +1,72 @@
+"""Overlay requests answered by the installed records engine."""
+
+from rust::std::process import Command
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from files import write
+from rust_target import decoded
+from scratch import scratch_directory
+
+
+pub def test_an_overlay_is_answered_by_a_check_alone() -> Result[None, str]:
+    """An unsaved type error is reported from a check: the request plans no function and bakes no native unit."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    program = scratch.path().joinpath("hello")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    source = program.joinpath("main.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    buffer = scratch.path().joinpath("buffer.incn")
+    write(buffer, "def main() -> None:\n    count: int = \"three\"\n    println(\"hello\")\n")?
+    store = scratch.path().joinpath("store")
+    answered = overlay(binary, source, buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    answer = answered?
+    text = answer.to_json().map_err((error) => error.message())?
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "plan_function_evaluations")? == 0, text
+    assert count(work, "native_bakes")? == 0, text
+    diagnostics = answer.require("diagnostics").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    assert len(diagnostics) == 1, text
+    assert count(diagnostics[0], "line")? == 2 and count(diagnostics[0], "column")? == 18, text
+    return Ok(None)
+
+
+def overlay(binary: str, source: Path, buffer: Path, store: Path) -> Result[JsonValue, str]:
+    """Ask the installed Oven for one overlay answer, with its engine work, against a private store."""
+    outcome = Command
+        .new(binary)
+        .arg("check")
+        .arg(source.0)
+        .args(["--overlay", buffer.0, "--document-version", "1", "--format", "json", "--engine-report"])
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    text = decoded(outcome.stdout)
+    return parse(text).map_err((error) => f"{error.message()}: stdout={text} stderr={decoded(outcome.stderr)}")
+
+
+def count(value: JsonValue, name: str) -> Result[int, str]:
+    """Read one required integer field."""
+    return value.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def stop_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop the private store's engine after the request."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="overlay request test completed")))
+        .map_err((refusal) => refusal.detail)?
+    _ = channel.receive().map_err((refusal) => refusal.detail)?
+    _ = channel.transport.close()
+    return Ok(None)

@@ -4,6 +4,9 @@ from std.fs import Path
 from rust_activation import version_matches
 from semver_req import compare_version_order, parse_version
 
+# The two routes a crate the registry does not publish has, appended to its refusal.
+const UNPUBLISHED_HINT: str = "  = hint: declare it as a local Rust facet, `ALIAS = { loaf = \"NAME\", path = \"DIR\" }`, or publish it to the registry"
+
 
 @derive(Eq)
 pub model RegistryUnit:
@@ -273,7 +276,7 @@ def candidate_groups(
                 f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
             )
         return Err(
-            f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}",
+            f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}\n{UNPUBLISHED_HINT}",
         )
     candidates = mode_candidates(candidates, mode)?
     preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]

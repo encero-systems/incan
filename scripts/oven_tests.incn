@@ -17,6 +17,10 @@ sources share a pool of private worker projects under `.agents/state`, one per j
 worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
 source at a time, so concurrent generations never share mutable output. The worker projects are removed once every
 invocation has exited.
+
+A source that needs a settled installation runs alone after every other invocation has exited. Its compile-only
+listing (`--list`, logged as `NNN-<source>-compile.log` and never joined) starts first among the others, so the run
+alone reuses the compiled unit and only its tests wait.
 """
 
 from rust::std::cell import RefCell
@@ -44,7 +48,7 @@ pub const HEADROOM_BYTES: int = GIB
 const PASSED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ PASSED$"
 const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPASS)( |$)"
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
-# break, so they run after the others have finished.
+# break, so they run after the others have finished; only their compilation runs beside the others.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
@@ -183,11 +187,10 @@ def run(options: Options) -> Result[str, str]:
     root = repository_root()?
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
-    planned = invocations(root, options.evidence, logs, options.jobs)?
-    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
-    ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
+    bakery = selected_builder_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    planned = invocations(root, options.evidence, logs, options.jobs, bakery)?
+    succeeded = run_planned(options.oven, planned, options.jobs, options.memory)?
     remove_worker_projects(planned)?
-    succeeded = ran and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -195,8 +198,20 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result[list[Invocation], str]:
-    """Plan fixed-order invocations; each Oven source may run in any of one private worker project per job."""
+pub def invocations(
+    root: Path,
+    evidence: Path,
+    logs: Path,
+    jobs: int,
+    builder_bakery: str = "",
+) -> Result[list[Invocation], str]:
+    """
+    Plan fixed-order invocations; each Oven source may run in any of one private worker project per job.
+
+    A nonempty `builder_bakery` is the release builder's bakery: the release-profile Loaf tests ask it, so they reuse
+    the release units the release already built under the same identities, as the Rust facet tests do. The Oven
+    sources keep the installation's bakery, because their nested commands inherit the environment.
+    """
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
     sources = listed_tests(oven.joinpath("src"))?
@@ -212,12 +227,65 @@ pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
         planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
     compiler = root.joinpath("loaves/compiler").0 + "/"
+    mut shared: Dict[str, str] = {}
+    if builder_bakery != "":
+        shared["INCAN_BAKERY"] = builder_bakery
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
-        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+        mut planned_loaf = invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source)
+        planned_loaf.environment = shared
+        planned.append(planned_loaf)
     return Ok(planned)
+
+
+pub def selected_builder_bakery(builder_home: str) -> str:
+    """Select the release builder's existing bakery for exact-identity reuse, or no override outside a release."""
+    if builder_home == "":
+        return ""
+    bakery = Path(builder_home).joinpath("bakery")
+    if not bakery.is_dir():
+        return ""
+    return bakery.0
+
+
+pub def run_planned(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
+    """
+    Run the pooled invocations beside each settled source's compile-ahead, then each settled source alone.
+
+    1. The compile-ahead invocations start first in the pool, so a settled source's compilation overlaps the others.
+    2. Each settled source then runs alone and reuses its compiled unit when its inputs are unchanged.
+    3. Only the planned invocations decide the outcome: a compile-ahead failure repeats in the settled run itself.
+    """
+    # 1. The compile-ahead invocations lead the pool, so their failed positions are the lowest ones.
+    early = compile_ahead(planned)
+    failed = run_all_failures(oven, early + [item for item in planned if not item.alone], jobs, memory)?
+    # 2. A settled source requires an installation that no other invocation changes any more.
+    ran_alone = run_all(oven, [item for item in planned if item.alone], 1, memory)?
+    # 3. The settled runs decide again what a compile-ahead failure showed.
+    return Ok(len([index for index in failed if index >= len(early)]) == 0 and ran_alone)
+
+
+pub def compile_ahead(planned: list[Invocation]) -> list[Invocation]:
+    """A compile-only listing of each settled source, in its own log, which may run beside the pooled invocations."""
+    mut ahead: list[Invocation] = []
+    for item in planned:
+        if not item.alone:
+            continue
+        log = item.log.parent().joinpath(f"{item.log.stem()}-compile.log")
+        ahead.append(
+            Invocation(
+                arguments=item.arguments + ["--list"],
+                directory=item.directory,
+                reservation=item.reservation,
+                log=log,
+                environment=item.environment,
+                timeout_seconds=item.timeout_seconds,
+                workers=item.workers,
+            ),
+        )
+    return ahead
 
 
 pub def remove_worker_projects(planned: list[Invocation]) -> Result[None, str]:

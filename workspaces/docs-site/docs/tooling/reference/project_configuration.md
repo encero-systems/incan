@@ -4,11 +4,11 @@ A project manifest is a TOML file named `loaf.toml`. Source commands select the 
 
 ## Root tables
 
-The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop`, `c` and `envs`. Unknown root tables are refused. `sdk`, `workspace`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
+The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop`, `c`, `envs` and `workspace`. Unknown root tables are refused. `sdk`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
 
 ## `[project]`
 
-`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. Accepting a metadata field does not enforce a compiler-version requirement.
+`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. `requires-incan` is a version requirement that the active toolchain must satisfy before `run`, `check`, `build` or `test` compiles anything. A prerelease toolchain satisfies it by its release version: `0.6.0-dev.8` meets `>=0.5` and misses `>=0.5.0,<0.6.0`, as `0.6.0` does, unless the requirement names a prerelease of that release, such as `>=0.6.0-dev.5`.
 
 ```toml
 [project]
@@ -26,7 +26,7 @@ Omitting the key preserves the existing unit key and records no explicit registr
 
 ### `[project.scripts]`
 
-Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library is refused. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
+Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library, such as `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it and ignored: the library is built as a library, never as an executable, and `run`, `check`, `build` and `test` print one warning naming the script line. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
 
 ### `[project.features]`
 
@@ -115,6 +115,20 @@ Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is
 ## `[vocab]`
 
 Accepts a required nonempty string `entry`; `crate` and other keys are refused. [Vocabulary entries](vocabulary.md) specifies the entry contract.
+
+## `[workspace]`
+
+A manifest with a `[workspace]` table is a workspace root. `members`, `default-members` and `exclude` are arrays of member directories relative to the root; [Workspaces](../../language/how-to/workspaces.md) covers member selection.
+
+`[workspace.dependencies]` declares dependencies the members share. Each entry names a local `path`, relative to the root, or a registry `loaf` with its `version`, and accepts the fields of a `[dependencies]` entry. A member inherits one with `NAME = { workspace = true }` in its own `[dependencies]`, optionally with `features`, added to the entry's, and `optional`. The member must be the root or one of its `members`; a local `path` is rebased from the root onto the member. `[workspace.rust-dependencies]` is refused with the corresponding `[workspace.dependencies]` Loaf form. `[workspace.rust-dev-dependencies]` is refused with that form too, and with `NAME = { workspace = true }` for each member's `[envs.test.dependencies]`, which inherits a shared entry as `[dependencies]` does.
+
+`[workspace.envs.NAME]` declares an environment fragment with the keys of `[envs.NAME]`. An environment of the root or a member reaches it only through `extends = ["workspace:NAME"]`, which applies the fragment before the environment's own layer; `oven env list` does not list fragments.
+
+`[workspace.policy]` and `[workspace.sources]` are tables accepted as 0.5.1 accepted them and reserved for later phases; no command reads them. `oven workspace inspect --format json` reports the shared tables as `shared_dependencies` (`libraries`, `rust` and an empty `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources`.
+
+## `[tool.incan]`
+
+`metadata` and `codegraph` are read as below. Any other `[tool.incan]` key is tolerated, as 0.5.1 tolerated it, and `run`, `check`, `build` and `test` print one warning naming each such key. `[tool.incan.envs]` is refused in favor of `[envs.NAME]`.
 
 ## `[tool.incan.metadata]`
 

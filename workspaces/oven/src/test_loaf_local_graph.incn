@@ -151,6 +151,8 @@ def registry_closure_controls() -> Result[None, str]:
         Ok(_) => fail("an unpublished registry Loaf was accepted")
         Err(reason) =>
             assert "crates-io/missing is not published in the compiled registry closure" in reason
+            # The refusal names the routes a crate outside the registry has.
+            assert "declare it as a local Rust facet" in reason and "publish it to the registry" in reason, reason
     missing = RegistryUnits(units=[serde_b], search=[])
     match missing.select([serde], "release"):
         Ok(_) => fail("a producer whose exact dependency is absent was accepted")

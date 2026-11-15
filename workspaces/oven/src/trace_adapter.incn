@@ -1,5 +1,6 @@
 """Adapt Oven's observation switches and compatibility formats to the platform's single span and channel home."""
 
+from rust::std::env import args
 from rust::std::io import Write, stderr
 from rust::std::process import id
 from rust::std::string import String as RustString
@@ -53,6 +54,14 @@ model ObservationChannels:
         if directory == "" and self.legacy_work == "" and self.legacy_reason == "":
             return
         self.process = int(id())
+        # A former variable still works for one release, and names its replacement once, where it writes; an owner's
+        # `OVEN_TRACE` is its internal mailbox, which names nothing.
+        if self.legacy_reason != "" and not internal_role():
+            notice = former_notice("OVEN_TRACE", "`reason`, `native_timing`, `vocab_runtime` and `redo`")
+            self.remember(compatibility_line(self.legacy_reason, f"oven: {notice}\n"))
+        if self.legacy_work != "":
+            notice = former_notice("INCAN_JEC_TRACE", "operation")
+            self.remember(compatibility_notice(self.legacy_work, self.process, notice))
         if directory != "":
             self.canonical = Path(directory).joinpath(f"engine-oven-{self.process}.jsonl").0
         self.run = get_or("INCAN_ENGINE_RUN", "")
@@ -294,3 +303,58 @@ def compatibility_line(destination: str, text: str) -> Result[None, TraceError]:
         output.write_all(RustString.from(text).into_bytes()).map_err((_) => TraceError.Channel)?
         return Ok(None)
     return append(destination, text)
+
+
+pub def former_notice(name: str, categories: str) -> str:
+    """The one notice a former tracing variable gives, naming the channel and the categories that replace it."""
+    replacement = f"`{name}` is replaced by `INCAN_ENGINE_TRACE`, whose {categories} records carry what it selected"
+    return replacement + "; it is read for one more release"
+
+
+def compatibility_notice(directory: str, process: int, notice: str) -> Result[None, TraceError]:
+    """Record a former variable's notice in its own JEC file, as a record its readers already parse."""
+    fields = JsonValue.object(
+        {
+            "schema": JsonValue.string("incan.jec/1"),
+            "process": JsonValue.int(process),
+            "category": JsonValue.string("notice"),
+            "input": JsonValue.string(notice),
+            "nanoseconds": JsonValue.int(0),
+            "ended_ns": JsonValue.int(0),
+            "bytes": JsonValue.int(0),
+            "allocations": JsonValue.null(),
+        },
+    )
+    text = fields.to_json().map_err((_) => TraceError.InvalidSpan)?
+    return append(Path(directory).joinpath(f"oven-{process}.jsonl").0, text + "\n")
+
+
+pub def notice_former_compiler_variables() -> None:
+    """
+    Name the replacement of each former compiler tracing variable this command set, once, where that variable sends
+    its output: a notice file in the `INCAN_TRACE_DIR` directory, standard error for the variables the compiler printed
+    there, standard output for those it printed there. A notice that cannot be written is dropped.
+    """
+    directory = get_or("INCAN_TRACE_DIR", "")
+    if directory != "":
+        notice = former_notice("INCAN_TRACE_DIR", "`invocation`")
+        _ = append(Path(directory).joinpath("former-variable.notice").0, notice + "\n")
+    if get_or("INCAN_TRACE_RUST_FACTS", "") != "":
+        mut output = stderr()
+        line = f"incan: {former_notice("INCAN_TRACE_RUST_FACTS", "`rust_facts`")}\n"
+        _ = output.write_all(RustString.from(line).into_bytes())
+    for name, category in [
+        ("INCAN_TRACE_TYPECHECK_MEMORY", "`typecheck_memory`"),
+        ("INCAN_TRACE_LOWERING", "`lowering`"),
+        ("INCAN_TRACE_LOWERING_FOOTPRINT", "`lowering_footprint`"),
+    ]:
+        if get_or(name, "") != "":
+            println(f"incan: {former_notice(name, category)}")
+
+
+def internal_role() -> bool:
+    """Whether this process is one of Oven's own internal roles, such as a resident owner, rather than a command."""
+    for argument in args():
+        if str(argument).startswith("--internal"):
+            return true
+    return false

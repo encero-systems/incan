@@ -24,6 +24,7 @@ from pub::incan_mir_plan import (
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
+from trace_channel import emit, traced
 from pub::incan_platform.probes import current_footprint, current_live_allocated
 from rust::incan_semantics_core import IncanType as RustType, CompilerNodeId
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
@@ -256,7 +257,7 @@ def lowered_plan(
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
-    trace = native_environment(trace_key).is_some()
+    trace = traced(trace_key)
     # 1. Validate the checked inputs and prepare their shared layouts.
     source_files = source_file_index(modules, files)?
     empty_templates = index_constructors([], source_files, package_versions)
@@ -417,7 +418,7 @@ pub def resume_unit_plan(
 ) -> Result[UnitPlanning, str]:
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
     trace_key: str = "INCAN_TRACE_LOWERING"
-    trace = native_environment(trace_key).is_some()
+    trace = traced(trace_key)
     validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
     source_files = source_file_index(modules, files)?
     mut source_context = continuation.source_context
@@ -1126,7 +1127,7 @@ pub def plan_contexts(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
-    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
+    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
     trace_lowering(trace, "validate modules")
     validate_plan_inputs(modules, sources, files, entry, validation_context)?
     trace_lowering_footprint(footprint_trace, "validated modules")
@@ -1150,7 +1151,7 @@ def plan_contexts_parallel(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate a resumed runtime slice and project its body-weighted module ranges concurrently."""
-    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
+    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
     trace_lowering(trace, "validate resumed modules")
     validate_plan_inputs(modules.as_ref(), sources, files, entry, validation_context)?
     trace_lowering_footprint(footprint_trace, "validated resumed modules")
@@ -1213,7 +1214,7 @@ pub def source_file_index(modules: &list[BodyIrModule], files: &list[str]) -> Re
 def trace_lowering(enabled: bool, stage: str) -> None:
     """Report one requested lowering stage without repeating diagnostic selection at each step."""
     if enabled:
-        println(f"lowering: {stage}")
+        emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: {stage}")
 
 
 def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
@@ -1223,11 +1224,21 @@ def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
     match current_footprint():
         Ok(footprint) =>
             match current_live_allocated():
-                Ok(live) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes")
-                Err(reason) => println(
+                Ok(live) => emit(
+                    "lowering_footprint",
+                    "INCAN_TRACE_LOWERING_FOOTPRINT",
+                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes",
+                )
+                Err(reason) => emit(
+                    "lowering_footprint",
+                    "INCAN_TRACE_LOWERING_FOOTPRINT",
                     f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
                 )
-        Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
+        Err(reason) => emit(
+            "lowering_footprint",
+            "INCAN_TRACE_LOWERING_FOOTPRINT",
+            f"lowering footprint: {boundary}: unavailable: {reason}",
+        )
 
 
 def validate_plan_inputs(

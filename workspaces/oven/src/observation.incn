@@ -328,7 +328,7 @@ def texts(items: list[str]) -> JsonValue:
 
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    content = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
     clock = begin()
     result = hexlify(sha256.digest(content))
     record(Operation.FileHash, path.0, clock, len(content))
@@ -514,7 +514,7 @@ def refusal(failed: list[str]) -> str:
 
 pub def trace_boundary(boundary: str) -> None:
     """Record an opt-in preparation boundary on the launch clock; ordinary invocations read no clock here."""
-    if get_optional("INCAN_NATIVE_TIMING") is None or get_or("OVEN_TRACE", "") == "":
+    if get_optional("INCAN_NATIVE_TIMING") is None or not reasoning_traced():
         return
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => trace(f"prepare epoch={now.as_secs_f64()} boundary={boundary}")
@@ -523,7 +523,7 @@ pub def trace_boundary(boundary: str) -> None:
 
 pub def trace_launch(program: str) -> None:
     """Record a pre-launch Unix timestamp only when tracing is enabled, naming an unavailable clock explicitly."""
-    if get_or("OVEN_TRACE", "") == "":
+    if not reasoning_traced():
         return
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => trace(f"launch epoch={now.as_secs_f64()} program={program}")
@@ -550,3 +550,8 @@ pub def now_seconds() -> int:
 pub def note_variable(name: str, observed: str) -> None:
     """Record, while a watch is on, an environment variable a request read, by an observation of its value."""
     WATCHED.note_variable(name, observed)
+
+
+def reasoning_traced() -> bool:
+    """Whether this command records Oven's reasoning: the channel is on, or `OVEN_TRACE` for one more release."""
+    return get_or("INCAN_ENGINE_TRACE", "") != "" or get_or("OVEN_TRACE", "") != ""

@@ -1,7 +1,8 @@
 //! Opt-in boundaries around fresh rustc setup, Incan injection, queries and teardown.
 //!
-//! Timing records never reach the compiled program's console: they go where `OVEN_TRACE` sends Oven's own reasoning
-//! (appended to the file it names, or stderr for `-`), and nowhere when it is unset. rustc prints its phase records
+//! Timing records never reach the compiled program's console: they go to the `native_timing` category of the tracing
+//! channel (`INCAN_ENGINE_TRACE`), or, for one more release, where `OVEN_TRACE` sends Oven's own reasoning (appended
+//! to the file it names, or stderr for `-`), and nowhere when neither is set. rustc prints its phase records
 //! with `eprintln!`, so a timed rustc run redirects stderr and routes only the phase records; every other
 //! captured line still reaches stderr.
 
@@ -99,7 +100,8 @@ impl Timing {
     }
 
     /// Record a named boundary in seconds; durations include preceding diagnostic writes and must not be summed
-    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents.
+    /// with nested rustc phases. Fixed internal names keep the emitted JSON independent of source contents. Each
+    /// record names the driver process that reached the boundary, so a trace shows which process ran which phase.
     pub(crate) fn mark(&mut self, boundary: &'static str) {
         let Some(clock) = &mut self.0 else {
             return;
@@ -114,6 +116,7 @@ impl Timing {
             "elapsed": now.duration_since(clock.started).as_secs_f64(),
             "interval": now.duration_since(clock.previous).as_secs_f64(),
             "ended_ns": ended_ns,
+            "process": std::process::id(),
         });
         write_trace(format!("native-time: {record}\n").as_bytes());
         clock.previous = now;
@@ -127,19 +130,8 @@ fn requested() -> bool {
 
 /// Append timing records to the trace sink; a sink that cannot be written loses the records, never the compilation.
 fn write_trace(records: &[u8]) {
-    if records.is_empty() {
-        return;
-    }
-    match std::env::var("OVEN_TRACE").as_deref() {
-        Ok("-") => {
-            let _ = std::io::stderr().write_all(records);
-        }
-        Ok(path) if !path.is_empty() => {
-            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = file.write_all(records);
-            }
-        }
-        _ => {}
+    for line in String::from_utf8_lossy(records).lines() {
+        incan_frontend::trace_flags::emit(incan_frontend::trace_flags::Category::NativeTiming, line);
     }
 }
 

@@ -6,7 +6,7 @@ from rust::std::os::unix::fs import symlink
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from files import make_directory, read, remove, write
-from run import invoke
+from run import invoke, trace_lines
 
 
 pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
@@ -62,12 +62,13 @@ def check_query_reuse(incan: str, directory: Path, first: Path, second: Path) ->
         make_directory(root.joinpath(".git"))?
     arguments = ["inspect", "codegraph", "src/main.incn", "--query", "refs", "first_helper"]
     original = invoke(incan, arguments, first)?
-    trace = directory.joinpath("query-reuse.trace")
-    if trace.is_file():
-        remove(trace)?
-    relocated = invoke(incan, arguments, second, [f"OVEN_TRACE={trace.0}"])?
-    work = read(trace)?
-    remove(trace)?
+    trace = directory.joinpath("query-reuse-trace")
+    if trace.is_dir():
+        trace.remove_tree().map_err((error) => error.message())?
+    make_directory(trace)?
+    relocated = invoke(incan, arguments, second, [f"INCAN_ENGINE_TRACE={trace.0}"])?
+    work = "\n".join(trace_lines(trace))
+    trace.remove_tree().map_err((error) => error.message())?
     if original.code != Some(0) or relocated.code != Some(0) or original.stdout != relocated.stdout:
         return Err("a relocated relative query changed its answer")
     if "graph answer lookup:" not in work or "graph answer evaluation:" in work:
