@@ -95,3 +95,26 @@ fn native_reference_is_an_explicit_view_value() -> Result<(), Box<dyn std::error
     );
     Ok(())
 }
+
+/// A function with `Borrowed[T]` parameters is a callable value of the type a native signature spells with `&T`: the
+/// two callable types are one type (shape C). An owned parameter still differs from a borrowed one.
+#[test]
+fn explicit_view_parameters_are_native_reference_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let declarations = "def compare(left: Borrowed[float], right: Borrowed[float]) -> int:\n    return 0\n\ndef owned(left: Owned[float], right: Owned[float]) -> int:\n    return 0\n\ndef apply(order: (&float, &float) -> int) -> int:\n    return 0\n\n";
+    let admitted = format!("{declarations}def main() -> int:\n    return apply(compare)\n");
+    let checker = checked(&admitted)?;
+    let mismatches: Vec<_> = checker
+        .errors
+        .iter()
+        .filter(|error| error.message.contains("mismatch"))
+        .collect();
+    assert!(mismatches.is_empty(), "{mismatches:?}");
+    let refused = format!("{declarations}def main() -> int:\n    return apply(owned)\n");
+    let checker = checked(&refused)?;
+    assert!(
+        checker.errors.iter().any(|error| error.message.contains("mismatch")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
