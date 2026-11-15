@@ -373,6 +373,60 @@ pub def test_a_local_lent_at_its_last_use_is_dropped_after_a_call_that_returns_a
     return Ok(None)
 
 
+const DECIDED_CONDITION: str = """pub enum Value:
+    Empty
+    Many(str, list[Value])
+
+
+def make(size: int) -> Value:
+    mut items: list[Value] = []
+    for _ in range(size):
+        items.append(Value.Empty)
+    return Value.Many("label", items)
+
+
+def arity(value: Value) -> int:
+    match value:
+        Value.Many(_, items) => return len(items)
+        _ => return 0
+
+
+def in_condition(size: int) -> str:
+    if arity(make(size)) > 3:
+        return "many"
+    return "few"
+
+
+def before_condition(size: int) -> str:
+    many = arity(make(size)) > 3
+    if many:
+        return "many"
+    return "few"
+
+
+def main() -> None:
+    println(in_condition(4))
+    println(in_condition(2))
+    println(before_condition(4))
+    println(before_condition(2))
+"""
+
+
+pub def test_a_value_built_to_decide_a_condition_is_dropped_before_the_branch() -> Result[None, str]:
+    """
+    A value built only to decide an `if` is dropped once, when the condition is decided (#1604).
+
+    `before_condition` decides in a statement of its own, so the built value drops once before the `if`.
+    `in_condition` decides in the `if` itself and holds the same drops: held to the end of the `if` statement, the
+    value would cost one drop inside the returning branch and one more after the statement.
+    """
+    report = plan_report("decided", DECIDED_CONDITION, "many\nfew\nmany\nfew")?
+    inside = returning_drops(report, "in_condition")?
+    before = returning_drops(report, "before_condition")?
+    assert inside == before, f"in_condition holds {inside} drops on returning paths and before_condition holds {before}"
+    return Ok(None)
+
+
 def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
     """Run one program through the records engine in a store of its own and return the driver's plan report."""
     scratch = scratch_directory()?
