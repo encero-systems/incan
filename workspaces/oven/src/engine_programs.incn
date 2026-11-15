@@ -75,6 +75,14 @@ pub model NativeUnit:
         )
 
 
+pub model SealedProgram:
+    """A baked executable's fact, the path of its view and whether it was linked against shared carriers."""
+
+    pub fact: Fact
+    pub binary: str
+    pub shared: bool
+
+
 pub model ProgramOutcome:
     """One caller's selection and the whole-unit producer work performed for it."""
 
@@ -107,6 +115,8 @@ pub model ProgramOutcome:
     # An editor overlay's source and checked-body records, published in the editor view only.
     pub view_transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
+    # The executable this request baked, whose view waits for the request's commit: see `view_sealed`.
+    pub sealed: Option[SealedProgram] = None
 
 
 pub model CheckOutcome:
@@ -271,6 +281,7 @@ pub def obtain(
     2. Otherwise read the captured epoch, describe the program and finalize its RFC 124 identity.
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
+    5. A unit baked here is returned unviewed: the caller commits the request and then calls `view_sealed`.
     """
     listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
@@ -414,6 +425,10 @@ pub def obtain(
     supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    # A fact this request baked is still unsealed, so its view waits for the request's commit.
+    mut sealed: Option[SealedProgram] = None
+    if produced.transaction is not None:
+        sealed = Some(SealedProgram(fact=fact, binary=binary.0, shared=development_link(ready, true)))
     # An overlay's content-addressed native results and finalized-unit index stay where every build finds them.
     mut shared = Some(request_transaction)
     mut view_records: Option[Transaction] = None
@@ -447,8 +462,20 @@ pub def obtain(
             transaction=indexed,
             view_transaction=view_records,
             claim=produced.claim,
+            sealed=sealed,
         ),
     )
+
+
+pub def view_sealed(store: Path, sealed: Option[SealedProgram]) -> Result[None, str]:
+    """
+    Make the executable view of a unit its request baked. The caller has committed the request: that commit's full
+    flush is the seal of the unit's payloads, which were only ordered on storage before it, so no view of them may
+    exist earlier. A request that baked nothing has nothing to view here; its hit was viewed from a sealed fact.
+    """
+    match sealed:
+        None => return Ok(None)
+        Some(program) => return view_executable(store, program.fact, Path(program.binary), "program", program.shared)
 
 
 def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
