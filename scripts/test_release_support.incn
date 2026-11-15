@@ -136,6 +136,20 @@ def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Re
     assert not defaults.keep_trees
     assert defaults.jobs == 4
     assert defaults.seed_source == ""
+    assert not defaults.stamp_signer
+    assert defaults.signed_bundle == ""
+    return Ok(None)
+
+
+def test_the_release_workflow_packs_and_verifies_in_two_invocations() -> Result[None, str]:
+    """`--stamp-signer` packs a stamped release; `--verify-installed BUNDLE` verifies the signed one; never both."""
+    packing = parse_release_options([SHA, "out", "--stamp-signer"])?
+    assert packing.stamp_signer and packing.signed_bundle == ""
+    verifying = parse_release_options([SHA, "out", "--verify-installed", "signed"])?
+    assert verifying.signed_bundle == "signed" and not verifying.stamp_signer
+    assert refused_release([SHA, "out", "--verify-installed"]) == "--verify-installed needs the directory of the signed bundle"
+    both = refused_release([SHA, "out", "--stamp-signer", "--verify-installed", "signed"])
+    assert both == "--stamp-signer packs a release to sign; --verify-installed verifies the signed one: pass one"
     return Ok(None)
 
 
@@ -152,7 +166,7 @@ def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> R
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS] [--stamp-signer | --verify-installed BUNDLE]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
