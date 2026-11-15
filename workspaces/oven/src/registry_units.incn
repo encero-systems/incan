@@ -17,6 +17,8 @@ pub model RegistryUnit:
     pub domain: str
     pub directory: str
     pub registry: str = ""
+    # The index revision of the Loaf manifest the unit was compiled from; 0 when the closure records none.
+    pub revision: int = 0
     pub features: list[str] = []
     pub entry: str = ""
     pub dependencies: list[str] = []
