@@ -2,7 +2,9 @@
 //! describe a source shape whose native storage or cleanup is still deliberately unavailable.
 
 use super::CallableSource;
-use crate::ast::{Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, Spanned, Statement};
+use crate::ast::{
+    Condition, Expr, FunctionDecl, MatchBody, MethodDecl, Param, ParamKind, PropertyDecl, Spanned, Statement,
+};
 use crate::ast_walk::any_expr_in_body;
 use crate::typechecker::{CheckedInputBody, TypeCheckInfo};
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind};
@@ -37,6 +39,7 @@ fn callable_boundary(callable: CallableSource<'_>) -> bool {
     match callable {
         CallableSource::Function(function) => direct_function_boundary(function),
         CallableSource::Method(method) => direct_method_boundary(method),
+        CallableSource::Property(property, _) => property.body.is_some(),
     }
 }
 
@@ -135,6 +138,26 @@ impl TypeCheckInfo {
         method: &MethodDecl,
     ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
         self.executable_input(owner, CallableSource::Method(method))
+    }
+
+    /// The executable profile of any source callable's body, selected as for functions.
+    pub(in crate::typechecker) fn executable_callable_input<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        callable: CallableSource<'_>,
+    ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
+        self.executable_input(owner, callable)
+    }
+
+    /// The executable profile of a property getter's body: an immutable receiver whose token is `receiver`, written
+    /// implicitly at the property's own span, and no parameters.
+    pub(crate) fn executable_property_input<'a>(
+        &'a self,
+        owner: &CanonicalSymbolId,
+        property: &PropertyDecl,
+        receiver: &Spanned<crate::ast::Ident>,
+    ) -> Result<Option<(u32, CheckedInputBody<'a>)>, &'static str> {
+        self.executable_input(owner, CallableSource::Property(property, receiver))
     }
 
     /// A body whose straight-line projection is refused executes under profile 2 only if it has control flow of its

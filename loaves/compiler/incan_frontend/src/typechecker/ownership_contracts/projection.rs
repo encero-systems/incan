@@ -148,6 +148,23 @@ impl TypeCheckInfo {
                             return Ok(None);
                         }
                     }
+                    // A property read calls its synchronous getter: an immutable receiver and no parameters.
+                    SemanticSourceTargetKind::Property if call.receiver.is_some() && call.parameters.is_empty() => {
+                        let local = self
+                            .declarations
+                            .body_ir_property_bindings
+                            .get(&call.callee.declaration_span)
+                            .map(|binding| &binding.callable)
+                            .filter(|binding| binding.identity.as_ref() == Some(&call.callee));
+                        if let Some(binding) = local {
+                            binding
+                        } else {
+                            if self.resolved_identity(call.site) != Some(&call.callee) {
+                                return Err("ordinary property read has no canonical selected getter");
+                            }
+                            return Ok(None);
+                        }
+                    }
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
                 let free_parameter_types_changed = call.callee.kind == SemanticSourceTargetKind::Function
@@ -236,6 +253,12 @@ impl TypeCheckInfo {
             .get(&owner.declaration_span)
             .into_iter()
             .chain(self.declarations.method_bindings_by_span.get(&owner.declaration_span))
+            .chain(
+                self.declarations
+                    .body_ir_property_bindings
+                    .get(&owner.declaration_span)
+                    .map(|binding| &binding.callable),
+            )
             .any(|binding| binding.identity.as_ref() == Some(owner));
         if !declaration {
             return Err("explicit input proof has no matching callable declaration");

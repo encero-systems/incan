@@ -271,6 +271,10 @@ impl SourceAccesses<'_, '_> {
     fn place_evaluation(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr => Ok(()),
+            // A property view's place is evaluated by its getter's invocation, as a view call's is.
+            Expr::Field(receiver, _) if self.property_invocation(expression) => {
+                self.method_access(expression, receiver, &[], false)
+            }
             Expr::Paren(base) | Expr::Field(base, _) => self.place_evaluation(base),
             Expr::Index(base, index) => {
                 self.place_evaluation(base)?;
@@ -287,6 +291,12 @@ impl SourceAccesses<'_, '_> {
             }
             _ => Err("source access place has an unsupported evaluation"),
         }
+    }
+
+    /// Whether a field spelling reads a computed property through its getter's checked invocation.
+    fn property_invocation(&self, expression: &Spanned<Expr>) -> bool {
+        self.proof.facts.computed_property_access(expression.span).is_some()
+            && self.proof.graph.invocations.contains_key(&expression.span)
     }
 
     /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
@@ -360,6 +370,14 @@ impl SourceAccesses<'_, '_> {
                     .is_some_and(|identity| {
                         identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant
                     }) => {}
+            // A property read is its getter's invocation; a view result is then read at its substituted place.
+            Expr::Field(receiver, _) if self.property_invocation(expression) => {
+                if self.place(expression)?.is_some() {
+                    self.stored_place_access(expression, consume)?
+                } else {
+                    self.method_access(expression, receiver, &[], consume)?
+                }
+            }
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
             }
@@ -742,6 +760,12 @@ impl SourceAccesses<'_, '_> {
                 .ok_or("returned view local has no result loan")?;
             if loan.span != self.proof.view_call_span(&assignment.value) {
                 return Err("returned view local differs from its initializer call");
+            }
+            // A property view binds as a view call does: its getter is invoked and the local takes the borrow.
+            if let Expr::Field(receiver, _) = &assignment.value.node
+                && self.property_invocation(&assignment.value)
+            {
+                return self.method_access(&assignment.value, receiver, &[], false);
             }
             return self.expression(&assignment.value, false);
         }

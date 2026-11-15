@@ -57,7 +57,17 @@ impl TypeChecker {
         self.symbols.resume_scope(prepared.scope);
         self.current_return_error_type = prepared.return_error_type;
         if let Some(body) = &property.node.body {
-            self.check_property_body(body, property.span);
+            // A getter is a callable body of its own: its calls record their selected contracts, and an ownership
+            // contract it declares or owes its callees is proved over it, as a method's is.
+            let previous = self.enter_mut_param_body(
+                &property.node.name,
+                SemanticSourceTargetKind::Property,
+                property.span,
+                &[],
+                &[],
+            );
+            self.check_property_body(body, property.span, &property.node);
+            self.exit_mut_param_body(previous);
         }
         self.current_return_error_type = None;
         self.symbols.exit_scope();
@@ -124,7 +134,8 @@ impl TypeChecker {
         {
             binding.receiver_identity = receiver_identity;
         }
-        let return_type = self.resolve_type_checked(&property.return_type);
+        let return_type =
+            self.resolve_callable_return_annotation(&property.return_type, property.result_source.is_some());
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
         // A `Borrowed[T]` result is a receiver-tied view: the body returns the value it views, as a method's does.
         let effective_return_type = self

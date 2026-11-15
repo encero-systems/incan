@@ -934,11 +934,11 @@ fn identity_owned_by(identity: &CanonicalSymbolId, module_path: &[String]) -> bo
     }
 }
 
-/// Whether an ownership contract belongs to a function or method the exact provider path declares.
+/// Whether an ownership contract belongs to a function, method or property the exact provider path declares.
 fn provider_input_contract(identity: &CanonicalSymbolId, module_path: &[String]) -> bool {
     matches!(
         identity.kind,
-        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
     ) && identity_owned_by(identity, module_path)
 }
 

@@ -9,7 +9,9 @@ use super::{
 };
 
 /// Build one concrete immutable getter body from its checked signature and exact implicit receiver provenance.
-/// Abstract requirements contribute no body; missing checked facts remain explicit unsupported body statements.
+/// Abstract requirements contribute no body; missing checked facts remain explicit unsupported body statements. A
+/// getter is a method of its receiver: an ownership contract it declares, or a callee's it owes, is proved over its
+/// body as a method's is, and a view result returns a borrow of the declared source place.
 pub(super) fn lower_getter_body(
     property: &ast::Spanned<ast::PropertyDecl>,
     owner: &str,
@@ -26,18 +28,34 @@ pub(super) fn lower_getter_body(
         .declarations
         .body_ir_property_bindings
         .get(&property.span);
+    let identity = binding.and_then(|binding| binding.callable.identity.as_ref());
     let parameters = binding
         .map(|binding| binding.owner_parameters.as_slice())
         .unwrap_or(&[]);
     let returned = binding
-        .map(|binding| parameter_types::checked_semantic_type(&binding.callable.return_type, facts.type_info))
+        .map(|binding| parameter_types::checked_semantic_type(&getter_value_type(binding, facts), facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, parameters))
         .unwrap_or(IncanType::Unknown);
     let mut builder = BodyBuilder::new(facts, returned.clone());
+    if let Some(identity) = identity {
+        builder.input_body = facts.type_info.checked_input_body(identity);
+    }
     builder.type_parameters = parameters.to_vec();
     let span = hir_span(property.span);
     let scope = builder.new_scope(None, span);
     let receiver = builder.declare_receiver_local(receiver_ty.clone(), false, scope, span);
+    let params = vec![bir::CallableParam {
+        local: receiver,
+        kind: IncanCallableParamKind::Normal,
+        name: "self".into(),
+        ty: receiver_ty.clone(),
+        span,
+        default: bir::CallableParamDefault::Required,
+        mutable: false,
+        input_access: incan_semantics_core::IncanInputAccess::Inferred,
+        native_owned: false,
+    }];
+    builder.prepare_returned_view(identity, &params, true);
 
     // ---- Getter body ----
     let mut stmts = Vec::new();
@@ -47,11 +65,20 @@ pub(super) fn lower_getter_body(
             span,
             &mut stmts,
         );
+    } else if let Err(reason) = builder.input_body {
+        builder.push_unsupported_stmt(reason.to_owned(), span, &mut stmts);
     } else {
         builder.lower_block_into(source, scope, &mut stmts);
         builder.insert_scope_drops(&mut stmts, scope);
         builder.transfer_at_last_reads(&mut stmts);
     }
+    let checked_input_profile = identity.and_then(|identity| {
+        let token = ast::Spanned::new("self".to_string(), property.span);
+        let admitted = facts
+            .type_info
+            .executable_property_input(identity, &property.node, &token);
+        builder.checked_input_profile(admitted, &params, span, &mut stmts)
+    });
     if builder
         .locals
         .iter()
@@ -63,19 +90,20 @@ pub(super) fn lower_getter_body(
     // ---- Retained callable ----
     let named_type_identities =
         builder.finish_type_identities(super::parameter_types::shared_declared_type_identities(facts.type_info));
+    let returned_view = builder.returned_view.as_ref().map(|source| source.view.clone());
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
         decl_id: CompilerNodeId::declaration(facts.module_identity, &format!("{owner}::{}", property.node.name)),
         direct_call_id: CompilerNodeId::declaration_at(facts.module_identity, property.span),
-        canonical: binding.and_then(|binding| binding.callable.identity.clone()),
+        canonical: identity.cloned(),
         name: property.node.name.clone(),
         span,
         type_parameters: Vec::new(),
         return_type: returned,
-        checked_input_profile: None,
-        explicit_input_bindings: Vec::new(),
-        returned_view: None,
+        checked_input_profile,
+        explicit_input_bindings: std::mem::take(&mut builder.input_local_bindings),
+        returned_view,
         callable_representation: Some(bir::CallableRepresentation {
             function_pointer_locals: builder.function_pointer_locals,
             closure_holding_locals: builder.closure_holding_locals,
@@ -85,17 +113,7 @@ pub(super) fn lower_getter_body(
                 .is_closure_returning_type(property.node.return_type.span),
         }),
         named_type_identities,
-        params: vec![bir::CallableParam {
-            local: receiver,
-            kind: IncanCallableParamKind::Normal,
-            name: "self".into(),
-            ty: receiver_ty.clone(),
-            span,
-            default: bir::CallableParamDefault::Required,
-            mutable: false,
-            input_access: incan_semantics_core::IncanInputAccess::Inferred,
-            native_owned: false,
-        }],
+        params,
         param_locals: vec![receiver],
         locals: builder.locals,
         scopes: builder.scopes,
@@ -106,6 +124,21 @@ pub(super) fn lower_getter_body(
         retired_rust_facade_wire: None,
         native_attributes: Vec::new(),
     })
+}
+
+/// A getter whose result is a view returns its source's value type; the view's access travels as the body's returned
+/// view, as a method's does. Other getters keep their checked result.
+fn getter_value_type(
+    binding: &crate::typechecker::BodyIrPropertyBindingInfo,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> crate::symbols::ResolvedType {
+    let contract = binding
+        .callable
+        .identity
+        .as_ref()
+        .and_then(|identity| facts.type_info.declarations.ownership_contracts.get(identity));
+    crate::ownership_metadata::result_value_type(contract, &binding.callable.return_type)
+        .unwrap_or_else(|_| binding.callable.return_type.clone())
 }
 
 impl BodyBuilder<'_, '_> {
@@ -150,23 +183,36 @@ impl BodyBuilder<'_, '_> {
             Ok(returned) => returned,
             Err(description) => return Some(self.unsupported_operand(description, scope, source_span, out)),
         };
-        self.settled_types.insert(span, returned.clone());
         let receiver = self.lower_expr_to_place(base, scope, out);
+        let receiver = bir::Operand::place(receiver, bir::OwnershipFact::Borrow, false);
+        let callee = bir::Callee::Method(bir::MethodTarget {
+            native_trait_delegation: None,
+            name,
+            canonical: Some(canonical),
+            intrinsic_carrier: None,
+            operation: None,
+            loaf_trait: None,
+            trait_arguments: None,
+            type_args: Vec::new(),
+            binding: bir::ArgumentBinding::resolved_positional(0),
+        });
+
+        // ---- A view result aliases the substituted source place, as a view method call's does ----
+        if let Some(view) = self.view_call_place(span, Some(&receiver), &[]) {
+            self.settled_types.insert(span, self.resolve_ty(span));
+            return Some(match view {
+                Ok((place, access)) => {
+                    self.push_view_call(callee, fixed_elements(vec![receiver]), place, access, source_span, out)
+                }
+                Err(description) => self.unsupported_operand(description, scope, source_span, out),
+            });
+        }
 
         // ---- Getter call ----
+        self.settled_types.insert(span, returned.clone());
         Some(self.push_call_temp(
-            bir::Callee::Method(bir::MethodTarget {
-                native_trait_delegation: None,
-                name,
-                canonical: Some(canonical),
-                intrinsic_carrier: None,
-                operation: None,
-                loaf_trait: None,
-                trait_arguments: None,
-                type_args: Vec::new(),
-                binding: bir::ArgumentBinding::resolved_positional(0),
-            }),
-            fixed_elements(vec![bir::Operand::place(receiver, bir::OwnershipFact::Borrow, false)]),
+            callee,
+            fixed_elements(vec![receiver]),
             returned,
             scope,
             source_span,

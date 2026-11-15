@@ -1,7 +1,45 @@
 //! Closed result shapes that source-call projection can classify without retained dependencies.
 
+use super::Builder;
+use crate::ast::Span;
 use crate::symbols::ResolvedType;
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::{
+    clone_methods::CloneMethodId, list_methods::ListMethodId, option_methods::OptionMethodId,
+};
+use incan_lang::lang::trait_bounds;
+use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+
+impl Builder<'_> {
+    /// Return whether semantic method resolution selected the standard `Clone.clone` slot for this call. A source
+    /// method that merely uses the spelling `clone` does not gain independent-result semantics.
+    pub(super) fn checked_clone_call(&self, span: Span) -> bool {
+        let builtin = crate::symbols::canonical_builtin_member_identity(
+            core_traits::as_str(TraitId::Clone),
+            trait_bounds::rust::CLONE_METHOD,
+        );
+        if matches!(
+            self.checker.type_info.resolved_builtin_method_call(span),
+            Some(
+                BuiltinMethodId::Clone(CloneMethodId::Clone)
+                    | BuiltinMethodId::List(ListMethodId::Clone)
+                    | BuiltinMethodId::Option(OptionMethodId::Clone)
+            )
+        ) || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
+        {
+            return true;
+        }
+        self.checker.type_info.resolved_method_call(span).is_some_and(|call| {
+            call.method == trait_bounds::rust::CLONE_METHOD
+                && matches!(
+                    &call.dispatch,
+                    crate::typechecker::ResolvedMethodDispatch::Trait { trait_name, .. }
+                        if core_traits::from_str(trait_name) == Some(TraitId::Clone)
+                )
+        })
+    }
+}
 
 /// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
 /// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic

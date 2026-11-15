@@ -210,7 +210,7 @@ impl TypeChecker {
         } else {
             info.return_type.clone()
         };
-        if let Some(identity) = identity {
+        if let Some(identity) = identity.clone() {
             self.type_info.record_resolved_identity(span, identity);
         }
         if inaccessible {
@@ -219,6 +219,8 @@ impl TypeChecker {
         }
         self.type_info
             .record_computed_property_access(span, type_name, property);
+        // A property read calls its getter with an immutable receiver; the getter's contract governs the read.
+        self.record_selected_method_input_call(identity.as_ref(), Some(crate::ast::Receiver::Immutable), &[], span);
         // A `Borrowed[T]` property result is a receiver-tied view, read as its value type like a stored view field.
         Some(self.explicit_ownership_value_type(&return_type).unwrap_or(return_type))
     }

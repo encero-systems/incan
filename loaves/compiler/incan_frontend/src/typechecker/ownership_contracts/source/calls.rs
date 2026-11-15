@@ -11,12 +11,7 @@ use super::{
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
-use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
-use incan_lang::lang::surface::{
-    clone_methods::CloneMethodId, list_methods::ListMethodId, option_methods::OptionMethodId,
-};
-use incan_lang::lang::trait_bounds;
-use incan_lang::lang::traits::{self as core_traits, TraitId};
+use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::IncanInputAccess;
 
@@ -663,34 +658,6 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// Return whether semantic method resolution selected the standard `Clone.clone` slot for this call. A source
-    /// method that merely uses the spelling `clone` does not gain independent-result semantics.
-    pub(super) fn checked_clone_call(&self, span: Span) -> bool {
-        let builtin = crate::symbols::canonical_builtin_member_identity(
-            core_traits::as_str(TraitId::Clone),
-            trait_bounds::rust::CLONE_METHOD,
-        );
-        if matches!(
-            self.checker.type_info.resolved_builtin_method_call(span),
-            Some(
-                BuiltinMethodId::Clone(CloneMethodId::Clone)
-                    | BuiltinMethodId::List(ListMethodId::Clone)
-                    | BuiltinMethodId::Option(OptionMethodId::Clone)
-            )
-        ) || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
-        {
-            return true;
-        }
-        self.checker.type_info.resolved_method_call(span).is_some_and(|call| {
-            call.method == trait_bounds::rust::CLONE_METHOD
-                && matches!(
-                    &call.dispatch,
-                    crate::typechecker::ResolvedMethodDispatch::Trait { trait_name, .. }
-                        if core_traits::from_str(trait_name) == Some(TraitId::Clone)
-                )
-        })
-    }
-
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
     /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. Unresolved
     /// duckborrow or ordinary mutable adapters refuse rather than cloning or guessing an access mode.
@@ -970,6 +937,7 @@ impl Builder<'_> {
         let expression = super::super::builtins::view_call(expression);
         match &expression.node {
             Expr::Call(..) | Expr::MethodCall(..) => {}
+            Expr::Field(..) if self.property_read(expression) => {}
             _ => return Ok(None),
         }
         let span = expression.span;
@@ -1167,6 +1135,9 @@ impl Builder<'_> {
             }
             Expr::Call(callee, _, arguments) if matches!(callee.node, Expr::Ident(_)) => {
                 self.apply_call(None, arguments, span, incoming)?
+            }
+            Expr::Field(receiver, _) if self.property_read(expression) => {
+                self.apply_call(Some(receiver), &[], span, incoming)?
             }
             _ => {
                 return Err(Unavailable {

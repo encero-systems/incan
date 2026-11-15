@@ -58,7 +58,9 @@ impl TypeChecker {
         resolved: &[ResolvedType],
     ) -> MutParamBodyState {
         let identity = match kind {
-            SemanticSourceTargetKind::Method => self.symbols.member_declaration_identity(name, kind, span),
+            SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property => {
+                self.symbols.member_declaration_identity(name, kind, span)
+            }
             _ => self.symbols.module_declaration_identity(name, kind, span),
         };
         let caller_visible = params

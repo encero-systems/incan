@@ -225,6 +225,12 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
+            // A property read is its getter's invocation, with the property's receiver and no arguments.
+            Expr::Field(receiver, _) if self.graph.invocations.contains_key(&expression.span) => {
+                self.visit_operation_expression(receiver, parameters, execution, seen)?;
+                self.authenticate_method_receiver(expression, receiver)?;
+                self.record_invocation(expression.span, &[], seen)?;
+            }
             // `?` evaluates its carrier; the propagating path leaves the body without a further operation.
             Expr::Paren(inner) | Expr::Unary(_, inner) | Expr::Field(inner, _) | Expr::Try(inner) => {
                 self.visit_operation_expression(inner, parameters, execution, seen)?;
@@ -619,6 +625,8 @@ impl CheckedInputBody<'_> {
                 place.projection.push(flow::Projection::Element(index.span));
                 Ok(Some((place, loan)))
             }
+            // A property read is its getter's call, not an alias of storage, as a view method call is.
+            Expr::Field(..) if self.facts.computed_property_access(expression.span).is_some() => Ok(None),
             Expr::Field(base, _) => {
                 let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
                     return Ok(None);
@@ -628,9 +636,6 @@ impl CheckedInputBody<'_> {
                     .resolved_identity(expression.span)
                     .filter(|field| field.kind == SemanticSourceTargetKind::Field)
                     .ok_or("operation alias projection lacks its canonical field")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("operation alias cannot infer computed property access");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, loan)))
             }
