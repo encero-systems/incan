@@ -1,0 +1,65 @@
+//! RFC 129 ordinary parameters inside an explicit body: an ordinary inferred slot receives a value, so a fresh value
+//! is evaluated into it and a place is read as it is passed; a caller-visible `mut` slot writes through, so the call
+//! takes its argument's place exclusively.
+
+use super::*;
+
+/// The flow recorded for the named body.
+fn flow<'a>(checker: &'a TypeChecker, name: &str) -> Option<&'a InputFlow> {
+    checker
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == name)
+        .map(|(_, flow)| flow)
+}
+
+/// Assert the named body's flow is proved and the check reports nothing.
+fn assert_proved(source: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    assert!(
+        matches!(flow(&checker, name), Some(InputFlow::Checked { .. })),
+        "{name}: {:?}",
+        flow(&checker, name)
+    );
+    Ok(())
+}
+
+/// A shared input, a field of an owned input, a literal and a fresh result all pass to ordinary value slots.
+#[test]
+fn ordinary_value_slots_take_places_and_fresh_values() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Row:\n    name: str\n    tags: list[str]\n\ndef encode(row: Borrowed[Row]) -> bytes:\n    return b\"row\"\n\ndef size(data: bytes) -> int:\n    return len(data)\n\ndef count(tags: list[str], label: str) -> int:\n    return len(tags) + len(label)\n\ndef shared(row: Borrowed[Row]) -> int:\n    return count(row.tags, row.name) + count(row.tags, \"x\")\n\ndef digest(row: Owned[Row]) -> int:\n    return size(encode(row)) + count(row.tags, row.name)\n";
+    assert_proved(source, "shared")?;
+    assert_proved(source, "digest")
+}
+
+/// An owned input's field forwarded through an ordinary helper into an owned result is a value the helper owns: the
+/// result retains no dependency on the input (#3022).
+#[test]
+fn owned_field_forwarded_through_a_helper_retains_nothing() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Inputs:\n    values: list[str]\n\nmodel Outcome:\n    values: list[str]\n\ndef retain(values: list[str]) -> Outcome:\n    return Outcome(values=values)\n\ndef resume(inputs: Owned[Inputs]) -> Outcome:\n    return retain(inputs.values)\n";
+    assert_proved(source, "resume")
+}
+
+/// A caller-visible `mut` slot writes through: an exclusive input passes to it, and a shared one is refused.
+#[test]
+fn caller_visible_mut_slots_take_their_argument_exclusively() -> Result<(), Box<dyn std::error::Error>> {
+    let declarations = "model Remap:\n    seen: list[int]\n\ndef note(mut remap: Remap, value: int) -> None:\n    remap.seen.append(value)\n\n";
+    assert_proved(
+        &format!("{declarations}def record(mut remap: BorrowedMut[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n"),
+        "record",
+    )?;
+    let refused = format!("{declarations}def record(remap: Borrowed[Remap]) -> int:\n    note(remap, 1)\n    return len(remap.seen)\n");
+    let checker = checked(&refused)?;
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        checker.errors
+    );
+    Ok(())
+}
