@@ -22,6 +22,23 @@ pub from checker_record_models import (
     GraphNamespaceValue,
 )
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, operation_budget, required_value
+from checker_record_types import canonical_decimal as decimal, checked_type_end as type_end, parameters_end
+from checker_record_rust_calls import rust_artifact_end
+
+
+@derive(Eq)
+enum IdentifierKind(str):
+    """The complete checked identifier classification shared with native record restoration."""
+
+    Value = "value"
+    Static = "static"
+    TypeName = "type-name"
+    Variant = "variant"
+    Module = "module"
+    RustImport = "rust-import"
+    RustValue = "rust-value"
+    Trait = "trait"
+
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
 pub const CHECKER_PROFILE: str = "incan.checker-free-functions/17"
@@ -243,8 +260,12 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "default",
             "final-type",
             "native-call",
+            "native-value",
+            "constructor",
+            "requirement",
             "artifact-call",
             "artifact-protocol",
+            "artifact-rust",
             "target",
             "identifier",
             "effect",
@@ -285,18 +306,6 @@ def read_family(value: str) -> Result[CheckedFamily, CodecFault]:
         "local" => return Ok(CheckedFamily.Local)
         "final" => return Ok(CheckedFamily.Final)
         _ => return Err(CodecFault.Unsupported(value))
-
-
-def decimal(text: str) -> Result[int, CodecFault]:
-    """Accept only a bounded unsigned canonical decimal spelling, including the one-byte zero."""
-    if text == "" or len(text) > 5 or (len(text) > 1 and text.startswith("0")):
-        return Err(CodecFault.Malformed)
-    mut value = 0
-    for digit in text.encode():
-        if digit < 48 or digit > 57:
-            return Err(CodecFault.Malformed)
-        value = value * 10 + digit - 48
-    return Ok(value)
 
 
 pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
@@ -640,6 +649,34 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             end = 2
         else:
             return Err(CodecFault.Malformed)
+    # A constructor binding assigns every field exactly once to an argument or to a strictly ordered default slot.
+    elif field.family == "constructor":
+        if field.node == "" or field.selector != "field-binding" or len(values) < 3:
+            return Err(CodecFault.Malformed)
+        field_count = decimal(values[0])?
+        argument_count = decimal(values[1])?
+        default_count_offset = 2 + argument_count
+        if default_count_offset >= len(values):
+            return Err(CodecFault.Malformed)
+        default_count = decimal(values[default_count_offset])?
+        if default_count != len(values) - default_count_offset - 1:
+            return Err(CodecFault.Malformed)
+        mut occupied: list[int] = []
+        for slot in values[2:default_count_offset]:
+            index = decimal(slot)?
+            if index >= field_count or index in occupied:
+                return Err(CodecFault.Malformed)
+            occupied.append(index)
+        mut previous_default = -1
+        for slot in values[default_count_offset + 1:]:
+            index = decimal(slot)?
+            if index >= field_count or index in occupied or index <= previous_default:
+                return Err(CodecFault.Malformed)
+            occupied.append(index)
+            previous_default = index
+        if len(occupied) != field_count:
+            return Err(CodecFault.Malformed)
+        end = len(values)
     # Facts that hold one nonempty value.
     elif field.family in ["binding", "reference", "write", "default"]:
         if len(values) != 1 or values[0] == "":
@@ -648,10 +685,13 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     # A parameter's type.
     elif field.family == "parameter":
         end = type_end(values, 0, 0)?
-    # An identifier's kind; only plain values are recorded.
+    # An identifier's complete checked kind.
     elif field.family == "identifier":
-        if field.selector != "kind" or values != ["value"]:
+        if field.selector != "kind" or len(values) != 1:
             return Err(CodecFault.Unsupported("identifier"))
+        match IdentifierKind.from_value(values[0]):
+            Some(_) => pass
+            None => return Err(CodecFault.Unsupported("identifier"))
         end = 1
     # Generated protocol artifact rows retain one checked receiver identity at its source node.
     elif field.family == "artifact-protocol":
@@ -698,6 +738,22 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             end = 1
         else:
             return Err(CodecFault.Unsupported("native-call"))
+    # A Rust-derived local value keeps its stable declaration identity and checked native carrier type.
+    elif field.family == "native-value":
+        if field.node == "" or field.selector != "type" or len(values) < 2 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        end = type_end(values, 1, 0)?
+    # A constructor-field requirement retains the selected field and its declaring nominal identity.
+    elif field.family == "requirement":
+        if (
+            field.node == ""
+            or field.selector != "constructor-field"
+            or len(values) != 2
+            or values[0] == ""
+            or values[1] == ""
+        ):
+            return Err(CodecFault.Malformed)
+        end = 2
     # Final types: an empty marker, or the type of an expression or a binding.
     elif field.family == "final-type":
         if field.selector == "empty" and values == ["true"]:
@@ -711,6 +767,8 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     # A diagnostic the body reported.
     elif field.family == "diagnostic":
         end = diagnostic_end(values)?
+    elif field.family == "artifact-rust":
+        end = rust_artifact_end(field)?
     else:
         return Err(CodecFault.Unsupported(field.family))
     if end != len(values):
@@ -728,87 +786,6 @@ def validate_type_identity_path(path: str) -> Result[None, CodecFault]:
     for component in components:
         _ = decimal(component)?
     return Ok(None)
-
-
-def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
-    """Validate one prefix-encoded type with a bounded nesting depth, independently of native type object layout."""
-    if depth > 32 or offset >= len(values):
-        return Err(CodecFault.Malformed)
-    tag = values[offset]
-    if tag in [
-        "never",
-        "int",
-        "float",
-        "bool",
-        "str",
-        "bytes",
-        "frozen-str",
-        "frozen-bytes",
-        "unit",
-        "self-type",
-        "call-site-infer",
-        "unknown",
-    ]:
-        return Ok(offset + 1)
-    if tag in ["named", "type-var", "numeric", "rust-path"]:
-        if offset + 1 >= len(values) or values[offset + 1] == "":
-            return Err(CodecFault.Malformed)
-        return Ok(offset + 2)
-    if tag == "result":
-        after = type_end(values, offset + 1, depth + 1)?
-        return type_end(values, after, depth + 1)
-    if tag in ["option", "list", "frozen-list", "frozen-set", "type-token", "ref", "ref-mut"]:
-        return type_end(values, offset + 1, depth + 1)
-    if tag == "frozen-dict":
-        after = type_end(values, offset + 1, depth + 1)?
-        return type_end(values, after, depth + 1)
-    if tag == "ownership":
-        if offset + 1 >= len(values) or values[offset + 1] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
-            return Err(CodecFault.Malformed)
-        return type_end(values, offset + 2, depth + 1)
-    if tag == "callable":
-        after = parameters_end(values, offset + 1, depth + 1)?
-        return type_end(values, after, depth + 1)
-    if tag in ["generic", "tuple"]:
-        if offset + 1 >= len(values):
-            return Err(CodecFault.Malformed)
-        mut end = offset + 1
-        if tag == "generic":
-            if values[end] == "":
-                return Err(CodecFault.Malformed)
-            end += 1
-        count = decimal(values[end])?
-        end += 1
-        if count > len(values) - end:
-            return Err(CodecFault.Malformed)
-        for _ in range(count):
-            end = type_end(values, end, depth + 1)?
-        return Ok(end)
-    return Err(CodecFault.Unsupported("type:" + tag))
-
-
-def parameters_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFault]:
-    """Parameter markers retain spelling, source shape, default/preset/mutation bits and the complete checked type."""
-    if offset >= len(values):
-        return Err(CodecFault.Malformed)
-    count = decimal(values[offset])?
-    if count > len(values):
-        return Err(CodecFault.Malformed)
-    mut end = offset + 1
-    for _ in range(count):
-        if end + 6 >= len(values):
-            return Err(CodecFault.Malformed)
-        if values[end] not in ["named", "unnamed"]:
-            return Err(CodecFault.Malformed)
-        if values[end] == "unnamed" and values[end + 1] != "":
-            return Err(CodecFault.Malformed)
-        if values[end + 2] not in ["normal", "rest", "keywords"]:
-            return Err(CodecFault.Malformed)
-        for bit in values[end + 3:end + 6]:
-            if bit not in ["true", "false"]:
-                return Err(CodecFault.Malformed)
-        end = type_end(values, end + 6, depth + 1)?
-    return Ok(end)
 
 
 def diagnostic_end(values: list[str]) -> Result[int, CodecFault]:
