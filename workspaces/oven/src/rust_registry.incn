@@ -188,7 +188,7 @@ def entries_directory(document: JsonValue, path: Path) -> Result[str, str]:
     return Err(f"{path.0} names no compiled unit")
 
 
-def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Result[RegistryUnit, str]:
+pub def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Result[RegistryUnit, str]:
     """One compiled unit of a closure, with the artifact directory its store entry holds."""
     entry = required_text(item, "entry")?
     directory = Path(entries).joinpath(entry.replace(":", "-")).joinpath("artifacts").0
@@ -197,6 +197,7 @@ def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Res
             loaf=required_text(item, "loaf")?,
             version=required_text(item, "version")?,
             registry=registry_text(item, "registry")?,
+            revision=registry_revision(item)?,
             domain=required_text(item, "domain")?,
             directory=directory,
             features=registry_features(item)?,
@@ -238,6 +239,13 @@ def registry_text(item: JsonValue, key: str) -> Result[str, str]:
     match item.get(key):
         None => return Ok("")
         Some(value) => return value.expect_str().map_err((error) => error.message())
+
+
+def registry_revision(item: JsonValue) -> Result[int, str]:
+    """The index revision of the unit's Loaf manifest; a closure that records none has revision 0."""
+    match item.get("revision"):
+        None => return Ok(0)
+        Some(value) => return value.expect_int().map_err((error) => f"registry unit revision: {error.message()}")
 
 
 def registry_dependencies(item: JsonValue) -> Result[list[str], str]:
