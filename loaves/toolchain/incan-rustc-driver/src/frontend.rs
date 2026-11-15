@@ -670,6 +670,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
+    let cloves = unit.cloves.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let native_products = dependencies
         .plan_record_products
@@ -736,6 +737,12 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         None
     };
     drop(program);
+    // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
+    let mut rustc_args = dependencies.rustc_args.clone();
+    rustc_args.extend(crate::foreign::clove_link_arguments(&plan, &cloves).map_err(|error| {
+        receipt.deterministic();
+        error.to_string()
+    })?);
     crate::adapter::compile(
         plan,
         &arguments[1],
@@ -743,7 +750,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &identity,
         &native_externs,
         &dependencies.directories,
-        &dependencies.rustc_args,
+        &rustc_args,
         &access,
         dependencies.shared_native.as_deref(),
         kind,

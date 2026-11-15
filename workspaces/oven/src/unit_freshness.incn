@@ -222,14 +222,14 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
 
 pub def unit_compiler_identity(unit: UnitDescription, compiler: str, sdk: str) -> Result[str, str]:
     """Bind SDK contents only to unit kinds whose compiler invocation can read them."""
-    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0 and len(unit.cloves) == 0:
         return Ok(compiler)
     return fingerprint([compiler, sdk])
 
 
 pub def selected_unit_compiler(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[str, str]:
     """Use the admitted default SDK identity for a final link or C-ABI unit."""
-    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0 and len(unit.cloves) == 0:
         return Ok(compiler)
     if toolchain.default_sdk_identity != "":
         return unit_compiler_identity(unit, compiler, toolchain.default_sdk_identity)
@@ -315,8 +315,23 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
-        ) + access_facts(unit) + record_identity,
+        ) + access_facts(unit) + record_identity + clove_facts(unit),
     )
+
+
+def clove_facts(unit: UnitDescription) -> list[str]:
+    """
+    Each Clove the unit reaches, by its library, compiler and every configuration's definitions and archive bytes, so
+    a rebuilt archive rekeys the units that link it. Locations are provenance. A unit that reaches none has none.
+    """
+    mut facts: list[str] = []
+    for clove in unit.cloves:
+        facts.append(f"clove={clove.name}:{clove.library}:{clove.cplusplus}:{clove.compiler}")
+        facts.extend([f"clove-header={clove.name}:{header}" for header in clove.public_headers])
+        for configuration in clove.configurations:
+            definitions = ",".join(configuration.definitions)
+            facts.append(f"clove-configuration={clove.name}:{configuration.name}:{definitions}:{configuration.identity}")
+    return facts
 
 
 def access_facts(unit: UnitDescription) -> list[str]:
@@ -382,6 +397,10 @@ def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[s
         contents.extend(["contract-model", project.digest(Path(unit.project_root).joinpath(schema))?])
     for header in unit.c_headers:
         contents.extend(["c-header", project.digest(Path(unit.project_root).joinpath(header))?])
+    # A Clove's public headers are verification inputs even when an edit leaves its archive bytes unchanged.
+    for clove in unit.cloves:
+        for header in clove.public_headers:
+            contents.extend(["clove-header", project.digest(Path(clove.root).joinpath(header))?])
     if let Some(vocab) = unit.vocab:
         contents.extend(["vocabulary", vocabulary_facts(Path(vocab))?])
     return Ok(contents)

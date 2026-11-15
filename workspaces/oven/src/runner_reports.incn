@@ -1,0 +1,182 @@
+"""
+The test runner's reports: one outcome per test, JSON Lines records (`incan.test.v1`), a JUnit XML document, the
+slowest durations and a summary line, each in 0.5.1's shape.
+"""
+
+from std.json import JsonValue
+
+pub const SCHEMA: str = "incan.test.v1"
+
+
+pub enum Status(str):
+    """How one selected test ended."""
+
+    Passed = "passed"
+    Failed = "failed"
+    Skipped = "skipped"
+    XFailed = "xfailed"
+    XPassed = "xpassed"
+
+
+pub model Outcome:
+    """One test's observed outcome, with the names each report uses."""
+
+    # The test module as reports name it, relative to the selected directory.
+    pub file: str
+    # The module's file name, as console lines name it.
+    pub label: str
+    pub name: str
+    pub status: Status
+    pub reason: str = ""
+    pub duration_ms: int = 0
+    pub markers: list[str] = []
+
+    pub def console_line(self) -> str:
+        """The console line: `FILE::TEST` and the outcome, with its reason where the outcome has one."""
+        mut word = "PASSED"
+        match self.status:
+            Status.Passed => word = "PASSED"
+            Status.Failed => word = "FAILED"
+            Status.Skipped => word = "SKIPPED"
+            Status.XFailed => word = "XFAIL"
+            Status.XPassed => word = "XPASS"
+        if self.reason != "":
+            return f"{self.label}::{self.name} {word} ({self.reason})"
+        return f"{self.label}::{self.name} {word}"
+
+    pub def failed(self) -> bool:
+        """Whether the outcome fails the run: a failure or an unexpected pass."""
+        return self.status == Status.Failed or self.status == Status.XPassed
+
+
+pub def json_record(outcome: Outcome) -> Result[str, str]:
+    """One outcome as a JSON Lines record."""
+    mut fields: Dict[str, JsonValue] = {
+        "duration_ms": JsonValue.int(outcome.duration_ms),
+        "file": JsonValue.string(outcome.file),
+        "markers": JsonValue.array([JsonValue.string(marker) for marker in outcome.markers]),
+        "name": JsonValue.string(outcome.name),
+        "schema_version": JsonValue.string(SCHEMA),
+        "status": JsonValue.string(outcome.status.value()),
+        "test_id": JsonValue.string(f"{outcome.label}::{outcome.name}"),
+    }
+    if outcome.reason != "":
+        fields["reason"] = JsonValue.string(outcome.reason)
+    return JsonValue.object(fields).to_json().map_err((error) => error.message())
+
+
+pub def json_summary(outcomes: list[Outcome], duration_ms: int, seed: Option[int]) -> Result[str, str]:
+    """The final JSON Lines record: the counts of each outcome, the run's duration and its shuffle seed."""
+    mut shuffle_seed = JsonValue.null()
+    if let Some(selected) = seed:
+        shuffle_seed = JsonValue.int(selected)
+    summary = JsonValue.object(
+        {
+            "duration_ms": JsonValue.int(duration_ms),
+            "failed": JsonValue.int(counted(outcomes, Status.Failed)),
+            "passed": JsonValue.int(counted(outcomes, Status.Passed)),
+            "shuffle_seed": shuffle_seed,
+            "skipped": JsonValue.int(counted(outcomes, Status.Skipped)),
+            "total": JsonValue.int(len(outcomes)),
+            "xfailed": JsonValue.int(counted(outcomes, Status.XFailed)),
+            "xpassed": JsonValue.int(counted(outcomes, Status.XPassed)),
+        },
+    )
+    record = JsonValue.object({"schema_version": JsonValue.string(SCHEMA), "summary": summary})
+    return record.to_json().map_err((error) => error.message())
+
+
+pub def counted(outcomes: list[Outcome], status: Status) -> int:
+    """How many outcomes have `status`."""
+    mut total = 0
+    for outcome in outcomes:
+        if outcome.status == status:
+            total += 1
+    return total
+
+
+pub def junit(outcomes: list[Outcome], duration_ms: int) -> str:
+    """A JUnit XML document with one `testcase` per outcome; skips and expected failures are skipped cases."""
+    failures = counted(outcomes, Status.Failed) + counted(outcomes, Status.XPassed)
+    skipped = counted(outcomes, Status.Skipped) + counted(outcomes, Status.XFailed)
+    mut lines = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        f"<testsuite name=\"incan\" tests=\"{len(outcomes)}\" failures=\"{failures}\" skipped=\"{skipped}\" time=\"{seconds(duration_ms)}\">",
+    ]
+    for outcome in outcomes:
+        opening = f"  <testcase classname=\"{escaped(outcome.file)}\" name=\"{escaped(outcome.name)}\" time=\"{seconds(outcome.duration_ms)}\">"
+        mut body = ""
+        match outcome.status:
+            Status.Failed => body = f"<failure message=\"{escaped(failure_message(outcome))}\"></failure>"
+            Status.XPassed => body = f"<failure message=\"{escaped(failure_message(outcome))}\"></failure>"
+            Status.Skipped => body = f"<skipped>{escaped(outcome.reason)}</skipped>"
+            Status.XFailed => body = f"<skipped>{escaped(outcome.reason)}</skipped>"
+            Status.Passed => pass
+        lines.append(f"{opening}{body}</testcase>")
+    lines.append("</testsuite>")
+    return "\n".join(lines) + "\n"
+
+
+def failure_message(outcome: Outcome) -> str:
+    """Why a failed case failed, as its JUnit failure message names it."""
+    if outcome.status == Status.XPassed:
+        return f"unexpectedly passed: {outcome.reason}"
+    if outcome.reason != "":
+        return outcome.reason
+    return "test failed"
+
+
+def escaped(text: str) -> str:
+    """Text escaped for an XML attribute or element."""
+    return (
+        text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def seconds(milliseconds: int) -> str:
+    """Milliseconds as seconds with three decimals."""
+    fraction = str(milliseconds % 1000)
+    return f"{milliseconds // 1000}." + padded(fraction, 3, "0")
+
+
+pub def slowest(outcomes: list[Outcome], count: int) -> list[str]:
+    """The `count` slowest executed tests, slowest first, as `   117ms FILE::TEST` lines under their heading."""
+    mut ranked: list[Outcome] = [outcome for outcome in outcomes if outcome.status != Status.Skipped]
+    mut lines: list[str] = ["==================== slowest durations ==================="]
+    mut taken = 0
+    while taken < count and len(ranked) > 0:
+        mut best = 0
+        for index in range(len(ranked)):
+            if ranked[index].duration_ms > ranked[best].duration_ms:
+                best = index
+        chosen = ranked[best]
+        width = str(chosen.duration_ms)
+        lines.append(padded(width, 6, " ") + f"ms {chosen.label}::{chosen.name}")
+        ranked = [ranked[index] for index in range(len(ranked)) if index != best]
+        taken += 1
+    return lines
+
+
+pub def summary_line(outcomes: list[Outcome], duration_ms: int) -> str:
+    """`N passed, N failed, ... in S.SSSs`, naming only the outcomes that occurred."""
+    mut parts: list[str] = []
+    for status in [Status.Passed, Status.Failed, Status.Skipped, Status.XFailed, Status.XPassed]:
+        total = counted(outcomes, status)
+        if total > 0:
+            parts.append(f"{total} {status.value()}")
+    if len(parts) == 0:
+        parts.append("no tests ran")
+    return ", ".join(parts) + f" in {seconds(duration_ms)}s"
+
+
+def padded(text: str, width: int, fill: str) -> str:
+    """`text` right-aligned in `width` characters with `fill`."""
+    mut result = text
+    while len(result) < width:
+        result = fill + result
+    return result

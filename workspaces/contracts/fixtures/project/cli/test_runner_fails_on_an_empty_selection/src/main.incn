@@ -1,0 +1,10 @@
+# behavior: `incan test` reports an empty selection as `No tests collected`, which fails only with `--fail-on-empty`, as 0.5.1 does (#3138).
+# cli-commands:
+#   test --fail-on-empty -k nothing
+#   test tests --fail-on-empty -k nothing
+# expect-stdout:
+#   No tests collected
+# expect-exit: 1
+
+def main() -> None:
+    println("main")

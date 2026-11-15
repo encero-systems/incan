@@ -87,6 +87,10 @@ pub struct UnitDescription {
     pub contract_models: Vec<String>,
     /// The C headers the package declares, package-relative, which checked C bindings may name.
     pub c_headers: Vec<String>,
+    /// The Cloves (C-library Loaves, RFC 159) the unit reaches, each configuration compiled by Oven; a
+    /// `c.loaf_library` binding verifies against one and links its archive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloves: Vec<UnitClove>,
     /// Producer registration prepared by Oven, in the existing versioned vocabulary descriptor format.
     #[serde(default)]
     pub vocab: Option<PathBuf>,
@@ -198,6 +202,42 @@ pub struct UnitNativeCrate {
     pub name: String,
     /// The library artifact; the compiler never chooses it from a directory.
     pub path: PathBuf,
+}
+
+/// One Clove a unit reaches: its library, the headers it exposes and its compiled configurations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitClove {
+    /// The Clove's Loaf name, which `c.loaf_library` names.
+    pub name: String,
+    /// The Clove's root directory, which its public headers and include roots are relative to.
+    pub root: PathBuf,
+    /// The archive's link name: `lib<library>.a`.
+    pub library: String,
+    /// The headers a binding may name, Clove-relative.
+    pub public_headers: Vec<String>,
+    /// The Clove's include roots, absolute.
+    pub include: Vec<PathBuf>,
+    /// Whether the archive holds C++ objects, whose runtime library the final link adds.
+    pub cplusplus: bool,
+    /// The compiler identity that built the archives; `host:` marks the non-portable local override.
+    pub compiler: String,
+    /// Every compiled configuration.
+    pub configurations: Vec<UnitCloveConfiguration>,
+}
+
+/// One compiled configuration of a Clove.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnitCloveConfiguration {
+    /// The configuration name.
+    pub name: String,
+    /// Its resolved preprocessor definitions, `NAME=VALUE`.
+    pub definitions: Vec<String>,
+    /// The static archive Oven compiled for it.
+    pub archive: PathBuf,
+    /// The archive's content identity.
+    pub identity: String,
 }
 
 /// One Loaf a unit reaches.

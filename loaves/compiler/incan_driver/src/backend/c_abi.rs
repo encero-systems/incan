@@ -97,6 +97,8 @@ impl CAbiTarget {
 pub struct CAbiVerificationPlan {
     target: CAbiTarget,
     definitions: Vec<String>,
+    /// Include roots of the Clove whose public headers a `c.loaf_library` binding names.
+    include: Vec<PathBuf>,
     toolchain_identity: Option<String>,
 }
 
@@ -106,8 +108,18 @@ impl CAbiVerificationPlan {
         CAbiTarget::host().map(|target| Self {
             target,
             definitions: Vec::new(),
+            include: Vec::new(),
             toolchain_identity: None,
         })
+    }
+
+    /// The same target verified with one Clove configuration's definitions and the Clove's include roots, as the
+    /// archive the binding links was compiled (RFC 159).
+    pub fn with_clove(&self, definitions: &[String], include: &[PathBuf]) -> Self {
+        let mut plan = self.clone();
+        plan.definitions.extend(definitions.iter().cloned());
+        plan.include.extend(include.iter().cloned());
+        plan
     }
 
     /// Return the exact Clang target selected for this verifier pass.
@@ -348,6 +360,9 @@ fn verifier_command(toolchain: &ClangToolchain, plan: &CAbiVerificationPlan) -> 
     command.args(&toolchain.arguments);
     for definition in plan.definitions() {
         command.arg(format!("-D{definition}"));
+    }
+    for include in &plan.include {
+        command.arg(format!("-I{}", include.display()));
     }
     command.args(["-std=gnu11", "-Werror", "-x", "c", "-target"]);
     command.arg(plan.target().triple());

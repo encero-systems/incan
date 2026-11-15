@@ -1,0 +1,17 @@
+"""An Incan facade over the Clove this Loaf also carries."""
+
+from std.interop import c
+
+
+binding Counter:
+    header = "include/counter.h"
+    link = c.loaf_library("counter")
+
+    symbol next(value: c.i32) -> c.i32:
+        native = "counter_next"
+
+
+pub def next_after(value: i32) -> i32:
+    """The C library's successor of `value`."""
+    unsafe:
+        return Counter.next(value)

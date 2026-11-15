@@ -153,6 +153,7 @@ pub def obtain(
         or described.vocabulary
         or len(described.contract_models) > 0
         or len(described.c_headers) > 0
+        or len(described.cloves) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
     ready = prepare_native(described, toolchain)?

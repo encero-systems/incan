@@ -194,7 +194,8 @@ pub(super) fn cabi_interop_artifacts(value: &CAbiInteropArtifacts) -> Result<(),
         output_slots,
         enum_accesses,
         enum_values,
+        clove_libraries,
     } = value;
-    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, facades, output_slots, enum_accesses, enum_values);
+    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, facades, output_slots, enum_accesses, enum_values, clove_libraries);
     Ok(())
 }

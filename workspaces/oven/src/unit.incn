@@ -5,6 +5,7 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 
 from std.fs import Path
 from std.json import JsonValue
+from clove_units import CloveUnit, clove_unit
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -63,6 +64,10 @@ pub model UnitDescription:
     pub rust_crates: list[str]
     pub contract_models: list[str]
     pub c_headers: list[str]
+    # The Cloves the unit reaches (its own Loaf's C facet and each reached path dependency's), every configuration
+    # compiled into its archive. An archive's identity is part of the description, so a rebuilt Clove rebuilds the
+    # units that link it.
+    pub cloves: list[CloveUnit] = []
     # Registry declared by this unit's own package; absent does not invent a default root key.
     pub registry_id: Option[str] = None
     pub externs: list[NativeCrate] = []
@@ -125,6 +130,8 @@ pub model UnitDescription:
         ), "rust_abi": texts(self.rust_abi)}
         if let Some(registry) = self.registry_id:
             fields["registry_id"] = JsonValue.string(registry)
+        if len(self.cloves) > 0:
+            fields["cloves"] = JsonValue.array([clove.to_json() for clove in self.cloves])
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:
@@ -167,10 +174,37 @@ def optional_text(value: Option[str]) -> JsonValue:
 
 
 pub def project_root_of(source: Path) -> Option[Path]:
-    """The nearest directory at or above `source`'s directory that holds a `loaf.toml`."""
+    """
+    The nearest directory at or above `source`'s directory that holds a `loaf.toml`. Discovery stops at a directory
+    that holds only the retired `incan.toml`; `discovered_project` reports that stop.
+    """
     for manifest in manifest_candidates(source):
         if manifest.is_file():
             return Some(manifest.parent())
+        if retired_manifest(manifest.parent()) is not None:
+            return None
+    return None
+
+
+pub def discovered_project(source: Path) -> Result[Option[Path], str]:
+    """The project `source` belongs to, refusing a directory on the way that holds `incan.toml` and no `loaf.toml`."""
+    for manifest in manifest_candidates(source):
+        if manifest.is_file():
+            return Ok(Some(manifest.parent()))
+        match retired_manifest(manifest.parent()):
+            Some(retired) =>
+                return Err(
+                    f"{retired.0}: `incan.toml` is not a project manifest; rename it to loaf.toml once its tables satisfy the Loaf schema",
+                )
+            None => pass
+    return Ok(None)
+
+
+def retired_manifest(directory: Path) -> Option[Path]:
+    """A directory's `incan.toml` when it holds no `loaf.toml`: the 0.5 manifest, which is never read."""
+    retired = directory.joinpath("incan.toml")
+    if retired.is_file() and not directory.joinpath("loaf.toml").is_file():
+        return Some(retired)
     return None
 
 
@@ -255,7 +289,7 @@ def described(
         return Err(f"{entry.0}: no such source file")
     if direct:
         return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
-    match project_root_of(entry):
+    match discovered_project(entry)?:
         None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
@@ -299,6 +333,7 @@ def project_unit(
             rust_crates=rust_crates_of(own, active.facets),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
+            cloves=project_cloves(own, profile, active, projects)?,
             vocab_entry=own.intent.vocab_entry,
             toolchain_access=own.intent.toolchain_access,
             facets=active.facets,
@@ -306,6 +341,26 @@ def project_unit(
             selected_toolchain=active.toolchain,
         ),
     )
+
+
+def project_cloves(
+    own: LocalProject,
+    profile: str,
+    active: ActiveGraph,
+    projects: Dict[str, LocalProject],
+) -> Result[list[CloveUnit], str]:
+    """
+    The project's own C facet and every reached project's, each compiled or reused as its own unit (RFC 159) under
+    the Clove's own `target`, so every unit that reaches one Clove shares its archives.
+    """
+    mut cloves: list[CloveUnit] = []
+    for root in reachable_roots(own.root, active):
+        if root not in projects:
+            continue
+        project = projects[root]
+        if let Some(facet) = project.intent.c_facet:
+            cloves.append(clove_unit(project.intent.name, root, facet, profile, root)?)
+    return Ok(cloves)
 
 
 def project_loaves(

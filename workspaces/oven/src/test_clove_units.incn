@@ -1,0 +1,64 @@
+"""A Clove's compiled archives are part of the identity of every unit that reaches them, and their locations are not."""
+
+from clove_units import CloveConfigurationUnit, CloveUnit
+from unit import UnitDescription
+from unit_freshness import description_digest
+
+
+def clove(root: str, identity: str, definitions: list[str]) -> CloveUnit:
+    """One Clove with one compiled configuration under `root`."""
+    return CloveUnit(
+        name="shim",
+        root=root,
+        library="shim",
+        public_headers=["include/shim.h"],
+        include=[f"{root}/include"],
+        cplusplus=false,
+        compiler="host:fixed",
+        configurations=[
+            CloveConfigurationUnit(
+                name="default",
+                definitions=definitions,
+                archive=f"{root}/target/incan/cloves/shim/default/debug/libshim.a",
+                identity=identity,
+            ),
+        ],
+    )
+
+
+def linking(cloves: list[CloveUnit]) -> UnitDescription:
+    """A program unit that reaches `cloves`, described with fixed locations."""
+    return UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+        cloves=cloves,
+    )
+
+
+pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[None, str]:
+    """
+    A unit is compiled again when a Clove it reaches compiled different archive bytes or definitions.
+
+    1. Reaching a Clove changes the description digest.
+    2. A rebuilt archive with different bytes, or different definitions, changes it again.
+    3. The same archive at another location keeps it.
+    """
+    # 1. The Clove is an input of the unit.
+    first = description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=2"])]))?
+    assert first != description_digest(linking([]))?
+    # 2. Different archive bytes or definitions are a different input.
+    assert description_digest(linking([clove("/checkout/project", "sha256:bb", ["SHIM_OFFSET=2"])]))? != first
+    assert description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=3"])]))? != first
+    # 3. Locations are provenance, not identity.
+    assert description_digest(linking([clove("/elsewhere/project", "sha256:aa", ["SHIM_OFFSET=2"])]))? == first
+    return Ok(None)

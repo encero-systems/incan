@@ -14,7 +14,9 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `toolchain_archive.incn` | Packing the installed toolchain's named artifacts and rewriting toolchain, registry and standard Loaf paths for relocation. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
 | `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
-| `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
+| `testing.incn` | Discovering test modules, then selecting, running and reporting the collected tests of compiled Incan and Rust harnesses, each in its own process (`incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]`). |
+| `inline_source.incn` | Inline source for `incan run -c CODE`: the digest-named module file a direct run compiles. |
+| `runner_options.incn`, `runner_selection.incn`, `runner_reports.incn` | The test runner options 0.5.1 accepts, `-k` and `-m` expressions with the seeded shuffle, and the console, JSON Lines, JUnit and durations reports. |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, libraries in dependency order, one `rustc` per unit against compiled registry units (`incan build`). |
 | `rust_build.incn` | The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned toolchain's libraries and `rustc` invocation. |
 | `rust_binaries.incn` | A facet's binaries. A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
@@ -27,11 +29,11 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
 | `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share.
 
 ## Test units
 
-`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names and outcome markers beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
+`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names, outcome markers (`skip`, `xfail`), `slow` flag, `@mark` names and unregistered marks beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
 
 Fixtures, test parameters, async tests, timeouts and resource markers currently produce named refusals. Their execution contracts are not implemented by this initial native harness.
 

@@ -1,0 +1,10 @@
+# behavior: with no managed C toolchain release installed, a Clove compiles only through the explicit, non-portable host override; without it the build is refused with that instruction (#3133, RFC 159)
+# cli-commands:
+#   oven check src/main.incn
+#   oven build src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   Clove `clove_without_compiler_override`: no C toolchain release is installed with this Incan toolchain; set INCAN_C_COMPILER=host
+
+def main() -> None:
+    println("unreachable")

@@ -45,6 +45,76 @@ pub(crate) fn items(
         .collect())
 }
 
+/// The search directories and runtime libraries of the Clove archives the plan's foreign calls link (RFC 159).
+///
+/// Each call names its Clove and configuration; the unit description names the archive Oven compiled for it. A plan
+/// that links two configurations of one Clove is refused, because both archives define the same symbols.
+pub(crate) fn clove_link_arguments(
+    plan: &Plan,
+    cloves: &[incan_driver::unit::UnitClove],
+) -> Result<Vec<String>, PlanError> {
+    let mut selected: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut arguments: Vec<String> = Vec::new();
+    for function in &plan.functions {
+        for block in &function.blocks {
+            let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+                continue;
+            };
+            let CalleeKind::Foreign(declaration) = &callee.kind else {
+                continue;
+            };
+            if declaration.clove.is_empty() {
+                continue;
+            }
+            let invalid = |reason: String| PlanError::Invalid {
+                function: function.name.clone(),
+                reason,
+            };
+            if let Some(previous) = selected.insert(&declaration.clove, &declaration.configuration)
+                && previous != declaration.configuration
+            {
+                return Err(invalid(format!(
+                    "Clove `{}` is linked in configurations `{previous}` and `{}` in one link closure",
+                    declaration.clove, declaration.configuration
+                )));
+            }
+            let clove = cloves
+                .iter()
+                .find(|clove| clove.name == declaration.clove)
+                .ok_or_else(|| invalid(format!("the unit describes no Clove `{}`", declaration.clove)))?;
+            let configuration = clove
+                .configurations
+                .iter()
+                .find(|configuration| configuration.name == declaration.configuration)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "Clove `{}` has no compiled configuration `{}`",
+                        declaration.clove, declaration.configuration
+                    ))
+                })?;
+            let directory = configuration
+                .archive
+                .parent()
+                .ok_or_else(|| invalid("a Clove archive has no directory".into()))?;
+            let search = format!("-Lnative={}", directory.display());
+            if !arguments.contains(&search) {
+                arguments.push(search);
+            }
+            if clove.cplusplus {
+                let runtime = if cfg!(target_os = "macos") {
+                    "-ldylib=c++"
+                } else {
+                    "-ldylib=stdc++"
+                };
+                if !arguments.iter().any(|argument| argument == runtime) {
+                    arguments.push(runtime.to_owned());
+                }
+            }
+        }
+    }
+    Ok(arguments)
+}
+
 /// Resolve only an injected foreign item with the exact plan declaration key, without Rust crate-path guessing.
 pub(crate) fn resolve(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
     tcx.hir_crate_items(())
@@ -120,14 +190,22 @@ fn foreign_module(declaration: &ForeignFunction, generator: &ast::attr::AttrIdGe
         span,
     );
     module.vis.kind = ast::VisibilityKind::Inherited;
+    let mut arguments = vec![AttributeArgument {
+        name: "name".into(),
+        value: AttributeValue::Text(declaration.library.clone()),
+    }];
+    // A Clove's library is the static archive Oven compiled; the unit's search path names its directory.
+    if !declaration.clove.is_empty() {
+        arguments.push(AttributeArgument {
+            name: "kind".into(),
+            value: AttributeValue::Text("static".into()),
+        });
+    }
     module.attrs.push(crate::native_attributes::attribute_item(
         generator,
         &NativeAttribute {
             path: "link".into(),
-            arguments: vec![AttributeArgument {
-                name: "name".into(),
-                value: AttributeValue::Text(declaration.library.clone()),
-            }],
+            arguments,
         },
         span,
     ));

@@ -24,7 +24,11 @@ A `binding` declares `Name` as a private declaration of its module. Its body hol
 | Field | Form | Meaning |
 | --- | --- | --- |
 | `header` | A non-empty string literal. | The C header that declares the binding's functions, constants and types. |
-| `link` | `c.system_library("name")` or `c.framework("name")`, with a non-empty string literal. | The native library the program links: a system library, or an Apple framework. |
+| `link` | `c.system_library("name")`, `c.framework("name")` or `c.loaf_library("loaf", configuration="name")`, with non-empty string literals. | The native library the program links: a system library, an Apple framework, or the static archive of one configuration of a Clove. |
+
+`c.loaf_library("loaf")` names a Clove, a Loaf with a [`[c]` facet](../../../tooling/reference/project_configuration.md#c): the unit's own project or a path dependency. `configuration` defaults to `default`. The binding's `header` is one of the Clove's `public-headers`, spelled relative to the Clove's root. The unit links the static archive Oven compiled for that configuration.
+
+- Refused (`INCAN-T0001`): a `loaf` that names no Clove the unit reaches; a configuration the Clove does not declare; a `header` that is not one of its public headers; and two configurations of one Clove in one unit.
 
 | Member | Declares |
 | --- | --- |
@@ -289,6 +293,7 @@ Before a module with a binding is checked, built or run, each binding is verifie
 | macOS arm64 host | Default on that host | `arm64-apple-macos11` |
 
 - The host selects the target. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
+- A `c.loaf_library` binding is verified with the configuration's resolved `defines` and the Clove's `include` roots, as its archive was compiled.
 - `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang with the macOS SDK as sysroot on macOS arm64, and `clang` on Linux x86-64.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
 - Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; and a host binding on a platform other than Linux x86-64 and macOS arm64.

@@ -277,13 +277,16 @@ pub enum CalleeKind:
 
 @derive(Clone, PartialEq)
 pub model ForeignFunction:
-    """One target-verified C function with its exact symbol, explicit system library, and native signature."""
+    """One target-verified C function with its exact symbol, explicit library, and native signature."""
 
     pub name: str
     pub symbol: str
     pub library: str
     pub parameters: list[PlanType]
     pub return_type: PlanType
+    # The Clove whose static archive provides `library` and the configuration it links; empty for a system library.
+    pub clove: str = ""
+    pub configuration: str = ""
 
 
 @derive(Clone, PartialEq)

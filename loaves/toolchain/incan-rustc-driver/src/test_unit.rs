@@ -7,11 +7,16 @@ use incan_driver::unit::{UnitDescription, UnitKind};
 use rustc_ast as ast;
 use rustc_span::Span;
 
-/// One collected test's source name and outcome markers, resolved once by the session collector.
+/// One collected test's source name, outcome markers and selection markers, resolved once by the session collector.
 pub(crate) struct CollectedTest {
     pub(crate) name: String,
     skip: Option<String>,
     xfail: Option<String>,
+    // `@slow`, which the runner leaves out unless asked, and the `@mark` names its marker expressions select.
+    slow: bool,
+    marks: Vec<String>,
+    // Marks the test module does not register in `TEST_MARKERS`, which strict marker selection refuses.
+    unregistered: Vec<String>,
 }
 
 /// Collect a test unit using the session's vocabulary and active features; unsupported harness contracts refuse by
@@ -44,12 +49,24 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
             name: test.function_name,
             skip: None,
             xfail: None,
+            slow: false,
+            marks: Vec::new(),
+            unregistered: Vec::new(),
         };
         for marker in test.markers {
             match marker {
                 TestMarker::Skip(reason) => entry.skip = Some(reason),
                 TestMarker::XFail(reason) => entry.xfail = Some(reason),
-                TestMarker::Test | TestMarker::Slow | TestMarker::Mark(_) | TestMarker::Serial => {}
+                TestMarker::Slow => entry.slow = true,
+                TestMarker::Mark(name) => {
+                    if !discovery.known_markers.contains(&name) && !entry.unregistered.contains(&name) {
+                        entry.unregistered.push(name.clone());
+                    }
+                    if !entry.marks.contains(&name) {
+                        entry.marks.push(name);
+                    }
+                }
+                TestMarker::Test | TestMarker::Serial => {}
                 _ => return Err(format!("unsupported test marker for `{}`", entry.name)),
             }
         }
@@ -63,9 +80,23 @@ pub(crate) fn report(tests: &[CollectedTest], native: &[String]) -> Result<serde
     if tests.len() != native.len() {
         return Err("test lowering lost a collected entry".into());
     }
-    Ok(serde_json::Value::Array(tests.iter().zip(native).map(|(test, native)| {
-        serde_json::json!({"name": test.name, "native": native, "skip": test.skip, "xfail": test.xfail})
-    }).collect()))
+    Ok(serde_json::Value::Array(
+        tests
+            .iter()
+            .zip(native)
+            .map(|(test, native)| {
+                serde_json::json!({
+                    "name": test.name,
+                    "native": native,
+                    "skip": test.skip,
+                    "xfail": test.xfail,
+                    "slow": test.slow,
+                    "marks": test.marks,
+                    "unregistered": test.unregistered,
+                })
+            })
+            .collect(),
+    ))
 }
 
 /// Register a checked function with rustc's native harness without parsing generated Rust source.

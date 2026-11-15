@@ -1,0 +1,142 @@
+"""The complete committed corpus must cross the independent native semantic-codec boundary."""
+
+from rust::incan_std_primitives::crumb import evaluate_semantic_case
+from std.fs import Path
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.admission import check_written
+from std.primitives.crumb.encoding_buffer import EncodingBuffer
+from std.primitives.crumb.framing import frame
+from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
+from std.primitives.crumb.identity import closed_selector, check_arity
+from std.primitives.crumb.hashes import value_hash
+from std.primitives.crumb.spelling import selector_spelling
+from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.crumb.values import Projection
+from std.primitives.hash import sha256
+from std.primitives.text import encode_utf8
+from case_data import CaseOperation, field, fields as fixture_fields, hex_bytes, nodes, text
+from corpus import load
+from fixture_adapter import logical
+
+
+def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str]:
+    """Every corpus operation must encode and decode natively; the binary subset remains separately counted."""
+    corpus = load(Path("specs/comic/corpus/manifest.json"))?
+    mut completed = 0
+    mut binary = 0
+    mut encoded_nanoseconds: u64 = 0
+    mut decoded_nanoseconds: u64 = 0
+    for item in corpus.cases:
+        if item.operation == CaseOperation.BinaryDecode or item.operation == CaseOperation.ColumnCodec:
+            binary += 1
+        document = item.document.to_json().map_err((error) => error.message())?
+        outcome = evaluate_semantic_case(item.operation.value(), document)
+        encoded_nanoseconds += outcome.encode_ns
+        decoded_nanoseconds += outcome.decode_ns
+        match item.operation:
+            CaseOperation.MemberIdentity =>
+                mut budget = Budget
+                    .create(bytes=1048576, elements=1048576, depth=128)
+                    .map_err((error) => error.message())?
+                incan = member_identity(text(item.document, "earliest_name")?, budget).map_err(
+                    (error) => error.message(),
+                )?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            CaseOperation.NominalIdentity =>
+                incan = nominal_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            CaseOperation.TypeSelector =>
+                incan = selector_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            CaseOperation.ShapeAdmission =>
+                incan = admission_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            CaseOperation.ValueRelation =>
+                incan = relation_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            _ =>
+                if outcome.kind == 0u8:
+                    return Err(f"native operation has no independent twin assertion: {item.operation.value()}")
+    assert len(corpus.cases) == 444
+    assert binary == 188
+    assert completed == 444, f"native semantic corpus completed {completed}/444; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
+    return Ok(None)
+
+
+def nominal_twin(document: JsonValue) -> Result[bytes, str]:
+    """Encode the independent Incan nominal-identity result in the harness's canonical comparison frame."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    registry = text(document, "registry")?
+    package = text(document, "package")?
+    earliest_path = text(document, "earliest_path")?
+    identity = declaration_identity(registry, package, earliest_path, budget).map_err((error) => error.message())?
+    preimage = declaration_preimage(registry, package, earliest_path, budget).map_err((error) => error.message())?
+    digest = sha256.digest(preimage)
+    mut output = EncodingBuffer.create()
+    output.append(identity, budget).map_err((error) => error.message())?
+    output
+        .append(frame(preimage, budget).map_err((error) => error.message())?, budget)
+        .map_err((error) => error.message())?
+    output.append(digest, budget).map_err((error) => error.message())?
+    return output.finish(budget).map_err((error) => error.message())
+
+
+def selector_twin(document: JsonValue) -> Result[bytes, str]:
+    """Encode the Incan selector spelling and key into the harness's canonical comparison frame."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    input = field(document, "input")?
+    mut arguments: list[TypeNode] = []
+    if let Some(items) = input.get("arguments"):
+        arguments = nodes(items.expect_array().map_err((error) => error.message())?)?
+    kind = match NominalKind.from_value(text(input, "kind")?):
+        Some(value) => value
+        None => return Err("unknown nominal kind")
+
+    node = TypeNode.Nominal(kind, "", Some(hex_bytes(text(input, "declaration_hex")?)?), arguments)
+    if let Some(parameters) = input.get("parameter_names"):
+        check_arity(node, len(parameters.expect_array().map_err((error) => error.message())?)).map_err(
+            (error) => error.message(),
+        )?
+    spelling = encode_utf8(selector_spelling(node, budget).map_err((error) => error.message())?)
+    key = closed_selector(node, budget).map_err((error) => error.message())?
+    mut output = EncodingBuffer.create()
+    output
+        .append(frame(spelling, budget).map_err((error) => error.message())?, budget)
+        .map_err((error) => error.message())?
+    output.append(key, budget).map_err((error) => error.message())?
+    return output.finish(budget).map_err((error) => error.message())
+
+
+def admission_twin(document: JsonValue) -> Result[bytes, str]:
+    """Encode the Incan written-shape admission result without reading the expected corpus verdict."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    match check_written(fixture_fields(field(document, "written")?)?, budget):
+        Ok(_) => return Ok(b"\x00")
+        Err(error) =>
+            mut output = EncodingBuffer.create()
+            output.octet(1, budget).map_err((failure) => failure.message())?
+            output
+                .append(frame(encode_utf8(error.kind.value()), budget).map_err((failure) => failure.message())?, budget)
+                .map_err((failure) => failure.message())?
+            output
+                .append(frame(encode_utf8(error.path), budget).map_err((failure) => failure.message())?, budget)
+                .map_err((failure) => failure.message())?
+            return output.finish(budget).map_err((failure) => failure.message())
+
+
+def relation_twin(document: JsonValue) -> Result[bytes, str]:
+    """Compare independently derived production object hashes without reading the expected relation."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    left = value_hash(logical(field(document, "left")?)?, Projection.Object, budget).map_err((error) => error.message())?
+    right = value_hash(logical(field(document, "right")?)?, Projection.Object, budget).map_err(
+        (error) => error.message(),
+    )?
+    if left.digest == right.digest:
+        return Ok(b"\x00")
+    return Ok(b"\x01")

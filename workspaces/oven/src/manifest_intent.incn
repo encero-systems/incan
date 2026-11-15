@@ -11,6 +11,7 @@ from loaf_identity import crate_name, validate_loaf_identity, validate_project_i
 from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
+from c_facet import CFacet, parse_c_facet
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
@@ -23,6 +24,7 @@ const ROOT_TABLES: FrozenList[str] = [
     "vocab",
     "tool",
     "interop",
+    "c",
     "envs",
 ]
 # The keys of `[project]`.
@@ -122,6 +124,8 @@ pub model ProjectIntent:
     pub contract_models: list[str] = []
     # The C headers the `[interop.c]` targets declare, project-relative.
     pub c_headers: list[str] = []
+    # The `[c]` facet, when the Loaf is a Clove (RFC 159).
+    pub c_facet: Option[CFacet] = None
     # The Incan module registering this Loaf's vocabulary, project-relative.
     pub vocab_entry: Option[str] = None
     # The rustc-internal access `[build]` declares for the Loaf's Incan units.
@@ -334,6 +338,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
+            c_facet=parse_c_facet(root, manifest)?,
             vocab_entry=parse_vocab_entry(root, manifest)?,
             toolchain_access=access,
         ),

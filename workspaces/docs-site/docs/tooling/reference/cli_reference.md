@@ -9,11 +9,11 @@ oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
-oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
-oven test PATH [UNIT OPTIONS]
+oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
@@ -21,11 +21,11 @@ oven inspect run ID --proofs
 
 incan --help | -h | help
 incan --version
-incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
-incan test PATH [UNIT OPTIONS]
-incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
+incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH [--profile NAME]
@@ -33,7 +33,7 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command or implicit source path. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run` and `build` select the Loaf at or above the current directory, `test` uses the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -51,6 +51,7 @@ There is no implicit command or implicit source path. Each name runs only its ow
 | `--all-features` | Boolean, false | Selects every declared root-package feature. |
 | `--locked` | Boolean, false | On `oven run`, `oven build` and `oven test`, refuses a missing lock or any resolution that would change it. |
 | `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
+| `--release` | Not accepted | Refused with exit `2`, naming its spelling `--profile release`. |
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
@@ -74,7 +75,7 @@ Trust controls only whether unattended preparation and the language server may r
 
 ## `oven run`
 
-`PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
+`PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
 With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
@@ -90,13 +91,38 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 ## `oven test`
 
-`PATH` names a source file containing test functions, or a Loaf directory. For a directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every `test_*.incn` module directly under its source root and its `tests` directory; a Loaf with neither is refused. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
+`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test, a test that exceeds `--timeout` or an `XPASS` returns nonzero. Every module is compiled before any test runs.
 
-Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy; `@test`, `@slow`, `@mark` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
+Runner options select, order and report the collected tests. Each option that takes a value also accepts `--OPTION=VALUE`.
+
+| Option | Value and default | Contract |
+| --- | --- | --- |
+| `--list` | Boolean, false | Prints each selected test as `MODULE::TEST`, `MODULE` relative to the selected directory, and runs none. |
+| `-k EXPR` | Expression, empty | Selects tests for which the expression holds; a term holds when `MODULE::TEST` contains it, ignoring case. |
+| `-m`, `--markers EXPR` | Expression, empty | Selects tests whose markers satisfy the expression: `skip`, `xfail`, `slow` and each `@mark` name. |
+| `--strict-markers` | Boolean, false | Refuses a run in which a test carries a `@mark` name its module does not register in `TEST_MARKERS`. |
+| `--slow` | Boolean, false | Includes tests marked `@slow`, which are otherwise not selected. |
+| `-x`, `--exitfirst` | Boolean, false | Starts no test after the first failure. |
+| `--fail-on-empty` | Boolean, false | Returns nonzero when no test is selected. |
+| `--run-xfail` | Boolean, false | Runs `@xfail` tests as ordinary tests. |
+| `--shuffle` | Boolean, false | Runs the selected tests in a random order and prints `shuffle seed: N`. |
+| `--seed N` | Integer, from the clock | Fixes the `--shuffle` order. Requires `--shuffle`. |
+| `-j`, `--jobs N` | Positive integer, `1` | Runs at most `N` tests at once. Outcomes print in selection order. |
+| `--timeout DURATION` | `250ms`, `5s`, `2m` or seconds, none | Stops a test that runs longer and reports it as `FAILED (timed out after Nms)`. |
+| `--durations N` | Integer, `0` | Prints the `N` slowest tests after the run. |
+| `--nocapture` | Boolean, false | Prints what passing tests print. |
+| `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
+| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test and a final summary record instead of console lines. |
+| `--junit PATH` | Path, none | Writes a JUnit XML report. Skipped tests and expected failures are skipped cases. |
+| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
+
+An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
+
+Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@test` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
 
 ## `oven build`
 
-An explicit source file selects that unit. For a directory, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
+An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
 A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
 
