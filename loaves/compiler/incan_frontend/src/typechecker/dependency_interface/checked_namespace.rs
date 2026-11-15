@@ -15,10 +15,11 @@ pub struct CheckedNamespaceInterface {
     module_path: Vec<String>,
     api: crate::api_metadata::CheckedApiMetadata,
     identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    nominal_scope: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 4;
+    const SCHEMA: u32 = 5;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -84,6 +85,7 @@ impl CheckedNamespaceInterface {
             module_path: module_path.to_vec(),
             api,
             identities,
+            nominal_scope: checker.collect_checked_nominal_scope(),
         }))
     }
 
@@ -168,21 +170,7 @@ impl CheckedNamespaceInterface {
             .iter()
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect::<HashMap<_, _>>();
-        let nominal_scope = Arc::new(
-            identities
-                .iter()
-                .filter(|(_, identity)| {
-                    matches!(
-                        identity.kind,
-                        SemanticSourceTargetKind::Model
-                            | SemanticSourceTargetKind::Class
-                            | SemanticSourceTargetKind::Enum
-                            | SemanticSourceTargetKind::Newtype
-                    )
-                })
-                .map(|(name, identity)| (name.clone(), identity.clone()))
-                .collect(),
-        );
+        let nominal_scope = Arc::new(self.nominal_scope.clone());
         for (name, kind) in &symbols {
             if let Some(identity) = identities.get(name) {
                 converter.retain_declaration_nominal_scope(identity, kind, &nominal_scope);
