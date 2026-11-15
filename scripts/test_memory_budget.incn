@@ -67,6 +67,20 @@ def test_a_completed_plan_folds_carrier_positions_in_place() -> Result[None, str
     return Ok(None)
 
 
+def test_a_completed_plan_folds_only_unfinished_carrier_positions() -> Result[None, str]:
+    """Publication retains inventories folded after the last carrier append and folds only storage and templates."""
+    root = repository_root()?
+    lowering = root.joinpath(
+        "loaves/compiler/incan_mir_lowering/src/lowering.incn",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    carrier_positions = root.joinpath(
+        "loaves/compiler/incan_mir_plan/src/carrier_positions.incn",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert "fold_remaining_carrier_positions(planned, sources)?" in lowering, "completed publication refolds finished inventories"
+    assert "pub def fold_remaining_carrier_positions(plan: Plan" in carrier_positions, "the remainder fold is not explicit"
+    return Ok(None)
+
+
 def test_a_completed_plan_releases_retry_state_before_publication() -> Result[None, str]:
     """A completed lowering attempt releases the retry-only snapshot before it assembles the published plan."""
     source = repository_root()?.joinpath(
