@@ -219,7 +219,8 @@ impl TypeChecker {
         }
         self.type_info
             .record_computed_property_access(span, type_name, property);
-        Some(return_type)
+        // A `Borrowed[T]` property result is a receiver-tied view, read as its value type like a stored view field.
+        Some(self.explicit_ownership_value_type(&return_type).unwrap_or(return_type))
     }
 
     /// Return whether the receiver has a computed property with this name.
