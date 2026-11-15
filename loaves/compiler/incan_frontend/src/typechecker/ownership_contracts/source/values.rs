@@ -475,14 +475,16 @@ impl Builder<'_> {
     }
 
     /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned and nested constructed
-    /// values own their fresh storage (a list literal's elements are Copy scalars, which its own evaluation checks).
-    /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
+    /// values own their fresh storage (a list literal's elements are Copy scalars, which its own evaluation checks),
+    /// and so does a call's result that can hold no borrow. A source place with a non-Copy type is never reclassified
+    /// as fresh merely because its last use is here.
     pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
         if self
             .checker
             .type_info
             .expr_type(value.span)
             .is_some_and(|ty| self.copy_value(ty))
+            || self.fresh_call_value(value)
         {
             return true;
         }
@@ -523,6 +525,30 @@ impl Builder<'_> {
             }
             _ => false,
         }
+    }
+
+    /// Whether an expression is a call's own result, through grouping and the success payload `?` takes, that can
+    /// hold no borrow: no returned or native view, and a type with no view, reference or open type in it. Evaluating
+    /// the call still requires its selected facts.
+    pub(super) fn fresh_call_value(&self, value: &Spanned<Expr>) -> bool {
+        let mut call = value;
+        while let Expr::Paren(inner) | Expr::Try(inner) = &call.node {
+            call = inner;
+        }
+        if !matches!(call.node, Expr::Call(..) | Expr::MethodCall(..))
+            || self.call_relation(call).ok().flatten().is_some()
+            || self
+                .native_result_relation(call)
+                .ok()
+                .flatten()
+                .is_some_and(|relation| !relation.sources.is_empty())
+        {
+            return false;
+        }
+        self.checker
+            .type_info
+            .expr_type(value.span)
+            .is_some_and(|ty| super::call_results::plain_result(ty) || self.checker.type_holds_no_borrow(ty))
     }
 
     /// Primitive formatting observes each interpolation in source order and creates a new string. Nominal/native
