@@ -102,11 +102,7 @@ impl TypeChecker {
     /// The body writer starts with isolated references. Retain the prepared parameter bindings before statement
     /// checking can shadow their names, so source admission and persisted restoration use the same canonical facts.
     pub(super) fn retain_callable_input_bindings(&mut self, callable: CallableSource<'_>) {
-        let parameters = match callable {
-            CallableSource::Function(function) => &function.params,
-            CallableSource::Method(method) => &method.params,
-        };
-        for parameter in parameters {
+        for parameter in callable.params() {
             self.record_write_target_identity(parameter.span, &parameter.node.name);
         }
     }
@@ -325,10 +321,7 @@ impl TypeChecker {
             );
             return;
         }
-        let admission = match callable {
-            CallableSource::Function(function) => self.type_info.executable_function_input(&identity, function),
-            CallableSource::Method(method) => self.type_info.executable_method_input(&identity, method),
-        };
+        let admission = self.type_info.executable_callable_input(&identity, callable);
         // A refused returned view already names the offending return; admission would only repeat it.
         if let Err(reason) = admission
             && !view_refused

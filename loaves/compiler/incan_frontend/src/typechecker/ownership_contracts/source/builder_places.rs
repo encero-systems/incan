@@ -226,6 +226,13 @@ impl Builder<'_> {
     ) -> Result<Option<(Vec<usize>, Path)>, Unavailable> {
         match &expression.node {
             Expr::Paren(inner) => self.projected_view_place(inner, incoming),
+            // A property read is a getter call: one whose result is a view roots the projection like a view call.
+            Expr::Field(..) if self.property_read(expression) => {
+                let Some(view) = self.view_source(expression)? else {
+                    return Ok(None);
+                };
+                self.evaluate_view_source(expression, view, incoming).map(Some)
+            }
             Expr::Field(base, _) => {
                 let Some((incoming, mut path)) = self.projected_view_place(base, incoming)? else {
                     return Ok(None);
@@ -444,6 +451,8 @@ impl Builder<'_> {
             {
                 Ok(None)
             }
+            // A property read is a getter call, not storage, whether its result is a fresh value or a view.
+            Expr::Field(_, _) if self.property_read(expression) => Ok(None),
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)
@@ -453,5 +462,20 @@ impl Builder<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Whether a field spelling reads a computed property whose getter call the checker selected: the read then is
+    /// that call, with the property's receiver and no arguments.
+    pub(super) fn property_read(&self, expression: &Spanned<Expr>) -> bool {
+        self.checker
+            .type_info
+            .computed_property_access(expression.span)
+            .is_some()
+            && self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .contains_key(&expression.span)
     }
 }

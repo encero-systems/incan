@@ -314,6 +314,10 @@ impl CheckedInputBody<'_> {
             {
                 Ok(None)
             }
+            // A property read is its getter's invocation: a view result is its substituted place, as a view call's.
+            Expr::Field(_, _) if self.facts.computed_property_access(expression.span).is_some() => {
+                self.view_call_place(expression)
+            }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
                 let field = self
@@ -321,9 +325,6 @@ impl CheckedInputBody<'_> {
                     .resolved_identity(expression.span)
                     .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
                     .ok_or("input field has no canonical declaration")?;
-                if self.facts.computed_property_access(expression.span).is_some() {
-                    return Err("input field is a computed property");
-                }
                 place.projection.push(flow::Projection::Field(field.clone()));
                 Ok(Some((place, through)))
             }
@@ -338,61 +339,68 @@ impl CheckedInputBody<'_> {
                         .ok_or("byte slice view has no checked receiver")?,
                 ),
             Expr::Call(..) | Expr::MethodCall(..) => {
-                let inner = super::super::builtins::view_call(expression);
-                if !self.graph.invocations.contains_key(&inner.span) {
-                    return Ok(None);
-                }
-                let Some(call) = self.facts.protocols.explicit_input_calls.get(&inner.span) else {
-                    return Ok(None);
-                };
-                let Some(view) = crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)?
-                else {
-                    return Ok(None);
-                };
-                let invocation = self
-                    .graph
-                    .invocations
-                    .get(&inner.span)
-                    .ok_or("returned view call has no checked invocation")?;
-                let base_id = match view.source.slot {
-                    crate::ownership_metadata::SourceSlot::Receiver => invocation.receiver,
-                    crate::ownership_metadata::SourceSlot::Parameter(slot) => invocation
-                        .arguments
-                        .iter()
-                        .find(|argument| argument.slot == slot)
-                        .and_then(|argument| argument.loan),
-                }
-                .ok_or("returned view call has no checked source loan")?;
-                let base = self
-                    .graph
-                    .loans
-                    .get(base_id.0)
-                    .ok_or("returned view call has no checked source loan")?;
-                let mut source = base.source.clone();
-                source
-                    .projection
-                    .extend(view.source.fields.iter().cloned().map(flow::Projection::Field));
-                let mut loans = self.graph.loans.iter().enumerate().filter(|(_, loan)| {
-                    loan.span == inner.span
-                        && loan.source == source
-                        && loan.parent == base.parent
-                        && loan
-                            .parent
-                            .and_then(|parent| self.graph.loans.get(parent.0))
-                            .is_none_or(|parent| parent.span != inner.span)
-                });
-                let Some((index, loan)) = loans.next() else {
-                    if view.source.fields.is_empty() {
-                        return Ok(Some((base.source.clone(), Some(base_id))));
-                    }
-                    return Err("returned view call has no checked result loan");
-                };
-                if loans.next().is_some() {
-                    return Err("returned view call has ambiguous checked result loans");
-                }
-                Ok(Some((loan.source.clone(), Some(flow::LoanId(index)))))
+                self.view_call_place(super::super::builtins::view_call(expression))
             }
             _ => Ok(None),
         }
+    }
+
+    /// The place a checked returned-view invocation substituted, under its result loan: the borrowed receiver's or
+    /// argument's place followed by the declared source fields. Other invocations name no input place.
+    fn view_call_place(
+        &self,
+        inner: &Spanned<Expr>,
+    ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
+        if !self.graph.invocations.contains_key(&inner.span) {
+            return Ok(None);
+        }
+        let Some(call) = self.facts.protocols.explicit_input_calls.get(&inner.span) else {
+            return Ok(None);
+        };
+        let Some(view) = crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)? else {
+            return Ok(None);
+        };
+        let invocation = self
+            .graph
+            .invocations
+            .get(&inner.span)
+            .ok_or("returned view call has no checked invocation")?;
+        let base_id = match view.source.slot {
+            crate::ownership_metadata::SourceSlot::Receiver => invocation.receiver,
+            crate::ownership_metadata::SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .ok_or("returned view call has no checked source loan")?;
+        let base = self
+            .graph
+            .loans
+            .get(base_id.0)
+            .ok_or("returned view call has no checked source loan")?;
+        let mut source = base.source.clone();
+        source
+            .projection
+            .extend(view.source.fields.iter().cloned().map(flow::Projection::Field));
+        let mut loans = self.graph.loans.iter().enumerate().filter(|(_, loan)| {
+            loan.span == inner.span
+                && loan.source == source
+                && loan.parent == base.parent
+                && loan
+                    .parent
+                    .and_then(|parent| self.graph.loans.get(parent.0))
+                    .is_none_or(|parent| parent.span != inner.span)
+        });
+        let Some((index, loan)) = loans.next() else {
+            if view.source.fields.is_empty() {
+                return Ok(Some((base.source.clone(), Some(base_id))));
+            }
+            return Err("returned view call has no checked result loan");
+        };
+        if loans.next().is_some() {
+            return Err("returned view call has ambiguous checked result loans");
+        }
+        Ok(Some((loan.source.clone(), Some(flow::LoanId(index)))))
     }
 }

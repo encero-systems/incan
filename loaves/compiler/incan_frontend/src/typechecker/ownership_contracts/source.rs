@@ -10,7 +10,8 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
+    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, PropertyDecl, Receiver, Span, Spanned, Statement,
+    Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -41,11 +42,14 @@ pub(in crate::typechecker) struct Unavailable {
 }
 
 /// The source callable whose already prepared declaration facts govern this body. Methods retain a distinct
-/// receiver declaration; neither a synthetic function nor a name-based signature lookup replaces that identity.
+/// receiver declaration; neither a synthetic function nor a name-based signature lookup replaces that identity. A
+/// property is a getter: an immutable receiver, written implicitly, whose token is the property declaration's own
+/// span, and no parameters.
 #[derive(Clone, Copy)]
 pub(in crate::typechecker) enum CallableSource<'a> {
     Function(&'a FunctionDecl),
     Method(&'a MethodDecl),
+    Property(&'a PropertyDecl, &'a Spanned<crate::ast::Ident>),
 }
 
 impl<'a> CallableSource<'a> {
@@ -54,6 +58,7 @@ impl<'a> CallableSource<'a> {
         match self {
             Self::Function(function) => &function.name,
             Self::Method(method) => &method.name,
+            Self::Property(property, _) => &property.name,
         }
     }
 
@@ -62,14 +67,16 @@ impl<'a> CallableSource<'a> {
         match self {
             Self::Function(function) => &function.params,
             Self::Method(method) => &method.params,
+            Self::Property(..) => &[],
         }
     }
 
-    /// Statements of the body; an abstract method has none.
+    /// Statements of the body; an abstract method or property has none.
     pub(in crate::typechecker) fn body(self) -> &'a [Spanned<Statement>] {
         match self {
             Self::Function(function) => &function.body,
             Self::Method(method) => method.body.as_deref().unwrap_or_default(),
+            Self::Property(property, _) => property.body.as_deref().unwrap_or_default(),
         }
     }
 
@@ -78,14 +85,25 @@ impl<'a> CallableSource<'a> {
         match self {
             Self::Function(function) => &function.return_type,
             Self::Method(method) => &method.return_type,
+            Self::Property(property, _) => &property.return_type,
         }
     }
 
-    /// A method's receiver binding token with its mode; functions have no receiver.
+    /// A method's or property's receiver binding token with its mode; functions have no receiver.
     pub(in crate::typechecker) fn receiver(self) -> Option<(&'a Spanned<crate::ast::Ident>, Receiver)> {
         match self {
             Self::Function(_) => None,
             Self::Method(method) => method.receiver_binding.as_ref().zip(method.receiver),
+            Self::Property(_, receiver) => Some((receiver, Receiver::Immutable)),
+        }
+    }
+
+    /// The identity namespace the callable's declaration was collected under.
+    pub(in crate::typechecker) fn kind(self) -> SemanticSourceTargetKind {
+        match self {
+            Self::Function(_) => SemanticSourceTargetKind::Function,
+            Self::Method(_) => SemanticSourceTargetKind::Method,
+            Self::Property(..) => SemanticSourceTargetKind::Property,
         }
     }
 }
@@ -201,26 +219,25 @@ fn build_graph(
     allow_fresh_aggregate_elements: bool,
     view_errors: &mut Vec<crate::diagnostics::CompileError>,
 ) -> Result<Graph, Unavailable> {
-    let (parameters, body, receiver, name, kind) = match callable {
-        CallableSource::Function(function) => (
-            &function.params,
-            &function.body,
-            None,
-            &function.name,
-            SemanticSourceTargetKind::Function,
-        ),
-        CallableSource::Method(method) => (
-            &method.params,
-            method.body.as_ref().ok_or(Unavailable {
-                span,
-                reason: "abstract method has no body".into(),
-            })?,
-            method.receiver_binding.as_ref().zip(method.receiver),
-            &method.name,
-            SemanticSourceTargetKind::Method,
-        ),
+    let abstract_body = match callable {
+        CallableSource::Function(_) => false,
+        CallableSource::Method(method) => method.body.is_none(),
+        CallableSource::Property(property, _) => property.body.is_none(),
     };
-    if identity.declaration_span != span || identity.declaration_name != *name || identity.kind != kind {
+    if abstract_body {
+        return Err(Unavailable {
+            span,
+            reason: "abstract method has no body".into(),
+        });
+    }
+    let (parameters, body, receiver, name, kind) = (
+        callable.params(),
+        callable.body(),
+        callable.receiver(),
+        callable.name(),
+        callable.kind(),
+    );
+    if identity.declaration_span != span || identity.declaration_name != name || identity.kind != kind {
         return Err(Unavailable {
             span,
             reason: "checked owner does not match the callable declaration".into(),
@@ -440,6 +457,10 @@ impl Builder<'_> {
             ));
         }
         match &expression.node {
+            // A property read whose result is not a view is its getter's call, with the property's receiver.
+            Expr::Field(receiver, _) if self.property_read(expression) => {
+                self.apply_call(Some(receiver), &[], expression.span, incoming)
+            }
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 let place = self.place(expression)?;
                 let mut incoming = self.evaluate_place(expression, incoming)?;

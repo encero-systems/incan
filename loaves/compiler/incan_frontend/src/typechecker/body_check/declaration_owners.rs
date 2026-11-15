@@ -172,7 +172,14 @@ impl TypeChecker {
 
     /// Check one computed property's statements in its own writer, preserving its original synchronous block rules.
     /// Property checking does not acquire callable-only iterator or resource finalization semantics at this boundary.
-    pub(in crate::typechecker) fn check_property_body(&mut self, body: &[Spanned<Statement>], span: Span) {
+    /// The getter's explicit input flow is recorded as a method's is: its receiver is the implicit `self` whose token
+    /// is the property's own span.
+    pub(in crate::typechecker) fn check_property_body(
+        &mut self,
+        body: &[Spanned<Statement>],
+        span: Span,
+        property: &crate::ast::PropertyDecl,
+    ) {
         #[cfg(test)]
         if !self.legacy_body_checking {
             assert!(
@@ -183,13 +190,16 @@ impl TypeChecker {
         self.check_work.body_local_checks += 1;
         self.check_work.property_bodies += 1;
         self.record_check_work("body", "property", span);
+        let receiver = Spanned::new("self".to_string(), span);
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_property_body_in_frame(body);
+            self.record_explicit_input_flow(CallableSource::Property(property, &receiver), span);
             return;
         }
         let scope = BodyCheckScope::enter(self);
         self.check_property_body_in_frame(body);
+        self.record_explicit_input_flow(CallableSource::Property(property, &receiver), span);
         let mut local = scope.finish(self);
         local.owner = span;
         self.body_checks.push(BodyCheckInput::Local(local));

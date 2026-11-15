@@ -1,7 +1,9 @@
 //! Resolve explicit declarations into canonical slots and stored-field identities before refusing execution.
 
 use super::TypeChecker;
-use crate::ast::{Declaration, FunctionDecl, MethodDecl, Param, Program, Receiver, ResultSource, Span, Spanned, Type};
+use crate::ast::{
+    Declaration, FunctionDecl, MethodDecl, Param, Program, PropertyDecl, Receiver, ResultSource, Span, Spanned, Type,
+};
 use crate::diagnostics::CompileError;
 use crate::ownership_metadata::{
     AccessMode, CheckedOwnershipContract, OwnershipContract, ResultDependency, SourceSlot, TypeComponent,
@@ -339,7 +341,9 @@ impl TypeChecker {
             if identity.origin == origin
                 && matches!(
                     identity.kind,
-                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Function
+                    SemanticSourceTargetKind::Method
+                        | SemanticSourceTargetKind::Function
+                        | SemanticSourceTargetKind::Property
                 )
             {
                 self.dependency_input_contracts
@@ -387,6 +391,47 @@ impl TypeChecker {
                         .insert(identity, contract);
                 }
             }
+            let properties = match &declaration.node {
+                Declaration::Model(owner) => owner.properties.as_slice(),
+                Declaration::Class(owner) => owner.properties.as_slice(),
+                _ => &[],
+            };
+            for property in properties {
+                self.collect_property_ownership_header(property);
+            }
+        }
+    }
+
+    /// A property is a getter of an immutable receiver with no parameters, so its result takes a contract as a
+    /// method's does: `property nominals -> Borrowed[list[T]] from self.nominals` returns a view of that field.
+    fn collect_property_ownership_header(&mut self, property: &Spanned<PropertyDecl>) {
+        let Some(binding) = self
+            .type_info
+            .declarations
+            .body_ir_property_bindings
+            .get(&property.span)
+        else {
+            return;
+        };
+        let Some(identity) = binding.callable.identity.clone() else {
+            return;
+        };
+        let result_type = binding.callable.return_type.clone();
+        let receiver_type = binding.receiver_type.clone();
+        let signature = Signature {
+            parameters: &[],
+            parameter_types: &[],
+            result: &property.node.return_type,
+            result_type: &result_type,
+            source: property.node.result_source.as_ref(),
+            receiver: Some(("self", &receiver_type)),
+            receiver_mode: Some(Receiver::Immutable),
+        };
+        if let Ok(Some(contract)) = self.checked_ownership_signature(&signature) {
+            self.type_info
+                .declarations
+                .ownership_contracts
+                .insert(identity, contract);
         }
     }
 

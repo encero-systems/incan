@@ -175,7 +175,7 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Publish an admitted profile over the frame's parameters, or report the checker's refusal in the body.
-    fn checked_input_profile(
+    pub(super) fn checked_input_profile(
         &mut self,
         admitted: Result<Option<(u32, crate::typechecker::CheckedInputBody<'_>)>, &'static str>,
         params: &[bir::CallableParam],
