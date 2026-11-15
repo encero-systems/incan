@@ -16,6 +16,7 @@ pub def node_item(
         "kind": JsonValue.string(text(record, "record")), "label": JsonValue.string(display(record)),
         "anchor": JsonValue.string(anchor(record, root)), "signature": nested(record, "signature"),
         "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
+        "author": nested(record, "author"),
         "score": JsonValue.int(score), "reason": JsonValue.string(reason), "details": node_details(record),
     })
 
@@ -43,7 +44,8 @@ pub def item_tokens(item: JsonValue, format: str) -> Result[int, str]:
 
 pub def compact_line(item: JsonValue) -> Result[str, str]:
     """Render one context item identically for final output, byte accounting and prepared minimum sizes."""
-    trust = f"{text(item, 'provenance')} degraded={nested(item, 'degraded').to_json().unwrap_or('null')}"
+    status = nested(item, "degraded").to_json().unwrap_or("null")
+    trust = f"{text(item, 'provenance')} degraded={status} author={written_by(nested(item, 'author'))}"
     where = json_text(nested(item, "anchor"))?
     if text(item, "record") == "edge":
         return Ok(f"{text(item, 'source')} -{text(item, 'kind')}-> {text(item, 'target')} [{trust}] {where}")
@@ -56,6 +58,20 @@ pub def compact_line(item: JsonValue) -> Result[str, str]:
     local = text(item, "local_id")
     kind = text(item, "kind")
     return Ok(f"{local} {kind} {label} [{trust}] {where} {signature} why={reason}{detail}")
+
+
+pub def written_by(author: JsonValue) -> str:
+    """
+    Name an item's author on its compact line: `toolchain`, `workspace`, or `dependency:` and the dependency's
+    identity as a JSON string, since the name is the dependency's own text. An item without one says `unknown`.
+    """
+    kind = text(author, "kind")
+    if kind == "":
+        return "unknown"
+    if kind != "dependency":
+        return kind
+    identity = nested(author, "identity").to_json().unwrap_or("null")
+    return f"{kind}:{identity}"
 
 
 pub def tokens(value: str) -> int:
