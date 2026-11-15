@@ -44,7 +44,13 @@ pub from compiler_captured_sources import (
     source_origin,
 )
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons, retained_namespace_event
+from compiler_body_fallbacks import (
+    fallback_lowering_event,
+    fallback_reasons,
+    member_event,
+    member_namespace,
+    retained_namespace_event,
+)
 from compiler_body_keys import body_key, eligibility_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
@@ -398,6 +404,8 @@ def stage_compiled_namespaces(
             value,
             receipt,
         )?
+        # A member body's plan reads this row: it carries the member's Body IR, which has no owner record of its own.
+        source.add(encode_record_key(key)?, value)
     return Ok(None)
 
 
@@ -426,6 +434,7 @@ def prepare_optional_lowering_records(
             report,
             unit,
             selected,
+            [namespace.module for namespace in outputs.namespaces],
         )
     return Ok(prepared)
 
@@ -805,8 +814,16 @@ def prepare_lowering_records(
     report: Path,
     unit: UnitDescription,
     selected: Option[Snapshot],
+    namespaces: list[str] = [],
 ) -> Result[Transaction, str]:
-    """Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses."""
+    """
+    Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses.
+
+    A module-level body is witnessed by its own Body IR record. A member body, such as a method, has none: its Body IR
+    is part of its module's namespace record, so its plan reads that record, one of `namespaces`, and is keyed by the
+    member's canonical identity. A member whose module staged no namespace record gets no plan record, as an explicit
+    fallback owner gets none.
+    """
     if not report.is_dir():
         return Err("successful records compile did not publish lowering outputs")
     scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
@@ -842,13 +859,20 @@ def prepare_lowering_records(
             continue
         if event_identity not in bodies and retained_namespace_event(unit, rechecked, event_identity)?:
             continue
+        mut member = false
+        if not runtime and event_identity not in bodies and member_event(event_identity)?:
+            member = true
         key = required_event_text(event, "key")?
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
         mut identity = event_identity
         mut signature_reads: list[RecordRequest] = []
         mut body_reads: list[RecordRequest] = []
-        if not runtime:
+        if member:
+            match member_namespace(unit, namespaces, event_identity)?:
+                None => continue
+                Some(module) => body_reads = [prepared_product_request(namespace_key(origin, module))]
+        elif not runtime:
             body = body_value(bodies, fallbacks, event_identity)?
             # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
             # when a linked Rust unit changed without changing the checked source body or its callable signature.
@@ -1204,7 +1228,7 @@ def root(encoded: bytes) -> Result[str, str]:
 
 pub def prepared_product_request(key: RecordKey) -> RecordRequest:
     """Read scalar facts while binding opaque Body IR and plans through a bounded semantic witness."""
-    if key.family in ["body-ir", "plan-function"]:
+    if key.family in ["body-ir", "plan-function", "namespace"]:
         selected = PayloadSelection(reference=key.context, offset=0, length=0)
         return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
     return RecordRequest(key=key, selection=RecordSelection.Field("value"))
