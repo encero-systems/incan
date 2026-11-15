@@ -71,7 +71,7 @@ fn read_record_index<'a>(
     if eligible % 8 != 0 && bitmap.bytes[size - 1] >> (eligible % 8) != 0 {
         return Err(at("bitmap_padding", origin + size - 1));
     }
-    let present_bits = (0..eligible).filter(|bit| bitmap.bit(*bit)).count();
+    let present_bits = rank(&bitmap, eligible, budget)?;
     let index = read_index(cursor, fields.len() - eligible + present_bits, budget)?;
     Ok((bitmap, index))
 }
@@ -189,8 +189,14 @@ fn scalar(kind: &str, view: &[u8], origin: usize, budget: &mut Budget) -> Positi
         return Ok(fixed_integer(view, signed));
     }
     match kind {
-        "fp32" => return float_cell(view, 4).place(origin),
-        "fp64" => return float_cell(view, 8).place(origin),
+        "fp32" => {
+            budget.bytes(8).place(origin)?;
+            return float_cell(view, 4).place(origin);
+        }
+        "fp64" => {
+            budget.bytes(16).place(origin)?;
+            return float_cell(view, 8).place(origin);
+        }
         _ => {}
     }
     let mut cursor = Span::new(view, origin);
@@ -202,7 +208,11 @@ fn scalar(kind: &str, view: &[u8], origin: usize, budget: &mut Budget) -> Positi
             Value::Boolean(view[0] == 1)
         }
         "string" => Value::Text(read_text(&mut cursor, budget)?),
-        "binary" => Value::Binary(cursor.frame(budget)?.to_vec()),
+        "binary" => {
+            let raw = cursor.frame(budget)?;
+            budget.bytes(raw.len() as u64).place(origin)?;
+            Value::Binary(raw.to_vec())
+        }
         "secret_string" | "secret_bytes" => {
             if view.len() != 1 || cursor.byte(budget)? != 0 {
                 return Err(at("invalid_cell", origin));
@@ -210,8 +220,12 @@ fn scalar(kind: &str, view: &[u8], origin: usize, budget: &mut Budget) -> Positi
             Value::Withheld
         }
         "reference" => {
-            let target = cursor.frame(budget)?.to_vec();
-            Value::Reference(target, cursor.frame(budget)?.to_vec())
+            let target_view = cursor.frame(budget)?;
+            budget.bytes(target_view.len() as u64).place(origin)?;
+            let target = target_view.to_vec();
+            let identity = cursor.frame(budget)?;
+            budget.bytes(identity.len() as u64).place(origin)?;
+            Value::Reference(target, identity.to_vec())
         }
         _ => return Err(at("invalid_cell", origin)),
     };

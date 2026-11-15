@@ -195,7 +195,7 @@ pub(super) fn bounded_count(cursor: &mut Span, budget: &mut Budget) -> Positione
 pub(super) fn read_text(cursor: &mut Span, budget: &mut Budget) -> Positioned<String> {
     let offset = cursor.absolute();
     let raw = cursor.frame(budget)?;
-    budget.bytes(raw.len() as u64).place(offset)?;
+    budget.bytes(2 * raw.len() as u64).place(offset)?;
     String::from_utf8(raw.to_vec()).map_err(|_| at("invalid_utf8", offset))
 }
 

@@ -274,6 +274,9 @@ fn read_records(
     }
     let mut seal = b"crumb1\x00\x04".to_vec();
     hash::unsigned(&mut seal, count as u128);
+    if sealed {
+        hash::charge_seal_start(count, budget).place(count_offset)?;
+    }
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
         let offset = cursor.absolute();
@@ -286,7 +289,7 @@ fn read_records(
         let value = read_root(&dictionary[slot], raw, origin, dictionary, budget)?;
         if sealed {
             let mut contribution = Vec::new();
-            hash::emit_object(&value, &mut contribution).ok_or_else(|| at("invalid_cell", origin))?;
+            hash::emit_object_charged(&value, &mut contribution, budget).place(origin)?;
             hash::frame(&mut seal, &contribution);
         }
         budget.bytes(64).place(origin)?;
@@ -302,7 +305,8 @@ fn read_records(
         if cursor.length(budget)? != count {
             return Err(at("seal_count", offset));
         }
-        let expected = cursor.take(32, budget)?;
+        let expected = copied(cursor.take(32, budget)?, budget).place(offset)?;
+        hash::charge_seal_digest(budget).place(offset)?;
         if Sha256::digest(&seal).as_slice() != expected {
             return Err(at("seal_mismatch", offset));
         }
@@ -343,11 +347,11 @@ fn read_entries(
                 )
             }
             1 => {
-                let key = cursor.frame(budget)?.to_vec();
+                let key = copied(cursor.frame(budget)?, budget).place(offset)?;
                 parse_key(&key, true, budget)
                     .map_err(|kind| invalid_as(kind, "invalid_selector"))
                     .place(offset)?;
-                let digest = cursor.take(32, budget)?.to_vec();
+                let digest = copied(cursor.take(32, budget)?, budget).place(offset)?;
                 let (position, source) = referenced(&key, &digest, supplied, kinds, budget).place(offset)?;
                 resolved = Some(position);
                 (source, false)
@@ -359,6 +363,7 @@ fn read_entries(
             .map_err(|kind| invalid_as(kind, "invalid_description"))
             .place(offset)?;
         checked.supplied = resolved;
+        budget.bytes(2 * checked.key.len() as u64).place(offset)?;
         if entries.iter().any(|entry| entry.key == checked.key) {
             return Err(at("duplicate_selector", offset));
         }
@@ -367,8 +372,23 @@ fn read_entries(
         }
         entries.push(checked);
     }
-    check_dictionary(&entries, budget).place(cursor.absolute())?;
+    settle_dictionary(&entries, kinds, budget).place(cursor.absolute())?;
     Ok(entries)
+}
+
+/// Repeat ordinary dictionary admission and account for its ordered index before following dependencies.
+fn settle_dictionary(entries: &[Stored], kinds: &[(String, bool)], budget: &mut Budget) -> Result<(), Refused> {
+    for entry in entries {
+        budget.elements(1)?;
+        budget.bytes(16)?;
+        admit(entry.metadata.clone(), entry.inline, kinds, budget)?;
+        budget.elements(1)?;
+        budget.bytes(2 * entry.key.len() as u64)?;
+    }
+    for entry in entries {
+        charge_copy(&entry.metadata, budget)?;
+    }
+    check_dictionary(entries, budget)
 }
 
 /// Every K and field selector must name descriptions the dictionary holds, with the same record or enum kind.
@@ -402,7 +422,10 @@ fn check_references(node: &Node, entries: &[Stored], budget: &mut Budget) -> Res
     budget.enter()?;
     let result = match node {
         Node::Nominal(kind, _, arguments) => {
-            let key = hash::closed_selector(node).ok_or("invalid_selector")?;
+            let key =
+                hash::closed_selector_charged(node, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+            budget.elements(1)?;
+            budget.bytes(2 * key.len() as u64)?;
             let entry = entries
                 .iter()
                 .find(|entry| entry.key == key)
@@ -460,10 +483,12 @@ fn inline_description(view: &[u8], origin: usize, kinds: &[(String, bool)], budg
     let mut cursor = Span::new(view, origin);
     let header_view = cursor.frame(budget)?;
     let header = read_metadata(header_view, cursor.absolute() - header_view.len(), budget)?;
-    let record = record_kind(&header, kinds).ok_or_else(|| at("invalid_description", origin))?;
+    let record = record_kind(&header, kinds, budget)
+        .place(origin)?
+        .ok_or_else(|| at("invalid_description", origin))?;
     let members = read_members(&mut cursor, !record, budget)?;
     cursor.finished()?;
-    with_members(header, if record { "fields" } else { "variants" }, members).place(origin)
+    with_members(header, if record { "fields" } else { "variants" }, members, budget).place(origin)
 }
 
 /// Read a member table: declaration positions form a permutation and identities ascend strictly.
@@ -484,7 +509,7 @@ fn read_members(cursor: &mut Span, variants: bool, budget: &mut Budget) -> Posit
         } else {
             read_metadata(view, origin, budget)?
         };
-        let Some(Meta::Binary(identity)) = get(&member, "id") else {
+        let Some(Meta::Binary(identity)) = get_charged(&member, "id", budget).place(offset)? else {
             return Err(at("invalid_description", offset));
         };
         if identity.len() != 6 {
@@ -504,7 +529,11 @@ fn read_members(cursor: &mut Span, variants: bool, budget: &mut Budget) -> Posit
         previous = Some(identity.clone());
         members[position] = Some(member);
     }
-    Ok(members.into_iter().flatten().collect())
+    let ordered: Vec<Meta> = members.into_iter().flatten().collect();
+    for member in &ordered {
+        charge_copy(member, budget).place(cursor.absolute())?;
+    }
+    Ok(ordered)
 }
 
 /// An enum variant: a framed header plus its anonymous payload field table.
@@ -514,16 +543,20 @@ fn read_variant(view: &[u8], origin: usize, budget: &mut Budget) -> Positioned<M
     let header = read_metadata(header_view, cursor.absolute() - header_view.len(), budget)?;
     let fields = read_members(&mut cursor, false, budget)?;
     cursor.finished()?;
-    with_members(header, "fields", fields).place(origin)
+    with_members(header, "fields", fields, budget).place(origin)
 }
 
 /// Append the recovered member list to a header that must not already contain it.
-fn with_members(header: Meta, name: &str, members: Vec<Meta>) -> Result<Meta, Refused> {
+fn with_members(header: Meta, name: &str, members: Vec<Meta>, budget: &mut Budget) -> Result<Meta, Refused> {
     let Meta::Map(mut entries) = header else {
         return Err("invalid_description");
     };
     if entries.iter().any(|(key, _)| key == name) {
         return Err("invalid_description");
+    }
+    for (key, value) in &entries {
+        charge_text(key, budget)?;
+        charge_copy(value, budget)?;
     }
     entries.push((name.to_string(), Meta::List(members)));
     Ok(Meta::Map(entries))
@@ -531,25 +564,25 @@ fn with_members(header: Meta, name: &str, members: Vec<Meta>) -> Result<Meta, Re
 
 /// Check K and every field N before admission, keeping malformed selectors distinguishable.
 fn validate_selectors(source: &Meta, kinds: &[(String, bool)], budget: &mut Budget) -> Result<(), Refused> {
-    let record = record_kind(source, kinds).ok_or("invalid_description")?;
-    let Some(Meta::Binary(key)) = get(source, "nominal") else {
+    let record = record_kind(source, kinds, budget)?.ok_or("invalid_description")?;
+    let Some(Meta::Binary(key)) = get_charged(source, "nominal", budget)? else {
         return Err("invalid_description");
     };
     parse_key(key, record, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
     let tables: Vec<&Meta> = if record {
         vec![source]
     } else {
-        let Some(Meta::List(variants)) = get(source, "variants") else {
+        let Some(Meta::List(variants)) = get_charged(source, "variants", budget)? else {
             return Err("invalid_description");
         };
         variants.iter().collect()
     };
     for table in tables {
-        let Some(Meta::List(fields)) = get(table, "fields") else {
+        let Some(Meta::List(fields)) = get_charged(table, "fields", budget)? else {
             return Err("invalid_description");
         };
         for field in fields {
-            let Some(Meta::Text(name)) = get(field, "type") else {
+            let Some(Meta::Text(name)) = get_charged(field, "type", budget)? else {
                 return Err("invalid_description");
             };
             parse_type(name, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
@@ -564,47 +597,96 @@ fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
     entries.iter().find(|(key, _)| key == name).map(|(_, value)| value)
 }
 
+/// Read one metadata property through the same scan and retained-copy charges as `metadata_values.get`.
+fn get_charged<'a>(value: &'a Meta, name: &str, budget: &mut Budget) -> Result<Option<&'a Meta>, Refused> {
+    let Meta::Map(entries) = value else { return Ok(None) };
+    for (key, value) in entries {
+        budget.elements(1)?;
+        if key == name {
+            charge_copy(value, budget)?;
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
+/// Copy retained bytes under the same allowance as `encoding_cursor.copied`.
+fn copied(view: &[u8], budget: &mut Budget) -> Result<Vec<u8>, Refused> {
+    budget.bytes(view.len() as u64)?;
+    Ok(view.to_vec())
+}
+
+/// Reserve a UTF-8 upper bound for one retained metadata name or text value.
+fn charge_text(text: &str, budget: &mut Budget) -> Result<(), Refused> {
+    (0..4).try_for_each(|_| budget.bytes(text.len() as u64))
+}
+
+/// Bound one complete retained metadata subtree before copying it.
+fn charge_copy(value: &Meta, budget: &mut Budget) -> Result<(), Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = match value {
+        Meta::Null | Meta::Boolean(_) => budget.bytes(1),
+        Meta::Integer(_) => budget.bytes(16),
+        Meta::Text(text) | Meta::Symbol(text) => charge_text(text, budget),
+        Meta::Binary(data) => budget.bytes(data.len() as u64),
+        Meta::List(children) => children.iter().try_for_each(|child| charge_copy(child, budget)),
+        Meta::Map(entries) => entries.iter().try_for_each(|(key, child)| {
+            budget.elements(1)?;
+            charge_text(key, budget)?;
+            charge_copy(child, budget)
+        }),
+    };
+    budget.leave();
+    result
+}
+
 /// Whether a description's kind has the record (true) or enum (false) shape: Record and Enum are built in, a
 /// registered profile kind has its registered shape, and any other kind has none.
-fn record_kind(metadata: &Meta, kinds: &[(String, bool)]) -> Option<bool> {
-    let Some(Meta::Text(kind)) = get(metadata, "kind") else {
-        return None;
+fn record_kind(metadata: &Meta, kinds: &[(String, bool)], budget: &mut Budget) -> Result<Option<bool>, Refused> {
+    let Some(Meta::Text(kind)) = get_charged(metadata, "kind", budget)? else {
+        return Ok(None);
     };
-    match kind.as_str() {
+    budget.elements(1)?;
+    charge_text(kind, budget)?;
+    Ok(match kind.as_str() {
         "Record" => Some(true),
         "Enum" => Some(false),
         _ => kinds.iter().find(|(name, _)| name == kind).map(|(_, record)| *record),
-    }
+    })
 }
 
 /// Admit one complete description: its D digest, kind, K, path, properties and member tables.
 fn admit(metadata: Meta, inline: bool, kinds: &[(String, bool)], budget: &mut Budget) -> Result<Stored, Refused> {
     let mut encoded = b"crumb1\x00\x05".to_vec();
+    budget.bytes(8)?;
     encode_metadata(&metadata, &mut encoded, budget)?;
     let digest = Sha256::digest(&encoded).to_vec();
-    let record = record_kind(&metadata, kinds).ok_or("invalid_description")?;
-    let Some(Meta::Binary(key)) = get(&metadata, "nominal") else {
+    budget.bytes(32)?;
+    let record = record_kind(&metadata, kinds, budget)?.ok_or("invalid_description")?;
+    let Some(Meta::Binary(key)) = get_charged(&metadata, "nominal", budget)? else {
         return Err("invalid_description");
     };
     let key = key.clone();
     parse_key(&key, record, budget)?;
-    if !matches!(get(&metadata, "path"), Some(Meta::Text(_)))
-        || !matches!(get(&metadata, "properties"), Some(Meta::Map(_)))
+    if !matches!(get_charged(&metadata, "path", budget)?, Some(Meta::Text(_)))
+        || !matches!(get_charged(&metadata, "properties", budget)?, Some(Meta::Map(_)))
     {
         return Err("invalid_description");
     }
     let (mut fields, mut variants) = (Vec::new(), Vec::new());
     if record {
-        let Some(Meta::List(items)) = get(&metadata, "fields") else {
+        let Some(Meta::List(items)) = get_charged(&metadata, "fields", budget)? else {
             return Err("invalid_description");
         };
         fields = admit_fields(items, budget)?;
     } else {
-        let Some(Meta::List(items)) = get(&metadata, "variants") else {
+        let Some(Meta::List(items)) = get_charged(&metadata, "variants", budget)? else {
             return Err("invalid_description");
         };
         variants = admit_variants(items, budget)?;
     }
+    charge_copy(&metadata, budget)?;
     Ok(Stored {
         metadata,
         inline,
@@ -623,13 +705,16 @@ fn admit_fields(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredField>
     for (position, value) in values.iter().enumerate() {
         budget.elements(1)?;
         budget.bytes(28)?;
-        let identity = member_identity(value)?;
+        charge_copy(value, budget)?;
+        let identity = member_identity(value, budget)?;
         if fields.iter().any(|field| field.identity == identity) {
             return Err("invalid_description");
         }
-        let (Some(Meta::Text(name)), Some(Meta::Boolean(canonical)), Some(Meta::Text(absent))) =
-            (get(value, "type"), get(value, "canonical"), get(value, "absent"))
-        else {
+        let (Some(Meta::Text(name)), Some(Meta::Boolean(canonical)), Some(Meta::Text(absent))) = (
+            get_charged(value, "type", budget)?,
+            get_charged(value, "canonical", budget)?,
+            get_charged(value, "absent", budget)?,
+        ) else {
             return Err("invalid_description");
         };
         let storage = parse_type(name, budget)?;
@@ -648,6 +733,11 @@ fn admit_fields(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredField>
         if !allowed {
             return Err("invalid_description");
         }
+        if !matches!(get_charged(value, "name", budget)?, Some(Meta::Text(_)))
+            || !matches!(get_charged(value, "properties", budget)?, Some(Meta::Map(_)))
+        {
+            return Err("invalid_description");
+        }
         fields.push(StoredField {
             position,
             metadata: value.clone(),
@@ -658,6 +748,10 @@ fn admit_fields(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredField>
         });
     }
     fields.sort_by(|left, right| left.identity.cmp(&right.identity));
+    for field in &fields {
+        charge_copy(&field.metadata, budget)?;
+        budget.bytes(16)?;
+    }
     Ok(fields)
 }
 
@@ -667,11 +761,12 @@ fn admit_variants(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredVari
     for (position, value) in values.iter().enumerate() {
         budget.elements(1)?;
         budget.bytes(28)?;
-        let identity = member_identity(value)?;
+        charge_copy(value, budget)?;
+        let identity = member_identity(value, budget)?;
         if variants.iter().any(|variant| variant.identity == identity) {
             return Err("invalid_description");
         }
-        let Some(Meta::List(items)) = get(value, "fields") else {
+        let Some(Meta::List(items)) = get_charged(value, "fields", budget)? else {
             return Err("invalid_description");
         };
         let fields = admit_fields(items, budget)?;
@@ -683,12 +778,19 @@ fn admit_variants(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredVari
         });
     }
     variants.sort_by(|left, right| left.identity.cmp(&right.identity));
+    for variant in &variants {
+        charge_copy(&variant.metadata, budget)?;
+    }
     Ok(variants)
 }
 
 /// A member's six-octet identity, with its name and properties map checked.
-fn member_identity(value: &Meta) -> Result<Vec<u8>, Refused> {
-    match (get(value, "id"), get(value, "name"), get(value, "properties")) {
+fn member_identity(value: &Meta, budget: &mut Budget) -> Result<Vec<u8>, Refused> {
+    match (
+        get_charged(value, "id", budget)?,
+        get_charged(value, "name", budget)?,
+        get_charged(value, "properties", budget)?,
+    ) {
         (Some(Meta::Binary(identity)), Some(Meta::Text(_)), Some(Meta::Map(_))) if identity.len() == 6 => {
             Ok(identity.clone())
         }
@@ -719,7 +821,7 @@ pub(super) fn parse_key(key: &[u8], record: bool, budget: &mut Budget) -> Result
     }
     let kind = if record { "record" } else { "enum" };
     let node = Node::Nominal(kind.to_string(), key[..6].to_vec(), arguments);
-    if hash::closed_selector(&node).ok_or("invalid_cell")? != key {
+    if hash::closed_selector_charged(&node, budget)? != key {
         return Err("invalid_cell");
     }
     Ok(node)
@@ -730,7 +832,7 @@ fn parse_type(text: &str, budget: &mut Budget) -> Result<Node, Refused> {
     budget.bytes(4 * text.len() as u64)?;
     let mut position = 0;
     let node = type_node(text.as_bytes(), &mut position, budget)?;
-    if position != text.len() || hash::selector_spelling(&node).as_deref() != Some(text) {
+    if position != text.len() || hash::charged_selector_spelling(&node, budget)?.as_str() != text {
         return Err("invalid_cell");
     }
     Ok(node)
@@ -749,6 +851,7 @@ fn type_node(text: &[u8], position: &mut usize, budget: &mut Budget) -> Result<N
 fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Result<Node, Refused> {
     let start = *position;
     while *position < text.len() && !matches!(text[*position], b'<' | b'>' | b',') {
+        budget.elements(1)?;
         *position += 1;
     }
     if *position == start {
@@ -757,6 +860,7 @@ fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Re
     let name = std::str::from_utf8(&text[start..*position])
         .map_err(|_| "invalid_cell")?
         .to_string();
+    budget.bytes(4 * name.len() as u64)?;
     if name == "decimal" {
         let mut parts = Vec::new();
         for delimiter in *b"<,>" {
@@ -767,9 +871,12 @@ fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Re
             if delimiter != b'>' {
                 let begin = *position;
                 while *position < text.len() && text[*position].is_ascii_digit() {
+                    budget.elements(1)?;
                     *position += 1;
                 }
                 let digits = std::str::from_utf8(&text[begin..*position]).map_err(|_| "invalid_cell")?;
+                budget.bytes(4 * digits.len() as u64)?;
+                budget.elements(digits.len() as u64)?;
                 parts.push(digits.parse::<i64>().map_err(|_| "invalid_cell")?);
             }
         }
@@ -797,6 +904,7 @@ fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Re
     if let Some((kind, identity)) = name.split_once('@')
         && matches!(kind, "record" | "enum")
     {
+        budget.bytes(6)?;
         let identity = columns::hex(identity)
             .filter(|bytes| bytes.len() == 6)
             .ok_or("invalid_cell")?;
@@ -845,7 +953,10 @@ fn read_node_inner(cursor: &mut Span, budget: &mut Budget) -> Positioned<Meta> {
         },
         2 => Meta::Integer(columns::unzigzag(&cursor.groups(budget)?).ok_or_else(|| at("integer_overflow", offset))?),
         3 => Meta::Text(read_text(cursor, budget)?),
-        4 => Meta::Binary(cursor.frame(budget)?.to_vec()),
+        4 => {
+            let raw = cursor.frame(budget)?;
+            Meta::Binary(copied(raw, budget).place(offset)?)
+        }
         5 => {
             let count = bounded_count(cursor, budget)?;
             Meta::List(
@@ -892,46 +1003,87 @@ pub(super) fn encode_metadata(value: &Meta, output: &mut Vec<u8>, budget: &mut B
 /// Encode one D node.
 fn encode_metadata_inner(value: &Meta, output: &mut Vec<u8>, budget: &mut Budget) -> Result<(), Refused> {
     match value {
-        Meta::Null => output.push(0),
-        Meta::Boolean(flag) => output.extend_from_slice(&[1, u8::from(*flag)]),
+        Meta::Null => hash_write(output, &[0], budget)?,
+        Meta::Boolean(flag) => hash_write(output, &[1, u8::from(*flag)], budget)?,
         Meta::Integer(number) => {
-            output.push(2);
-            hash::zigzag(output, number.unsigned_abs(), *number < 0);
+            hash_write(output, &[2], budget)?;
+            hash_zigzag(output, number.unsigned_abs(), *number < 0, budget)?;
         }
         Meta::Text(text) => {
-            output.push(3);
-            hash::frame(output, text.as_bytes());
+            hash_write(output, &[3], budget)?;
+            hash_text(output, text, budget)?;
         }
         Meta::Binary(data) => {
-            output.push(4);
-            hash::frame(output, data);
+            hash_write(output, &[4], budget)?;
+            hash_frame(output, data, budget)?;
         }
         Meta::Symbol(name) => {
-            output.push(7);
-            hash::frame(output, name.as_bytes());
+            hash_write(output, &[7], budget)?;
+            hash_text(output, name, budget)?;
         }
         Meta::List(items) => {
-            output.push(5);
-            hash::unsigned(output, items.len() as u128);
+            hash_write(output, &[5], budget)?;
+            hash_unsigned(output, items.len(), budget)?;
             for item in items {
                 encode_metadata(item, output, budget)?;
             }
         }
         Meta::Map(entries) => {
             let mut keyed: Vec<&(String, Meta)> = entries.iter().collect();
+            for (key, _) in entries {
+                budget.elements(1)?;
+                budget.bytes(16)?;
+                budget.bytes(12 * key.len() as u64)?;
+            }
             keyed.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
             if keyed.windows(2).any(|pair| pair[0].0 == pair[1].0) || !keyed.iter().all(|(key, _)| property_name(key)) {
                 return Err("invalid_description");
             }
-            output.push(6);
-            hash::unsigned(output, keyed.len() as u128);
+            hash_write(output, &[6], budget)?;
+            hash_unsigned(output, keyed.len(), budget)?;
             for (key, item) in keyed {
-                hash::frame(output, key.as_bytes());
+                hash_text(output, key, budget)?;
                 encode_metadata(item, output, budget)?;
             }
         }
     }
     Ok(())
+}
+
+/// Charge bytes before feeding them to one metadata hash output.
+fn hash_write(output: &mut Vec<u8>, data: &[u8], budget: &mut Budget) -> Result<(), Refused> {
+    budget.bytes(data.len() as u64)?;
+    output.extend_from_slice(data);
+    Ok(())
+}
+
+/// Encode a shortest unsigned value, charging its codec work and its output write.
+fn hash_unsigned(output: &mut Vec<u8>, value: usize, budget: &mut Budget) -> Result<(), Refused> {
+    let encoded = crate::crumb::encode_native_unsigned(value as u128);
+    budget.elements(encoded.element_charge)?;
+    budget.bytes(encoded.byte_charge)?;
+    hash_write(output, &encoded.data, budget)
+}
+
+/// Frame known bytes through the charged metadata output.
+fn hash_frame(output: &mut Vec<u8>, data: &[u8], budget: &mut Budget) -> Result<(), Refused> {
+    hash_unsigned(output, data.len(), budget)?;
+    hash_write(output, data, budget)
+}
+
+/// Charge a UTF-8 upper bound before framing one metadata text value or map key.
+fn hash_text(output: &mut Vec<u8>, text: &str, budget: &mut Budget) -> Result<(), Refused> {
+    budget.bytes(4 * text.len() as u64)?;
+    hash_frame(output, text.as_bytes(), budget)
+}
+
+/// Encode one signed metadata integer, charging its codec work and output write.
+fn hash_zigzag(output: &mut Vec<u8>, magnitude: u128, negative: bool, budget: &mut Budget) -> Result<(), Refused> {
+    let mut encoded = Vec::new();
+    hash::zigzag(&mut encoded, magnitude, negative);
+    budget.elements(encoded.len() as u64)?;
+    budget.bytes(encoded.len() as u64)?;
+    hash_write(output, &encoded, budget)
 }
 
 /// One identifier-shaped property name.
