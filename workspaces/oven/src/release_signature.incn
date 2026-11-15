@@ -279,7 +279,7 @@ def included(found: Entry, log: Log) -> Result[None, str]:
     # 1. The audit path from the leaf to the root.
     if found.proof_index < 0 or found.proof_index >= found.tree_size:
         return Err("the inclusion proof's index is outside its tree")
-    mut node = found.proof_index
+    mut node = found.proof_index.clone()
     mut last = found.tree_size - 1
     mut current = hashed([b"\x00", found.body])
     for sibling in found.hashes:

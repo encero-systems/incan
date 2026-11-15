@@ -227,7 +227,7 @@ def digits_only(text: str) -> bool:
 
 def selector_of(argument: str) -> str:
     """A selector without the trailing slashes a directory name carries."""
-    mut selector = argument
+    mut selector = argument.clone()
     while selector.endswith("/"):
         selector = selector[0:len(selector) - 1]
     return selector
@@ -252,9 +252,9 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     mut refused = 0
     for family in families:
         clock = Instant.now()
-        compiled = units.compiled
-        reused = units.reused
-        replayed = units.replayed
+        compiled = units.compiled.clone()
+        reused = units.reused.clone()
+        replayed = units.replayed.clone()
         # 1. A family a selector reaches is discovered, and one that cannot be read is refused and counted.
         match discover_family(settings.root, family):
             Err(reason) =>
@@ -342,7 +342,7 @@ def worker_runner(settings: Settings) -> Result[ProtocolRunner, str]:
     """This runner as a family or protocol worker starts it: absolute paths and the flags every worker keeps."""
     executable = current_exe().map_err((error) => str(error))?
     root = settings.root.resolve().map_err((error) => error.message())?
-    mut incan = settings.incan
+    mut incan = settings.incan.clone()
     if "/" in incan:
         incan = Path(incan).absolute().map_err((error) => error.message())?.0
     mut flags: list[str] = []

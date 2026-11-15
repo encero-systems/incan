@@ -267,7 +267,7 @@ def instance_key(
             match request_identity(request):
                 Err(_) => return Ok(None)
                 Ok(named) =>
-                    mut inputs = witness
+                    mut inputs = witness.clone()
                     inputs.append(INSTANCE_FUNCTION)
                     inputs.append(named.declaration)
                     inputs.append(named.arguments)

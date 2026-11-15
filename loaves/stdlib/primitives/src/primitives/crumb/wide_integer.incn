@@ -23,7 +23,7 @@ pub model WideInteger:
     @staticmethod
     pub def from_unsigned(value: u128) -> Self:
         """Widen one native unsigned value without decimal formatting."""
-        mut remaining = value
+        mut remaining = value.clone()
         mut octets: list[u8] = []
         while remaining > 0u128:
             octets.append((remaining % 256u128).wrapping_resize[u8]())
@@ -198,7 +198,7 @@ def add_magnitudes(left: bytes, right: bytes, mut budget: Budget) -> Result[byte
     mut carry = 0
     for index in range(size):
         budget.charge_elements(1)?
-        mut value = carry
+        mut value = carry.clone()
         if index < len(left):
             value += int(left[index])
         if index < len(right):

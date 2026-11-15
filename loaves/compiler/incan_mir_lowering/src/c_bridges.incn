@@ -275,12 +275,12 @@ def copy_utf8(
     decoded_after = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid_utf8, valid_utf8), span)
     forget_owned(builder, decoded.local)
-    decoded_owners = builder.owned
+    decoded_owners = builder.owned.clone()
     owner = enum_owner(ty)?
     builder.current = invalid_utf8
     assign_carrier(builder, output, owner, 1, [read_place(decoded_fields[1], true, span)], span)
     builder.finish(TerminatorKind.Goto(decoded_after), span)
-    decoded_retained = builder.owned
+    decoded_retained = builder.owned.clone()
     builder.current = valid_utf8
     builder.owned = decoded_owners
     assign_carrier(builder, output, owner, 0, [read_place(decoded_fields[1], true, span)], span)

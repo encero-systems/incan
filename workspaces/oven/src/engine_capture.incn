@@ -713,7 +713,7 @@ model Capture:
         exactly those bytes. A file still changing after `READ_ATTEMPTS` reads is unstable.
         """
         read = self.reader
-        mut before = observed
+        mut before = observed.clone()
         for attempt in range(READ_ATTEMPTS):
             if attempt > 0:
                 self.counters.retries += 1

@@ -304,7 +304,7 @@ def lower_instance_frame(
         storage_arguments,
         role,
     ).map_err((reason) => f"{reason} in {diagnostic_context}")?
-    mut retained_function = function
+    mut retained_function = function.clone()
     retained_function.signature_lifetimes = lifetimes
     retained_function.generic_loans = instance_loans(program, context, request, runtime_unions, intrinsics)?
     if let Some(transport) = products:

@@ -19,7 +19,7 @@ pub def emit_resize(
 ) -> Result[None, str]:
     """Use the checked output carrier, including the retained Some payload for checked resizing."""
     result = place_type(builder.locals, output)
-    mut target = result
+    mut target = result.clone()
     if policy == RustNumericResizeMethodId.Try:
         _owner, declaration = carrier_layout(builder, result)?
         if declaration.carrier != Carrier.Option or len(declaration.variants) != 2:

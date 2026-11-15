@@ -252,7 +252,7 @@ pub def retain_runtime_instances(
                         )?,
                     )
                 result = native_source_type(constructors, nominals, enums, unions, closed.return_type, intrinsics)?
-                mut called = symbol
+                mut called = symbol.clone()
                 match runtime_frame_adapter(module, external, parameters, result, symbol, CalleeKind.Planned(symbol))?:
                     Some(adapter) =>
                         called = adapter.name
@@ -398,7 +398,7 @@ def retain_runtime_frame_call(
                 )
             result = native_source_type(constructors, nominals, enums, unions, frame.return_type, intrinsics)?
             symbol = function_name(module, frame)
-            mut target = callee
+            mut target = callee.clone()
             # 2. Adapt declared storage; an exact ABI calls the compiled item directly.
             match runtime_frame_adapter(module, external, parameters, result, symbol, callee)?:
                 None => pass
@@ -543,7 +543,7 @@ def retain_runtime_future_instances(
         function = borrowed_at(functions, index)
         mut path: str = ""
         mut types: list[PlanType] = []
-        mut span = function.span
+        mut span = function.span.clone()
         match function.future_callee:
             Some(callee) =>
                 match callee.kind:

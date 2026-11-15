@@ -38,7 +38,7 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
         or len(unit.cloves) != 0
     ):
         trace(f"{unit.package}: checked-source reuse refused for executable vocabulary or C headers")
-        mut refused = unit
+        mut refused = unit.clone()
         refused.checked_context = None
         refused.checked_products = None
         return Ok(refused)
@@ -63,7 +63,7 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     trace(f"{unit.package}: checked-source components {" ".join(parts)}")
     ledger.save()?
     # 3. Expanded nodes never enter scalar products; source bytes are checked by the item producer itself.
-    mut selected = unit
+    mut selected = unit.clone()
     context = fingerprint(parts)?
     selected.checked_context = Some(context)
     selected.checked_products = Some(

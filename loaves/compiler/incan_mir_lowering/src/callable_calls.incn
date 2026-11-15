@@ -517,7 +517,7 @@ def lower_type_parameter_call(
     closed = checked_type_arguments(builder, indexed_static_type_arguments(builder.constructors, target)?)?
     typed_body = instantiate(body, closed, [])?
     owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?
-    mut concrete_body = typed_body
+    mut concrete_body = typed_body.clone()
     if len(owned) != 0:
         concrete_body = instantiate(body, closed, owned)?
     request_instance(builder.instances, body, closed, owned, false)
@@ -901,7 +901,7 @@ pub def carrier_callable_operand(
         _ => return Ok(value)
     if owner < len(builder.enums):
         return Ok(value)
-    declaration = builder.intrinsics[carrier_position(owner)]
+    declaration = builder.intrinsics[carrier_position(owner)].clone()
     source = operand_type(builder, value)?
     if declaration.carrier != Carrier.Declared or not callable_copy_type(source):
         return Ok(value)
@@ -935,7 +935,7 @@ pub def owned_callable_value(
 
 def callable_address(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Operand, str]:
     """Expose the address of the exact checked pointer, reifying an item without replacing its signature."""
-    mut pointer = value
+    mut pointer = value.clone()
     match operand_type(builder, value)?:
         PlanType.FunctionItem(_name, signature) =>
             held = temporary(builder, PlanType.FunctionPointer(signature), span)

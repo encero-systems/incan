@@ -102,7 +102,7 @@ pub def append_default_type_bindings(
     # 1. A non-receiver frame has no inherited trait environment.
     if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
         return Ok(None)
-    mut owner = receiver
+    mut owner = receiver.clone()
     match receiver:
         PlanType.ModelRef(index, name) => owner = PlanType.Model(index, name)
         PlanType.ModelMutRef(index, name) => owner = PlanType.Model(index, name)

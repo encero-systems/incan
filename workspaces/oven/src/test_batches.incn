@@ -27,7 +27,7 @@ pub def batch_groups(found: list[list[TestCase]]) -> list[list[int]]:
             continue
         # 2. Every batch it shares a fixture with, joined.
         mut members: list[int] = [position]
-        mut shared = mine
+        mut shared = mine.clone()
         mut kept_groups: list[list[int]] = []
         mut kept_keys: list[list[str]] = []
         for index in range(len(groups)):

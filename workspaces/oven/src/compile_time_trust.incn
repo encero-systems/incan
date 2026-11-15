@@ -227,7 +227,7 @@ def registry_key(unit: RegistryUnit) -> str:
 
 pub def combine(left: TrustDecision, right: TrustDecision) -> TrustDecision:
     """Combine local and registry decisions without changing either authority label."""
-    mut result = left
+    mut result = left.clone()
     for loaf in right.covered_by.keys():
         result.covered_by[loaf] = right.covered_by[loaf]
     result.missing = result.missing + right.missing

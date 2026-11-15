@@ -35,7 +35,7 @@ pub def zip_reference(mut builder: Builder, source: Place, mutable: bool, span: 
     match zip_shape(borrowed_at(builder.locals, source.local).ty):
         None => return Err("unsupported Body IR zip reference receiver")
         Some((left, right)) =>
-            mut root = source
+            mut root = source.clone()
             if borrowed_at(builder.locals, source.local).ty != PlanType.ZipIterator(left, right):
                 if mutable and borrowed_at(builder.locals, source.local).ty == PlanType.ZipIteratorRef(left, right):
                     return Err("unsupported Body IR mutable zip through shared reference")
@@ -136,7 +136,7 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
             )
             exhausted = builder.new_block(span)
             selected = builder.new_block(span)
-            owners = builder.owned
+            owners = builder.owned.clone()
             builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
             builder.current = exhausted
             drop_owned(builder, storage.local, span)

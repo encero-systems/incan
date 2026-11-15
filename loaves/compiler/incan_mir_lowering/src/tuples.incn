@@ -224,8 +224,8 @@ pub def element_has_owner(element: TupleElement) -> bool:
 pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[list[Place], str]:
     """Project the admitted tuple layout in canonical element order, after any field path that reached the tuple."""
     mut fields: list[Place] = []
-    mut owner = value
-    mut layout = ty
+    mut owner = value.clone()
+    mut layout = ty.clone()
     match ty:
         PlanType.TupleRef(elements) =>
             layout = PlanType.Tuple(elements)

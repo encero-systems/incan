@@ -192,7 +192,7 @@ def retained_by(identities: dict[str, bool], facts: dict[str, Fact]) -> Retained
 def by_size(roots: list[Root]) -> list[Root]:
     """Roots from the largest retained payload total down, then by project path."""
     mut ordered: list[Root] = []
-    mut remaining = roots
+    mut remaining = roots.clone()
     while len(remaining) > 0:
         mut chosen = 0
         for index in range(len(remaining)):

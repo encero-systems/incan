@@ -287,7 +287,7 @@ def optional_none_comparison(
     """Compare a checked Option against None by its tag without copying or equating its payload."""
     if operator != BinOp.Eq and operator != BinOp.Ne and operator != BinOp.Is and operator != BinOp.IsNot:
         return Ok(None)
-    mut other = left
+    mut other = left.clone()
     if none_constant(right):
         other = left
     elif none_constant(left):
@@ -735,7 +735,7 @@ def text_comparison(
         _ => return Ok(None)
     if not text_comparison_operand(builder, left, span)? or not text_comparison_operand(builder, right, span)?:
         return Ok(None)
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     operands = [borrow_text_operand(builder, left, span)?, borrow_text_operand(builder, right, span)?]
     output = emit_text_helper(builder, name, PlanType.Bool, [PlanType.StringRef, PlanType.StringRef], operands, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)

@@ -59,7 +59,7 @@ def body_expressions(item: VocabBodyItem) -> list[IncanExpr]:
         VocabBodyItem.Statement(statement) => return statement_expressions(statement)
         VocabBodyItem.Declaration(declaration) => return declaration_expressions(declaration)
         VocabBodyItem.Clause(clause) =>
-            mut expressions = clause.head
+            mut expressions = clause.head.clone()
             match clause.body:
                 VocabClauseBody.Expression(value) => expressions.append(value)
                 VocabClauseBody.ExpressionList(items) =>

@@ -142,7 +142,7 @@ def print_model(request: MetadataRequest) -> Result[i32, str]:
     model and names the models available when MODEL is not one of them.
     """
     path = Path(request.path)
-    mut metadata = path
+    mut metadata = path.clone()
     if not path.is_file() or not (path.0.endswith(".json") or path.0.endswith(".incnlib")):
         metadata = declared_bundles(path)?
     toolchain = load_toolchain()?
@@ -205,7 +205,7 @@ def checked_source(path: Path, inspection: bool) -> Result[CheckedSource, str]:
 
 def described_library(path: Path) -> Result[UnitDescription, str]:
     """The library unit of a source file, or of a directory's library entry, then its program entry."""
-    mut source = path
+    mut source = path.clone()
     if path.is_dir():
         match entry_source(path, ManifestReader())?:
             Some(entry) => source = entry

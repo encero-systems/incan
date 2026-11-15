@@ -133,7 +133,7 @@ pub def conversion_chain(
                         Some(inner) =>
                             if name != canonical.declaration_name and name != inner.carrier_name():
                                 return Err("unsupported Body IR automatic string conversion underlying identity")
-                            mut seen = ancestors
+                            mut seen = ancestors.clone()
                             seen.append(str(declaration.name))
                             return conversion_chain(module, inner, seen)
         _ => return Err("unsupported Body IR automatic string conversion primitive")

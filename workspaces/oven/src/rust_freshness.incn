@@ -296,7 +296,7 @@ pub def inputs_unchanged(
     # 1. Read the compiler's complete dependency list.
     text = read(dependencies)?
     paths, _ = dependency_inputs(text)?
-    mut selected = paths
+    mut selected = paths.clone()
     if let Some(root) = project:
         selected = source_paths(root, dependencies, arguments, paths)?
     # 2. Require every recorded dependency to have been observed before compilation.

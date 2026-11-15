@@ -627,7 +627,7 @@ pub class TypedCellSource with Source[CrumbError]:
             self.field_seen[selected_field] = true
             if not self.column_present[selected_field]:
                 return Ok(None)
-            mut column_node = field.shape.storage_type
+            mut column_node = field.shape.storage_type.clone()
             if field.shape.absent == AbsentPolicy.NoneValue:
                 match column_node:
                     TypeNode.Container(ContainerKind.Option, arguments) =>
@@ -659,7 +659,7 @@ pub class TypedCellSource with Source[CrumbError]:
             self.budget,
         ).map_err(as_crumb)?
         raw, origin = selected(index.cells, position, self.budget).map_err(as_crumb)?
-        mut node = field.shape.storage_type
+        mut node = field.shape.storage_type.clone()
         if field.shape.absent == AbsentPolicy.NoneValue:
             match node:
                 TypeNode.Container(ContainerKind.Option, arguments) =>

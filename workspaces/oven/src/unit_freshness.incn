@@ -232,8 +232,8 @@ pub def reconciled_key(
 
     The ledger is saved when this reconciliation changed it, and the work it could not avoid is traced.
     """
-    hashed = project.hashed
-    listed = project.listed
+    hashed = project.hashed.clone()
+    listed = project.listed.clone()
     key = unit_key_with(unit, compiler, described, project, graph)?
     project.save()?
     work = f"hashed {project.hashed - hashed} files, listed {project.listed - listed} directories"
@@ -692,7 +692,7 @@ pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Ke
 
 pub def replay_key(key: Key) -> Key:
     """`key` under its raw identity, for an output that shows source text or positions, such as a codegraph export."""
-    mut raw = key
+    mut raw = key.clone()
     raw.digest = key.replayed()
     raw.replay = ""
     return raw

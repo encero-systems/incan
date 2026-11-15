@@ -371,7 +371,7 @@ def compiled_domain(root: LocalDemand, reader: ManifestReader) -> Result[LocalDe
     project = read_project(Path(root.project), reader).map_err((error) => error.message())?
     if project.intent.rust_type != "proc-macro":
         return Ok(root)
-    mut selected = root
+    mut selected = root.clone()
     selected.domain = DependencyDomain.Host
     return Ok(selected)
 

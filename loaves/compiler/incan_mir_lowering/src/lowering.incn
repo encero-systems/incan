@@ -286,7 +286,7 @@ def lowered_plan(
         package_versions,
     )?
     constructors = Arc.new(with_generic_constructor_arities(constructor_table, template_constructors))
-    mut intrinsics = initial_intrinsics
+    mut intrinsics = initial_intrinsics.clone()
     mut models: list[ModelDeclaration] = []
     mut enums: list[EnumDeclaration] = []
     mut functions: list[Function] = []
@@ -308,11 +308,11 @@ def lowered_plan(
         externals,
         instances,
     )?
-    mut program = initial_program
+    program = initial_program
     mut emitted_frames = no_emitted_frames()
     # 2. Lower ordinary frames and static initializers exactly once.
     instance_products = instance_transport(scalar_products, scalar_bodies, record_report, overflow_checks)
-    mut retained_nominals = nominal_instances
+    mut retained_nominals = nominal_instances.clone()
     lower_ordinary_bodies(
         context,
         shared_source_context,
@@ -429,27 +429,27 @@ pub def resume_unit_plan(
     trace = traced(trace_key)
     validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
     source_files = source_file_index(modules, files)?
-    mut source_context = continuation.source_context
-    mut template_constructors = continuation.template_constructors
-    mut owners = continuation.owners
-    mut retained_sources = continuation.sources
-    mut retained_files = continuation.files
+    mut source_context = continuation.source_context.clone()
+    mut template_constructors = continuation.template_constructors.clone()
+    mut owners = continuation.owners.clone()
+    mut retained_sources = continuation.sources.clone()
+    mut retained_files = continuation.files.clone()
     entry_owner = continuation.entry_owner
     entry_file = continuation.entry_file
-    mut context = continuation.context
-    mut template_references = continuation.template_references
-    mut constructors = continuation.constructors
-    mut program = continuation.program
-    mut unions = continuation.unions
-    mut retained_nominals = continuation.nominal_instances
-    mut intrinsics = continuation.intrinsic_layouts
-    mut models = continuation.models
-    mut enums = continuation.enums
-    mut functions = continuation.functions
-    mut externals = continuation.externals
-    mut instances = continuation.instances
-    mut emitted_frames = continuation.emitted_frames
-    mut statics = continuation.statics
+    mut context = continuation.context.clone()
+    mut template_references = continuation.template_references.clone()
+    mut constructors = continuation.constructors.clone()
+    mut program = continuation.program.clone()
+    mut unions = continuation.unions.clone()
+    mut retained_nominals = continuation.nominal_instances.clone()
+    mut intrinsics = continuation.intrinsic_layouts.clone()
+    mut models = continuation.models.clone()
+    mut enums = continuation.enums.clone()
+    mut functions = continuation.functions.clone()
+    mut externals = continuation.externals.clone()
+    mut instances = continuation.instances.clone()
+    mut emitted_frames = continuation.emitted_frames.clone()
+    mut statics = continuation.statics.clone()
     instance_products = continuation.instance_products
     # #3022: release the copied model shell before Arc.make_mut so retained contexts remain uniquely owned.
     drop(continuation)
@@ -627,7 +627,7 @@ def finish_unit_plan(
     products: Option[InstanceProducts] = None,
 ) -> Result[UnitPlanning, str]:
     """Drain instances from preserved ordinary frames, finalize their layouts and publish one complete plan."""
-    mut retained_program = program
+    mut retained_program = program.clone()
     original_nominal_count = len(context.as_ref().nominal_declarations)
     trace_lowering(trace, "generic instances")
     retry_intrinsic_layouts = list(intrinsics)
@@ -687,7 +687,7 @@ def finish_unit_plan(
 
     retained_constructors = retained_program.constructors.as_ref()
     original_constructors = constructors.as_ref()
-    mut completed_models = models
+    mut completed_models = models.clone()
     if len(context.as_ref().nominal_declarations) != original_nominal_count:
         completed_models = lower_model_declarations(
             retained_constructors,
@@ -1097,7 +1097,7 @@ def lower_requested_frames(
     )?:
         RuntimeRetention.NeedsRuntime(requests) => return Ok(FramesPlanning.NeedsRuntime(requests))
         RuntimeRetention.Complete => pass
-    mut cells = statics
+    mut cells = statics.clone()
     for cell in instance_cells:
         cells.append(cell)
     return Ok(FramesPlanning.Complete(cells))

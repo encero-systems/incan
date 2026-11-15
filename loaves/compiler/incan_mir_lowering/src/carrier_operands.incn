@@ -164,7 +164,7 @@ pub def boundary_plan_operand(
             builder.emit(plan_assign(pointer, operation, span))
             return Ok(read_place(pointer, false, span))
         _ => pass
-    mut operand = value
+    mut operand = value.clone()
     if operand_type(builder, operand)? == PlanType.FrozenStr:
         match target:
             PlanType.Enum(owner, _name) =>
@@ -284,8 +284,8 @@ def converted_carrier_operand(
         _ => return Ok(None)
     if source_owner < len(builder.enums) or target_owner < len(builder.enums):
         return Ok(None)
-    before = builder.intrinsics[carrier_position(source_owner)]
-    after = builder.intrinsics[carrier_position(target_owner)]
+    before = builder.intrinsics[carrier_position(source_owner)].clone()
+    after = builder.intrinsics[carrier_position(target_owner)].clone()
     if before.carrier == Carrier.Declared or before.carrier != after.carrier:
         return Ok(None)
     # An existing optional payload lifts as a whole, including None inside Some(None).
@@ -302,7 +302,7 @@ def converted_carrier_operand(
     condition = variant_condition(builder, source, 0, span)
     builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
     forget_owned(builder, source.local)
-    owners = builder.owned
+    owners = builder.owned.clone()
     for slot in range(2):
         builder.current = selected
         if slot == 1:

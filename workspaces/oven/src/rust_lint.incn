@@ -50,7 +50,7 @@ pub def lint_rust(request: RustBuild) -> Result[i32, str]:
        error-level finding fails the command.
     """
     # 1. Every library a lint links must exist first, and none is compiled from edited prebuilt sources.
-    mut checking = request
+    mut checking = request.clone()
     checking.check_only = true
     _ = build_rust(checking)?
     prepared = prepared_build(checking)?
@@ -156,7 +156,7 @@ def lint_library(
         Ok(result) =>
             text = decoded(result.stderr)
             warnings, reported = finding_counts(text)
-            mut errors = reported
+            mut errors = reported.clone()
             if not result.status.success() and errors == 0:
                 errors = 1
             return Ok(

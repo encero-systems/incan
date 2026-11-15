@@ -48,7 +48,7 @@ pub def check_relocation(incan: str, project: Path) -> Result[None, str]:
         refused = invoke(incan, ["inspect", "codegraph", "src/main.incn", "--strict"], root)?
         if refused.code == Some(0) or "unchecked" not in refused.stderr:
             return Err("invalid source acquired a checked relocated graph")
-        mut other_root = first
+        mut other_root = first.clone()
         if root.0 == first.0:
             other_root = second
         if other_root.0 in refused.stderr:

@@ -219,7 +219,7 @@ def undisplayed_key(ty: PlanType, operation: str) -> str:
 pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
     """Borrow owners, a model's collection field among them, and reborrow parameters, never copying an exclusive reference."""
     ty = place_type(builder.locals, place)
-    mut source = place
+    mut source = place.clone()
     if collection_owned(ty) != ty:
         if mutable and ty != collection_reference(ty, true):
             return Err("unsupported Body IR mutable access through shared collection parameter")
@@ -340,7 +340,7 @@ pub def extend_collection(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Splice one checked owner into a set constructor or dictionary literal, then consume that owner."""
-    mut source_place = destination
+    mut source_place = destination.clone()
     match source.kind:
         OperandKind.Move(place) => source_place = place
         _ => return Err("unsupported Body IR collection spread without owned source")

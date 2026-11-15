@@ -36,8 +36,8 @@ pub def normalize_decimal(coefficient: i128, scale: int) -> Result[NormalizedDec
     """Return the unique trailing-zero-free coefficient and scale, refusing scale underflow."""
     if coefficient == 0i128:
         return Ok(NormalizedDecimal(coefficient=0i128, scale=0))
-    mut normalized = coefficient
-    mut normalized_scale = scale
+    mut normalized = coefficient.clone()
+    mut normalized_scale = scale.clone()
     while normalized % 10i128 == 0i128:
         if normalized_scale == -9223372036854775808:
             return Err(CrumbError.invalid_input("decimal scale underflow"))

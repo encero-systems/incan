@@ -106,7 +106,7 @@ def idle_memory_environment() -> dict[str, str]:
 
 pub def handshake(initial: Channel, identity: Identity) -> Result[Channel, Refusal]:
     """Require OS user, exact negotiated identities and limits; startup errors never select legacy compilation."""
-    mut channel = initial
+    mut channel = initial.clone()
     if channel.transport.peer().map_err(transport)?.uid != identity.uid:
         return Err(Refusal(kind=RefusalKind.Identity, detail="engine service peer user mismatch"))
     channel.transport.wait_at_most(HANDSHAKE_SECONDS)

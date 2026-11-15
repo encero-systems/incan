@@ -34,13 +34,13 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
     if admitted.vocabulary or admitted.vocab_entry == None:
         return Ok(admitted)
     # 1. The wrapper imports the authored entry, so the compiler checks its export and complete import closure.
-    mut unit = admitted
+    mut unit = admitted.clone()
     directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("vocabulary")
     directory.mkdir(true, true).map_err((error) => f"cannot {error.message()}")?
     entry = entry_module(unit)?
     wrapper = directory.joinpath("main.incn")
     write_changed(wrapper, registration_main(entry))?
-    mut registration = unit
+    mut registration = unit.clone()
     registration.source = wrapper.0
     registration.source_root = unit.project_root
     registration.package = unit.package
@@ -161,7 +161,7 @@ def worker_description(registration: UnitDescription, entry: str, directory: Pat
     """Generate the typed host-worker adapter as a separate native program unit."""
     wrapper = directory.joinpath("worker.incn")
     write_changed(wrapper, worker_main(entry))?
-    mut worker = registration
+    mut worker = registration.clone()
     worker.source = wrapper.0
     worker.vocab_desugarer = true
     return Ok(worker)

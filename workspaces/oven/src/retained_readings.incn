@@ -136,7 +136,7 @@ def selected_fields(document: JsonValue, selected: list[str]) -> JsonValue:
     """The fields of `document` at the selected dotted paths, keyed by those paths; a path it lacks is left out."""
     mut fields: Dict[str, JsonValue] = {}
     for path in selected:
-        mut value = document
+        mut value = document.clone()
         for name in path.split("."):
             value = nested(value, name)
         if not value.is_null():

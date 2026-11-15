@@ -198,7 +198,7 @@ def prepare_project_graph(
     if root.0 in ancestors:
         return Err(f"cyclic codegraph source selection: {root.0}")
     preparation.sources.append(root.0)
-    available = preparation.registry
+    available = preparation.registry.clone()
     reader = preparation.manifests
     # 2. The facets are the Rust graph the manifest activates, each coming after the facets it links.
     rustc = rust_compiler(toolchain)
@@ -254,7 +254,7 @@ def prepare_project_graph(
     )?
     trace(f"graph checked exports {root.0}: {checked.elapsed().as_millis()} ms")
     # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
-    mut paths = checked_paths
+    mut paths = checked_paths.clone()
     if not published_only:
         paths = paths + source_graphs(root, profile, toolchain, ancestors, preparation)?
     return Ok(
@@ -394,7 +394,7 @@ pub def unit_natives(
         library = built[key]
         natives[library.crate_name] = NativeCrate(name=library.crate_name, path=library.artifact)
     # 2. A local edge's library is also known by the alias this unit writes it as.
-    mut native_facet = facet
+    mut native_facet = facet.clone()
     checked_aliases = [loaf.key for loaf in checking_loaves]
     native_facet.local = [edge for edge in facet.local if edge.key() in built or edge.alias not in checked_aliases]
     for native in facet_bindings(native_facet, built, request.registry)?:
@@ -441,7 +441,7 @@ def compiled_directory(
     ]
     mut selected: Option[Path] = None
     for candidate in candidates:
-        mut directory = candidate
+        mut directory = candidate.clone()
         if let Some(fact) = viewed_fact(candidate)?:
             directory = fact
         graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
@@ -569,7 +569,7 @@ def checked_units(
             facets=selected,
         )?
         trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
-        mut selected_path = path
+        mut selected_path = path.clone()
         match native_directory:
             Some(directory) =>
                 if publish_prepared_graph(ready, toolchain, directory, path)?:

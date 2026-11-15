@@ -192,7 +192,7 @@ def locked_files(
 
 def staged_project(path: Path) -> Result[LocalProject, str]:
     """The project at or above `path`."""
-    mut root = path
+    mut root = path.clone()
     if not path.joinpath("loaf.toml").is_file():
         match discovered_project(path.joinpath("loaf.toml"))?:
             Some(found) => root = found

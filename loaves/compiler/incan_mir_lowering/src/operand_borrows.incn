@@ -412,7 +412,7 @@ pub def lower_text_helper(
     arity = text_helper_arity(name)
     if len(arguments) != arity:
         return Err("invalid Body IR string helper arity")
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     mut parameters: list[PlanType] = []
     mut operands: list[Operand] = []
     for argument in arguments:

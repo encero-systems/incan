@@ -84,7 +84,7 @@ pub def registration_metadata(registration: VocabRegistration) -> JsonValue:
     2. Encode the registration using the descriptor reader's schema.
     """
     # 1. Parser keywords come from the same foundational declaration descriptors.
-    mut registrations = registration.keyword_registrations
+    mut registrations = registration.keyword_registrations.clone()
     for surface in registration.dsl_surfaces:
         registrations.append(surface.keyword_registration())
     # 2. Publication keeps the existing schema and executable marker above the foundational contracts.
@@ -118,7 +118,7 @@ pub def run_desugar_worker(desugar: (DesugarRequest) -> Result[DesugarResponse, 
             return Ok(None)
         batch = DesugarBatchRequest.from_json(line)?
         # The reply echoes the batch's number, so its host can tell it from a frame no batch asked for.
-        number = batch.batch
+        number = batch.batch.clone()
         mut replies: list[DesugarReply] = []
         # 2. The authored function receives one node, so batch neighbors do not become part of its interface.
         for request in batch.requests:

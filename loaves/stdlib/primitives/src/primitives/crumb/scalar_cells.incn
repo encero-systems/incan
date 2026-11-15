@@ -140,7 +140,7 @@ def decimal_native_coefficient(
         return Err(CrumbError.invalid_input("decimal cell exact scale"))
     extra = scale - normalized.scale
     budget.charge_elements(extra)?
-    mut scaled = normalized.coefficient
+    mut scaled = normalized.coefficient.clone()
     for _ in range(extra):
         # The precision and minimum-scale checks above bound the result below 10**38.
         scaled *= 10i128

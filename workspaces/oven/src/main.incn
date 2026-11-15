@@ -553,7 +553,7 @@ def records_command(command: str, arguments: list[str]) -> None:
 
 def records_validated(command: str, options: Options) -> Options:
     """Validate a records command's options; the records engine produces the engine report run and build ask for."""
-    mut shared = options
+    mut shared = options.clone()
     if command in ["run", "build"]:
         shared.engine_report = false
     _ = validated(command, shared)
@@ -592,7 +592,7 @@ def run(arguments: list[str]) -> None:
     directory, the program is the enclosing Loaf's; `-c CODE` runs CODE as a direct source module.
     """
     own, passed = program_arguments(arguments)
-    mut unit_arguments = own
+    mut unit_arguments = own.clone()
     match inline_arguments(own, invoked()):
         Err(reason) => syntax_error("run", reason)
         Ok(replaced) => unit_arguments = replaced
@@ -615,7 +615,7 @@ def located(command: str, options: Options) -> Options:
     match enclosing_loaf(Path(options.path)):
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
         Ok(root) =>
-            mut selected = options
+            mut selected = options.clone()
             selected.path = root.0
             return selected
     return options
@@ -805,7 +805,7 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
     its compilation status. Under one job, the modules that share a plain session conftest fixture run from one batch
     unit instead, its cases in place of theirs (`test_batches`).
     """
-    mut here = root
+    mut here = root.clone()
     match Path.cwd():
         Ok(directory) => here = directory
         Err(_) => pass
@@ -815,7 +815,7 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
         if not may_select(runner, source, relative_name(source, root))?:
             found.append([])
             continue
-        mut selected = options
+        mut selected = options.clone()
         selected.path = source.0
         code, binary = compiled_tests(selected, runner)?
         if code != 0:
@@ -869,7 +869,7 @@ def batch_cases(
         match module_of(test_case, members, Path(unit.project_root)):
             None => return Err(f"batch unit {binary.0} reports a case of an unknown module {test_case.module}")
             Some(module) =>
-                mut named = test_case
+                mut named = test_case.clone()
                 named.file = relative_name(module, root)
                 named.label = module.name()
                 named.path = relative_name(module, here)

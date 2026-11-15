@@ -296,7 +296,7 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     concrete: RustType = substitute(result.return_type, names, storage)?
     result.return_type = source_nominal_storage(source_owners, concrete)?
     close_result_requirements(result, names, storage)?
-    mut name = body_name
+    mut name = body_name.clone()
     for argument in arguments:
         name += type_component(argument)
     for slot in owned_callable_slots:

@@ -394,12 +394,12 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
     location = located_page(root, reference)?
     pages_read["pages"] = pages_read.get("pages", 0) + 1
     if let Some(checked) = CHECKED.checked(location.digest):
-        mut found = checked
+        mut found = checked.clone()
         found.pack = location.pack
         return Ok(found)
     path = location.file
     mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
-    mut length = location.length
+    mut length = location.length.clone()
     if length < 0:
         length = mapped.len()
     match mapped.view(location.offset, length):
@@ -627,7 +627,7 @@ pub def build(writer: PageWriter, leaves: list[Entry]) -> Result[str, IndexError
     if len(leaves) == 0:
         return Ok("")
     mut level = 0
-    mut current = leaves
+    mut current = leaves.clone()
     loop:
         mut parents: list[Entry] = []
         mut start = 0
@@ -762,7 +762,7 @@ model TreeOrder:
 def tree_order(root: Path, tops: list[str]) -> Result[TreeOrder, IndexError]:
     """Every page reachable from `tops`, each read once, parents before their children."""
     mut tree = TreeOrder()
-    mut pending = tops
+    mut pending = tops.clone()
     mut position = 0
     while position < len(pending):
         reference = pending[position]

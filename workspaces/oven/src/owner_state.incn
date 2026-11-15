@@ -188,7 +188,7 @@ pub model Owner:
             None => return Ok(Reply(status="fallback", reason=FALLBACK_REASON))
             Some(found) =>
                 # 4. The executable is kept or built for the key its inputs reconcile to, as without an owner.
-                mut held = found
+                mut held = found.clone()
                 trace_boundary("unit_prepared")
                 key = held.key(self.compiler, toolchain)?
                 trace_boundary("source_key")
@@ -272,7 +272,7 @@ def requested_features(request: Request) -> FeatureRequest:
 
 def retain(unit: UnitDescription, command: str, watched: Watched) -> Result[Held, str]:
     """The preparation to retain for a unit: its description digest and the ledger of what requests observed."""
-    mut prepared = unit
+    mut prepared = unit.clone()
     if command == "test":
         prepared.kind = "test"
     described = description_digest(prepared)?
@@ -354,7 +354,7 @@ def built(
     prefix = console_prefix(generation)?
     discard(f"{prefix}.out")
     discard(f"{prefix}.err")
-    mut capturing = toolchain
+    mut capturing = toolchain.clone()
     capturing.console = prefix
     # 3. An executable whose key is unchanged is kept, and a changed one is compiled.
     development = request.command == "run" or request.command == "test"

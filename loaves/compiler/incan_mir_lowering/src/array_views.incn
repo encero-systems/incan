@@ -20,7 +20,7 @@ pub def borrow_array_slice(
     actual = place_type(builder.locals, source)
     mut items: list[PlanType] = []
     mut count = 0
-    mut owner = source
+    mut owner = source.clone()
     mut already_shared = false
     match actual:
         PlanType.NativeArray(array_items, length) =>

@@ -233,7 +233,7 @@ pub def lower_truth_builtin(
                         builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
                         return Ok(None)
                     _ => pass
-                incoming = builder.owned
+                incoming = builder.owned.clone()
                 reference = borrow_text_operand(builder, value, span)?
                 external_call(
                     builder,

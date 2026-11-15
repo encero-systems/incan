@@ -326,7 +326,7 @@ def lower_string_slice(
     """Consume the checked primitive slice member with its borrowed receiver and two signed int endpoints."""
     if len(arguments) != 3:
         return Err("unsupported Body IR string slice argument count")
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     mut operands: list[Operand] = []
     match arguments[0].as_one():
         Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
@@ -365,7 +365,7 @@ def lower_text_codec_method(
         arity = 3
     if len(arguments) != arity:
         return Err("unsupported Body IR incomplete builtin codec arguments")
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     receiver_type = argument_type(builder, arguments, 0, span)?
     mut operands: list[Operand] = []
     if not decoding and not frozen and receiver_type in [PlanType.String, PlanType.StringRef]:
@@ -468,7 +468,7 @@ def lower_primitive_decode(
     builder.finish(TerminatorKind.SwitchBool(read_place(policy_fields[0], false, span), rejected, accepted), span)
 
     # Rejected options construct the legacy error without reading the receiver.
-    policy_owners = builder.owned
+    policy_owners = builder.owned.clone()
     builder.current = rejected
     error = temporary(builder, PlanType.ValidationError, span)
     external_call(
@@ -483,7 +483,7 @@ def lower_primitive_decode(
     owner, _declaration = carrier_layout(builder, result)?
     assign_carrier(builder, output, owner, 1, [read_place(error, true, span)], span)
     builder.finish(TerminatorKind.Goto(after), span)
-    retained = builder.owned
+    retained = builder.owned.clone()
 
     # Accepted options decode through one byte-level implementation, then adapt only its strict failure detail.
     builder.current = accepted
@@ -515,7 +515,7 @@ def lower_primitive_decode(
     decoded_after = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(decoded_fields[0], false, span), invalid, valid), span)
     forget_owned(builder, decoded.local)
-    decoded_owners = builder.owned
+    decoded_owners = builder.owned.clone()
 
     builder.current = invalid
     adapted = temporary(builder, PlanType.ValidationError, span)
@@ -530,7 +530,7 @@ def lower_primitive_decode(
     )
     assign_carrier(builder, output, owner, 1, [read_place(adapted, true, span)], span)
     builder.finish(TerminatorKind.Goto(decoded_after), span)
-    decoded_retained = builder.owned
+    decoded_retained = builder.owned.clone()
 
     builder.current = valid
     builder.owned = decoded_owners

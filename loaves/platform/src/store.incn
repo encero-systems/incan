@@ -288,7 +288,7 @@ pub def view_snapshot(selected: Snapshot, name: str) -> Result[Snapshot, StoreEr
     """Select another virtual view of the same immutable generation without rereading CURRENT."""
     check_view_key(name)?
     if selected.view == name:
-        mut held = selected
+        mut held = selected.clone()
         if held.generation > 0 and held.index != "" and held.pin is None:
             held.pin = Some(Rc.new(lease(held)?))
         return Ok(held)
@@ -668,14 +668,14 @@ pub def begin_compared(view: Snapshot) -> Transaction:
 
 pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
     """`transaction` with a value written under `key`, valid only while `expect` holds at commit."""
-    mut next = transaction
+    mut next = transaction.clone()
     stage_put(next, key, value, expect)
     return next
 
 
 pub def delete(transaction: Transaction, key: str) -> Transaction:
     """`transaction` with a tombstone written under `key`."""
-    mut next = transaction
+    mut next = transaction.clone()
     stage_delete(next, key)
     return next
 
@@ -797,7 +797,7 @@ def publish_group(transactions: list[Transaction], execution_view: str) -> Resul
     sync_pages(root)?
     record_work(Operation.StorePagesStage, pages.value, installing)
     publication_boundary("pages-installed")
-    mut views = latest.views
+    mut views = latest.views.clone()
     for name in sorted([view for view in staged_roots.keys()]):
         views = with_view(views, name, installed_reference(staged_roots[name], pack))
     # 3. One switch is the only visibility and durability boundary for the entire request.
@@ -1035,7 +1035,7 @@ pub def claim(root: Path, key: str) -> Result[LockGuard, StoreError]:
 
 def pinned_publication(view: Snapshot, name: str) -> Result[Publication, StoreError]:
     """Acquire a selected generation's lease before its acknowledgment; an unpinned commit retains its selected view."""
-    mut selected = view
+    mut selected = view.clone()
     if name == "":
         if selected.pin is None:
             selected.pin = Some(Rc.new(lease(selected)?))

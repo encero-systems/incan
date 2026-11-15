@@ -120,7 +120,7 @@ pub def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None,
 
 def drop_loop_local_owners(mut builder: Builder, span: SourceSpan) -> None:
     """Release only the exited iteration's local storage, retaining its result and all surviving enclosing owners."""
-    incoming = builder.loop_owners[-1]
+    incoming = builder.loop_owners[-1].clone()
     retained = builder.owned
     for index in range(len(retained)):
         owner = retained[len(retained) - index - 1]
@@ -135,7 +135,7 @@ def loop_local_owner(mut builder: Builder, local: int) -> bool:
         scope = builder.scoped_locals[slot][1]
         if index != local:
             continue
-        mut current = scope
+        mut current = scope.clone()
         for _ in range(len(builder.scope_parents) + 1):
             if current == builder.loop_scopes[-1]:
                 return true
@@ -335,7 +335,7 @@ def race_callback(
 
 def scope_within(mut builder: Builder, scope: int, root: int) -> bool:
     """Use retained lexical ancestry to distinguish callback locals from unretained enclosing captures."""
-    mut current = scope
+    mut current = scope.clone()
     for _ in range(len(builder.scope_parents) + 1):
         if current == root:
             return true
@@ -427,7 +427,7 @@ def view_return_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Borrow a returned view's source place with the view's access; the checker proved the place is the declared one."""
-    access = builder.returned_view
+    access = builder.returned_view.clone()
     return view_operand(builder, operand, return_type, access, span)
 
 
@@ -518,8 +518,8 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
         builder.finish(TerminatorKind.Goto(header), span)
         return Ok(None)
     drop_loop_local_owners(builder, span)
-    end = builder.current
-    owners = builder.owned
+    end = builder.current.clone()
+    owners = builder.owned.clone()
     builder.loop_exit_blocks[-1].append(end)
     builder.loop_exit_owners[-1].append(owners)
     builder.finish(TerminatorKind.Goto(after), span)
@@ -574,7 +574,7 @@ def lower_if(
     after = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
 
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     mut branch_ends: list[int] = []
     mut branch_owners: list[list[int]] = []
     builder.current = then_index
@@ -634,7 +634,7 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     after = builder.new_block(span)
     builder.finish(TerminatorKind.Goto(header), span)
     builder.current = header
-    incoming = builder.owned
+    incoming = builder.owned.clone()
     builder.loops.append((header, after))
     builder.loop_owners.append(incoming)
     builder.loop_scopes.append(int(body.scope.0))

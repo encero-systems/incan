@@ -173,7 +173,7 @@ pub def check_program(
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
     home = program_home(selected_home)?
-    mut toolchain = home.toolchain
+    mut toolchain = home.toolchain.clone()
     toolchain.console = console
     described = describe(
         Path(epoch.roots[0]),
@@ -245,7 +245,7 @@ def select_bodies(
     """
     reading = body_reading(store, view, ready, inputs)?
     origin = source_origin(ready)
-    mut invalid = reading.invalid
+    mut invalid = reading.invalid.clone()
     if listing_refusals:
         invalid = [
             record.identity
@@ -298,7 +298,7 @@ pub def obtain(
     preparing = begin_work()
 
     home = program_home(selected_home)?
-    mut toolchain = home.toolchain
+    mut toolchain = home.toolchain.clone()
 
     toolchain.console = console
     described = describe(
@@ -321,7 +321,7 @@ pub def obtain(
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
     # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
-    mut native_key = compiled_key
+    mut native_key = compiled_key.clone()
     if listing_refusals:
         native_key = refusal_diagnostic_key(compiled_key)?
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
@@ -379,8 +379,8 @@ pub def obtain(
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
     record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
-    mut request_transaction = projected.transaction
-    mut native = produced.transaction
+    mut request_transaction = projected.transaction.clone()
+    mut native = produced.transaction.clone()
     if not editor:
         request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
         native = None
@@ -477,7 +477,7 @@ def merge_request_transaction(native: Option[Transaction], source: Transaction) 
     match native:
         None => return source
         Some(value) =>
-            mut combined = value
+            mut combined = value.clone()
             combined.writes.extend(source.writes)
             combined.payloads.extend(source.payloads)
             return combined

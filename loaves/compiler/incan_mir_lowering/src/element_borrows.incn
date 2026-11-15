@@ -222,7 +222,7 @@ def projected_field(mut builder: Builder, place: Place, projection: PlaceElem, s
         builder.unions,
         builder.intrinsics,
     )?
-    mut projected = owner
+    mut projected = owner.clone()
     for step in steps:
         projected = appended_field(projected, step, span)?
     return Ok(projected)

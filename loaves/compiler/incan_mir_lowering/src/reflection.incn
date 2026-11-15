@@ -311,7 +311,7 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
             selected = builder.new_block(span)
             missing = builder.new_block(span)
             join = builder.new_block(span)
-            owners = builder.owned
+            owners = builder.owned.clone()
             condition = variant_condition(builder, field, 1, span)
             builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
             builder.current = selected
@@ -323,7 +323,7 @@ def string_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result
             builder.owned = owners
             text = owned_literal(builder, "None", span)
             replace_owned_destination(builder, output, RvalueKind.Use(read_place(text, true, span)), span)
-            retained = builder.owned
+            retained = builder.owned.clone()
             builder.finish(TerminatorKind.Goto(join), span)
             builder.current = join
             builder.owned = retained
@@ -409,7 +409,7 @@ def reflect_value(
         return Err("unsupported Body IR reflection lookup result")
     key = text_argument(builder, arguments, 1, span)?
     join = builder.new_block(span)
-    owners = builder.owned
+    owners = builder.owned.clone()
     for slot in fields:
         mut keys = [str(builder.nominals[owner].fields[slot])]
         if len(builder.nominals[owner].field_aliases) == len(builder.nominals[owner].fields):
@@ -445,7 +445,7 @@ def reflect_value(
             builder.current = no
             builder.owned = owners
     assign_carrier(builder, output, index, 0, [], span)
-    retained = builder.owned
+    retained = builder.owned.clone()
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = join
     builder.owned = retained

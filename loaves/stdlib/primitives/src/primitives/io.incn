@@ -99,7 +99,7 @@ pub class WriteBuffer:
         Growth zero-fills new bytes. Shrinking below the cursor clamps the cursor to the new end.
         """
         position = self.tell()
-        mut target = position
+        mut target = position.clone()
         if let Some(value) = size:
             target = value
         if target < 0:

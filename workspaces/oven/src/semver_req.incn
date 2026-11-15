@@ -285,7 +285,7 @@ pub def requirement_matches(requirement: VersionReq, version: Version) -> bool:
 
 pub def named_version(comparator: Comparator) -> Version:
     """The version a comparator's own components name, a missing minor or patch as zero."""
-    mut parts = comparator.parts
+    mut parts = comparator.parts.clone()
     while len(parts) < 3:
         parts.append("0")
     return Version(major=parts[0], minor=parts[1], patch=parts[2], prerelease=comparator.prerelease, build=[])

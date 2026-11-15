@@ -43,7 +43,7 @@ pub def standalone_crates(
     3. Bind one exact registry artifact per crate.
     """
     # 1. Parsing, including local module discovery, belongs to the compiler.
-    mut parsed = described
+    mut parsed = described.clone()
     if let Some(linked) = asked:
         parsed = linked
     requests = source_requests(parsed, toolchain)?
@@ -84,7 +84,7 @@ pub def bind_published(
     coherent producers without overriding an authored feature request; the compiler enforces the bindings of the
     standard Loaves a checked program actually reaches.
     """
-    mut bound = registry
+    mut bound = registry.clone()
     for entry in bound_entries(bound.units, published_bindings(unit, toolchain, roots)?)?:
         if ("target", entry) not in bound.anchors:
             bound.anchors.append(("target", entry))

@@ -253,7 +253,7 @@ pub def prepare_native(
     and keying it asks the compiler nothing more.
     """
     # 1. Incan and Rust consumers share one activation graph and one artifact per source provider.
-    mut unit = described
+    mut unit = described.clone()
     unit.unattended = unattended or unit.unattended
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         unit = resolve_dependencies(unit, toolchain)?
@@ -287,7 +287,7 @@ pub def prepare_linked(
     3. Keep each such directory once and register a producer vocabulary.
     """
     # 1. Every unit of the toolchain generation names the same index.
-    mut unit = described
+    mut unit = described.clone()
     unit.search_index = Some(search_index(toolchain, registry)?)
     unit.rust_abi = toolchain.rust_abi
     unit = with_toolchain_crates(unit, toolchain)
@@ -359,7 +359,7 @@ def loaf_library(loaf: UnitLoaf) -> Path:
 
 def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> UnitDescription:
     """The unit with the toolchain's native crates bound; a crate that ships an interface also joins its Loaves."""
-    mut unit = described
+    mut unit = described.clone()
     for native in toolchain.externs:
         if native.name not in [item.name for item in unit.externs]:
             unit.externs.append(native)
@@ -378,7 +378,7 @@ def with_declared_libraries(described: UnitDescription, toolchain: Toolchain) ->
     names, which its `rust::` imports may then name. A unit that links them also records the resolved sysroot its
     executables load them from.
     """
-    mut unit = described
+    mut unit = described.clone()
     for library in declared_libraries(unit.toolchain_access, toolchain)?:
         unit = add_extern(unit, library)?
         if library.name not in unit.rust_crates:
@@ -422,7 +422,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     3. Compile the local units the edges reach.
     4. Bind the project's own crate, then the aliases of its local and registry edges.
     """
-    mut unit = unit
+    mut unit = unit.clone()
     # 1. A project with no local source or Rust inputs needs no dependency preparation.
     declared = rust_facet(unit.project_root, false, unit.manifests)?
     if not needs_local_preparation(unit, declared.kind):
@@ -436,7 +436,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         features=unit.active_features,
         defaults=false,
     )
-    mut facets = unit.facets
+    mut facets = unit.facets.clone()
     if len(facets) == 0:
         facets = local_facets(demand, configuration, {}, unit.manifests)?
     registry = registry_for_unit(unit, facets, toolchain)?
@@ -464,7 +464,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     built = build_dependencies(request, facets)?
     # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.
     #    The registry's directories are in the toolchain's search index.
-    mut result = unit
+    mut result = unit.clone()
     for key in sorted([key for key in built.keys()]):
         result.search = result.search + [built[key].directory] + built[key].search
     result.loaves = rebase_loaves(result.loaves, incan_artifacts(built))
@@ -480,7 +480,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
 
 def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> UnitDescription:
     """Mark dependencies unavailable after the trust cut while retaining their source binding descriptions."""
-    mut ready = unit
+    mut ready = unit.clone()
     mut not_prepared = [item.loaf for item in missing]
     for loaf in ready.loaves:
         if not loaf.is_dependency():
@@ -540,7 +540,7 @@ def bind_edges(
     registry: RegistryUnits,
 ) -> Result[UnitDescription, str]:
     """Bind the alias of each local and registry edge of the unit's own facet to the library built for it."""
-    mut result = unit
+    mut result = unit.clone()
     for binding in facet_bindings(facet, built, registry)?:
         result = add_extern(result, binding)?
     return Ok(result)
@@ -567,7 +567,7 @@ pub def add_extern(unit: UnitDescription, native: NativeCrate) -> Result[UnitDes
             if not same_native_artifact(current.path, native.path)?:
                 return Err(f"Rust crate `{native.name}` names conflicting artifacts: {current.path} and {native.path}")
             return Ok(unit)
-    mut result = unit
+    mut result = unit.clone()
     result.externs.append(native)
     return Ok(result)
 
@@ -594,7 +594,7 @@ def expose_macro_crates(
     unit's direct externs. A Loaf that exports such a macro lists them in its native closure; the toolchain's own
     crates, named by `toolchain_crates`, are already bound for every unit and stay as they are.
     """
-    mut result = unit
+    mut result = unit.clone()
     match document.get("macro_externs"):
         None => return Ok(result)
         Some(listed) =>

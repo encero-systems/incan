@@ -112,7 +112,7 @@ pub def scalar(value: int, width: int) -> bytes:
 
 pub def wide(value: u64, width: int) -> bytes:
     """Encode a fixed-width scalar without native memory-layout casts."""
-    mut remaining = value
+    mut remaining = value.clone()
     mut result: list[u8] = []
     for _index in range(width):
         byte: u8 = (remaining & 255u64).wrapping_resize()

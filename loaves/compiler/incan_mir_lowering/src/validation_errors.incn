@@ -52,7 +52,7 @@ pub def lower_validation_error(
 
 pub def validation_error_reference(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
     """Borrow an owned native validation error or preserve its existing shared reference without cloning its payload."""
-    mut reference = source
+    mut reference = source.clone()
     if place_type(builder.locals, source) == PlanType.ValidationError:
         reference = temporary(builder, PlanType.ValidationErrorRef, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
