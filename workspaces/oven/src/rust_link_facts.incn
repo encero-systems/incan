@@ -1,0 +1,241 @@
+"""
+A build fact's link work (RFC 119 rule 6): the C objects a crate's build script compiled, compiled again by the
+declared compiler and archived into the declared static library the unit links.
+
+A link record names its compiler by owner, owner-relative path and digest. The owner is found among the link owners
+(`INCAN_OVEN_LINK_OWNERS`, a `:`-separated list of directories, the Command Line Tools on macOS): the first under which
+the compiler's bytes have the recorded digest. Each declared source is verified by its digest before anything runs.
+The objects compile from the Loaf, with the declared arguments, and are archived in their declared order into a
+directory of the Loaf named by the recipe's digest, so the unit's identity follows the recipe.
+"""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.hash import sha256
+from std.toml import TomlValue
+from clove_units import static_archive
+from files import make_directory
+from observation import file_digest
+from toml_fields import optional_string, required_string
+
+# Where the products of a Loaf's link records go, inside the Loaf, so paths into them are Loaf-relative.
+const PRODUCTS: str = ".oven-link"
+
+
+pub model LinkArgument:
+    """One argument of an object's compile: a literal, an owner-relative path, a declared input or the object."""
+
+    pub kind: str
+    pub value: str
+
+
+pub model LinkSource:
+    """One declared source: a file, or a tree of member files, with its Loaf-relative path and digests."""
+
+    pub name: str
+    pub kind: str
+    pub path: str
+    pub digest: str
+    pub members: list[Tuple[str, str]] = []
+
+
+pub model LinkObject:
+    """One object the compiler writes, and the arguments it is compiled with."""
+
+    pub name: str
+    pub arguments: list[LinkArgument]
+
+
+pub model LinkFact:
+    """One `[[rust.facts.link]]` record: its compiler, sources, objects and static library."""
+
+    pub name: str
+    pub library: str
+    pub executable: str
+    pub owner: str
+    pub digest: str
+    pub sources: list[LinkSource]
+    pub objects: list[LinkObject]
+
+    pub def recipe(self) -> str:
+        """The digest of everything the archive is made from, which names its directory."""
+        mut parts = [self.name, self.library, self.executable, self.owner, self.digest]
+        for source in self.sources:
+            parts.append(f"source {source.name} {source.kind} {source.path} {source.digest}")
+            for path, digest in source.members:
+                parts.append(f"member {path} {digest}")
+        for object in self.objects:
+            parts.append(f"object {object.name}")
+            for argument in object.arguments:
+                parts.append(f"{argument.kind} {argument.value}")
+        return hexlify(sha256.digest("\n".join(parts).encode("utf-8")))
+
+
+pub def link_owners() -> list[str]:
+    """The link owner directories this process may resolve a link record's compiler under."""
+    return [owner for owner in get_or("INCAN_OVEN_LINK_OWNERS", "").split(":") if owner != ""]
+
+
+pub def read_links(table: Dict[str, TomlValue]) -> Result[list[LinkFact], str]:
+    """The `link` records of one build fact; only static libraries are accepted."""
+    if "link" not in table:
+        return Ok([])
+    mut links: list[LinkFact] = []
+    for record in table["link"].as_array().map_err((error) => f"rust.facts.link: {error.message()}")?:
+        fields = record.as_table().map_err((error) => f"rust.facts.link: {error.message()}")?
+        kind = required_string(record, "library.kind")?
+        if kind != "static":
+            reason = f"library kind `{kind}` is not supported; a link record builds a static library"
+            return Err(f"rust.facts.link: {reason}")
+        mut sources: list[LinkSource] = []
+        for source in fields["sources"].as_array().map_err((error) => f"rust.facts.link.sources: {error.message()}")?:
+            sources.append(read_source(source)?)
+        mut objects: list[LinkObject] = []
+        for object in fields["objects"].as_array().map_err((error) => f"rust.facts.link.objects: {error.message()}")?:
+            objects.append(read_object(object)?)
+        links.append(
+            LinkFact(
+                name=required_string(record, "name")?,
+                library=required_string(record, "library.name")?,
+                executable=required_string(record, "executable.path")?,
+                owner=required_string(record, "executable.owner")?,
+                digest=required_string(record, "executable.digest")?,
+                sources=sources,
+                objects=objects,
+            ),
+        )
+    return Ok(links)
+
+
+def read_source(record: TomlValue) -> Result[LinkSource, str]:
+    """One declared source with its digest, and a tree's member digests."""
+    table = record.as_table().map_err((error) => f"rust.facts.link.sources: {error.message()}")?
+    mut members: list[Tuple[str, str]] = []
+    if "members" in table:
+        for member in table["members"].as_array().map_err((error) => f"members: {error.message()}")?:
+            members.append((required_string(member, "path")?, required_string(member, "digest")?))
+    return Ok(
+        LinkSource(
+            name=required_string(record, "name")?,
+            kind=required_string(record, "kind")?,
+            path=required_string(record, "path")?,
+            digest=required_string(record, "digest")?,
+            members=members,
+        ),
+    )
+
+
+def read_object(record: TomlValue) -> Result[LinkObject, str]:
+    """One object and its arguments, each exactly one of `literal`, `owner`, `input` or `output`."""
+    table = record.as_table().map_err((error) => f"rust.facts.link.objects: {error.message()}")?
+    mut arguments: list[LinkArgument] = []
+    for argument in table["arguments"].as_array().map_err((error) => f"arguments: {error.message()}")?:
+        mut found: list[LinkArgument] = []
+        for kind in ["literal", "owner", "input", "output"]:
+            match optional_string(argument, kind)?:
+                Some(value) => found.append(LinkArgument(kind=kind, value=value))
+                None => pass
+        if len(found) != 1:
+            return Err("rust.facts.link: an object argument is exactly one of literal, owner, input or output")
+        arguments.append(found[0])
+    return Ok(LinkObject(name=required_string(record, "name")?, arguments=arguments))
+
+
+pub def link_arguments(unit: str, project: str, links: list[LinkFact], owners: list[str]) -> Result[list[str], str]:
+    """
+    The arguments that link each record's static library, building any whose recipe has no archive yet.
+
+    1. Find the compiler under a link owner and verify every declared source.
+    2. Compile and archive into the recipe's directory, unless it already holds the archive.
+    3. Link the library from that directory.
+    """
+    mut arguments: list[str] = []
+    for link in links:
+        # 1. Nothing runs before the compiler and the sources are the recorded bytes.
+        root = owner_root(unit, link, owners)?
+        verify_sources(unit, project, link)?
+        # 2. A recipe's archive is built once; its directory name is the recipe's digest.
+        products = Path(project).joinpath(PRODUCTS).joinpath(f"{link.name}-{link.recipe()[:16]}")
+        if not products.joinpath(f"lib{link.library}.a").is_file():
+            build_archive(unit, project, link, root, products)?
+        # 3. The unit links the library by name from the recipe's directory.
+        arguments = arguments + ["-L", f"native={products.0}", "-l", f"static={link.library}"]
+    return Ok(arguments)
+
+
+def owner_root(unit: str, link: LinkFact, owners: list[str]) -> Result[str, str]:
+    """The first link owner under which the record's compiler has the recorded digest."""
+    mut seen: list[str] = []
+    for owner in owners:
+        compiler = Path(owner).joinpath(link.executable)
+        if not compiler.is_file():
+            continue
+        actual = "sha256:" + file_digest(compiler)?
+        if actual == link.digest:
+            return Ok(owner)
+        seen.append(f"{compiler.0} has digest {actual}")
+    if len(seen) > 0:
+        return Err(f"{unit}: link `{link.name}` needs {link.executable} with digest {link.digest}; {"; ".join(seen)}")
+    return Err(f"{unit}: link `{link.name}` needs owner {link.owner} ({link.executable}), which no link owner holds")
+
+
+def verify_sources(unit: str, project: str, link: LinkFact) -> Result[None, str]:
+    """Every declared source file, and every member of a declared tree, has its recorded digest."""
+    for source in link.sources:
+        mut files: list[Tuple[str, str]] = [(source.path, source.digest)]
+        if source.kind == "tree":
+            files = [(f"{source.path}/{path}", digest) for path, digest in source.members]
+        for path, digest in files:
+            actual = "sha256:" + file_digest(Path(project).joinpath(path))?
+            if actual != digest:
+                return Err(f"{unit}: link `{link.name}` source {path} has digest {actual}; its record names {digest}")
+    return Ok(None)
+
+
+def build_archive(unit: str, project: str, link: LinkFact, root: str, products: Path) -> Result[None, str]:
+    """Compile each object from the Loaf with its declared arguments, then archive them in their declared order."""
+    building = Path(products.0 + ".building")
+    if building.exists():
+        building.remove_tree().map_err((error) => f"cannot remove {building.0}: {error.message()}")?
+    make_directory(building)?
+    relative = building.0[len(project) + 1:]
+    mut paths: Dict[str, str] = {}
+    for source in link.sources:
+        paths[source.name] = source.path
+    mut objects: list[str] = []
+    for object in link.objects:
+        mut command = Command.new(Path(root).joinpath(link.executable).0)
+        command.current_dir(project)
+        for argument in object.arguments:
+            command.arg(link_argument(unit, link, argument, root, paths, relative)?)
+        output = command.output().map_err((error) => f"{unit}: cannot run {link.executable}: {error.to_string()}")?
+        if not output.status.success():
+            detail = RustString.from_utf8_lossy(output.stderr).into_owned()
+            return Err(f"{unit}: link `{link.name}` object {object.name} did not compile: {detail}")
+        objects.append(building.joinpath(object.name).0)
+    static_archive(building.joinpath(f"lib{link.library}.a"), objects, project)?
+    _ = building.rename(products).map_err((error) => f"cannot publish {products.0}: {error.message()}")?
+    return Ok(None)
+
+
+def link_argument(
+    unit: str,
+    link: LinkFact,
+    argument: LinkArgument,
+    root: str,
+    paths: Dict[str, str],
+    relative: str,
+) -> Result[str, str]:
+    """One compile argument: owner paths under the owner, inputs and outputs relative to the Loaf."""
+    if argument.kind == "literal":
+        return Ok(argument.value)
+    if argument.kind == "owner":
+        return Ok(Path(root).joinpath(argument.value).0)
+    if argument.kind == "output":
+        return Ok(f"{relative}/{argument.value}")
+    if argument.value not in paths:
+        return Err(f"{unit}: link `{link.name}` names input `{argument.value}`, which it declares no source for")
+    return Ok(paths[argument.value])

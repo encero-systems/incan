@@ -51,6 +51,7 @@ from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, forget_view, library_directory
 from rust_registry import selected_registry
+from rust_link_facts import link_owners
 from rust_manifest import RustFacet, package_environment, rust_facet, unit_environment, unit_fact_arguments
 from rust_build import (
     BuiltUnit,
@@ -808,7 +809,8 @@ pub def library_compile_arguments(
     profile = selected_producer_profile(request.profile, producer_profile)
     unit = artifact_context(facet, declared, profile)?
     dependencies = directory.joinpath("library.d")
-    arguments = library_arguments(declared) + unit_fact_arguments(declared, request.rustc, profile, facet.features)?
+    facts = unit_fact_arguments(declared, request.rustc, profile, facet.features, link_owners())?
+    arguments = library_arguments(declared) + facts
     mut metadata = "metadata=incan-unit"
     if iteration:
         context = fingerprint([unit, declared.package, declared.version])?
