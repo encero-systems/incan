@@ -9,7 +9,15 @@ from freshness_fixtures import compiler_fingerprint, fixture, unit_key, write
 from observation import file_digest
 from scratch import scratch_directory
 from unit_freshness import fingerprint
-from unit_publication import LOAF_FACTS_SCHEMA, facts_path, import_publication, record_path, record_payload
+from unit_publication import (
+    LOAF_FACTS_SCHEMA,
+    admitted_identity,
+    facts_path,
+    import_publication,
+    published_identity,
+    record_path,
+    record_payload,
+)
 
 
 pub def test_a_compiler_record_pin_leaves_unit_identities_alone() -> Result[None, str]:
@@ -65,4 +73,15 @@ pub def test_a_transported_loaf_keys_its_consumers_as_where_it_was_built() -> Re
     # 3. The installed Loaf keys its consumers as the built one did.
     assert unit_key(setup.unit, setup.toolchain)?.digest == built_program, "the installed Loaf rekeyed the program"
     assert unit_key(library, setup.toolchain)?.digest == built_library, "the installed Loaf rekeyed a library"
+    return Ok(None)
+
+
+pub def test_a_directory_named_like_a_registry_entry_gives_its_artifacts_no_identity() -> Result[None, str]:
+    """A registry-looking path outside every store in the selected toolchain closure proves no producer identity."""
+    scratch = scratch_directory()?
+    entry = "sha256-abababababababababababababababababababababababababababababababab"
+    forged = scratch.path().joinpath("vendor/entries").joinpath(entry).joinpath("artifacts/libserde.rlib")
+    write(forged, "bytes no registry unit produced")?
+    assert admitted_identity(forged)?.is_none(), "a directory name alone admitted an artifact"
+    assert published_identity(forged).is_err(), "a directory name alone named an artifact's producer"
     return Ok(None)
