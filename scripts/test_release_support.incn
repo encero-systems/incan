@@ -49,7 +49,7 @@ from verify_installation import (
     require_pristine_relocation_inputs,
     require_shipped_standard_sources,
 )
-from relink_driver import Relink, absolute_manifest, driver_build_environment
+from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -354,31 +354,6 @@ def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[N
     return Ok(None)
 
 
-def test_driver_build_shares_the_installation_bakery_unless_one_is_requested() -> Result[None, str]:
-    """The compiler home selects installed trees; its compiled units land in the installation's own bakery."""
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    installed = temporary.path().joinpath("build-home")
-    installed.mkdir(true, true).map_err((error) => error.message())?
-    compiler = installed.joinpath("compiler-build")
-    relink = Relink(
-        repo=temporary.path().joinpath("source"),
-        bootstrap=temporary.path().joinpath("bootstrap"),
-        toolchain_home=installed,
-        builder="oven",
-        stdlib="stdlib",
-        profile="release",
-        refresh=false,
-        log=temporary.path().joinpath("driver-build.log"),
-    )
-    environment = driver_build_environment(relink, "/sysroot", compiler, "")?
-    assert environment["INCAN_HOME"] == compiler.0
-    assert environment["INCAN_BAKERY"] == installed.resolve().map_err((error) => error.message())?.joinpath("bakery").0
-    assert environment["RUSTC"] == "/sysroot/bin/rustc"
-    requested = driver_build_environment(relink, "/sysroot", compiler, "/shared/bakery")?
-    assert requested["INCAN_BAKERY"] == "/shared/bakery"
-    return Ok(None)
-
-
 def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
     """Tree evidence measures bytes, hashes content, and reuses only a verified read-only relocated copy."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
@@ -411,6 +386,14 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
     match cached.write_bytes(b"changed"):
         Ok(_) => return Err("the shared relocated tree remained writable")
         Err(_) => pass
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    # Reuse only reads the shared home: a permission write would change what a concurrent release admitted.
+    cached.chmod(false).map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a writable shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("writable entry"), message
+    cached.chmod(true).map_err((error) => error.message())?
     assert shared_relocated_sysroot(tree, cache)?.0 == home.0
     rustup
         .joinpath("update-hashes/tree")

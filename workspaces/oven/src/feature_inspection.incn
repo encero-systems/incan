@@ -1,0 +1,144 @@
+"""
+`oven inspect features [PATH]`: the package features a selection activates, why each is active, and the dependency
+edges they select, the report 0.5.1 printed as `incan inspect features` (RFC 114). It is an operational fact of the
+selected closure, so it is Oven's inspection (RFC 118); `incan inspect features` names it.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from cli_help import render
+from features import FeatureRequest, resolve_features
+from intake import LocalProject, intake
+from unit import project_root_of
+
+pub const FEATURES_USAGE: str = "oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]"
+
+
+pub model FeatureInspection:
+    """One `oven inspect features` invocation."""
+
+    pub path: str = "."
+    pub format: str = "text"
+    pub request: FeatureRequest = FeatureRequest()
+
+
+pub def parse_features(arguments: list[str]) -> Result[FeatureInspection, str]:
+    """Read the PATH, the format and the feature selection, as `run` and `build` select features."""
+    mut selected = FeatureInspection()
+    mut seen_path = false
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--format", "--features"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            if argument == "--format":
+                selected.format = arguments[index + 1]
+            else:
+                for feature in arguments[index + 1].split(","):
+                    if feature.strip() != "":
+                        selected.request.features.append(feature.strip())
+            index += 2
+            continue
+        if argument == "--no-default-features":
+            selected.request.default_features = false
+        elif argument == "--all-features":
+            selected.request.all_features = true
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        elif seen_path:
+            return Err(f"unexpected argument `{argument}`")
+        else:
+            selected.path = argument
+            seen_path = true
+        index += 1
+    if selected.format != "text" and selected.format != "json":
+        return Err(f"`--format` is text or json, got `{selected.format}`")
+    return Ok(selected)
+
+
+pub def inspect_features(selected: FeatureInspection) -> Result[i32, str]:
+    """Resolve the selection's closure and print each reached package's active features and why."""
+    root = selected_root(selected.path)?
+    graph = intake(root).map_err((error) => error.message())?
+    canonical = root.resolve().map_err((error) => f"{root.0}: {error.message()}")?
+    active = resolve_features(graph, canonical.0, selected.request)?
+    mut packages: list[JsonValue] = []
+    mut lines: list[str] = []
+    for project in graph.projects:
+        if project.root not in active.reached:
+            continue
+        features = sorted(active.active[project.root])
+        lines.append(f"Package {project.intent.name}: {", ".join(features)}")
+        packages.append(package_document(project, features, selected.request, project.root == canonical.0))
+    if selected.format == "json":
+        edges = [JsonValue.object(
+            {"requester": JsonValue.string(name_of(graph.projects, edge.requester_root)), "alias": JsonValue.string(
+                edge.alias,
+            ), "dependency": JsonValue.string(name_of(graph.projects, edge.dependency_root))},
+        ) for edge in active.edges]
+        document = JsonValue.object(
+            {"schema_version": JsonValue.int(1), "packages": JsonValue.array(packages), "edges": JsonValue.array(edges)},
+        )
+        println(document.to_pretty_json().map_err((error) => error.message())?)
+        return Ok(0)
+    for edge in active.edges:
+        requester = name_of(graph.projects, edge.requester_root)
+        lines.append(f"Edge {requester} -> {name_of(graph.projects, edge.dependency_root)} (as {edge.alias})")
+    println("\n".join(lines))
+    return Ok(0)
+
+
+def selected_root(path: str) -> Result[Path, str]:
+    """The project PATH names: a project directory, or the project a source file belongs to."""
+    absolute = Path(path).absolute().map_err((error) => f"cannot resolve {path}: {error.message()}")?
+    mut probe = absolute.joinpath("loaf.toml")
+    if not absolute.is_dir():
+        probe = absolute
+    match project_root_of(probe):
+        Some(root) => return Ok(root)
+        None => return Err(f"no loaf.toml at or above {path}")
+
+
+def name_of(projects: list[LocalProject], root: str) -> str:
+    """A reached project's package name."""
+    for project in projects:
+        if project.root == root:
+            return project.intent.name
+    return root
+
+
+def package_document(project: LocalProject, active: list[str], request: FeatureRequest, is_root: bool) -> JsonValue:
+    """One package: its active features and why each is active."""
+    mut reasons: Dict[str, JsonValue] = {}
+    for feature in active:
+        mut why: list[JsonValue] = []
+        if is_root and feature == "default" and request.default_features:
+            why.append(JsonValue.object({"kind": JsonValue.string("default")}))
+        if is_root and (feature in request.features or request.all_features):
+            why.append(JsonValue.object({"kind": JsonValue.string("requested")}))
+        for name in sorted([name for name in project.intent.features.keys()]):
+            if name in active and feature in project.intent.features[name].includes:
+                why.append(JsonValue.object({"kind": JsonValue.string("included_by"), "source": JsonValue.string(name)}))
+        if len(why) == 0:
+            why.append(JsonValue.object({"kind": JsonValue.string("requested_by_dependent")}))
+        reasons[feature] = JsonValue.array(why)
+    return JsonValue.object(
+        {"package": JsonValue.string(project.intent.name), "project_root": JsonValue.string(project.root), "active_features": JsonValue.array(
+            [JsonValue.string(name) for name in active],
+        ), "reasons": JsonValue.object(reasons)},
+    )
+
+
+pub def features_help() -> str:
+    """`oven inspect features --help`."""
+    return render(
+        FEATURES_USAGE,
+        [
+            "  --format text|json     Report format (default text).",
+            "  --features A,B         Add public root-package features.",
+            "  --no-default-features  Disable the root package's default feature.",
+            "  --all-features         Select every declared root-package feature.",
+        ],
+        "oven inspect features . --features extra --format json",
+    )

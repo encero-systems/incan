@@ -1,0 +1,210 @@
+"""
+`oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]`: what a build for one target links for C
+interop, read from the project's and its path dependencies' manifests: Cloves with their configurations, the declared
+static archives in link order with their identities, binding relations and checked headers.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from c_facet import configuration_names, resolve_configuration
+from c_interop import host_triple, linked_artifacts
+from files import json_text, read
+from json_fields import required_items, required_text, string_value
+from intake import LocalProject, intake
+from unit import discovered_project
+
+
+pub model PlanOptions:
+    """The selected project, target and output format."""
+
+    pub path: str = "."
+    pub target: str = ""
+    pub format: str = "text"
+
+
+pub def plan_options(arguments: list[str]) -> Result[PlanOptions, str]:
+    """Read `--target TRIPLE`, `--format text|json` and one optional path."""
+    mut options = PlanOptions(target=host_triple())
+    mut index = 0
+    mut path_given = false
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--target", "--format"]:
+            if index + 1 >= len(arguments):
+                return Err(f"{argument} requires a value")
+            if argument == "--target":
+                options.target = arguments[index + 1]
+            else:
+                options.format = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("-") or path_given:
+            return Err(f"unexpected argument `{argument}`")
+        options.path = argument
+        path_given = true
+        index += 1
+    if options.format not in ["text", "json"]:
+        return Err(f"--format accepts text or json, not `{options.format}`")
+    return Ok(options)
+
+
+pub def inspect_interop_plan(options: PlanOptions) -> Result[i32, str]:
+    """Print the interop plan of the project at or above the path for the selected target."""
+    selected = Path(options.path)
+    mut root = selected
+    if not selected.joinpath("loaf.toml").is_file():
+        match discovered_project(selected.joinpath("loaf.toml"))?:
+            Some(found) => root = found
+            None => return Err(f"{options.path}: no owning loaf.toml")
+    graph = intake(root).map_err((error) => error.message())?
+    mut plans: list[JsonValue] = []
+    for project in graph.projects:
+        plans.append(project_plan(project, options.target)?)
+    plan = JsonValue.object(
+        {"schema": JsonValue.string("incan.interop-plan/1"), "target": JsonValue.string(options.target), "projects": JsonValue.array(
+            plans,
+        )},
+    )
+    if options.format == "json":
+        println(json_text(plan)?)
+    else:
+        println(plan_text(plan)?)
+    return Ok(0)
+
+
+def texts(values: list[str]) -> JsonValue:
+    """Strings as a JSON array."""
+    return JsonValue.array([JsonValue.string(value) for value in values])
+
+
+def project_plan(project: LocalProject, target: str) -> Result[JsonValue, str]:
+    """One project's Clove, archives, binding relations and headers for `target`."""
+    mut fields: Dict[str, JsonValue] = {"name": JsonValue.string(project.intent.name)}
+    if let Some(facet) = project.intent.c_facet:
+        mut configurations: list[JsonValue] = []
+        for name in configuration_names(facet):
+            resolved = resolve_configuration(facet, name)?
+            definitions = [f"{key}={resolved.defines[key]}" for key in sorted([key for key in resolved.defines.keys()])]
+            stamp = Path(project.root).joinpath(f"target/incan/cloves/{project.intent.name.replace("/", "_")}/{name}")
+            configurations.append(
+                JsonValue.object(
+                    {"name": JsonValue.string(name), "definitions": texts(definitions), "built": texts(
+                        built_profiles(stamp)?,
+                    )},
+                ),
+            )
+        fields["clove"] = JsonValue.object(
+            {"library": JsonValue.string(facet.library), "public_headers": texts(facet.public_headers), "configurations": JsonValue.array(
+                configurations,
+            )},
+        )
+    mut archives: list[JsonValue] = []
+    mut relations: list[JsonValue] = []
+    mut headers: list[str] = []
+    for entry in project.intent.c_targets:
+        if entry.target != target:
+            continue
+        headers = headers + entry.headers
+        for artifact in linked_artifacts(entry):
+            path = Path(project.root).joinpath(artifact.path)
+            mut identity = "missing"
+            if path.is_file():
+                raw = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+                identity = "sha256:" + hexlify(sha256.digest(raw))
+            mut archive = {"name": JsonValue.string(artifact.name), "path": JsonValue.string(artifact.path), "link_name": JsonValue.string(
+                artifact.link_name,
+            ), "dependencies": texts(artifact.dependencies), "identity": JsonValue.string(identity)}
+            if let Some(origin) = artifact.origin:
+                archive["origin"] = JsonValue.object(
+                    {"source": JsonValue.string(origin.source), "revision": JsonValue.string(origin.revision), "license": JsonValue.string(
+                        origin.license,
+                    )},
+                )
+            archives.append(JsonValue.object(archive))
+        for binding in entry.bindings:
+            relations.append(
+                JsonValue.object(
+                    {"module": texts(binding.module), "name": JsonValue.string(binding.name), "artifacts": texts(
+                        binding.artifacts,
+                    )},
+                ),
+            )
+    fields["static_archives"] = JsonValue.array(archives)
+    fields["bindings"] = JsonValue.array(relations)
+    fields["headers"] = texts(headers)
+    return Ok(JsonValue.object(fields))
+
+
+def built_profiles(directory: Path) -> Result[list[str], str]:
+    """The profiles a configuration's archive was compiled for, with their unit identities, from the build stamps."""
+    if not directory.is_dir():
+        return Ok([])
+    mut built: list[str] = []
+    for profile in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        stamp = profile.joinpath(".oven-clove-inputs")
+        if stamp.is_file():
+            identity = read(stamp)?.split("\n")[0]
+            built.append(f"{profile.name()} {identity}")
+    return Ok(sorted(built))
+
+
+def plan_text(plan: JsonValue) -> Result[str, str]:
+    """The plan for a terminal: one line per fact, without identities."""
+    mut lines = [f"target {field_text(plan, "target")?}"]
+    for project in field_items(plan, "projects")?:
+        lines.extend(project_lines(project)?)
+    return Ok("\n".join(lines))
+
+
+def field_text(value: JsonValue, key: str) -> Result[str, str]:
+    """One string field."""
+    return required_text(value, key)
+
+
+def field_texts(value: JsonValue, key: str) -> Result[list[str], str]:
+    """One string-array field."""
+    mut items: list[str] = []
+    for item in required_items(value, key)?:
+        items.append(string_value(item)?)
+    return Ok(items)
+
+
+def field_items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """One array field."""
+    return required_items(value, key)
+
+
+def project_lines(project: JsonValue) -> Result[list[str], str]:
+    """One project's facts, indented under its name."""
+    mut lines = [f"project {field_text(project, "name")?}"]
+    if let Some(clove) = project.get("clove"):
+        lines.append(
+            f"  clove library {field_text(clove, "library")?}: public headers {", ".join(
+                field_texts(clove, "public_headers")?,
+            )}",
+        )
+        for configuration in field_items(clove, "configurations")?:
+            definitions = field_texts(configuration, "definitions")?
+            mut line = f"    configuration {field_text(configuration, "name")?}:"
+            if len(definitions) > 0:
+                line = line + " " + " ".join(definitions)
+            lines.append(line)
+    for archive in field_items(project, "static_archives")?:
+        mut line = f"  static archive {field_text(archive, "name")?}: {field_text(archive, "path")?} (links as {field_text(
+            archive,
+            "link_name",
+        )?})"
+        dependencies = field_texts(archive, "dependencies")?
+        if len(dependencies) > 0:
+            line = line + f", before {", ".join(dependencies)}"
+        lines.append(line)
+    for binding in field_items(project, "bindings")?:
+        module = ".".join(field_texts(binding, "module")?)
+        lines.append(
+            f"  binding {module}.{field_text(binding, "name")?}: {", ".join(field_texts(binding, "artifacts")?)}",
+        )
+    for header in field_texts(project, "headers")?:
+        lines.append(f"  header {header}")
+    return Ok(lines)

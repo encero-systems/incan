@@ -1,0 +1,16 @@
+# behavior: `oven inspect interop-plan --target TRIPLE` prints, without building, what a build for that target links for C interop: the Clove and its configurations, the declared static archives in link order, binding relations and checked headers (#3137)
+# cli-commands:
+#   oven inspect interop-plan --target x86_64-unknown-linux-gnu
+# expect-stdout:
+#   target x86_64-unknown-linux-gnu
+#   project interop_plan
+#     clove library shim: public headers include/shim.h
+#       configuration default: SHIM_VALUE=1
+#       configuration wide: SHIM_VALUE=1 SHIM_WIDE=1
+#     static archive bridge: interop/lib/libbridge.a (links as bridge), before helper
+#     static archive helper: interop/lib/libhelper.a (links as helper)
+#     binding main.Bridge: bridge
+#     header interop/include/bridge.h
+
+def main() -> None:
+    println("not run")

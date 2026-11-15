@@ -12,6 +12,8 @@ from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess,
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from c_facet import CFacet, parse_c_facet
+from semver_req import parse_requirement
+from c_interop import CInteropTarget, parse_c_targets
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
@@ -26,6 +28,18 @@ const ROOT_TABLES: FrozenList[str] = [
     "interop",
     "c",
     "envs",
+    "workspace",
+]
+# The keys of `[envs.NAME]` (RFC 073, RFC 117).
+const ENVIRONMENT_KEYS: FrozenList[str] = [
+    "dependencies",
+    "extends",
+    "requires-incan",
+    "cwd",
+    "env-vars",
+    "scripts",
+    "detached",
+    "description",
 ]
 # The keys of `[project]`.
 const PROJECT_KEYS: FrozenList[str] = [
@@ -126,6 +140,8 @@ pub model ProjectIntent:
     pub c_headers: list[str] = []
     # The `[c]` facet, when the Loaf is a Clove (RFC 159).
     pub c_facet: Option[CFacet] = None
+    # Every `[[interop.c.targets]]` entry: headers, package-owned static archives and binding relations.
+    pub c_targets: list[CInteropTarget] = []
     # The Incan module registering this Loaf's vocabulary, project-relative.
     pub vocab_entry: Option[str] = None
     # The rustc-internal access `[build]` declares for the Loaf's Incan units.
@@ -267,7 +283,12 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
                 "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses",
             ),
         )
+    refuse_moved_tables(root, manifest)?
     allowed(root, list(ROOT_TABLES), manifest, [])?
+    validate_workspace(root, manifest)?
+    if "project" not in root and "workspace" in root:
+        detail = "a virtual workspace is not a project: select its members with --workspace or --member"
+        return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, detail))
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
     project = table(root["project"], manifest, ["project"])?
@@ -277,6 +298,8 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
         (error) => refusal(manifest, ["project", "name"], IntakeErrorKind.Invalid, error),
     )?
     version = required(project, "version", manifest, ["project", "version"])?
+    if "requires-incan" in project:
+        requirement(project["requires-incan"], manifest, ["project", "requires-incan"])?
     mut registry_id: Option[str] = None
     if "registry-id" in project:
         declared_registry = required(project, "registry-id", manifest, ["project", "registry-id"])?
@@ -339,10 +362,41 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
             c_facet=parse_c_facet(root, manifest)?,
+            c_targets=parse_c_targets(root, manifest)?,
             vocab_entry=parse_vocab_entry(root, manifest)?,
             toolchain_access=access,
         ),
     )
+
+
+def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """A `[workspace]` table lists member directories; membership is read by workspace selection, not by a unit."""
+    if "workspace" not in root:
+        return Ok(None)
+    workspace = table(root["workspace"], manifest, ["workspace"])?
+    allowed(workspace, ["members", "default-members", "exclude"], manifest, ["workspace"])?
+    for key in ["members", "default-members", "exclude"]:
+        if key in workspace:
+            entries = workspace[key]
+                .as_array()
+                .map_err((error) => refusal(manifest, ["workspace", key], IntakeErrorKind.Invalid, error.message()))?
+            for entry in entries:
+                text(entry, manifest, ["workspace", key])?
+    return Ok(None)
+
+
+def requirement(value: TomlValue, manifest: str, field: list[str]) -> Result[None, IntakeError]:
+    """A `requires-incan` is a version requirement (RFC 073); anything else makes the manifest invalid."""
+    declared = text(value, manifest, field)?
+    parse_requirement(declared).map_err(
+        (reason) => refusal(
+            manifest,
+            field,
+            IntakeErrorKind.Invalid,
+            f"`{declared}` is not a version requirement: {reason}",
+        ),
+    )?
+    return Ok(None)
 
 
 def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
@@ -363,9 +417,12 @@ def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[N
             )?
             detail = f"use [envs.{name}.dependencies] {replacement}"
             return Err(refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail))
-        allowed(environment, ["dependencies"], manifest, ["envs", name])?
-        for group in sorted([group for group in environment.keys()]):
-            table(environment[group], manifest, ["envs", name, group])?
+        allowed(environment, list(ENVIRONMENT_KEYS), manifest, ["envs", name])?
+        for group in ["dependencies", "env-vars", "scripts"]:
+            if group in environment:
+                table(environment[group], manifest, ["envs", name, group])?
+        if "requires-incan" in environment:
+            requirement(environment["requires-incan"], manifest, ["envs", name, "requires-incan"])?
     return Ok(None)
 
 
@@ -486,7 +543,30 @@ def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: l
             package = text(entry["crate"], manifest, field + ["crate"])?
         if "version" in entry:
             version = text(entry["version"], manifest, field + ["version"])?
+        if "features" in entry:
+            names = string_list(entry["features"], manifest, field + ["features"])?
+            quoted = ", ".join([f"\"{name}\"" for name in names])
+            return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\", features = [{quoted}] }}")
     return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\" }}")
+
+
+def refuse_moved_tables(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Refuse a 0.5.1 table whose content has another table now, naming that table."""
+    if "rust-dev-dependencies" in root:
+        field = ["rust-dev-dependencies"]
+        entries = table(root["rust-dev-dependencies"], manifest, field)?
+        alias = first_key(entries)
+        mut detail = "use [envs.test.dependencies]"
+        if alias in entries:
+            replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
+            detail = f"use [envs.test.dependencies] {replacement}"
+        return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
+    if "oven" in root:
+        oven = table(root["oven"], manifest, ["oven"])?
+        if "interop" in oven:
+            detail = "[oven.interop] is refused; declare C interop under [interop.c]"
+            return Err(refusal(manifest, ["oven", "interop"], IntakeErrorKind.Unsupported, detail))
+    return Ok(None)
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:

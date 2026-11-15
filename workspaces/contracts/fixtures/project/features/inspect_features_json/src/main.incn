@@ -1,0 +1,15 @@
+# behavior: `oven inspect features --format json` reports the selection's packages, active features and why each is active, as 0.5.1's versioned document did (#3142).
+# cli-commands:
+#   oven inspect features --features extra --format json
+# expect-stdout-contains:
+#   {
+#     "edges": [],
+#         "package": "inspect_features_json",
+#               "kind": "requested"
+#     "schema_version": 1
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose features the case inspects."""
+    pass

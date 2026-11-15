@@ -22,7 +22,7 @@ from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
 from home import StandardPackage
-from incan_units import obtain_executable, program_binary, executable_view, view_executable
+from incan_units import check_unit, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
 from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
 from store_path_conversion import snapshot
@@ -79,6 +79,13 @@ pub model ProgramOutcome:
     pub claim: Option[Rc[LockGuard]] = None
 
 
+pub model CheckOutcome:
+    """One compiler check completion and the console frame containing its text or JSON report."""
+
+    pub code: i32
+    pub console: str
+
+
 model ProgramHome:
     """The request-owned compiler and standard packages used to describe and build one program."""
 
@@ -93,6 +100,39 @@ pub model NativeSelection:
     pub encodings: int = 1
     pub commits: int = 1
     pub transaction: Option[Transaction] = None
+
+
+pub def check_program(
+    store: Path,
+    revision: str,
+    console: str,
+    format: str,
+    captured: Option[BuildEpoch] = None,
+    selected_home: Option[SelectedHome] = None,
+) -> Result[CheckOutcome, str]:
+    """Describe and check one captured build reach without requesting code generation or a native selection."""
+    epoch = request_epoch(store, revision, captured, "check")?
+    if len(epoch.roots) != 1:
+        return Err("unit records require exactly one program root")
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+    toolchain.console = console
+    described = describe(
+        Path(epoch.roots[0]),
+        epoch.selection.profile,
+        FeatureRequest(),
+        selected_toolchain=Some(toolchain),
+        selected_standard=home.standard,
+    )?
+    if (
+        described.kind != "program"
+        or described.vocabulary
+        or len(described.contract_models) > 0
+        or len(described.c_headers) > 0
+    ):
+        return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
+    code = check_unit(described, toolchain, format)?
+    return Ok(CheckOutcome(code=code, console=console))
 
 
 pub def obtain(

@@ -1,6 +1,6 @@
 """Bakery contracts: one bake per identity across projects and processes, views that cost nothing to lose, collection."""
 
-from rust::std::fs import Permissions, remove_dir_all, set_permissions
+from rust::std::fs import Permissions, remove_dir_all, rename, set_permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::process import Command
 from std.fs import Path
@@ -372,6 +372,7 @@ pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[N
         assert bake(store, digest_of(f"{index}a"), f"{index}", [], "dep")?
     assert lookup(store, "dep")? == Some(digest_of("19a"))
     verify_frozen_library_bindings(scratch.path())?
+    verify_moved_library_bindings(scratch.path())?
     verify_equal_payload_identity_change(scratch.path())?
     return Ok(None)
 
@@ -417,6 +418,26 @@ def verify_frozen_library_bindings(root: Path) -> Result[None, str]:
     assert read(original.joinpath("payload"))? == "first library"
     assert read(current.joinpath("payload"))? == "repaired library"
     assert original.joinpath("payload").is_symlink()
+    return Ok(None)
+
+
+def verify_moved_library_bindings(root: Path) -> Result[None, str]:
+    """A library's bindings name their payloads relative to the bakery, so they hold after the bakery moves."""
+    store = root.joinpath("moving-bakery")
+    identity = fingerprint(["moved-library-fixture", root.0])?
+    staged = staging(store, identity)?
+    write(staged.joinpath("payload"), "moved library")?
+    fact = seal(store, identity, staged, "library", identity, [], "test")?
+    target = root.joinpath("target/moved-library")
+    view_directory(store, fact, target)?
+    bound = library_directory(store, target)?
+    assert bound.joinpath("payload").is_symlink()
+    moved = root.joinpath("moved-bakery")
+    rename(store.0, moved.0).map_err((error) => f"{store.0}: {error}")?
+    selected = library_directory(moved, target)?
+    canonical = moved.resolve().map_err((error) => error.message())?
+    assert selected.0.startswith(canonical.0 + "/"), "the library was bound outside the moved bakery"
+    assert read(selected.joinpath("payload"))? == "moved library"
     return Ok(None)
 
 

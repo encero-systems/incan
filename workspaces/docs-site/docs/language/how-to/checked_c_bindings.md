@@ -58,6 +58,24 @@ incan check src/main.incn --format json
 
 A successful check verifies the supported source contract; it does not establish an Android or iOS package. Dev.8 does not accept `--interop-target`, `inspect interop-plan`, interop bake or stage commands.
 
+## Link a package-owned static archive
+
+Declare a prebuilt `lib<name>.a` for the target, and relate the binding to it explicitly:
+
+```toml
+[[interop.c.targets.artifacts]]
+name = "bridge"
+kind = "static"
+path = "interop/lib/libbridge.a"
+
+[[interop.c.targets.bindings]]
+module = ["main"]
+name = "Bridge"
+artifacts = ["bridge"]
+```
+
+The binding names the archive's link name with `link = c.system_library("bridge")`. A build for that target links the archive statically. See [`[interop.c]`](../../tooling/reference/project_configuration.md#interopc) for `dependencies` and `origin`.
+
 ## Build and link your own C
 
 Declare the C library in the same `loaf.toml` with a [`[c]` facet](../../tooling/reference/project_configuration.md#c), which makes the Loaf a Clove:

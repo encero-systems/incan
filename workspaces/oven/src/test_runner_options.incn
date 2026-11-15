@@ -85,7 +85,13 @@ pub def test_selection_expressions_and_seeded_order() -> Result[None, str]:
 
 pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
     """JSON Lines records, the summary, JUnit XML and the slowest durations name each outcome as 0.5.1 did."""
-    passed = Outcome(file="tests/test_a.incn", label="test_a.incn", name="test_one", status=Status.Passed, duration_ms=12)
+    passed = Outcome(
+        file="tests/test_a.incn",
+        label="test_a.incn",
+        name="test_one",
+        status=Status.Passed,
+        duration_ms=12,
+    )
     skipped = Outcome(
         file="tests/test_a.incn",
         label="test_a.incn",
@@ -94,7 +100,13 @@ pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
         reason="later & <soon>",
         markers=["skip"],
     )
-    failed = Outcome(file="tests/test_a.incn", label="test_a.incn", name="test_three", status=Status.Failed, duration_ms=1500)
+    failed = Outcome(
+        file="tests/test_a.incn",
+        label="test_a.incn",
+        name="test_three",
+        status=Status.Failed,
+        duration_ms=1500,
+    )
     assert passed.console_line() == "test_a.incn::test_one PASSED"
     assert skipped.console_line() == "test_a.incn::test_two SKIPPED (later & <soon>)"
     assert json_record(passed)? == "{\"duration_ms\":12,\"file\":\"tests/test_a.incn\",\"markers\":[],\"name\":\"test_one\",\"schema_version\":\"incan.test.v1\",\"status\":\"passed\",\"test_id\":\"test_a.incn::test_one\"}"

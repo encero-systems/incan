@@ -1,0 +1,25 @@
+"""The changed lines `incan fmt --diff` shows, without formatting or reading any file."""
+
+from formatting import line_changes, parse_arguments
+
+
+pub def test_changed_lines_are_numbered_in_their_own_version() -> None:
+    """A replaced line shows as removed then added; inserted and deleted lines carry their own version's number."""
+    assert line_changes(["a", "b", "c"], ["a", "b", "c"]) == []
+    assert line_changes(["def main() -> None:", "    x = [1,2]"], ["def main() -> None:", "    x = [1, 2]"]) == [
+        "-   2 |     x = [1,2]",
+        "+   2 |     x = [1, 2]",
+    ]
+    assert line_changes(["a", "c"], ["a", "b", "c"]) == ["+   2 | b"]
+    assert line_changes(["a", "b", "", "", "c"], ["a", "b", "", "c"]) == ["-   4 | "]
+    assert line_changes([], ["a"]) == ["+   1 | a"]
+
+
+pub def test_diff_and_pathless_formatting_parse() -> Result[None, str]:
+    """`--diff` is a mode of its own, and no PATH formats the current directory, as in 0.5.1."""
+    request = parse_arguments(["--diff"])?
+    assert request.diff and not request.check and request.paths == ["."]
+    assert parse_arguments(["--check", "src", "--", "-odd.incn"])?.paths == ["src", "-odd.incn"]
+    refused: Result[list[str], str] = Err("unknown option `--nonexistent`")
+    assert parse_arguments(["--nonexistent"]).map((selected) => selected.paths) == refused
+    return Ok(None)

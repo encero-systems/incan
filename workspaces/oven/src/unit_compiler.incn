@@ -7,6 +7,7 @@ from std.fs import Path
 from std.json import parse
 from driver_command import driver_command
 from codegen import compiled_arguments
+from c_interop import archive_arguments
 from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import compile_or_replay
@@ -67,7 +68,7 @@ pub def compile_prepared_unit(
         executable,
         dependency_source_roots(unit),
         toolchain.sysroot,
-    )? + shared_arguments(unit, development)?
+    )? + shared_arguments(unit, development)? + archive_arguments(unit.c_archives)
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:

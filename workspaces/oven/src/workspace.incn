@@ -1,0 +1,327 @@
+"""
+Workspaces and member selection (RFC 117, RFC 118), the capability 0.5.1 offered as its workspace table, `incan
+workspace inspect` and `--workspace` and `--member` on project commands.
+
+A `loaf.toml` with a `[workspace]` table is a workspace root: with `[project]` it is a rooted workspace, whose root
+project is a member, and without it a virtual one. Membership is explicit: `members` lists member directories relative
+to the root, each with its own `loaf.toml`. `--workspace` selects every member, `--member` (or `-p`) a member by its
+project name or root-relative path, and `--exclude` removes members from that set.
+"""
+
+from std import toml
+from std.fs import Path
+from std.json import JsonValue
+from std.toml import TomlValue
+from cli_help import render
+from files import read
+from intake import read_project, source_root_of
+from rust::std::env import current_exe
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Command
+
+pub const INSPECT_USAGE: str = "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."
+# The workspace table's keys.
+pub const WORKSPACE_KEYS: FrozenList[str] = ["members", "default-members", "exclude"]
+
+
+@derive(Eq)
+pub enum ScopeOrigin(str):
+    """How the selected members were chosen."""
+
+    DefaultMembers = "default_members"
+    Workspace = "workspace"
+    ExplicitMembers = "explicit_members"
+
+
+pub model Selection:
+    """The member selection flags of one invocation and the arguments left once they are removed."""
+
+    pub workspace: bool = false
+    pub members: list[str] = []
+    pub excluded: list[str] = []
+    pub remaining: list[str] = []
+
+
+pub model Member:
+    """One workspace member: its project name and its directory, relative to the root and as a path."""
+
+    pub name: str
+    pub relative: str
+    pub root: Path
+    pub is_root_member: bool = false
+
+
+pub model Workspace:
+    """A workspace root and its explicit members, the root project first when the workspace is rooted."""
+
+    pub root: Path
+    pub manifest: Path
+    pub members: list[Member]
+    pub default_members: list[str]
+
+
+pub def selected(selection: Selection) -> bool:
+    """Whether the invocation names any member selection."""
+    return selection.workspace or len(selection.members) > 0 or len(selection.excluded) > 0
+
+
+pub def parse_selection(arguments: list[str]) -> Result[Selection, str]:
+    """Remove `--workspace`, `--member`/`-p` and `--exclude` before `--`; every other argument is kept in order."""
+    mut selection = Selection()
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            selection.remaining = selection.remaining + arguments[index:]
+            return Ok(selection)
+        if argument in ["--member", "-p", "--exclude"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a member name or path")
+            if argument == "--exclude":
+                selection.excluded.append(arguments[index + 1])
+            else:
+                selection.members.append(arguments[index + 1])
+            index += 2
+            continue
+        if argument == "--workspace":
+            selection.workspace = true
+        else:
+            selection.remaining.append(argument)
+        index += 1
+    return Ok(selection)
+
+
+pub def find_workspace(start: Path) -> Result[Workspace, str]:
+    """The nearest workspace root at or above `start`, read with its members."""
+    mut directory = start.absolute().map_err((error) => f"cannot resolve {start.0}: {error.message()}")?
+    if start.0 == ".":
+        directory = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    while true:
+        manifest = directory.joinpath("loaf.toml")
+        if manifest.is_file():
+            document = toml.parse(read(manifest)?).map_err((error) => f"{manifest.0}: {error.message()}")?
+            declares = "workspace" in document.as_table().map_err((error) => f"{manifest.0}: {error.message()}")?
+            if declares:
+                return read_workspace(directory, manifest, document)
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 == "":
+            break
+        directory = parent
+    return Err(f"no loaf.toml with a [workspace] table at or above {start.0}")
+
+
+def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Workspace, str]:
+    """A workspace root's members: the root project when it has one, then each declared member directory."""
+    listed = strings(document, "workspace.members", manifest)
+    mut members: list[Member] = []
+    if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
+        members.append(Member(name=name, relative=".", root=root, is_root_member=true))
+    excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
+    for item in listed:
+        relative = normalized(item)
+        if relative in excluded:
+            continue
+        member_manifest = root.joinpath(relative).joinpath("loaf.toml")
+        if not member_manifest.is_file():
+            return Err(f"{manifest.0}: workspace member `{item}` has no loaf.toml")
+        member_document = toml
+            .parse(read(member_manifest)?)
+            .map_err((error) => f"{member_manifest.0}: {error.message()}")?
+        mut name = ""
+        match member_document.get_optional[str]("project.name").map_err((error) => error.message())?:
+            Some(declared) => name = declared
+            None => return Err(f"{member_manifest.0}: a workspace member needs [project] name")
+        members.append(Member(name=name, relative=relative, root=root.joinpath(relative)))
+    if len(members) == 0:
+        return Err(f"{manifest.0}: a virtual workspace must declare at least one member")
+    defaults = [normalized(item) for item in strings(document, "workspace.default-members", manifest)]
+    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults))
+
+
+def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
+    """A list of strings at `key`, empty when absent or malformed (intake reports a malformed one)."""
+    match document.get_optional[list[str]](key):
+        Ok(Some(values)) => return values
+        Ok(None) => return []
+        Err(_) => return []
+
+
+def normalized(path: str) -> str:
+    """A member path without a leading `./` or a trailing `/`; the root itself is `.`."""
+    mut text = path
+    while text.startswith("./"):
+        text = text[2:]
+    while text.endswith("/") and len(text) > 1:
+        text = text[:len(text) - 1]
+    if text == "":
+        return "."
+    return text
+
+
+pub def select_members(workspace: Workspace, selection: Selection) -> Result[tuple[ScopeOrigin, list[Member]], str]:
+    """
+    The members a selection names, in declaration order: every member for `--workspace`, the named ones for
+    `--member`, otherwise the default members (every member when none are declared); `--exclude` removes members.
+    """
+    mut origin = ScopeOrigin.DefaultMembers
+    mut chosen: list[str] = []
+    if selection.workspace:
+        origin = ScopeOrigin.Workspace
+        chosen = [member.relative for member in workspace.members]
+    elif len(selection.members) > 0:
+        origin = ScopeOrigin.ExplicitMembers
+        for selector in selection.members:
+            chosen.append(resolve(workspace, selector)?.relative)
+    elif len(workspace.default_members) > 0:
+        for selector in workspace.default_members:
+            chosen.append(resolve(workspace, selector)?.relative)
+    else:
+        chosen = [member.relative for member in workspace.members]
+    mut removed: list[str] = []
+    for selector in selection.excluded:
+        removed.append(resolve(workspace, selector)?.relative)
+    members = [member for member in workspace.members if member.relative in chosen and member.relative not in removed]
+    return Ok((origin, members))
+
+
+def resolve(workspace: Workspace, selector: str) -> Result[Member, str]:
+    """The member a selector names by project name or root-relative path."""
+    path = normalized(selector)
+    for member in workspace.members:
+        if member.name == selector or member.relative == path:
+            return Ok(member)
+    return Err(f"`{selector}` does not identify a workspace member of {workspace.manifest.0}")
+
+
+pub def inspect_workspace(arguments: list[str]) -> Result[str, str]:
+    """`oven workspace inspect`: the workspace, its manifest, the selected members and the canonical lock."""
+    mut format = "text"
+    mut own: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] == "--format" and index + 1 < len(arguments):
+            format = arguments[index + 1]
+            index += 2
+            continue
+        own.append(arguments[index])
+        index += 1
+    selection = parse_selection(own)?
+    if len(selection.remaining) > 0:
+        if selection.remaining[0].startswith("-"):
+            return Err(f"unknown option `{selection.remaining[0]}`")
+        return Err(f"unexpected argument `{selection.remaining[0]}`")
+    if format != "text" and format != "json":
+        return Err(f"`--format` is text or json, got `{format}`")
+    workspace = find_workspace(Path("."))?
+    origin, members = select_members(workspace, selection)?
+    lock = workspace.root.joinpath("oven.lock")
+    if format == "json":
+        return inspection_document(workspace, origin, members, lock)
+    mut lines = [
+        f"Workspace: {workspace.root.0}",
+        f"Manifest: {workspace.manifest.0}",
+        f"Selected scope ({origin.value()})",
+    ]
+    for member in members:
+        lines.append(f"  - {member.name} ({member.relative})")
+    lines.append(f"Canonical lock: {lock.0}")
+    return Ok("\n".join(lines))
+
+
+def inspection_document(
+    workspace: Workspace,
+    origin: ScopeOrigin,
+    members: list[Member],
+    lock: Path,
+) -> Result[str, str]:
+    """The versioned JSON form of `oven workspace inspect`."""
+    mut declared: list[JsonValue] = []
+    for member in workspace.members:
+        declared.append(
+            JsonValue.object(
+                {"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative), "root": JsonValue.string(
+                    member.root.0,
+                ), "is_root_member": JsonValue.bool(member.is_root_member)},
+            ),
+        )
+    scope = [JsonValue.object({"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative)}) for member in members]
+    document = JsonValue.object(
+        {"schema_version": JsonValue.int(1), "workspace": JsonValue.object(
+            {"root": JsonValue.string(workspace.root.0), "manifest_path": JsonValue.string(workspace.manifest.0)},
+        ), "members": JsonValue.array(declared), "default_members": JsonValue.array(
+            [JsonValue.string(item) for item in workspace.default_members],
+        ), "selected_scope": JsonValue.object(
+            {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
+        ), "lock": JsonValue.object(
+            {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
+        )},
+    )
+    return document.to_pretty_json().map_err((error) => error.message())
+
+
+pub def inspect_help() -> str:
+    """`oven workspace inspect --help`."""
+    return render(
+        INSPECT_USAGE,
+        [
+            "  --format text|json     Report format (default text).",
+            "  --workspace            Select every member.",
+            "  --member, -p NAME      Select a member by project name or root-relative path; repeatable.",
+            "  --exclude NAME         Remove a member from the selection; repeatable.",
+        ],
+        "oven workspace inspect --workspace --format json",
+    )
+
+
+pub def run_members(surface: str, command: str, selection: Selection) -> Result[i32, str]:
+    """
+    Run `command` once for each selected member, in declaration order, and return the first failing status.
+
+    Each member runs as its own invocation of this program under the same surface name, with the member's path in
+    place of the selection flags, so every member gets exactly the command a single project gets.
+    """
+    workspace = find_workspace(Path("."))?
+    _origin, members = select_members(workspace, selection)?
+    if len(members) == 0:
+        return Err(f"the selection names no member of {workspace.manifest.0}")
+    executable = current_exe().map_err((error) => f"cannot locate the running Oven: {error}")?
+    mut own: list[str] = []
+    mut passed: list[str] = []
+    mut after = false
+    for argument in selection.remaining:
+        if after or argument == "--":
+            after = true
+            passed.append(argument)
+        else:
+            own.append(argument)
+    mut status: i32 = 0
+    for member in members:
+        operand = member_operand(command, member)?
+        println(f"workspace member {member.name}: {member.relative}")
+        mut child = Command.new(executable.as_os_str())
+        _ = child.arg0(surface)
+        for argument in [command] + own + [operand] + passed:
+            child.arg(argument)
+        outcome = child.status().map_err((error) => f"cannot run {command} for member {member.name}: {error}")?
+        mut code: i32 = 1
+        match outcome.code():
+            Some(exited) => code = exited
+            None => pass
+        if code != 0 and status == 0:
+            status = code
+    return Ok(status)
+
+
+def member_operand(command: str, member: Member) -> Result[str, str]:
+    """The PATH a command takes for a member: its program or checked entry source, else its directory."""
+    if command not in ["run", "check"]:
+        return Ok(member.root.0)
+    project = read_project(member.root).map_err((error) => error.message())?
+    source_root = Path(source_root_of(project))
+    program = source_root.joinpath("main.incn")
+    if program.is_file():
+        return Ok(program.0)
+    library = source_root.joinpath("lib.incn")
+    if command == "check" and library.is_file():
+        return Ok(library.0)
+    return Err(f"workspace member {member.name} has no {program.0} to {command}")

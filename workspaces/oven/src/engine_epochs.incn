@@ -57,10 +57,15 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     3. Stage the epoch and request head together; unchanged requests encode and publish nothing.
     """
     # 1. This stage accepts one program file and one profile, with no implicit option fallbacks.
-    if submit.command not in ["run", "build"]:
+    if submit.command not in ["run", "build", "check"]:
         return Err(f"unit records do not implement `{submit.command}`")
-    if submit.input_selection not in ["debug", "release"] or submit.options != "":
+    if submit.input_selection not in ["debug", "release"]:
         return Err("unit records require a debug or release profile and no additional build options")
+    if submit.command == "check":
+        if submit.options not in ["text", "json"]:
+            return Err("unit records check requires a text or json report format")
+    elif submit.options != "":
+        return Err("unit records run and build accept no additional build options")
     source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot resolve source {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
@@ -69,7 +74,8 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
-    # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
+    # 2. Every engine request starts at its selected source. Whole-unit capture adds the same authored inventory
+    # that build checks, including the source directory or its declaring Loaf.
     request = CaptureRequest(
         roots=[source.0],
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),

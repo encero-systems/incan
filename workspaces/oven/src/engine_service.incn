@@ -275,6 +275,8 @@ def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: 
                     producer=state.identity.compiler_generation,
                     view=submit.view,
                     proofs=submit.observation_policy == "proofs",
+                    command=submit.command,
+                    format=submit.options,
                     handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
                         transport,
                     )?,

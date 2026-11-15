@@ -1,0 +1,165 @@
+"""
+`incan inspect bindings [--format text|json] [PATH]`: the compiler-checked C binding declarations of a source or
+project, read from the same `c_binding` records its codegraph export carries.
+"""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import json_text
+from graph_inspection import graph_response
+from json_fields import required_items, required_text, string_value
+from unit import project_root_of
+
+
+pub model BindingOptions:
+    """The selected source or project and the output format."""
+
+    pub path: str = "."
+    pub format: str = "text"
+
+
+pub def binding_options(arguments: list[str]) -> Result[BindingOptions, str]:
+    """Read `--format text|json` and one optional path."""
+    mut options = BindingOptions()
+    mut index = 0
+    mut path_given = false
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--format":
+            if index + 1 >= len(arguments):
+                return Err("--format requires a value")
+            options.format = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("-") or path_given:
+            return Err(f"unexpected argument `{argument}`")
+        options.path = argument
+        path_given = true
+        index += 1
+    if options.format not in ["text", "json"]:
+        return Err(f"--format accepts text or json, not `{options.format}`")
+    return Ok(options)
+
+
+pub def inspect_bindings(options: BindingOptions) -> Result[i32, str]:
+    """Print every checked C binding the source or project declares, ordered by file and name."""
+    export = graph_response(["codegraph", options.path, "--format", "jsonl"])?
+    base = Path(options.path).resolve().map_err((error) => f"{options.path}: {error.message()}")?
+    mut root = base.0
+    if Path(root).is_file():
+        root = project_root_of(base).unwrap_or(base.parent()).0
+    mut found: list[Tuple[str, JsonValue]] = []
+    for line in export.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => f"codegraph record: {error.message()}")?
+        match record.get("record"):
+            Some(kind) =>
+                if string_value(kind)? != "c_binding":
+                    continue
+            None => continue
+        file = relative_file(record, root)?
+        found.append((f"{file}\t{required_text(record, "name")?}", binding_json(record, file)?))
+    mut unsorted: list[str] = []
+    for key, _ in found:
+        unsorted.append(key)
+    keys = sorted(unsorted)
+    mut ordered: list[JsonValue] = []
+    for key in keys:
+        for candidate, value in found:
+            if candidate == key:
+                ordered.append(value)
+    if options.format == "json":
+        println(
+            json_text(
+                JsonValue.object({"schema": JsonValue.string("incan.bindings/1"), "bindings": JsonValue.array(ordered)}),
+            )?,
+        )
+        return Ok(0)
+    mut lines: list[str] = []
+    for binding in ordered:
+        lines.extend(binding_lines(binding)?)
+    if len(lines) > 0:
+        println("\n".join(lines))
+    return Ok(0)
+
+
+def relative_file(record: JsonValue, root: str) -> Result[str, str]:
+    """The binding's file, relative to the inspected project when it is inside it."""
+    span = record.require("span").map_err((error) => error.message())?
+    file = required_text(span, "file")?
+    if file.startswith(root + "/"):
+        return Ok(file[len(root) + 1:])
+    return Ok(file)
+
+
+def binding_json(record: JsonValue, file: str) -> Result[JsonValue, str]:
+    """The binding's declaration facts, with its file relative to the project."""
+    mut fields: Dict[str, JsonValue] = {"file": JsonValue.string(file)}
+    for key in ["name", "header", "link_capability", "system_library", "binding_identity"]:
+        fields[key] = JsonValue.string(required_text(record, key)?)
+    for key in ["symbols", "enums", "structs", "resources"]:
+        fields[key] = JsonValue.array(required_items(record, key)?)
+    return Ok(JsonValue.object(fields))
+
+
+def type_text(value: JsonValue) -> str:
+    """A carrier's source spelling, or its kind when it has none."""
+    match value.get("spelling"):
+        Some(spelling) =>
+            match spelling.expect_str():
+                Ok(text) => return text
+                Err(_) => pass
+        None => pass
+    match value.get("kind"):
+        Some(kind) =>
+            match kind.expect_str():
+                Ok(text) => return text
+                Err(_) => pass
+        None => pass
+    return "?"
+
+
+def binding_lines(binding: JsonValue) -> Result[list[str], str]:
+    """One binding: its header and link, then each member."""
+    link = f"{required_text(binding, "link_capability")?}(\"{required_text(binding, "system_library")?}\")"
+    mut lines = [
+        f"binding {required_text(binding, "name")?} in {required_text(binding, "file")?}: header {required_text(
+            binding,
+            "header",
+        )?}, link {link}",
+    ]
+    for symbol in required_items(binding, "symbols")?:
+        mut parameters: list[str] = []
+        for parameter in required_items(symbol, "parameters")?:
+            parameters.append(
+                f"{required_text(parameter, "name")?}: {type_text(
+                    parameter.require("type").map_err((error) => error.message())?,
+                )}",
+            )
+        result = type_text(symbol.require("return_type").map_err((error) => error.message())?)
+        lines.append(
+            f"  symbol {required_text(symbol, "name")?}({", ".join(parameters)}) -> {result} is {required_text(
+                symbol,
+                "native",
+            )?}",
+        )
+    for enumeration in required_items(binding, "enums")?:
+        lines.append(f"  enum {required_text(enumeration, "name")?}: {required_text(enumeration, "carrier")?}")
+        for variant in required_items(enumeration, "variants")?:
+            lines.append(f"    {required_text(variant, "name")?} is {required_text(variant, "native")?}")
+    for structure in required_items(binding, "structs")?:
+        lines.append(f"  struct {text_or(structure, "name")} is {text_or(structure, "native")}")
+    for resource in required_items(binding, "resources")?:
+        lines.append(f"  resource {text_or(resource, "name")} is {text_or(resource, "native")}")
+    return Ok(lines)
+
+
+def text_or(value: JsonValue, key: str) -> str:
+    """A string field, or `?` when the record has none."""
+    match value.get(key):
+        Some(found) =>
+            match found.expect_str():
+                Ok(text) => return text
+                Err(_) => return "?"
+        None => return "?"

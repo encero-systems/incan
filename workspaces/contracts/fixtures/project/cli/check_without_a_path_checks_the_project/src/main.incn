@@ -1,0 +1,11 @@
+# behavior: `incan check` with no PATH, or with a directory, checks the entry `build` selects for the Loaf at or above it, as 0.5.1's `check [PATH]` (default `.`) documents (#3143).
+# cli-commands:
+#   check
+#   oven check
+#   check .
+#   check src
+# expect-stdout:
+#   ✓ Type check passed!
+
+def main() -> None:
+    println("checked through its project")

@@ -1,0 +1,9 @@
+# behavior: a declared interop artifact of a kind this toolchain does not link is refused rather than ignored (#3136)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   artifact kind `bundled` is not supported; this toolchain links `static` archives
+
+def main() -> None:
+    println("unreachable")

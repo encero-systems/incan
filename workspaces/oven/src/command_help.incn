@@ -8,14 +8,20 @@ from home_paths import TOOLCHAIN
 from surfaces import OVEN, owner_of
 from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
 from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
+from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
+from project_version import VERSION_USAGE, version_help
+from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
+from environments import ENV_USAGE, env_help
+from doctor import DOCTOR_USAGE, doctor_help
+from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const INCAN_RUN_OPERANDS: str = "run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
-const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
+const CHECK_OPERANDS: str = "check [PATH] [--format text|json] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
-const BUILD_OPERANDS: str = "build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
-const EXPLAIN_USAGE: str = "incan explain CODE"
+const BUILD_OPERANDS: str = "build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const EXPLAIN_USAGE: str = "incan explain CODE [--format text|json]"
 const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
@@ -46,6 +52,12 @@ pub def usage(surface: str) -> str:
                 DEPENDENCIES_USAGE,
                 LOCK_USAGE,
                 TRUST_USAGE,
+                NEW_USAGE,
+                INIT_USAGE,
+                VERSION_USAGE,
+                WORKSPACE_USAGE,
+                ENV_USAGE,
+                FEATURES_USAGE,
             ],
         )
     return overview(
@@ -59,6 +71,7 @@ pub def usage(surface: str) -> str:
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
+            DOCTOR_USAGE,
         ],
     )
 
@@ -73,8 +86,14 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     if command in ["run", "check", "test", "describe-unit", "build"]:
         if requested(arguments, unit_valued()):
             return Some(unit_help(surface, command))
-    elif command == "explain" and requested(arguments):
-        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "explain" and requested(arguments, ["--format"]):
+        return Some(
+            render(
+                EXPLAIN_USAGE,
+                ["  --format text|json  Explanation format (default text)."],
+                "incan explain INCAN-T0001",
+            ),
+        )
     elif command == "lock" and requested(arguments, ["--versions"]):
         return Some(
             render(
@@ -106,6 +125,16 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(format_help())
     elif command == "mcp" and requested(arguments, ["--profile"]):
         return Some(mcp_help())
+    elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
+        return Some(scaffold_help(command))
+    elif command == "tools" and nested_help(arguments, "doctor", ["--format"]):
+        return Some(doctor_help())
+    elif command == "env" and env_help_requested(arguments):
+        return Some(env_help())
+    elif command == "workspace" and nested_help(arguments, "inspect", ["--format", "--member", "-p", "--exclude"]):
+        return Some(workspace_help())
+    elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project", "--member", "-p"]):
+        return Some(version_help())
     elif command in ["--version", "version"] and requested(arguments):
         return Some(render(f"{surface} --version", [], f"{surface} --version"))
     elif command == "owner" and nested_help(arguments, "stop"):
@@ -124,6 +153,8 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
     """Help for the inspection the surface runs: semantic codegraph facts on `incan`, operational facts on `oven`."""
     if surface != OVEN and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    if surface == OVEN and nested_help(arguments, "features", ["--format", "--features"]):
+        return Some(features_help())
     if surface == OVEN and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
         return Some(unit_help(surface, "inspect dependencies"))
     if surface == OVEN and nested_help(arguments, "run"):
@@ -192,6 +223,8 @@ def unit_help(surface: str, command: str) -> str:
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
             "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
             "  --locked               Refuse a missing or stale oven.lock.",
+            "  --report json          Print a JSON build report: version, artifacts, outcome and time.",
+            "  --report-output PATH   Write the build report to PATH instead of stdout.",
         ],
         f"{surface} build src/main.incn --profile debug",
     )
@@ -228,3 +261,11 @@ def unit_valued() -> list[str]:
     for option in RUNNER_VALUE_OPTIONS:
         valued.append(option)
     return valued
+
+
+def env_help_requested(arguments: list[str]) -> bool:
+    """Help for `oven env` or one of its subcommands, before `--`."""
+    for subcommand in ["list", "show", "run"]:
+        if nested_help(arguments, subcommand, ["--format", "--project"]):
+            return true
+    return false

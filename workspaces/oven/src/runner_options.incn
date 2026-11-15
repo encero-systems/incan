@@ -3,6 +3,7 @@ The test runner options `incan test` and `oven test` accept beside the unit opti
 failure policy, parallel workers, time limits, output and reports. Their spellings and meanings are 0.5.1's.
 """
 
+
 pub enum ReportFormat(str):
     """How the runner reports outcomes on stdout."""
 

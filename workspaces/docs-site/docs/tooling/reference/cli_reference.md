@@ -10,10 +10,10 @@ oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-oven check PATH [--format text|json] [UNIT OPTIONS]
+oven check [PATH] [--format text|json] [UNIT OPTIONS]
 oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-oven build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
@@ -22,18 +22,18 @@ oven inspect run ID --proofs
 incan --help | -h | help
 incan --version
 incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-incan check PATH [--format text|json] [UNIT OPTIONS]
+incan check [PATH] [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
-incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
-incan fmt [--check] PATH...
+incan build [PATH [OUTPUT_DIR]] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+incan fmt [--check] [--diff] [PATH...]
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `run` and `build` select the Loaf at or above the current directory, `test` uses the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run`, `check` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -53,7 +53,7 @@ There is no implicit command. Without `PATH`, `run` and `build` select the Loaf 
 | `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
 | `--release` | Not accepted | Refused with exit `2`, naming its spelling `--profile release`. |
 
-Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path; `build` also accepts an `OUTPUT_DIR` after it. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
 `incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--locked` and `--engine-report`.
 
@@ -81,7 +81,7 @@ With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file o
 
 ## `oven check`
 
-Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
+Checks the source at `PATH` without producing an executable. A directory, or no `PATH`, selects the Loaf at or above it and checks the entry [`oven build`](#oven-build) selects for it; a Loaf without an Incan entry is refused. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
 
@@ -112,19 +112,19 @@ Runner options select, order and report the collected tests. Each option that ta
 | `--durations N` | Integer, `0` | Prints the `N` slowest tests after the run. |
 | `--nocapture` | Boolean, false | Prints what passing tests print. |
 | `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
-| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test and a final summary record instead of console lines. |
-| `--junit PATH` | Path, none | Writes a JUnit XML report. Skipped tests and expected failures are skipped cases. |
+| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. |
+| `--junit PATH` | Path, none | Writes a JUnit XML report whose class names are modules relative to the working directory. Skipped tests and expected failures are skipped cases. |
 | `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
 
-An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
+An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, also with `--list`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
-Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@test` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
+Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@timeout(DURATION)` gives a test its own time limit in place of `--timeout`. Tests that share a `@resource(NAME)` never run at once, and a `@serial` test runs with no other test. `@test` is accepted and does not change execution. Fixtures and parametrized tests are refused.
 
 ## `oven build`
 
 An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
-A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
+A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `OUTPUT_DIR`, after `PATH`, receives a copy of a program build's executable under the same name, replacing a file of that name; a library or Rust-project build refuses it. `--lib` and `--report` are not accepted.
 
 With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
 
@@ -157,7 +157,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 ## `incan fmt`
 
-Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees, or the current directory without `PATH`. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--diff` leaves files unchanged, prints each file formatting would change as `--- FILE`, `--- original` and `+++ formatted` followed by its removed lines as `-   N | TEXT` and added lines as `+   N | TEXT`, with each line's number in its own version, then `N file(s) need formatting`, and exits `1`; when no file would change it prints `✓ N file(s) already formatted` and exits `0`. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `oven owner stop`
 
@@ -259,6 +259,21 @@ A duration is a nonnegative integer of at most twelve digits followed by `s`, `m
 
 Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--profile NAME` selects the artifact profile as specified under [Unit options](#unit-options). `--strict` refuses a graph containing unchecked units. The default returns available facts and warns about unchecked units.
 
+## `incan inspect bindings`
+
+`incan inspect bindings [--format text|json] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
+
+```text
+binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
+  symbol NAME(PARAMETER: TYPE, ...) -> TYPE is NATIVE
+  enum NAME: CARRIER
+    VARIANT is NATIVE
+  struct NAME is NATIVE
+  resource NAME is NATIVE
+```
+
+`FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
+
 ## `oven inspect dependencies`
 
 Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:
@@ -272,6 +287,22 @@ LIBRARY
 ```
 
 `KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`oven describe-unit`](#oven-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
+
+## `oven inspect interop-plan`
+
+`oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]` prints what a build for `TRIPLE` (default: the host) links for C interop, from the manifests of the project at or above `PATH` (default `.`) and its path dependencies, without building. For each project it lists its [`[c]` facet](project_configuration.md#c) (library, public headers, and each configuration with its resolved definitions), the static archives the target declares under [`[interop.c]`](project_configuration.md#interopc) in link order, its binding relations and its headers. The text report is:
+
+```text
+target TRIPLE
+project NAME
+  clove library LIBRARY: public headers HEADER, ...
+    configuration NAME: DEFINITION ...
+  static archive NAME: PATH (links as LINK), before DEPENDENCY, ...
+  binding MODULE.NAME: ARTIFACT, ...
+  header HEADER
+```
+
+`--format json` prints `incan.interop-plan/1` with the same facts, each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
 
 ## `incan mcp`
 

@@ -115,6 +115,7 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let converter = TypeChecker::new();
+        let remapping = checked_namespace_foreign_nominal_remapping(&self.api);
         let mut symbols = HashMap::new();
         let mut callables = HashMap::new();
         let mut reexports = HashMap::new();
@@ -127,7 +128,7 @@ impl CheckedNamespaceInterface {
                 .get(name)
                 .ok_or_else(|| format!("checked namespace declaration `{name}` has no identity"))?
                 .clone();
-            let Some(kind) = converter.symbol_kind_from_api_declaration(None, declaration) else {
+            let Some(mut kind) = converter.symbol_kind_from_api_declaration(None, declaration) else {
                 let crate::api_metadata::ApiDeclaration::Alias(alias) = declaration else {
                     return Err(format!("checked namespace declaration `{name}` has no semantic symbol"));
                 };
@@ -145,6 +146,7 @@ impl CheckedNamespaceInterface {
                 );
                 continue;
             };
+            converter.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
             if let SymbolKind::Function(function_info) = &kind {
                 callables.insert(
                     identity.clone(),
@@ -246,6 +248,31 @@ impl CheckedNamespaceInterface {
         }
         Ok(())
     }
+}
+
+/// Convert artifact-qualified API leaves to the canonical carrier spellings used by editable dependency interfaces.
+fn checked_namespace_foreign_nominal_remapping(
+    api: &crate::api_metadata::CheckedApiMetadata,
+) -> HashMap<String, String> {
+    use crate::library_manifest::{TypeRef, VisitTypeRefs};
+
+    let mut projection = api.clone();
+    let mut remapping = HashMap::new();
+    projection.visit_type_refs(&mut |ty| {
+        let origin = match ty {
+            TypeRef::Named { origin, .. } | TypeRef::Applied { origin, .. } => origin.as_ref(),
+            _ => None,
+        };
+        let Some(origin) = origin else { return };
+        let Some(identity) = origin.canonical.hydrate() else {
+            return;
+        };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
+            return;
+        };
+        remapping.insert(origin.binding_key(), carrier);
+    });
+    remapping
 }
 
 /// Return the declaration spelling shared by the frozen API row, symbol table and stable identity map.

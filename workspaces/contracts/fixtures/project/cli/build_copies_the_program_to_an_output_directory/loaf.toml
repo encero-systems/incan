@@ -1,0 +1,6 @@
+[project]
+name = "build_copies_the_program_to_an_output_directory"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

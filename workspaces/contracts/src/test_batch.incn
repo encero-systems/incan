@@ -1,7 +1,8 @@
 """Contract batch scheduling keeps semantic incompatibility separate from elapsed compilation time."""
 
 from std.fs import Path
-from batch import group_compilation_request
+from batch import SHARED_ENTRIES_REFUSED, compilation_refusal, group_compilation_request
+from run import Outcome
 
 
 def test_compatible_batch_compilation_has_no_automatic_deadline() -> None:
@@ -10,3 +11,24 @@ def test_compatible_batch_compilation_has_no_automatic_deadline() -> None:
     assert request.deadline_seconds == 0
     assert request.duration_hint == 37
     assert request.selector is None
+
+
+def test_an_engine_without_shared_entries_is_not_a_semantic_refusal() -> None:
+    """
+    An engine that cannot select program entries refuses every shared compilation alike, so its refusal says nothing
+    about which cases are incompatible and must not be bisected; a compiler's refusal of the cases still is.
+    """
+    engine = Outcome(
+        stdout="",
+        stderr="incan build: unit records do not implement feature, substitution or program-entry options\n",
+        code=Some(1),
+    )
+    refusal, evidence = compilation_refusal(Ok(engine))
+    assert refusal == SHARED_ENTRIES_REFUSED
+    assert "program-entry" in evidence
+    compiler = Outcome(stdout="", stderr="error[INCAN-T0001]: src/case_3.incn: unknown name\n", code=Some(1))
+    refused, diagnostics = compilation_refusal(Ok(compiler))
+    assert refused == "combined compilation refused"
+    assert "case_3" in diagnostics
+    clean, nothing = compilation_refusal(Ok(Outcome(stdout="", stderr="", code=Some(0))))
+    assert clean == "" and nothing == ""

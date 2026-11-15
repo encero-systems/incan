@@ -292,7 +292,7 @@ Before a module with a binding is checked, built or run, each binding is verifie
 | Linux x86-64 host | Default on that host | `x86_64-unknown-linux-gnu` |
 | macOS arm64 host | Default on that host | `arm64-apple-macos11` |
 
-- The host selects the target. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
+- The host selects the target. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc). A declared header, or a Clove public header, is read from the package; any other relative `header` is a system header, searched only on the target's system include path and never relative to the working directory.
 - A `c.loaf_library` binding is verified with the configuration's resolved `defines` and the Clove's `include` roots, as its archive was compiled.
 - `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang with the macOS SDK as sysroot on macOS arm64, and `clang` on Linux x86-64.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
