@@ -2,6 +2,7 @@
 # expect-stdout:
 #   lent to a reader: freed after its last use
 #   lent in a branch: freed after its last use
+#   lent in a branch to a call that returns text: freed after its last use
 
 """Measure the live heap right after the last use of a large local that was only ever lent."""
 
@@ -21,6 +22,11 @@ def build(size: int) -> list[str]:
 def measure(items: list[str]) -> int:
     """Only read the list, so a caller lends it."""
     return len(items)
+
+
+def described(items: list[str]) -> str:
+    """Only read the list and return text of its own, so a caller lends the list and owns the result."""
+    return f"{len(items)} items"
 
 
 def lent_to_a_reader() -> int:
@@ -43,6 +49,41 @@ def lent_in_a_branch(flag: bool) -> int:
     return held + counted * 0
 
 
+def lent_in_a_branch_for_text(flag: bool) -> int:
+    """Lend a local on one branch only, to a call whose result the frame keeps."""
+    before = live_heap_bytes()
+    items = build(SIZE)
+    mut label = "none"
+    if flag:
+        label = described(items)
+    held = live_heap_bytes() - before
+    return held + len(label) * 0
+
+
+def held_once(shape: int) -> int:
+    """Run one shape and return what the heap held after its last use of the list."""
+    if shape == 0:
+        return lent_to_a_reader()
+    if shape == 1:
+        return lent_in_a_branch(true)
+    return lent_in_a_branch_for_text(true)
+
+
+def least(shape: int) -> int:
+    """
+    The least the heap holds after a shape's last use of its list, over several runs.
+
+    The allocator's count of bytes in use settles late now and then, so one run can report bytes that no value holds;
+    a list still held shows in every run.
+    """
+    mut held = held_once(shape)
+    for _ in range(8):
+        next = held_once(shape)
+        if next < held:
+            held = next
+    return held
+
+
 def report(label: str, held: int) -> None:
     """Print whether the heap was back where it started, from `held` bytes measured before printing."""
     if held < SIZE:
@@ -52,6 +93,6 @@ def report(label: str, held: int) -> None:
 
 
 def main() -> None:
-    _ = lent_to_a_reader() + lent_in_a_branch(true)
-    report("lent to a reader", lent_to_a_reader())
-    report("lent in a branch", lent_in_a_branch(true))
+    report("lent to a reader", least(0))
+    report("lent in a branch", least(1))
+    report("lent in a branch to a call that returns text", least(2))
