@@ -1,0 +1,186 @@
+"""
+The source graph a program or test unit's compilation reads: the files module collection read and the absent paths its
+imports looked for, as the compiler reports them.
+
+Oven keys such a unit by its graph instead of by every file under the source root, so a file nothing imports never
+rebuilds the unit, while a file created where an import looked does. The graph is recorded beside the unit's ledger
+with the digest of each file it read, and is asked of the compiler again only when one of those files changed or one
+of those absent paths appeared, the only edits that can change what collection reads.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from compiler_worker import captured_resident
+from driver_command import driver_command
+from files import json_text, make_directory, parse_json, read_json, write
+from json_fields import required_items, required_text
+from observation import Ledger, trace
+from publication import publish
+from rust_target import decoded
+from toolchain import Toolchain
+from unit import UnitDescription
+from pub::incan_platform.trace import Operation
+from jec import begin, record
+
+const GRAPH_SCHEMA: str = "incan.oven.source-graph/1"
+
+
+pub model SourceGraph:
+    """What one unit's module collection read and the absent paths its imports looked for, as absolute paths."""
+
+    pub read: list[str]
+    pub absent: list[str]
+
+
+pub def graph_keyed(unit: UnitDescription) -> bool:
+    """
+    Whether a unit is keyed by its source graph: a program or test unit compiled from its own entry alone.
+
+    Additional program entries, vocabulary, contract models and C inputs read sources the entry's collection does not,
+    so those units keep every source under their roots in their identity.
+    """
+    return (
+        unit.kind in ["program", "test"]
+        and len(unit.program_entries) == 0
+        and unit.vocab_entry is None
+        and unit.vocab is None
+        and not unit.vocabulary
+        and len(unit.contract_models) == 0
+        and len(unit.c_headers) == 0
+        and len(unit.cloves) == 0
+    )
+
+
+pub def source_graph(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    scope: str,
+    name: str,
+    mut project: Ledger,
+) -> Result[Option[SourceGraph], str]:
+    """
+    The unit's source graph under `scope` (its compiler and description), or `None` when it keeps the listing.
+
+    1. A unit that is not graph-keyed keeps every source under its roots.
+    2. A recorded graph whose read files are unchanged and whose absent paths are still absent is current.
+    3. Otherwise the compiler collects the graph again, and it is recorded with the digests of what it read. A compiler
+       that cannot report a graph leaves the unit on the listing, which covers every file the graph could name.
+    """
+    # 1. Only a plain program or test unit is collected from its entry alone.
+    if not graph_keyed(unit):
+        return Ok(None)
+    location = Path(unit.project_root).joinpath("target/incan/units").joinpath(f"{name}.source-graph.json")
+    # 2. Unchanged reads and still-absent lookups collect the same graph.
+    if let Some(graph) = recorded_graph(location, scope, project)?:
+        return Ok(Some(graph))
+    # 3. The compiler names what its collection reads.
+    match discovered(unit, toolchain, location)?:
+        None => return Ok(None)
+        Some(graph) =>
+            retain(location, scope, graph, project)?
+            return Ok(Some(graph))
+
+
+def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Option[SourceGraph], str]:
+    """A recorded graph of the same scope that is still current; anything else is a miss, never an error."""
+    if not location.is_file():
+        return Ok(None)
+    match read_json(location):
+        Err(_) => return Ok(None)
+        Ok(document) =>
+            if required_text(document, "schema").unwrap_or("") != GRAPH_SCHEMA:
+                return Ok(None)
+            if required_text(document, "scope").unwrap_or("") != scope:
+                return Ok(None)
+            mut read: list[str] = []
+            for entry in required_items(document, "read").unwrap_or([]):
+                path = required_text(entry, "path").unwrap_or("")
+                if path == "" or not Path(path).is_file():
+                    return Ok(None)
+                if project.digest(Path(path))? != required_text(entry, "digest").unwrap_or(""):
+                    return Ok(None)
+                read.append(path)
+            mut absent: list[str] = []
+            for entry in required_items(document, "absent").unwrap_or([]):
+                path = entry.as_str().unwrap_or("")
+                if path == "" or Path(path).exists():
+                    return Ok(None)
+                absent.append(path)
+            if len(read) == 0:
+                return Ok(None)
+            return Ok(Some(SourceGraph(read=read, absent=absent)))
+
+
+def discovered(unit: UnitDescription, toolchain: Toolchain, location: Path) -> Result[Option[SourceGraph], str]:
+    """Ask the resident compiler, or one compiler process, which files the unit's collection reads and probes."""
+    make_directory(location.parent())?
+    description = location.parent().joinpath(f"{location.name()}.unit.json")
+    write(description, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    arguments = ["--rust-imports", description.0, "--source-graph"]
+    mut output = b""
+    match captured_resident(toolchain, arguments):
+        Ok(Some(completed)) =>
+            if completed.code != 0:
+                return unavailable(unit)
+            output = completed.output
+        Ok(None) =>
+            match cold_graph(toolchain, arguments, description):
+                Some(stdout) => output = stdout
+                None => return unavailable(unit)
+        Err(_) => return unavailable(unit)
+    # A compiler that answers with anything but a graph report keeps the unit on the listing.
+    mut report = JsonValue.null()
+    match parse_json(decoded(output)):
+        Ok(parsed) => report = parsed
+        Err(_) => return Ok(None)
+    mut read: list[str] = []
+    mut absent: list[str] = []
+    match (required_items(report, "read"), required_items(report, "absent")):
+        (Ok(reads), Ok(probes)) =>
+            read = [item.as_str().unwrap_or("") for item in reads]
+            absent = [item.as_str().unwrap_or("") for item in probes]
+        _ => return Ok(None)
+    if len(read) == 0 or "" in read or "" in absent:
+        return Ok(None)
+    trace(f"unit {unit.package} source graph: collected {len(read)} files, {len(absent)} absent paths")
+    return Ok(Some(SourceGraph(read=read, absent=absent)))
+
+
+def retain(location: Path, scope: str, graph: SourceGraph, mut project: Ledger) -> Result[None, str]:
+    """Record the graph with the digest of each file it read; a record that cannot be written only costs a collection."""
+    mut read: list[JsonValue] = []
+    for path in graph.read:
+        read.append(
+            JsonValue.object({"path": JsonValue.string(path), "digest": JsonValue.string(project.digest(Path(path))?)}),
+        )
+    document = JsonValue.object(
+        {"schema": JsonValue.string(GRAPH_SCHEMA), "scope": JsonValue.string(scope), "read": JsonValue.array(read), "absent": JsonValue.array(
+            [JsonValue.string(path) for path in graph.absent],
+        )},
+    )
+    _ = publish(location, json_text(document)?)
+    return Ok(None)
+
+
+def cold_graph(toolchain: Toolchain, arguments: list[str], description: Path) -> Option[bytes]:
+    """One compiler process's graph report when no worker serves it; a compiler that cannot report one gives `None`."""
+    match driver_command(toolchain):
+        Err(_) => return None
+        Ok(found) =>
+            mut command = found
+            for argument in arguments:
+                command.arg(argument)
+            clock = begin()
+            match command.output():
+                Err(_) => return None
+                Ok(finished) =>
+                    record(Operation.DriverSpawn, f"--rust-imports {description.0} --source-graph", clock)
+                    if not finished.status.success():
+                        return None
+                    return Some(finished.stdout)
+
+
+def unavailable(unit: UnitDescription) -> Result[Option[SourceGraph], str]:
+    """Keep a unit whose compiler reports no graph on the listing, which covers every file a graph could name."""
+    trace(f"unit {unit.package} source graph: unavailable, keyed by listing")
+    return Ok(None)

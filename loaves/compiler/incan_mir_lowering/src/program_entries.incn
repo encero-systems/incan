@@ -11,6 +11,7 @@ from pub::incan_mir_plan import (
     GenericModelDeclaration,
     GenericEnumDeclaration,
     PlanType,
+    UnitNominals,
 )
 from rust::incan_semantics_core import (
     IncanType as RustType,
@@ -33,11 +34,11 @@ from scalar_store import (
     scalar_inputs,
     record_scalar_inputs,
     retained_scalar,
-    retain_scalar,
     report_scalar,
     report_scalar_refusal,
 )
 from record_positions import relative_body_positions
+from nominal_records import product_nominal_table, retain_named_scalar, sync_carriers
 from std.fs import Path
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
@@ -242,6 +243,7 @@ def lower_module_frames(
     unions = collect_unions(context.as_ref())
     mut intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, [])?
     program = program_context(constructors, context.as_ref(), intrinsics, unions, overflow_checks)?
+    mut nominals = product_nominal_table(program, intrinsics, scalar_products)
     mut completed: list[ModuleFrames] = []
     for module_index in range(len(positions_by_module)):
         completed.append(
@@ -260,6 +262,7 @@ def lower_module_frames(
                 scalar_products,
                 scalar_bodies.as_ref(),
                 record_report,
+                nominals,
             )?,
         )
     return Ok(completed)
@@ -280,6 +283,7 @@ def lower_selected_module(
     scalar_products: Option[str],
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
     record_report: Option[str],
+    mut nominals: UnitNominals,
 ) -> Result[ModuleFrames, str]:
     """Lower one module against worker-local immutable layout views and return mergeable output."""
     mut functions: list[Function] = []
@@ -307,6 +311,7 @@ def lower_selected_module(
             scalar_products,
             scalar_bodies,
             record_report,
+            nominals,
         ).map_err((reason) => reason + diagnostic_owner)?
         merge_instance_requests(instances, pending)
         if len(named_functions(names, functions, function.name)) != 0:
@@ -368,6 +373,7 @@ pub def lower_ordinary_bodies_serial(
     Bodies are grouped by retained module provenance once, frame names are checked by key, and native signatures merge through
     a keyed index, so no step rescans every body, frame or signature per frame.
     """
+    mut nominals = product_nominal_table(program, intrinsics, scalar_products)
     mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
     for position in range(len(context.bodies)):
         owner = body_module_identity(body_at(context.bodies, position))?
@@ -400,6 +406,7 @@ pub def lower_ordinary_bodies_serial(
                 scalar_products,
                 scalar_bodies,
                 record_report,
+                nominals,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
             # Frames any helper appended since the last check are named first, so the check covers every frame.
@@ -446,8 +453,13 @@ def lower_ordinary_frame(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
     record_report: Option[str],
+    mut nominals: UnitNominals,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
-    """Read only producer-admitted scalar products, or lower normally and retain an exact witnessed result."""
+    """
+    Read only producer-admitted products, or lower normally and retain an exact witnessed result.
+
+    A product names the unit's models and enums by declaration identity; `nominals` describes the current tables.
+    """
     inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted, record_report is not None)
     mut record_identity = ""
     if record_report is not None:
@@ -470,9 +482,12 @@ def lower_ordinary_frame(
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
         if let Some(witness) = inputs:
-            if let Some(product) = retained_scalar(directory, witness, Some(location(body.span, source, file))):
-                function, runtime = product
-                report_scalar(record_report, directory, witness, record_identity, function.name, true, len(runtime))?
+            sync_carriers(nominals, program, intrinsics)
+            if let Some(product) = retained_scalar(directory, witness, nominals, Some(location(body.span, source, file))):
+                function, runtime, references = product
+                report_scalar(
+                    record_report, directory, witness, record_identity, function.name, true, len(runtime), references,
+                )?
                 return Ok((function, runtime, [], []))
     function, runtime, pending, synthesized = lower_function(
         context,
@@ -488,22 +503,39 @@ def lower_ordinary_frame(
     if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                match retain_scalar(directory, witness, function, runtime):
-                    Ok(_) =>
-                        report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
+                match retain_named_scalar(directory, witness, function, runtime, nominals):
+                    Ok(references) =>
+                        report_scalar(
+                            record_report,
+                            directory,
+                            witness,
+                            record_identity,
+                            function.name,
+                            false,
+                            len(runtime),
+                            references,
+                        )?
                     Err(reason) =>
                         # The ordinary compiler already has its complete lowered function. Record the optional
                         # product's refusal without changing that ordinary verdict.
                         if record_report is not None:
                             report_scalar_refusal(record_report, record_identity, function.name, reason)?
     elif record_report is not None and inputs is not None:
-        report_scalar_refusal(
-            record_report,
-            record_identity,
-            function.name,
-            "lowering produced pending instances, synthesized frames, or intrinsic changes",
-        )?
+        refusal = lowering_refusal(len(pending), len(synthesized), len(intrinsics) - original_intrinsics)
+        report_scalar_refusal(record_report, record_identity, function.name, refusal)?
     return Ok((function, runtime, pending, synthesized))
+
+
+pub def lowering_refusal(pending: int, synthesized: int, carriers: int) -> str:
+    """Name every lowering side effect a keyed product cannot carry."""
+    mut causes: list[str] = []
+    if pending != 0:
+        causes.append("requested generic instances")
+    if synthesized != 0:
+        causes.append("synthesized helper frames")
+    if carriers != 0:
+        causes.append("admitted new intrinsic carriers")
+    return "lowering " + ", ".join(causes)
 
 
 def ordinary_product_inputs(

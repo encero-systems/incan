@@ -1,0 +1,30 @@
+# behavior: `incan tools metadata model PATH MODEL --format json` prints the canonical model bundle, selected by its stable model id, as 0.5.1 did (#3142).
+# cli-commands:
+#   tools metadata model . example.orders.Order --format json
+# expect-stdout:
+#   {
+#     "schema_version": 1,
+#     "stable_model_id": "example.orders.Order",
+#     "logical_type_name": "Order",
+#     "fields": [
+#       {
+#         "name": "id",
+#         "type": "int",
+#         "nullable": false
+#       },
+#       {
+#         "name": "note",
+#         "type": "str",
+#         "nullable": true,
+#         "alias": "memo",
+#         "description": "Free text"
+#       }
+#     ],
+#     "publishable": true
+#   }
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The project whose declared model bundle the case emits."""
+    pass

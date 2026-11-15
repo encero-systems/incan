@@ -25,9 +25,11 @@ mod compiler_record_set;
 mod decoded_manifest;
 mod lazy_entry;
 mod manifest_input;
+mod native_reference;
 mod retained;
 
 use lazy_entry::IndexedLoaf;
+pub use native_reference::{NATIVE_CLOSURE_SCHEMA, NativeAnchors, PublishedNativeClosure};
 
 /// Publish one private cache record atomically: write `bytes` to a new owner-only file beside `path`, named with this
 /// process and `suffix`, and rename it over `path`. A failed write removes the temporary file; concurrent readers see
@@ -206,29 +208,19 @@ impl LoafArtifact {
         self.dir.join(format!("{}.native.json", artifact_stem(&self.name)))
     }
 
-    /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
-    /// this Loaf's directory, so the closure returned holds only locatable paths.
-    pub fn native_closure(&self) -> Result<LoafNativeClosure, LoafIndexError> {
-        LoafNativeClosure::read(&self.dir, &self.name)
+    /// Read the library unit's native closure, resolving its anchored references against the current home's
+    /// `anchors`, so the closure returned holds only locatable paths.
+    pub fn native_closure(&self, anchors: &NativeAnchors) -> Result<LoafNativeClosure, LoafIndexError> {
+        LoafNativeClosure::read(&self.dir, &self.name, anchors)
     }
 }
 
 impl LoafNativeClosure {
     /// Read the native closure of the Loaf `name` in `dir` without reading its manifest: linking needs only the
-    /// closure file, and a Loaf the program never imports must not be decoded to link it.
-    pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{}.native.json", artifact_stem(name)));
-        let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
-            path: path.clone(),
-            reason: error.to_string(),
-        })?;
-        let mut closure: LoafNativeClosure =
-            serde_json::from_slice(&bytes).map_err(|error| LoafIndexError::Unreadable {
-                path,
-                reason: error.to_string(),
-            })?;
-        closure.locate_in(dir);
-        Ok(closure)
+    /// closure file, and a Loaf the program never imports must not be decoded to link it. Anchored references resolve
+    /// against the current home's `anchors`; a legacy closure's relative paths name their targets from `dir`.
+    pub fn read(dir: &Path, name: &str, anchors: &NativeAnchors) -> Result<Self, LoafIndexError> {
+        Self::read_anchored(dir, name, anchors)
     }
 }
 
@@ -251,8 +243,9 @@ fn located(directory: &Path, path: &Path) -> PathBuf {
     result
 }
 
-/// A library unit's native closure (`<name>.native.json`): the crates it links by name and the directories their own
-/// dependencies are found in. A consumer links the unit with the same closure.
+/// A library unit's native closure (`<name>.native.json`) as a consumer links it: the crates it links by name and the
+/// directories their own dependencies are found in, at their locations in the current home. The published file holds
+/// anchored references instead ([`PublishedNativeClosure`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LoafNativeClosure {
     /// The crates the unit links, by crate name and rlib.
@@ -263,18 +256,6 @@ pub struct LoafNativeClosure {
     /// in the applying crate, where its output names the unit's own Rust crates. Empty unless the unit exports one.
     #[serde(default)]
     pub macro_externs: Vec<(String, PathBuf)>,
-}
-
-impl LoafNativeClosure {
-    /// Resolve every relative path against the Loaf's `directory`; absolute paths stay as written.
-    fn locate_in(&mut self, directory: &Path) {
-        for (_, path) in self.externs.iter_mut().chain(self.macro_externs.iter_mut()) {
-            *path = located(directory, path);
-        }
-        for path in &mut self.search {
-            *path = located(directory, path);
-        }
-    }
 }
 
 /// The namespace one Loaf owns in a compilation.
@@ -691,6 +672,15 @@ impl LoafIndex {
         Some(resolved)
     }
 
+    /// Release every Rust item decoded so far, for this index and the clones that share its store, when checking is
+    /// done. A standard type's metadata carries every implementation it has, so the items a checker decoded can
+    /// outweigh the checked program; a later lookup decodes its item again through the same lookup order.
+    pub fn release_resolved_rust_items(&self) {
+        if let Ok(mut items) = self.resolved_rust_items.lock() {
+            *items = HashMap::new();
+        }
+    }
+
     /// Alias-only Rust metadata for `canonical_path`, following the full-item lookup order without expanding a cache
     /// record's methods, trait implementations, fields or variants.
     ///
@@ -937,6 +927,49 @@ mod scoped_name_tests {
         assert_eq!(observed_identity, &identity);
         assert_eq!(observed_namespace, &LoafNamespace::Dependency { key: key.to_owned() });
         assert!(!observation.was_demanded());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resolved_item_tests {
+    use super::LoafIndex;
+    use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+    use std::sync::Arc;
+
+    /// Releasing decoded items after checking drops every shared item the index held, and a later lookup answers
+    /// again through the same lookup order instead of from a retained copy.
+    #[test]
+    fn released_items_leave_the_index_and_decode_again() -> Result<(), Box<dyn std::error::Error>> {
+        let path = "native::Header";
+        let mut index = LoafIndex::default();
+        index.add_rust_facts(
+            &Default::default(),
+            [(
+                path.to_owned(),
+                RustItemMetadata {
+                    canonical_path: path.to_owned(),
+                    definition_path: None,
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo::default()),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let first = index.rust_abi_item(path).ok_or("the installed fact did not answer")?;
+        assert_eq!(Arc::strong_count(&first), 2, "the index shares the item it decoded");
+
+        index.release_resolved_rust_items();
+
+        assert_eq!(
+            Arc::strong_count(&first),
+            1,
+            "the released index still holds the decoded item"
+        );
+        let again = index.rust_abi_item(path).ok_or("a released item no longer answers")?;
+        assert!(!Arc::ptr_eq(&first, &again), "the lookup answered from a retained copy");
+        assert_eq!(again.canonical_path, path);
         Ok(())
     }
 }

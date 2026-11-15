@@ -276,6 +276,14 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
 
+## `incan inspect registry`
+
+`incan inspect registry IDENTITY [--project PATH] [--format json]` prints one public typed registry (see [checked and loaded registries](../../language/explanation/checked_and_loaded_registries.md)) of the project at `PATH` (default `.`) as the compiler checks it, without running any module. `IDENTITY` is the registry's `<module>::<binding>`, or the same prefixed with the package name. The document has `schema_version` `1`, `provenance` `checked`, `package` (`name`, `version`), `registry` (the definition: `identity`, `binding`, `public`, `key_type`, `descriptor_type`, `subjects`, and `reexport_paths` when nonempty) and `entries`, each with `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor` and `provenance`. An identity the package does not define exits `1` with ``checked registry `IDENTITY` was not found; available registries: ...``, listing package-qualified identities.
+
+## `incan tools metadata api`
+
+`incan tools metadata api [PATH] [--format json]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation.
+
 ## `oven inspect dependencies`
 
 Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:

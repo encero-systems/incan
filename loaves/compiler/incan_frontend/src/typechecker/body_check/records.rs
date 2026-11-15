@@ -1,11 +1,16 @@
 //! Selected owner projections for the Incan checker-record codec. This is a bootstrap conversion, not a store.
 
+mod artifact_admission;
+mod call_artifacts_generated;
 mod diagnostics;
 mod function_calls;
 mod input_flow;
 mod inputs;
 mod mutation;
+mod native_types;
 mod ownership;
+mod rust_artifact_admission;
+mod rust_artifacts_generated;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
 mod unsupported;
@@ -294,6 +299,7 @@ impl TypeChecker {
 /// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
 struct Positions {
     nodes: SemanticNodeBindings,
+    owner: Span,
     identities: BTreeMap<String, CanonicalSymbolId>,
     caller: Option<super::super::type_info::CBindingRawCallOwner>,
     type_identities: BTreeMap<String, CanonicalSymbolId>,
@@ -430,6 +436,7 @@ impl Positions {
         });
         Ok(Self {
             nodes,
+            owner,
             identities,
             caller,
             type_identities,
@@ -541,6 +548,11 @@ impl Positions {
             root: self.nodes.root().to_owned(),
             path: path.to_owned(),
         })
+    }
+
+    /// Return the selected owner's canonical structural path for owner-wide artifact rows.
+    fn owner_path(&self) -> Result<String, NodeBindingError> {
+        Ok(self.nodes.anchor(self.owner)?.path)
     }
 }
 
@@ -946,6 +958,12 @@ fn restore_local(
     record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
     row: &[String],
 ) -> Result<(), NodeBindingError> {
+    if call_artifacts_generated::restore(positions, &mut local.calls, row)? {
+        return Ok(());
+    }
+    if rust_artifacts_generated::restore(positions, &mut local.rust, row)? {
+        return Ok(());
+    }
     if matches!(
         row[0].as_str(),
         "input-call" | "input-local" | "input-flow" | "input-copy"

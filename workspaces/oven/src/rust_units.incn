@@ -26,13 +26,14 @@ from home import dependency_artifact_dir, standard_artifact_dir, standard_packag
 from json_fields import field, required_items, required_text, strings
 from intake import library_source, ManifestReader
 from native_closure_input import NativeClosureInput
+from native_references import closure_reference, native_anchors, rust_native_document
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from observation import trace
 from publication import place, publish
 from rust_activation import DependencyDomain
 from rust_target import target_configuration
 from toml_fields import read_manifest, required_string
-from toolchain import NativeCrate, Toolchain, located
+from toolchain import NativeCrate, Toolchain
 from unit_freshness import Key, artifact_identity, cache_identities, fingerprint, record, reusable, staleness
 from rust_freshness import (
     compilation_observations,
@@ -587,18 +588,11 @@ pub def publish_native_inputs(
     search: list[str],
     unit: BuiltUnit,
 ) -> Result[None, str]:
-    """Record a new producer's selected inputs without rewriting an immutable reused producer."""
+    """Record a new producer's selected inputs, anchored in the current home, without rewriting a reused producer."""
     if unit.reused:
         return Ok(None)
     bindings = facet_bindings(facet, built, request.registry)?
-    mut externs: list[JsonValue] = []
-    for binding in bindings:
-        externs.append(JsonValue.array([JsonValue.string(binding.name), JsonValue.string(binding.path)]))
-    document = JsonValue.object(
-        {"schema": JsonValue.string("incan.rust-native/1"), "externs": JsonValue.array(externs), "search": JsonValue.array(
-            [JsonValue.string(directory) for directory in search + [unit.directory]],
-        )},
-    )
+    document = rust_native_document(bindings, search + [unit.directory], native_anchors()?)
     return publish(Path(unit.directory).joinpath("native.json"), json_text(document)?)
 
 
@@ -1259,7 +1253,9 @@ pub def native_search(closure: Path, readings: NativeClosureInput = NativeClosur
 
 
 pub def closure_search(closure: Path, document: JsonValue) -> Result[list[str], str]:
-    """The search directories of the native closure `document` read from `closure`, resolved beside it."""
+    """The search directories of the native closure `document` read from `closure`, resolved in the current home."""
     match strings(field(document, "search", []).map_err((_) => f"{closure.0}: missing search")?, ["search"]):
         Err(_) => return Err(f"{closure.0}: search is not a list of directories")
-        Ok(directories) => return Ok([located(closure.parent(), directory) for directory in directories])
+        Ok(directories) =>
+            anchors = native_anchors()?
+            return Ok([closure_reference(closure.parent(), directory, anchors)? for directory in directories])

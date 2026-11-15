@@ -1,4 +1,4 @@
-# behavior: frozen text retains parameter, field and collection values, displays as ordinary text when printed or formatted from a shared parameter (incan-4.4), and shares checked text methods (#2256)
+# behavior: frozen text retains parameter, field, collection and tuple values, displays as ordinary text when printed or formatted from a shared parameter (incan-4.4), and shares checked text methods (#2256); a `str` constant in a `tuple[str, str]` becomes owned text (once refused in lowering with `expected String, found FrozenStr`)
 # expect-stdout:
 #   strict
 #   [strict]
@@ -10,6 +10,7 @@
 #   <named>
 #   strict
 #   2 strict
+#   named value
 
 """Observe frozen text across parameters, fields, collections and shared text operations."""
 
@@ -33,6 +34,10 @@ def pick() -> FrozenStr:
     return keep("policy")
 
 
+def labeled() -> tuple[str, str]:
+    return (NAME, "value")
+
+
 def show(value: FrozenStr) -> None:
     println(value)
     println(f"<{value}>")
@@ -42,7 +47,7 @@ def main() -> None:
     """Observe frozen values across authoring boundaries.
 
     1. Pass frozen values through text and frozen parameters, then extend an owned value.
-    2. Retain frozen values through model fields and collection elements.
+    2. Retain frozen values through model fields, collection elements and tuple elements.
     3. Validate the shared text methods on frozen receivers.
     """
     # 1. Preserve frozen arguments and turn one value into an extensible owned string.
@@ -60,6 +65,8 @@ def main() -> None:
     println(config.name)
     names = [POLICY, POLICY]
     println(f"{len(names)} {names[0]}")
+    first, second = labeled()
+    println(f"{first} {second}")
 
     # 3. Use checked text operations without treating their frozen receiver as a list.
     observe_frozen_methods()

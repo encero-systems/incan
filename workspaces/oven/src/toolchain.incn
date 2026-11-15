@@ -19,6 +19,9 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   on macOS).
 - `codegraph_on_request`: this compiler accepts `--no-codegraph`, so native compilation and graph publication have
   separate proofs. Its absence preserves bootstrap compatibility with the preceding Oven generation.
+- `closure_anchors`: this compiler accepts `--toolchain-root` and `--bakery-root` and publishes anchored native
+  closures. Its absence keeps those options away from a driver that predates them, as in a release's source closure,
+  which the preceding release's driver builds.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -44,12 +47,16 @@ from unit_publication import (
     verified_payload,
     relocate_payload,
 )
-from compiler_facts import FactAdmission, admit_fact, verified_fact, relocate_fact
+from compiler_facts import FactAdmission, admit_fact, retire_facts, verified_fact, relocate_fact
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
-from installation_page import readmit as readmit_installation_page, recall as recall_installation, retain as retain_installation
+from installation_page import (
+    readmit as readmit_installation_page,
+    recall as recall_installation,
+    retain as retain_installation,
+)
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -139,6 +146,18 @@ pub def readmit_selected_installation() -> Result[Installation, str]:
     if directory.is_dir():
         directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     return readmit_installation(directory)
+
+
+pub def readmit_relinked_installation(removed: list[str]) -> Result[int, str]:
+    """
+    Re-admit the selected installation after a relink replaced its compiler, then retire the admission records of
+    the compiler files it removed, `removed`. Returns how many records were retired.
+
+    An installed generation is frozen: ordinary commands never notice an edited `toolchain.json`. A relink is the
+    installation's owner, so it asks for this explicitly after it rewrites the manifest.
+    """
+    _ = readmit_selected_installation()?
+    return retire_facts(removed)
 
 
 def parsed_without_admission(directory: Path) -> Result[Toolchain, str]:
@@ -344,6 +363,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
+            closure_anchors=optional_flag(document, "closure_anchors")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

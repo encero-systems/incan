@@ -1,0 +1,9 @@
+[project]
+name = "tools_metadata_model_absent"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[tool.incan.metadata]
+model-bundles = ["contracts/order.json"]

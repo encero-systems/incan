@@ -55,6 +55,9 @@ pub model Toolchain:
     pub driver_observation: str = ""
     # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
     pub retire_worker: bool = false
+    # This compiler accepts `--toolchain-root` and `--bakery-root` and anchors the native closures it publishes. A driver
+    # from before them refuses the options, so Oven passes them only when the installation advertises this.
+    pub closure_anchors: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -67,6 +70,7 @@ pub model Toolchain:
             registry_units=self.registry_units,
             registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
+            closure_anchors=self.closure_anchors,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
@@ -92,6 +96,7 @@ pub model InstalledCompiler:
     pub registry_units: str
     pub registry_units_identity: str = ""
     pub codegraph_on_request: bool = false
+    pub closure_anchors: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
@@ -116,6 +121,7 @@ pub model InstalledCompiler:
             registry_units=self.registry_units,
             registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
+            closure_anchors=self.closure_anchors,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

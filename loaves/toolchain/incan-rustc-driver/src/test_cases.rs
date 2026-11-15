@@ -21,6 +21,7 @@ use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned, Statement};
 use incan_frontend::testing_markers::{TestingMarkerKind, resolve_testing_marker_kind};
+use incan_lang::lang::conventions::NONE_TYPE_NAME;
 
 /// The prefix of every generated entry and local. Source names may not start with `__incan_`, which the checker
 /// reserves for names it generates itself, so the source-level entries use this one.
@@ -474,7 +475,7 @@ impl<'a> EntryWriter<'a> {
         autouse: &[&str],
     ) -> Result<String, String> {
         let returns = return_type(self, function);
-        let returns_value = returns != "None";
+        let returns_value = returns != NONE_TYPE_NAME;
         let mut roots: Vec<&str> = test
             .parameter_names
             .iter()
@@ -648,7 +649,7 @@ fn return_type(writer: &EntryWriter<'_>, function: &FunctionDecl) -> String {
         .text(function.return_type.span.start, function.return_type.span.end)
         .trim();
     if matches!(function.return_type.node, incan_frontend::ast::Type::Unit) || written.is_empty() {
-        "None".to_string()
+        NONE_TYPE_NAME.to_string()
     } else {
         written.to_string()
     }

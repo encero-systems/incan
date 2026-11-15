@@ -28,7 +28,7 @@ from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begi
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import describe
-from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
+from unit_compiler import PlanRecordCounts, graph_body_output_path, plan_record_counts, plan_record_report_path
 from unit_rust import prepare_native
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
@@ -223,7 +223,10 @@ pub def obtain(
     invalid_plans = plan_owners_reading(graph, projected.keys)?
     selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)
     produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies))?
-    plan_counts = plan_record_counts(ready, compiled_key)?
+    # A bakery hit plans nothing; the report beside the key is the earlier build's.
+    mut plan_counts = PlanRecordCounts()
+    if produced.evaluations > 0:
+        plan_counts = plan_record_counts(ready, compiled_key)?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(

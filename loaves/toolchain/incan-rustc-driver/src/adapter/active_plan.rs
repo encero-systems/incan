@@ -12,6 +12,8 @@ const NATIVE_CGU_PARTITIONS: usize = 16;
 /// The exact record input attached to one compiler definition.
 #[derive(Clone)]
 pub(crate) struct DefinitionInput {
+    /// The plan's name for the definition; it chooses the codegen unit and carries no source position.
+    name: String,
     identity: String,
     fingerprint: String,
 }
@@ -25,8 +27,10 @@ impl DefinitionInput {
         &self.fingerprint
     }
 
+    /// The codegen unit of the definition, from its plan name: a comment that shifts byte offsets, and with them the
+    /// record identity, leaves every definition in the unit it was in, so equal plans compile to equal bytes.
     pub(crate) fn partition(&self) -> usize {
-        stable_partition(&self.identity)
+        stable_partition(&self.name)
     }
 }
 
@@ -175,6 +179,7 @@ impl PlanReader {
                 .insert(
                     event.function.clone(),
                     DefinitionInput {
+                        name: event.function.clone(),
                         identity: event.identity,
                         fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                     },
@@ -199,6 +204,7 @@ impl PlanReader {
             inputs.insert(
                 layout.name.clone(),
                 DefinitionInput {
+                    name: layout.name.clone(),
                     identity: layout.name.clone(),
                     fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                 },
@@ -210,6 +216,7 @@ impl PlanReader {
             inputs.insert(
                 layout.name.clone(),
                 DefinitionInput {
+                    name: layout.name.clone(),
                     identity: layout.name.clone(),
                     fingerprint: fingerprint.trim_start_matches("sha256:").to_owned(),
                 },

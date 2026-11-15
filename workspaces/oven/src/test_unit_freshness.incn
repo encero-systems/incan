@@ -67,6 +67,11 @@ def verify_be34_position_changes(scratch: Path) -> Result[None, str]:
     write(source, "# position-only edit\n" + helper + main)?
     commented = reconcile(scratch, setup)?
     assert commented.key != original.key, "BE-34: the native unit reads changed positions"
+    # Rewording that comment moves no code: the native unit keeps its key, while replayed source sees the edit.
+    write(source, "# a reworded position-only edit\n" + helper + main)?
+    reworded = reconcile(scratch, setup)?
+    assert reworded.key == commented.key, "a comment text edit moves no code and keeps the native key"
+    assert reworded.replay != commented.replay, "a replayed check or refusal still sees the edited comment"
     write(source, main + "\n" + helper)?
     moved = reconcile(scratch, setup)?
     assert moved.key != original.key, "BE-34: moving declarations updates native position inputs"
@@ -312,7 +317,8 @@ def verify_import_records(scratch: Path) -> Result[None, str]:
     setup = fixture(scratch)?
     driver = Path(setup.toolchain.driver)
     attempts = scratch.joinpath("attempts")
-    mut script = "#!/bin/sh\n[ \"$1\" = --rust-imports ] || exit 2\n" + f"printf x >> '{attempts.0}'\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n"
+    script += "[ \"$1\" = --rust-imports ] || exit 2\n" + f"printf x >> '{attempts.0}'\n"
     script += "printf '[{\"crate\":\"std\",\"version\":null,\"features\":[],\"source\":\"main.incn\"}]'\n"
     write(driver, script)?
     make_executable(driver)?
@@ -457,7 +463,7 @@ def verify_relocated_outcomes(scratch: Path) -> Result[None, str]:
     second = fixture(scratch.joinpath("second"))?
     attempts = scratch.joinpath("attempts")
     driver = Path(first.toolchain.driver)
-    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nprevious=''\n"
     script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\nprevious=$argument\ndone\n"
     script += "certified=check\n[ \"$1\" = --unit ] && certified=refusal\n"
@@ -519,7 +525,7 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
     record = scratch.joinpath("bakery")
-    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
     script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\nprevious=''\n"
     script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\n"
     script += "previous=$argument\ndone\n"

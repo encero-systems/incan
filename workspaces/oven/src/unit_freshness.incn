@@ -19,17 +19,19 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
+from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
 from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
 from frozen_inputs import observation as frozen_observation
-from source_identity import entry_scope, source_inputs
+from source_identity import absent_inputs, entry_scope, source_inputs
+from unit_sources import SourceGraph, source_graph
 from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
 from rust::std::env::consts import OS
 
-const UNIT_DOMAIN: str = "incan.oven.unit/3"
+const UNIT_DOMAIN: str = "incan.oven.unit/4"
 const CODEGEN_DOMAIN: str = "incan.oven.codegen/2"
 
 
@@ -132,6 +134,15 @@ pub model Key:
     pub descriptor: str = ""
     # The admitted compiler input for revalidation; an opaque caller-owned key may omit its derivation context.
     pub compiler: str = ""
+    # The identity over every authored byte, comments included, for outcomes that show source text or byte offsets:
+    # replayed check reports and refusals, and codegraph exports. Empty when it equals `digest`.
+    pub replay: str = ""
+
+    pub def replayed(self) -> str:
+        """The identity of an outcome that renders source: the raw identity, or `digest` when they agree."""
+        if self.replay != "":
+            return self.replay
+        return self.digest
 
 
 pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
@@ -159,13 +170,22 @@ def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) 
     if base_compiler == "":
         base_compiler = compiler_fingerprint(toolchain)?
     selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
-    mut key = reconciled_key(unit, selected_compiler, description_digest(unit)?, project)?
+    described = description_digest(unit)?
+    # A program or test unit is keyed by what its collection read and probed, as the compiler reports it.
+    graph = source_graph(unit, toolchain, f"{selected_compiler} {described}", ledger_name(unit), project)?
+    mut key = reconciled_key(unit, selected_compiler, described, project, graph)?
     # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
     key.compiler = base_compiler
     return Ok(key)
 
 
-pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def reconciled_key(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     The key of a unit against a ledger that may already hold what earlier requests observed.
 
@@ -173,7 +193,7 @@ pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut
     """
     hashed = project.hashed
     listed = project.listed
-    key = unit_key_with(unit, compiler, described, project)?
+    key = unit_key_with(unit, compiler, described, project, graph)?
     project.save()?
     work = f"hashed {project.hashed - hashed} files, listed {project.listed - listed} directories"
     trace(f"{ledger_name(unit)}: key {key.digest[:12]}, {work}")
@@ -196,6 +216,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     2. Read the identities the linked native units were produced under.
     3. Bind the target and deployment selection without including installation paths. SDK contents belong only to
        units that read or link them, through `selected_unit_compiler`.
+    4. Bind the native-closure schemas the compiler and Oven publish, so records from an earlier closure form are
+       misses rather than closures this generation cannot resolve.
     """
     # 1. Installed selections carry the identities admitted with their immutable page. Synthetic and staged
     # toolchains without a page retain the direct fact lookup used by installation preparation and focused tests.
@@ -217,6 +239,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     if len(selection) > 0 or toolchain.rust_version == "":
         deployment = deployment_target(rust_compiler(toolchain), target, selection)?
     facts.extend([target, deployment])
+    # 4. The schemas name the reference form of every native closure a unit of this compiler publishes or reads.
+    facts.extend([NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA])
     return fingerprint(facts + natives)
 
 
@@ -357,7 +381,13 @@ pub def linked_natives(unit: UnitDescription) -> list[NativeCrate]:
     return [native for native in unit.externs if native.name not in unit.toolchain_access.sysroot_dependencies]
 
 
-pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+pub def unit_key_with(
+    unit: UnitDescription,
+    compiler: str,
+    described: str,
+    mut project: Ledger,
+    graph: Option[SourceGraph] = None,
+) -> Result[Key, str]:
     """
     Digest compiled source contents and fold the recorded identities of the units it links.
 
@@ -370,13 +400,18 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     3. Combine them with the compiler and the description into the key.
     """
     # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
-    sources = source_contents(unit, project)?
+    # A program or test unit's native code reads only positioned code, so comments that move no code are not its inputs.
+    native = unit.kind in ["program", "test"]
+    sources = source_contents(unit, project, graph, native)?
     # 2. A rebuilt library or native crate the unit links changes the key of the unit linking it. The selected
     # compiler identity already binds every admitted Rust ABI cache, so repeating those lookups here would reopen
     # frozen installation inputs after admission.
     artifacts = loaf_identities(unit)? + native_identities(linked_natives(unit))?
     # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
     key = assembled(compiler, described, sources, artifacts)?
+    mut replay = ""
+    if native:
+        replay = assembled(compiler, described, source_contents(unit, project, graph, false)?, artifacts)?.digest
     return Ok(
         Key(
             digest=key.digest,
@@ -385,17 +420,43 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
             provenance=[unit.project_root, unit.source],
             descriptor=fingerprint([json_text(unit.to_json())?])?,
             compiler=key.compiler,
+            replay=replay,
         ),
     )
 
 
-def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
-    """Resolve declared entries from their project and identify their roles without physical source locations."""
+def source_contents(
+    unit: UnitDescription,
+    mut project: Ledger,
+    graph: Option[SourceGraph],
+    code: bool,
+) -> Result[list[str], str]:
+    """
+    Resolve declared entries from their project and identify their roles without physical source locations.
+
+    A unit with a source graph reads exactly its graph's files, and the graph's absent paths are inputs too: a file
+    created at one changes what collection reads. Any other unit reads every source under its roots.
+    With `code`, an Incan source counts by its positioned code (`Ledger.code_digest`) instead of its bytes.
+    """
     root = Path(unit.source_root)
     declared = Path(unit.project_root)
-    mut contents = ["entry", entry_scope(Path(unit.source), root), project.digest(Path(unit.source))?]
-    modules = [path for path in unit_files(unit, project)? if path != unit.source]
-    contents.extend(source_inputs(modules, root, project)?)
+    mut entry_digest = ""
+    if code:
+        entry_digest = project.code_digest(Path(unit.source))?
+    else:
+        entry_digest = project.digest(Path(unit.source))?
+    mut contents = ["entry", entry_scope(Path(unit.source), root), entry_digest]
+    match graph:
+        Some(collected) =>
+            # The collection's own paths are physical; bind them under the physical root.
+            physical = root.resolve().unwrap_or(root)
+            entry = Path(unit.source).resolve().unwrap_or(Path(unit.source)).0
+            modules = [path for path in collected.read if path != entry and path != unit.source]
+            contents.extend(source_inputs(modules, physical, project, code)?)
+            contents.extend(["absent"] + absent_inputs(collected.absent, physical))
+        None =>
+            modules = [path for path in unit_files(unit, project)? if path != unit.source]
+            contents.extend(source_inputs(modules, root, project, code)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     if let Some(entry) = unit.vocab_entry:
@@ -559,3 +620,11 @@ pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Ke
     for index in range(len(staged)):
         place(staged[index], finals[index])?
     return record(stamp, key, finals)
+
+
+pub def replay_key(key: Key) -> Key:
+    """`key` under its raw identity, for an output that shows source text or positions, such as a codegraph export."""
+    mut raw = key
+    raw.digest = key.replayed()
+    raw.replay = ""
+    return raw

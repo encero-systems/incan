@@ -1,0 +1,13 @@
+"""A lowering whose side effects a keyed plan product cannot carry names each of them in its refusal."""
+
+from program_entries import lowering_refusal
+
+
+pub def test_lowering_refusal_names_each_side_effect() -> Result[None, str]:
+    """Generic instance requests, synthesized frames and admitted carriers are reported separately and together."""
+    assert lowering_refusal(0, 3, 0) == "lowering synthesized helper frames"
+    assert lowering_refusal(2, 0, 0) == "lowering requested generic instances"
+    assert lowering_refusal(0, 0, 1) == "lowering admitted new intrinsic carriers"
+    combined = lowering_refusal(1, 1, 1)
+    assert combined == "lowering requested generic instances, synthesized helper frames, admitted new intrinsic carriers"
+    return Ok(None)

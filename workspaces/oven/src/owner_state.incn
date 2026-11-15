@@ -40,6 +40,7 @@ from unit_freshness import (
     selected_unit_compiler,
 )
 from unit_rust import prepare_native
+from unit_sources import source_graph
 from installation_page import admitted_identity, begin_command, end_command
 from storage_admission import take_decision
 
@@ -87,7 +88,8 @@ pub model Held:
     pub def key(mut self, compiler: str, toolchain: Toolchain) -> Result[Key, str]:
         """Reconcile the unit's inputs against what earlier requests observed."""
         selected = selected_unit_compiler(self.unit, toolchain, compiler)?
-        mut key = reconciled_key(self.unit, selected, self.described, self.ledger)?
+        graph = source_graph(self.unit, toolchain, f"{selected} {self.described}", ledger_name(self.unit), self.ledger)?
+        mut key = reconciled_key(self.unit, selected, self.described, self.ledger, graph)?
         key.compiler = compiler
         return Ok(key)
 
@@ -208,6 +210,7 @@ pub model Owner:
         admission = match admitted_identity(directory)?:
             Some(identity) => identity
             None => return Err("toolchain installation has no admitted page")
+
         compiler = compiler_fingerprint(loaded)?
         loaded.worker_generation = generation_for(compiler)?
         if admitted_identity(directory)? != Some(admission):

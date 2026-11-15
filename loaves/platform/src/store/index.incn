@@ -295,6 +295,10 @@ pub def insert(root: Path, top: str, staged: Path, additions: list[Entry]) -> Re
     ordered = sorted_entries(additions)
     if top == "":
         return build(staged, ordered)
+    # Rebuilding is linear and canonical for a large delta. Repeated copy-on-write insertion is retained for small
+    # deltas so ordinary edits still share every unchanged page with the selected generation.
+    if len(ordered) > FANOUT:
+        return build(staged, sorted_entries(entries(root, top)? + ordered))
     mut current = top
     for addition in ordered:
         current = insert_one(root, current, staged, addition)?
