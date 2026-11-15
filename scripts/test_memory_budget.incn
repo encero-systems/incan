@@ -125,7 +125,7 @@ def test_parallel_lowering_workers_release_temporary_heap_before_joining() -> Re
         "loaves/compiler/incan_mir_lowering/src/program_entries.incn",
     ).read_text("utf-8", "strict").map_err((error) => error.message())?
     assert "from pub::incan_platform.heap import release_free_heap" in source
-    boundary = ")?\n    release_free_heap()\n    return Ok(completed)"
+    boundary = ")?,\n        )\n    release_free_heap()\n    return Ok(completed)"
     assert boundary in source, "a lowering worker crosses its join before returning its freed temporary heap"
     return Ok(None)
 
