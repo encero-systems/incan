@@ -5,8 +5,9 @@ use super::*;
 /// Durable checked surface of one editable source namespace.
 ///
 /// Frozen Loaves carry this same [`crate::api_metadata::CheckedApiMetadata`] projection inside their manifest. The
-/// editable-namespace record adds only the source module key and canonical declaration identities needed to install
-/// that projection through [`ModuleDependencyInterface`], without serializing transient [`TypeCheckInfo`].
+/// editable-namespace record adds the source module key, canonical declaration identities and final published nominal
+/// scope needed to install that projection through [`ModuleDependencyInterface`], without serializing transient
+/// [`TypeCheckInfo`].
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedNamespaceInterface {
@@ -79,13 +80,20 @@ impl CheckedNamespaceInterface {
                 return Ok(None);
             }
         }
+        let mut nominal_scope = checker.type_info().declarations.named_type_identities.clone();
+        for (name, identity) in &checker.type_info().declarations.body_ir_native_type_identities {
+            nominal_scope.entry(name.clone()).or_insert_with(|| identity.clone());
+            if let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) {
+                nominal_scope.entry(key).or_insert_with(|| identity.clone());
+            }
+        }
         Ok(Some(Self {
             schema: Self::SCHEMA,
             module_name: module_name.to_owned(),
             module_path: module_path.to_vec(),
             api,
             identities,
-            nominal_scope: checker.collect_checked_nominal_scope(),
+            nominal_scope,
         }))
     }
 
