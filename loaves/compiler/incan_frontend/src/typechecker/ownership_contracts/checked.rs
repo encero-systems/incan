@@ -154,6 +154,7 @@ impl TypeChecker {
             projected
         });
         let contract = receiver_contract.as_ref().unwrap_or(contract);
+        let imported = identity.is_some_and(|identity| !self.declared_in_current_module(identity));
         let mut output = None;
         for mode in &contract.modes {
             let Some(slot) = mode.component.parameter else { continue };
@@ -167,12 +168,20 @@ impl TypeChecker {
                 )
                 .with_stable_code("INCAN-T0123")
             })?;
+            // An imported contract's payload is spelled in its declaring module, while the caller sees the parameter
+            // re-spelled for its own scope, for example a nominal it does not import by its carrier key. The same
+            // mode on the parameter's own wrapper selects that slot; the caller's spelling is the value type.
+            let respelled = imported
+                && matches!(&parameter.ty, ResolvedType::Generic(name, arguments)
+                    if arguments.len() == 1 && self.explicit_ownership_mode(name) == Some(mode.mode));
             let underlying = crate::ownership_metadata::input_value_type_matching(
                 Some(contract),
                 slot,
                 &parameter.ty,
                 &|declared, instantiated| {
-                    self.types_compatible(declared, instantiated) && self.types_compatible(instantiated, declared)
+                    respelled
+                        || (self.types_compatible(declared, instantiated)
+                            && self.types_compatible(instantiated, declared))
                 },
             )
             .map_err(|reason| CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"))?;
@@ -298,6 +307,15 @@ impl TypeChecker {
                     .insert(identity, contract);
             }
         }
+    }
+
+    /// Whether a declaration belongs to the module being checked, rather than to a module or Loaf it imports.
+    fn declared_in_current_module(&self, identity: &CanonicalSymbolId) -> bool {
+        identity.origin
+            == self
+                .symbols
+                .member_declaration_identity("", SemanticSourceTargetKind::Method, Span::new(0, 0))
+                .origin
     }
 
     /// Collect dependency function and method contracts while that module's canonical names and aliases are still in
