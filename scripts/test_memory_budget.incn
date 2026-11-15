@@ -119,6 +119,17 @@ def test_lowering_releases_attempt_heap_before_preserving_a_continuation() -> Re
     return Ok(None)
 
 
+def test_parallel_lowering_workers_release_temporary_heap_before_joining() -> Result[None, str]:
+    """Each lowering worker returns freed temporary heap while its allocator thread is still alive."""
+    source = repository_root()?.joinpath(
+        "loaves/compiler/incan_mir_lowering/src/program_entries.incn",
+    ).read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert "from pub::incan_platform.heap import release_free_heap" in source
+    boundary = ")?\n    release_free_heap()\n    return Ok(completed)"
+    assert boundary in source, "a lowering worker crosses its join before returning its freed temporary heap"
+    return Ok(None)
+
+
 def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Result[None, str]:
     """The gate compares bytes while the human report alone renders MiB and whole seconds."""
     under = measured("oven", 1, 2048 * MIB, 90_000)
