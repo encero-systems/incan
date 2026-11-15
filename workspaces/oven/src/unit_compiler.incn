@@ -21,6 +21,7 @@ from toolchain import Toolchain
 from native_references import anchor_arguments
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
+from unit_sidecars import unit_sidecar_directory
 from compiler_body_values import SelectedBodyPage
 
 
@@ -123,7 +124,11 @@ pub def compile_prepared_unit(
     return Ok(code)
 
 
-pub def write_selected_records(directory: Path, unit: UnitDescription, records: list[SelectedBodyPage]) -> Result[None, str]:
+pub def write_selected_records(
+    directory: Path,
+    unit: UnitDescription,
+    records: list[SelectedBodyPage],
+) -> Result[None, str]:
     """
     Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
     compiler context they were selected under. Builds and checks read their records from this one writer.
@@ -164,20 +169,15 @@ pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
     return Ok(CheckedBodyCounts(checked=checked, reused=reused, decoded=decoded))
 
 
-pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
+pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Result[Path, str]:
     """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
-    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
-    return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
-
-
-pub def unit_sidecar_directory(project: Path, store: Path) -> Path:
-    """Name the transient compiler-sidecar directory used by one physical Bakery's engine."""
-    return project.joinpath("target").joinpath("incan").joinpath("units")
+    directory = unit_sidecar_directory(Path(unit.project_root), bakery()?)
+    return Ok(directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output"))
 
 
 pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[CheckerRecordCounts, str]:
     """Read the compiler's complete per-owner admission report without inspecting diagnostic fallback strings."""
-    report = checker_record_report_path(graph_body_output_path(unit, key))
+    report = checker_record_report_path(graph_body_output_path(unit, key)?)
     if not report.is_file():
         return Ok(CheckerRecordCounts())
     value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
@@ -186,11 +186,9 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
     schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
     if schema != "incan.checker-reuse/1":
         return Err("unsupported checker record report")
-    fields = value
-        .require("artifact_refusals")
-        .map_err((error) => error.message())?
-        .expect_object()
-        .map_err((error) => error.message())?
+    fields = value.require("artifact_refusals").map_err((error) => error.message())?.expect_object().map_err(
+        (error) => error.message(),
+    )?
     mut refusals: Dict[str, int] = {}
     for name in fields.keys():
         refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
@@ -200,16 +198,12 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
         for owner in owners.expect_array().map_err((error) => error.message())?:
             restored.append(owner.expect_str().map_err((error) => error.message())?)
     counts = CheckerRecordCounts(
-        reusable_declarations=value
-            .require("reusable_declarations")
-            .map_err((error) => error.message())?
-            .expect_int()
-            .map_err((error) => error.message())?,
-        all_declarations=value
-            .require("all_declarations")
-            .map_err((error) => error.message())?
-            .expect_int()
-            .map_err((error) => error.message())?,
+        reusable_declarations=value.require("reusable_declarations").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?,
+        all_declarations=value.require("all_declarations").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )?,
         summary=value.require("summary").map_err((error) => error.message())?.expect_str().map_err(
             (error) => error.message(),
         )?,
@@ -227,16 +221,14 @@ def checker_record_report_path(output: Path) -> Path:
 
 pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:
     """Count only loss-checked plan products that the lowering reports as evaluated or reused for this request."""
-    report = plan_record_report_path(unit, key)
+    report = plan_record_report_path(unit, key)?
     mut counts = PlanRecordCounts()
     if not report.is_dir():
         return Ok(counts)
     for entry in report.iterdir().map_err((error) => f"plan record report: cannot {error.message()}")?:
         if not entry.is_file() or not entry.name().endswith(".event"):
             continue
-        text = entry
-            .read_text("utf-8", "strict")
-            .map_err((error) => f"plan record event: cannot {error.message()}")?
+        text = entry.read_text("utf-8", "strict").map_err((error) => f"plan record event: cannot {error.message()}")?
         event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
         reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
             (error) => error.message(),
@@ -265,10 +257,10 @@ pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecord
     return Ok(counts)
 
 
-pub def plan_record_report_path(unit: UnitDescription, key: Key) -> Path:
+pub def plan_record_report_path(unit: UnitDescription, key: Key) -> Result[Path, str]:
     """Name the request-local lowering output consumed by proof counters and atomic Bakery publication."""
-    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
-    return directory.joinpath(f"{described_by(key)}.unit.json.graph-plan-report")
+    directory = unit_sidecar_directory(Path(unit.project_root), bakery()?)
+    return Ok(directory.joinpath(f"{described_by(key)}.unit.json.graph-plan-report"))
 
 
 pub def crate_name(unit: UnitDescription) -> str:
@@ -298,7 +290,9 @@ pub def write_unit(
     mut root = Path(unit.project_root)
     if let Some(selected) = owner:
         root = selected
-    directory = root.joinpath("target").joinpath("incan").joinpath("units")
+    mut directory = root.joinpath("target").joinpath("incan").joinpath("units")
+    if owner is None and described != "":
+        directory = unit_sidecar_directory(root, bakery()?)
     directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
     mut name = compiled
     if described != "":

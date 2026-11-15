@@ -1,0 +1,11 @@
+"""Engine-private paths for transient compiler invocation sidecars."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.primitives.hash import sha256
+
+
+pub def unit_sidecar_directory(project: Path, store: Path) -> Path:
+    """Name one physical Bakery engine's transient compiler sidecars without changing compilation identity."""
+    name = hexlify(sha256.digest(store.0.encode("utf-8")))[:24]
+    return project.joinpath("target").joinpath("incan").joinpath("units").joinpath(name)
