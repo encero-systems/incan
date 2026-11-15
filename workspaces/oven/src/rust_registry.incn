@@ -19,7 +19,7 @@ from registry_pages import current as catalog_current
 from toolchain import load_toolchain, located, rust_compiler
 from unit_freshness import compiler_fingerprint
 from unit_freshness import record
-from unit_publication import admit_store, import_payload
+from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
 
 # The schema of the registry closure a toolchain ships.
@@ -93,19 +93,11 @@ def read_registry_catalog(path: Path, key: str, observed: Observation) -> Result
 
 
 def catalog_registry(units: list[RegistryUnit], path: Path) -> Result[RegistryUnits, str]:
-    """
-    Bind installation preferences separately from the page so project-specific locks never leak into shared facts.
-
-    The selected toolchain's closure is the admitted one, so the stores its entries lie in are the only ones whose entry
-    directories name producers.
-    """
-    admitted = path.0 == load_toolchain()?.registry_units
+    """Bind installation preferences separately from the page so project-specific locks never leak into shared facts."""
     mut search: list[str] = []
     for unit in units:
         if unit.directory not in search:
             search.append(unit.directory)
-        if admitted and unit.entry != "":
-            admit_store(Path(unit.directory).parent().parent().0)
     return Ok(
         RegistryUnits(
             units=units,
