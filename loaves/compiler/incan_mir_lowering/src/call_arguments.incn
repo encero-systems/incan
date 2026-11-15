@@ -261,9 +261,6 @@ pub def call_argument_operand(
         # The checked ABI distinguishes owned packs and SDK values from ordinary collection references.
         return value_operand(builder, value, span)
     if is_list(ty) or is_collection(ty):
-        match stored_element_list(builder, value, ty, span)?:
-            Some(lent) => return Ok(lent)
-            None => pass
         if is_mutable_list_reference(ty):
             match loop_variable_copy(builder, value, span)?:
                 Some(copy) => return list_borrow(builder, copy, true, span)
@@ -394,39 +391,6 @@ def exact_shared_storage(
                         return Ok(Some(source))
                 Err(_reason) => pass
             return Ok(None)
-
-
-def stored_element_list(
-    mut builder: Builder,
-    value: &RustOperand,
-    ty: PlanType,
-    span: SourceSpan,
-) -> Result[Option[Operand], str]:
-    """
-    Lend a list stored inside a list element, such as `stored.variants[position].labels`, to a shared list parameter
-    through the element's own loan, so the call copies nothing.
-
-    Only a shared parameter of exactly the stored list's type qualifies. A slice, a moved projection, a mutable
-    parameter and a list of another shape keep the copy `checked_list_argument` makes for them.
-    """
-    match value:
-        RustOperand.Place(read) =>
-            if read.fact != OwnershipFact.Borrow or not is_element_place(builder, read.place)?:
-                return Ok(None)
-            match reference_contract(ty):
-                Ok((referent, writable)) =>
-                    if writable or not is_list(referent):
-                        return Ok(None)
-                    match element_place_type(builder, read.place):
-                        Ok(element) =>
-                            if element != referent:
-                                return Ok(None)
-                        Err(_reason) => return Ok(None)
-                Err(_reason) => return Ok(None)
-            match shared_element_place(builder, read.place, span)?:
-                Some(stored) => return Ok(Some(list_borrow(builder, stored, false, span)?))
-                None => return Ok(None)
-        _ => return Ok(None)
 
 
 def has_ordinary_lending_route(ty: PlanType) -> bool:
