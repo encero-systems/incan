@@ -1,0 +1,52 @@
+# behavior: borrowing a selected view of the envelope's plan as a receiver after the envelope changes is refused at the change, since the borrow uses the view's dependency (#2972)
+# expect-diagnostic: INCAN-T0126
+
+
+trait Plan:
+    def width(self) -> int:
+        pass
+
+
+class StoredPlan with Plan:
+    pub value: int
+
+    def width(self) -> int:
+        return self.value
+
+
+class Walker[P with Plan]:
+    pub plan: P
+    total: int = 0
+
+    pub def write(mut self, value: int) -> None:
+        self.total += value + self.plan.width()
+
+    pub def finish(self) -> int:
+        return self.total
+
+
+model Selected[P with Plan]:
+    plan: P
+
+    pub def walker(self) -> Walker[P]:
+        return Walker(plan=self.plan)
+
+
+class Envelope:
+    pub plan: StoredPlan
+    pub total: int = 0
+
+    pub def select(self) -> Selected[Borrowed[StoredPlan]] from self.plan:
+        return Selected[Borrowed[StoredPlan]](plan=self.plan)
+
+    pub def append(mut self, value: int) -> None:
+        self.total += value
+
+
+def main() -> None:
+    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)
+    selected = envelope.select()
+    envelope.append(1)
+    mut walker = selected.walker()
+    walker.write(3)
+    println(walker.finish())
