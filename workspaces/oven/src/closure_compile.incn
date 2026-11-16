@@ -6,7 +6,8 @@ them as the `incan.oven.closure/1` document and `entries/` store a toolchain ins
 
 1. Read each lock's registry Loaves, each with its registry, index revision and archive digest.
 2. Stage every Loaf version's source from its admitted archive and the index's manifest (`closure_sources`).
-3. Refuse, before compiling, each Loaf whose build fact this Oven cannot apply, and every Loaf that links one.
+3. Refuse, before compiling, each Loaf whose source RFC 175 refuses or whose build fact this Oven cannot apply, and
+   every Loaf that links one.
 4. Compile each lock as its own graph: a carrier depends on the lock's target Loaves with their locked features, and
    every Loaf version is substituted by its staged source, so the lock's feature unification is kept.
 5. Write each unit's entry, named by its identity, and the closure document.
@@ -26,6 +27,7 @@ from rust_manifest import build_fact, rust_facet
 from rust_registry import read_registry_units
 from rust_target import compiler_version, target_configuration
 from rust_units import build_rust, read_receipt
+from source_security import validate_native_project
 from toolchain import Toolchain, load_toolchain, rust_compiler
 from unit_freshness import compiler_fingerprint
 
@@ -142,8 +144,9 @@ def refusals(locks: list[OvenLock], substitutes: Dict[str, str], run: ClosureRun
     """
     The Loaf versions this run refuses, each with its reason.
 
-    1. A Loaf whose build script has no exact fact for one of its locked bindings, or whose fact declares work this Oven
-       does not run, is refused with `build_fact`'s reason.
+    1. A Loaf whose source holds a bidirectional control (RFC 175) is refused with the diagnostic, which names the file
+       by its place in the Loaf. A Loaf whose build script has no exact fact for one of its locked bindings, or whose
+       fact declares work this Oven does not run, is refused with `build_fact`'s reason.
     2. A Loaf that links a refused one is refused too, until no lock entry changes.
     """
     # 1. Every locked binding of a version is its own question.
@@ -153,6 +156,11 @@ def refusals(locks: list[OvenLock], substitutes: Dict[str, str], run: ClosureRun
             key = f"{entry.name}@{entry.version}"
             if entry.origin != "toolchain" or key in refused:
                 continue
+            match validate_native_project(substitutes[key]):
+                Err(reason) =>
+                    refused[key] = reason.replace(substitutes[key] + "/", "")
+                    continue
+                Ok(_) => pass
             declared = rust_facet(substitutes[key], false)?
             for binding in entry.features:
                 match build_fact(declared, run.identity, run.target, run.profile, binding.enabled):
