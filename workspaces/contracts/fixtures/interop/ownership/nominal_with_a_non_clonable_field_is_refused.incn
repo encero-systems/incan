@@ -1,0 +1,17 @@
+# behavior: a nominal value is never shallow-copied: a class holding a Rust value with no owned Clone implementation, such as a file handle, is refused at the field, so `.clone()` on it has nothing to copy field by field; every model, class and enum requires Clone of its fields (RFC 129's copy spelling, #1846).
+# expect-diagnostic: INCAN-T0113
+
+from rust::std::fs import File
+
+
+class Holder:
+    pub file: File
+
+
+def main() -> None:
+    match File.open("/dev/null"):
+        Ok(file) =>
+            holder = Holder(file=file)
+            other = holder.clone()
+            println("cloned")
+        Err(_) => println("no file")
