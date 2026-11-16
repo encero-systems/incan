@@ -158,7 +158,7 @@ fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<d
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(3)?;
+    let graph = reader.graph(5)?;
     reader.finish()?;
     let invalid_entry = graph.nodes.len();
     let mut invalid = checked.clone();
@@ -216,7 +216,7 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(3)?;
+    let graph = reader.graph(5)?;
     reader.finish()?;
     let initializer = graph.owned_locals.values().next().ok_or("missing owned initializer")?;
     assert!(initializer.source.is_some());
@@ -275,7 +275,7 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(3)?;
+    let graph = reader.graph(5)?;
     reader.finish()?;
     assert_eq!(graph.operations.len(), 1);
     for completion in [true, false] {
@@ -339,7 +339,7 @@ fn invocation_evaluation_restore_requires_its_exact_analysis_fault() -> Result<(
         positions: &positions,
         values: checked[5..].iter(),
     };
-    let graph = reader.graph(3)?;
+    let graph = reader.graph(5)?;
     reader.finish()?;
     assert_eq!(graph.invocations.len(), 1);
     let mut positive = BodyLocal {
@@ -463,6 +463,86 @@ fn checked_copy_restore_retains_exact_type_decisions() -> Result<(), Box<dyn std
     let mut empty_fields = Vec::new();
     super::project(&positions, &retained_empty, &mut empty_fields)?;
     assert_eq!(empty_fields, vec![empty]);
+    Ok(())
+}
+
+/// Only the current ownership schemas can restore authority; legacy rows remain a safe fresh-check fallback.
+#[test]
+fn legacy_input_schemas_are_not_restored() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: Owned[int]) -> int:\n    return value\n";
+    let (program, checker, owner) = fixture(source, "keep")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let view = checker.checked_body(owner).ok_or("missing input owner body")?;
+    let mut fields = Vec::new();
+    super::project(&positions, &view.local, &mut fields)?;
+    let flow = fields
+        .iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-flow"))
+        .ok_or("missing current input-flow row")?;
+    let copy = fields
+        .iter()
+        .find(|row| row.first().is_some_and(|family| family == "input-copy"))
+        .ok_or("missing current input-copy row")?;
+
+    for version in ["1", "2", "3", "4"] {
+        let mut legacy = flow.clone();
+        legacy[3] = version.into();
+        let mut restored = BodyLocal {
+            owner,
+            ..BodyLocal::default()
+        };
+        assert!(restore(&positions, &mut restored, &legacy).is_err());
+        assert!(restored.protocols.explicit_input_flow.is_empty());
+    }
+    let mut legacy_copy = copy.clone();
+    legacy_copy[3] = "1".into();
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    assert!(restore(&positions, &mut restored, &legacy_copy).is_err());
+    assert!(restored.protocols.explicit_input_copy.is_empty());
+    Ok(())
+}
+
+/// A body admitted by current-source value classification publishes no reusable local or final record until that
+/// classification has a wire representation. The next activation therefore checks the body afresh.
+#[test]
+fn current_source_value_uses_are_not_projected_as_record_authority() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Family:\n    Local\ndef read_family(value: str) -> Result[Family, str]:\n    return Ok(Family.Local)\ndef collect(seed: Borrowed[int], rows: list[list[str]]) -> Result[Family, str]:\n    header = rows[0]\n    family = read_family(header[3])?\n    return Ok(family)\n";
+    let (program, checker, owner) = fixture(source, "collect")?;
+    let positions = Positions::new(&checker, &program, owner, false)?;
+    let view = checker.checked_body(owner).ok_or("missing classified owner body")?;
+    assert!(
+        view.local
+            .protocols
+            .explicit_input_flow
+            .values()
+            .any(|flow| matches!(flow, InputFlow::Checked { graph, .. } if !graph.value_uses.is_empty()))
+    );
+    let mut fields = Vec::new();
+    assert_eq!(
+        super::project(&positions, &view.local, &mut fields),
+        Err(super::NodeBindingError::Unsupported(
+            "current-source value classification"
+        ))
+    );
+    assert!(checker.produced_local_record(owner).is_none());
+    assert!(checker.produced_final_record(owner).is_none());
+    assert!(checker.local_record_refusal(owner).is_some());
+    assert_eq!(
+        checker.final_record_refusal(owner),
+        Some(super::NodeBindingError::Unsupported(
+            "current-source value classification"
+        ))
+    );
+
+    let mut fresh = crate::typechecker::TypeChecker::new();
+    fresh.set_graph_body_records(crate::checker_records::GraphBodyRecords::new(Vec::new())?);
+    fresh.check_program(&program).map_err(|errors| format!("{errors:?}"))?;
+    assert_eq!(fresh.check_work().function_bodies, 2);
+    assert_eq!(fresh.check_work().body_view_reuses, 0);
+    assert!(!fresh.restored_body_record(owner));
     Ok(())
 }
 

@@ -25,6 +25,7 @@ impl CheckedInputBody<'_> {
             known: BTreeSet::new(),
             constrained: BTreeSet::new(),
             fresh_loop_locals: BTreeSet::new(),
+            active_value_uses: BTreeSet::new(),
         };
         for (index, node) in self.graph.nodes.iter().enumerate() {
             if matches!(node.event, flow::Event::Access { .. }) {
@@ -103,6 +104,7 @@ struct SourceAccesses<'a, 'facts> {
     known: BTreeSet<flow::Root>,
     constrained: BTreeSet<flow::Root>,
     fresh_loop_locals: BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+    active_value_uses: BTreeSet<HirSourceSpan>,
 }
 
 impl SourceAccesses<'_, '_> {
@@ -316,6 +318,8 @@ impl SourceAccesses<'_, '_> {
     /// an owned argument constrains its root and is consumed.
     fn invocation_arguments(
         &mut self,
+        invocation_span: HirSourceSpan,
+        receiver_span: Option<HirSourceSpan>,
         invocation: &flow::Invocation,
         arguments: &[CallArg],
     ) -> Result<(), &'static str> {
@@ -333,7 +337,10 @@ impl SourceAccesses<'_, '_> {
             }
             if argument.access == IncanInputAccess::Inferred
                 && matches!(value.node, Expr::Closure(..))
-                && self.capture_free_result_map_err_callback(value.span)
+                && receiver_span.is_some_and(|receiver| {
+                    self.proof
+                        .capture_free_result_map_err_callback(invocation_span, receiver, value.span)
+                })
             {
                 continue;
             }
@@ -356,35 +363,14 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
-    /// Source admission already proved this exact inline callback has no captures; replay claims no storage access.
-    fn capture_free_result_map_err_callback(&self, callback: HirSourceSpan) -> bool {
-        self.proof.graph.invocations.iter().any(|(span, invocation)| {
-            let Some(call) = self.proof.facts.protocols.explicit_input_calls.get(span) else {
-                return false;
-            };
-            call.callee == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
-                && call.receiver == Some(crate::ast::Receiver::Immutable)
-                && self.proof.facts.resolved_builtin_method_call(*span)
-                    == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
-                        incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
-                    ))
-                && invocation.callee == call.callee
-                && invocation.arguments.iter().any(|argument| {
-                    argument.span == callback
-                        && argument.access == IncanInputAccess::Inferred
-                        && argument.loan.is_none()
-                        && argument.source.is_none()
-                        && call.parameters.get(argument.slot).is_some_and(|parameter| {
-                            matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
-                                if parameters.len() == 1)
-                        })
-                })
-        })
-    }
-
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if self.proof.graph.value_uses.contains_key(&expression.span)
+            && !self.active_value_uses.contains(&expression.span)
+        {
+            return self.classified_value_use(expression);
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::Field(_, _)
                 if self
@@ -467,6 +453,57 @@ impl SourceAccesses<'_, '_> {
             _ => return Err("source access coverage requires the supported expression profile"),
         }
         Ok(())
+    }
+
+    /// Consume one current-source classification through its exact retained event links. Call results recurse into
+    /// ordinary invocation replay while stored observations must claim exactly the classified access nodes.
+    fn classified_value_use(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        let value_use = self
+            .proof
+            .graph
+            .value_uses
+            .get(&expression.span)
+            .ok_or("source classification is absent")?
+            .clone();
+        if self.proof.facts.expr_type(expression.span) != Some(&value_use.value_type) {
+            return Err("source classification differs from its checked value type");
+        }
+        self.active_value_uses.insert(expression.span);
+        let result = match value_use.kind {
+            flow::ValueUseKind::Read | flow::ValueUseKind::Move => {
+                let expected = if value_use.kind == flow::ValueUseKind::Read {
+                    flow::Access::Read
+                } else {
+                    flow::Access::Move
+                };
+                for classified in &value_use.accesses {
+                    let index = classified.node;
+                    let node = self
+                        .proof
+                        .graph
+                        .nodes
+                        .get(index)
+                        .ok_or("source classification access is outside callable")?;
+                    if self.claimed.contains(&index)
+                        || self.last.is_some_and(|previous| previous >= index)
+                        || !matches!(&node.event,
+                            flow::Event::Access { place, access, through }
+                                if place == &classified.place
+                                    && *access == expected
+                                    && *access == classified.access
+                                    && *through == classified.through)
+                    {
+                        return Err("source classification access is missing, reused or reordered");
+                    }
+                    self.claimed.insert(index);
+                    self.last = Some(index);
+                }
+                Ok(())
+            }
+            flow::ValueUseKind::CallResult => self.expression(expression, false),
+        };
+        self.active_value_uses.remove(&expression.span);
+        result
     }
 
     /// Validate a generator's eager source; its later clauses execute only when a terminal reader advances it.
@@ -559,13 +596,13 @@ impl SourceAccesses<'_, '_> {
             .ok_or("source access method call has no checked invocation")?;
         if invocation.receiver_owned {
             self.expression(receiver, true)?;
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments);
         }
         if invocation.receiver.is_none() {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments);
         }
         self.fresh_method_receiver(receiver, invocation)?;
-        self.invocation_arguments(invocation, arguments)
+        self.invocation_arguments(expression.span, Some(receiver.span), invocation, arguments)
     }
 
     /// Claim a builtin access over a computed receiver only when the graph ties it to that exact temporary or to a
@@ -668,7 +705,7 @@ impl SourceAccesses<'_, '_> {
             return self.closure_capture_accesses(expression.span, &loans);
         }
         if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
-            return self.invocation_arguments(invocation, arguments);
+            return self.invocation_arguments(expression.span, None, invocation, arguments);
         }
         let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
         let construction = self.proof.facts.constructor_field_binding(expression.span).is_some();
@@ -700,46 +737,47 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
+    /// Whether a constructor reads an independently materialized builtin index or slice from the current loop item.
     fn fresh_loop_constructor_materialization(&mut self, value: &Spanned<Expr>) -> Result<bool, &'static str> {
         let (base, cloneable_result) = match &value.node {
             Expr::Index(base, _) => (
                 base.as_ref(),
-                matches!(self.proof.facts.expr_type(value.span),
-                    Some(crate::symbols::ResolvedType::Str
-                        | crate::symbols::ResolvedType::Bytes
-                        | crate::symbols::ResolvedType::FrozenStr
-                        | crate::symbols::ResolvedType::FrozenBytes)),
+                matches!(
+                    self.proof.facts.expr_type(value.span),
+                    Some(
+                        crate::symbols::ResolvedType::Str
+                            | crate::symbols::ResolvedType::Bytes
+                            | crate::symbols::ResolvedType::FrozenStr
+                            | crate::symbols::ResolvedType::FrozenBytes
+                    )
+                ),
             ),
             Expr::Slice(base, _) => {
                 let result = self.proof.facts.expr_type(value.span);
                 let cloneable = matches!(result,
-                    Some(crate::symbols::ResolvedType::Generic(name, arguments))
-                        if incan_lang::lang::types::collections::from_str(name)
-                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
-                            && arguments.len() == 1
-                            && matches!(arguments.first(), Some(
-                                crate::symbols::ResolvedType::Int
-                                    | crate::symbols::ResolvedType::Float
-                                    | crate::symbols::ResolvedType::Numeric(_)
-                                    | crate::symbols::ResolvedType::Bool
-                                    | crate::symbols::ResolvedType::Str
-                                    | crate::symbols::ResolvedType::Bytes
-                                    | crate::symbols::ResolvedType::FrozenStr
-                                    | crate::symbols::ResolvedType::FrozenBytes
-                                    | crate::symbols::ResolvedType::Unit
-                            )));
-                (base.as_ref(), cloneable && self.proof.facts.expr_type(base.span) == result)
+                Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                    if incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                        && arguments.len() == 1
+                        && matches!(arguments.first(), Some(
+                            crate::symbols::ResolvedType::Int
+                                | crate::symbols::ResolvedType::Float
+                                | crate::symbols::ResolvedType::Numeric(_)
+                                | crate::symbols::ResolvedType::Bool
+                                | crate::symbols::ResolvedType::Str
+                                | crate::symbols::ResolvedType::Bytes
+                                | crate::symbols::ResolvedType::FrozenStr
+                                | crate::symbols::ResolvedType::FrozenBytes
+                                | crate::symbols::ResolvedType::Unit
+                        )));
+                (
+                    base.as_ref(),
+                    cloneable && self.proof.facts.expr_type(base.span) == result,
+                )
             }
             _ => return Ok(false),
         };
-        if self
-            .proof
-            .facts
-            .calls
-            .resolved_operator_calls
-            .contains_key(&value.span)
-            || !cloneable_result
-        {
+        if self.proof.facts.calls.resolved_operator_calls.contains_key(&value.span) || !cloneable_result {
             return Ok(false);
         }
         let builtin_list = match &value.node {

@@ -55,7 +55,9 @@ impl Builder<'_> {
                 if mode.is_some_and(|mode| matches!(mode.mode, OwnershipMode::Borrowed | OwnershipMode::BorrowedMut)) {
                     self.borrowed_inputs.insert(Root::Binding(root.clone()));
                 }
-                self.constrained.insert(Root::Binding(root));
+                let root = Root::Binding(root);
+                self.declared_constrained_inputs.insert(root.clone());
+                self.constrained.insert(root);
             }
         }
         Ok(())

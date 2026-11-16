@@ -90,7 +90,36 @@ impl Builder<'_> {
                 self.constrained.insert(source.place.root.clone());
             }
         }
-        let incoming = self.expression(&assignment.value, incoming, true)?;
+        let value_use = if mode.is_none() && root.declaration_span == assignment.name_span {
+            if let Expr::Match(_, arms) = &assignment.value.node {
+                self.classify_value_use(
+                    &assignment.value,
+                    super::value_uses::ValueUseContext::MatchAssignment(arms),
+                )?
+            } else if let Some(source) = &source {
+                self.classify_value_use(
+                    &assignment.value,
+                    super::value_uses::ValueUseContext::LocalInitializer {
+                        assignment,
+                        destination: &root,
+                        source,
+                    },
+                )?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let incoming = match value_use {
+            Some(plan) => match &assignment.value.node {
+                Expr::Match(scrutinee, arms) => {
+                    self.apply_match_value_use(&assignment.value, scrutinee, arms, plan, incoming)?
+                }
+                _ => self.apply_value_use(&assignment.value, plan, incoming)?,
+            },
+            None => self.expression(&assignment.value, incoming, true)?,
+        };
         if mode.is_some_and(|mode| mode.mode == OwnershipMode::Owned) {
             self.retain_owned_initializer(assignment, &root, source.as_ref(), &incoming)?;
         }
@@ -588,6 +617,7 @@ impl Builder<'_> {
         items
     }
 
+    /// Collect canonical loop-pattern locals whose whole roots are replaced at the start of every poll.
     fn collect_fresh_loop_pattern(
         &mut self,
         pattern: &Spanned<crate::ast::Pattern>,
@@ -603,12 +633,15 @@ impl Builder<'_> {
                     .cloned()
                 {
                     self.fresh_loop_locals.insert(identity.clone());
-                    self.graph.permissions.entry(Root::Binding(identity.clone())).or_insert(Permission {
-                        exclusive: false,
-                        // The binding stays source-immutable; only the authenticated loop poll replaces it.
-                        writable: true,
-                        transferable: true,
-                    });
+                    self.graph
+                        .permissions
+                        .entry(Root::Binding(identity.clone()))
+                        .or_insert(Permission {
+                            exclusive: false,
+                            // The binding stays source-immutable; only the authenticated loop poll replaces it.
+                            writable: true,
+                            transferable: true,
+                        });
                     items.push(identity);
                 }
             }
@@ -657,7 +690,7 @@ impl Builder<'_> {
             Statement::Expr(Spanned {
                 node: Expr::Match(scrutinee, arms),
                 ..
-            }) => self.match_statement(scrutinee, arms, incoming),
+            }) => self.match_statement(scrutinee, arms, None, incoming),
             // A discarded returned view still borrows its source for the call; its result loan is never used. A
             // discarded call that carries a view drops its carrier the same way, with its view and its error.
             Statement::Expr(value) => match self.view_source(value)? {

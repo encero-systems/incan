@@ -311,12 +311,9 @@ impl CheckedInputBody<'_> {
                 }
                 if argument.access == IncanInputAccess::Owned
                     && !copy
-                    && argument
-                        .source
-                        .as_ref()
-                        .is_some_and(|source| {
-                            !source.projection.is_empty() && !self.reinitialized_pattern_projection(source)
-                        })
+                    && argument.source.as_ref().is_some_and(|source| {
+                        !source.projection.is_empty() && !self.reinitialized_pattern_projection(source)
+                    })
                 {
                     return Err("explicit projected transfer requires checked drop obligations");
                 }

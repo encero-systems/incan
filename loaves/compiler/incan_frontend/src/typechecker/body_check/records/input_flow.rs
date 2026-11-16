@@ -432,6 +432,8 @@ impl Reader<'_> {
             dependent_locals: self.ordered_map(Self::identity, Self::loan_ids)?,
             dependent_values: self.span_set()?,
             owned_locals: self.ordered_map(Self::identity, Self::owned_initialization)?,
+            // Records never supply current-source classifications. A body that needs one follows fresh checking.
+            value_uses: BTreeMap::new(),
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,

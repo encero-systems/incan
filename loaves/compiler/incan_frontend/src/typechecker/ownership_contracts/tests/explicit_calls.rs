@@ -492,8 +492,8 @@ fn ordinary_call_replay_requires_its_exact_header() -> Result<(), Box<dyn std::e
 /// selected call-site header still authenticate one ordinary call. A current-module call missing its header and a
 /// package identity colliding with conflicting retained headers remain refused.
 #[test]
-fn package_ordinary_call_requires_exact_selected_header_without_local_binding()
--> Result<(), Box<dyn std::error::Error>> {
+fn package_ordinary_call_requires_exact_selected_header_without_local_binding() -> Result<(), Box<dyn std::error::Error>>
+{
     let source = "def add(left: int, right: int) -> int:\n    return left + right\ndef use(value: Borrowed[int]) -> int:\n    return add(value, 1)\n";
     let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -504,9 +504,14 @@ fn package_ordinary_call_requires_exact_selected_header_without_local_binding()
         checker.errors = errors;
     }
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    assert!(checker.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
-        owner.declaration_name == "use" && matches!(flow, InputFlow::Checked { .. })
-    }));
+    assert!(
+        checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| { owner.declaration_name == "use" && matches!(flow, InputFlow::Checked { .. }) })
+    );
     let call = checker
         .type_info
         .protocols

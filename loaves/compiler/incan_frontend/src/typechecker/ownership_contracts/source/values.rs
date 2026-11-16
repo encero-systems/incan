@@ -313,8 +313,8 @@ impl Builder<'_> {
                         | ResolvedType::Unit
                 )
             );
-            let fresh_selected_model = element_type
-                .is_some_and(|element| self.fresh_closed_selected_model_result(value, element));
+            let fresh_selected_model =
+                element_type.is_some_and(|element| self.fresh_closed_selected_model_result(value, element));
             if !copy_scalar
                 && !self.fresh_or_copy_field(value)
                 && !fresh_selected_model
@@ -364,6 +364,7 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// Whether one selected call returns an exact dependency-free model value for a builtin list element.
     fn fresh_closed_selected_model_result(&self, value: &Spanned<Expr>, element: &ResolvedType) -> bool {
         if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
             || self.checker.type_info.expr_type(value.span) != Some(element)
@@ -395,7 +396,10 @@ impl Builder<'_> {
         };
         crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
             && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
-            && self.checker.native_result_dependencies(value.span).is_ok_and(|value| value.is_none())
+            && self
+                .checker
+                .native_result_dependencies(value.span)
+                .is_ok_and(|value| value.is_none())
             && !self.checker.native_result_is_independent(value.span)
             && !self.checked_clone_call(value.span)
     }
@@ -498,6 +502,22 @@ impl Builder<'_> {
                 .as_ref()
                 .and_then(|types| types.get(index))
                 .is_some_and(|expected| self.fresh_loop_slice_field(value, expected));
+            let classified = if stores_view {
+                None
+            } else {
+                argument_types
+                    .as_ref()
+                    .and_then(|types| types.get(index))
+                    .map(|expected| {
+                        self.classify_value_use(value, super::value_uses::ValueUseContext::ConstructorField(expected))
+                    })
+                    .transpose()?
+                    .flatten()
+            };
+            if let Some(plan) = classified {
+                incoming = self.apply_value_use(value, plan, incoming)?;
+                continue;
+            }
             if !stores_view && !self.fresh_or_copy_field(value) {
                 if fresh_loop_index || fresh_loop_slice {
                     incoming = self.expression(value, incoming, false)?;
@@ -551,6 +571,7 @@ impl Builder<'_> {
             })
     }
 
+    /// Whether one builtin slice clones a closed scalar list from the current transferable loop item.
     fn fresh_loop_slice_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
         let Expr::Slice(base, _) = &value.node else {
             return false;
@@ -569,22 +590,22 @@ impl Builder<'_> {
             return false;
         }
         let builtin_list = matches!(self.checker.type_info.expr_type(base.span),
-            Some(base_ty @ ResolvedType::Generic(name, arguments))
-                if base_ty == expected
-                    && incan_lang::lang::types::collections::from_str(name)
-                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
-                    && arguments.len() == 1
-                    && matches!(arguments.first(), Some(
-                        ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Numeric(_)
-                            | ResolvedType::Bool
-                            | ResolvedType::Str
-                            | ResolvedType::Bytes
-                            | ResolvedType::FrozenStr
-                            | ResolvedType::FrozenBytes
-                            | ResolvedType::Unit
-                    )));
+        Some(base_ty @ ResolvedType::Generic(name, arguments))
+            if base_ty == expected
+                && incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                && arguments.len() == 1
+                && matches!(arguments.first(), Some(
+                    ResolvedType::Int
+                        | ResolvedType::Float
+                        | ResolvedType::Numeric(_)
+                        | ResolvedType::Bool
+                        | ResolvedType::Str
+                        | ResolvedType::Bytes
+                        | ResolvedType::FrozenStr
+                        | ResolvedType::FrozenBytes
+                        | ResolvedType::Unit
+                )));
         builtin_list
             && self.optional_place(base).ok().flatten().is_some_and(|path| {
                 path.through.is_none()

@@ -31,7 +31,7 @@ fn consumer_checkers(
 }
 
 /// Check both dependency routes inside one real package, so imported sibling-module identities remain Package.
-fn package_consumer_checkers(
+pub(super) fn package_consumer_checkers(
     provider: &str,
     consumer: &str,
 ) -> Result<Vec<(&'static str, TypeChecker)>, Box<dyn std::error::Error>> {
@@ -76,8 +76,7 @@ fn consumer_checkers_with_package(
 /// operation, Member identity, callback signature and result. Same-spelled source methods and returned-view receivers
 /// remain on their existing refusal routes.
 #[test]
-fn builtin_result_map_err_requires_fresh_selected_package_result()
--> Result<(), Box<dyn std::error::Error>> {
+fn builtin_result_map_err_requires_fresh_selected_package_result() -> Result<(), Box<dyn std::error::Error>> {
     let provider = "pub def encode(value: int) -> Result[int, str]:\n    return Ok(value)\n";
     let consumer = "from views import encode\n\ndef use(value: Borrowed[int]) -> Result[int, int]:\n    return encode(value).map_err((_) => 1)\n";
     for (route, checker) in package_consumer_checkers(provider, consumer)? {
@@ -97,12 +96,20 @@ fn builtin_result_map_err_requires_fresh_selected_package_result()
             .map(|(span, _)| *span)
             .ok_or_else(|| format!("{route}: missing imported encode call"))?;
         let inner = &checker.type_info.protocols.explicit_input_calls[&inner_span];
-        assert!(matches!(
-            &inner.callee.origin,
-            incan_semantics_core::SymbolOrigin::Package { library, module_path }
-                if library == "fixture_records" && module_path.iter().map(String::as_str).eq(["views"])
-        ), "{route}: imported call lost Package origin: {:?}", inner.callee);
-        assert_eq!(inner.callee.kind, incan_semantics_core::SemanticSourceTargetKind::Function, "{route}");
+        assert!(
+            matches!(
+                &inner.callee.origin,
+                incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                    if library == "fixture_records" && module_path.iter().map(String::as_str).eq(["views"])
+            ),
+            "{route}: imported call lost Package origin: {:?}",
+            inner.callee
+        );
+        assert_eq!(
+            inner.callee.kind,
+            incan_semantics_core::SemanticSourceTargetKind::Function,
+            "{route}"
+        );
         assert_eq!(inner.parameters.len(), 1, "{route}");
         assert_eq!(inner.parameters[0].ty, crate::symbols::ResolvedType::Int, "{route}");
 
@@ -123,8 +130,16 @@ fn builtin_result_map_err_requires_fresh_selected_package_result()
             .type_info
             .resolved_identity(outer_span)
             .ok_or_else(|| format!("{route}: Result.map_err lost its builtin identity"))?;
-        assert_eq!(outer_identity.namespace, incan_semantics_core::SymbolNamespace::Member, "{route}");
-        assert_eq!(outer_identity.origin, incan_semantics_core::SymbolOrigin::Builtin, "{route}");
+        assert_eq!(
+            outer_identity.namespace,
+            incan_semantics_core::SymbolNamespace::Member,
+            "{route}"
+        );
+        assert_eq!(
+            outer_identity.origin,
+            incan_semantics_core::SymbolOrigin::Builtin,
+            "{route}"
+        );
         assert_eq!(outer_identity.declaration_name, "Result.map_err", "{route}");
         assert_eq!(
             outer_identity.kind,
@@ -188,7 +203,11 @@ fn builtin_result_map_err_requires_fresh_selected_package_result()
         Some("value")
     );
     assert!(!user.errors.is_empty());
-    assert!(user.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")));
+    assert!(
+        user.errors
+            .iter()
+            .all(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
 
     let view_source = "def result_view(value: Borrowed[Result[int, str]]) -> Borrowed[Result[int, str]] from value:\n    return value\n\ndef mapped_view(value: Borrowed[Result[int, str]]) -> Result[int, int]:\n    return result_view(value).map_err((_) => 1)\n";
     let view_program = parsed(view_source)?;
@@ -207,13 +226,20 @@ fn builtin_result_map_err_requires_fresh_selected_package_result()
     let InputFlow::Unavailable(view_unavailable) = view_state else {
         return Err(format!("returned-view Result receiver acquired builtin admission: {view_state:?}").into());
     };
-    assert_eq!(view_unavailable.reason, "call has no selected explicit input access facts");
+    assert_eq!(
+        view_unavailable.reason,
+        "call has no selected explicit input access facts"
+    );
     assert_eq!(
         view_source.get(view_unavailable.span.start..view_unavailable.span.end),
         Some("result_view(value).map_err((_) => 1)")
     );
     assert!(!view.errors.is_empty());
-    assert!(view.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")));
+    assert!(
+        view.errors
+            .iter()
+            .all(|error| error.stable_code() == Some("INCAN-T0123"))
+    );
     Ok(())
 }
 

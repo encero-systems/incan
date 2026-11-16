@@ -1,7 +1,7 @@
 //! Authenticate the source body's ownership proof before any native projection consumes it.
 
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
@@ -26,6 +26,45 @@ impl CheckedInputBody<'_> {
     /// Retain the source proof's exact owner for the frame profile it publishes.
     pub(crate) fn canonical_owner(&self) -> &CanonicalSymbolId {
         &self.owner
+    }
+
+    /// Authenticate one inline capture-free callback against the exact selected outer call and classified receiver.
+    pub(super) fn capture_free_result_map_err_callback(
+        &self,
+        invocation_span: incan_semantics_core::HirSourceSpan,
+        receiver_span: incan_semantics_core::HirSourceSpan,
+        callback: incan_semantics_core::HirSourceSpan,
+    ) -> bool {
+        self.graph.value_uses.get(&receiver_span).is_some_and(|value_use| {
+            value_use.kind == flow::ValueUseKind::CallResult
+                && value_use.result_map_err
+                    == Some(flow::ResultMapErrUse {
+                        invocation: invocation_span,
+                        receiver: receiver_span,
+                        callback,
+                    })
+        }) && self.graph.invocations.get(&invocation_span).is_some_and(|invocation| {
+            let Some(call) = self.facts.protocols.explicit_input_calls.get(&invocation_span) else {
+                return false;
+            };
+            call.callee == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+                && call.receiver == Some(crate::ast::Receiver::Immutable)
+                && self.facts.resolved_builtin_method_call(invocation_span)
+                    == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                        incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                    ))
+                && invocation.callee == call.callee
+                && invocation.arguments.iter().any(|argument| {
+                    argument.span == callback
+                        && argument.access == IncanInputAccess::Inferred
+                        && argument.loan.is_none()
+                        && argument.source.is_none()
+                        && call.parameters.get(argument.slot).is_some_and(|parameter| {
+                            matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
+                                if parameters.len() == 1)
+                        })
+                })
+        })
     }
 
     /// Whether the invocation argument written at `span` passes a closure local to a parameter its callee only calls.
@@ -289,6 +328,14 @@ impl TypeCheckInfo {
             return Err("explicit input body has conflicting or stale source flow evidence");
         }
         self.validate_input_invocations(owner, graph)?;
+
+        // Current-source classifications are exact owner/type facts. Records restore this map empty and cannot
+        // manufacture the authority; a fresh source check supplies it again when one of the new routes is needed.
+        for (span, value_use) in &graph.value_uses {
+            if self.expr_type(*span) != Some(&value_use.value_type) {
+                return Err("value-use classification differs from its checked source type");
+            }
+        }
 
         // ---- Loan destinations and their source annotations ----
         for (local, loan) in &graph.local_loans {

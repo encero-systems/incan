@@ -117,6 +117,7 @@ impl Builder<'_> {
         &mut self,
         scrutinee: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
+        assignment_payload: Option<&CanonicalSymbolId>,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
         if let Some(outgoing) = self.dictionary_match(scrutinee, arms, incoming.clone())? {
@@ -194,6 +195,9 @@ impl Builder<'_> {
                     }
                 }
             }
+            if let Some(payload) = assignment_payload {
+                self.constrained.insert(Root::Binding(payload.clone()));
+            }
             let arm_input = if let Some(guard) = &arm.node.guard {
                 let guarded = self.expression(guard, remaining, false)?;
                 remaining = guarded.clone();
@@ -202,8 +206,22 @@ impl Builder<'_> {
                 remaining.clone()
             };
             let continuing = match &arm.node.body {
-                MatchBody::Expr(value) => self.expression(value, arm_input, false)?,
-                MatchBody::Block(body) => self.block(body, arm_input)?,
+                MatchBody::Expr(value) => self.expression(
+                    value,
+                    arm_input,
+                    assignment_payload
+                        .is_some_and(|payload| self.checker.type_info.resolved_identity(value.span) == Some(payload)),
+                )?,
+                MatchBody::Block(body) => {
+                    let continuing = self.block(body, arm_input)?;
+                    if assignment_payload.is_some() && !continuing.is_empty() {
+                        return Err(Unavailable {
+                            span: arm.span,
+                            reason: "classified match fallback arm does not terminate".into(),
+                        });
+                    }
+                    continuing
+                }
             };
             if !continuing.is_empty() {
                 ends.push(self.carrier_state());

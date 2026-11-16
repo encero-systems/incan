@@ -28,6 +28,7 @@ mod dictionaries;
 mod matches;
 mod operations;
 mod retained_results;
+mod value_uses;
 mod values;
 
 /// Source-analysis refusal for a borrowed place passed into a plain owned nominal field. The caller turns this typed
@@ -146,7 +147,13 @@ struct Builder<'a> {
     fresh_list_calls: BTreeSet<Span>,
     /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
     fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
+    /// Unannotated locals whose initializer was classified as an independent materialization.
+    independent_locals: BTreeSet<CanonicalSymbolId>,
+    /// Selected dependency-free call results active only while their classified value is evaluated.
+    independent_call_results: BTreeSet<Span>,
     constrained: BTreeSet<Root>,
+    /// Parameter roots constrained by their authored input mode before body moves add transient constraints.
+    declared_constrained_inputs: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
     /// The declared source dependency of a top-level owned result. The result remains value storage rather than a
@@ -294,6 +301,7 @@ fn build_graph(
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
             owned_locals: BTreeMap::new(),
+            value_uses: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
@@ -306,6 +314,7 @@ fn build_graph(
             entry: 0,
         },
         constrained: BTreeSet::new(),
+        declared_constrained_inputs: BTreeSet::new(),
         borrowed_inputs: BTreeSet::new(),
         aliases: BTreeMap::new(),
         carriers: BTreeMap::new(),
@@ -315,6 +324,8 @@ fn build_graph(
         try_calls: BTreeSet::new(),
         fresh_list_calls: BTreeSet::new(),
         fresh_loop_locals: BTreeSet::new(),
+        independent_locals: BTreeSet::new(),
+        independent_call_results: BTreeSet::new(),
         loops: Vec::new(),
         owned_source: None,
         view: None,

@@ -170,6 +170,127 @@ pub(in crate::typechecker) struct OwnedInitialization {
     pub access_node: Option<usize>,
 }
 
+/// One current-source value classification and the exact graph events that implement it.
+///
+/// Input records deliberately do not serialize this authority. A restored body that needs one of these observations
+/// follows the existing fresh-check fallback instead of reconstructing a source decision from partial record facts.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct ValueUse {
+    pub value_type: crate::symbols::ResolvedType,
+    pub kind: ValueUseKind,
+    pub accesses: Vec<ValueUseAccess>,
+    pub result_map_err: Option<ResultMapErrUse>,
+}
+
+/// The one selected `Result.map_err` invocation that consumes a classified direct call result.
+///
+/// Keeping the outer invocation, receiver and callback together prevents one genuine capture-free callback marker
+/// from authorizing a different `map_err` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) struct ResultMapErrUse {
+    pub invocation: HirSourceSpan,
+    pub receiver: HirSourceSpan,
+    pub callback: HirSourceSpan,
+}
+
+/// One exact stored access retained by a current-source classification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::typechecker) struct ValueUseAccess {
+    pub node: usize,
+    pub place: Place,
+    pub access: Access,
+    pub through: Option<LoanId>,
+    pub role: ValueUseRole,
+}
+
+/// The source role of one retained access, including the two distinct moves of a match extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) enum ValueUseRole {
+    Stored,
+    MatchSubject,
+    MatchPayload,
+}
+
+/// The storage effect proved for one value in its exact source context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) enum ValueUseKind {
+    /// Observe independently owned storage without transferring its root.
+    Read,
+    /// Transfer selected storage or an extracted payload exactly once.
+    Move,
+    /// Consume a selected call result whose checked dependency contract is empty.
+    CallResult,
+}
+
+/// Current-source value classifications must name exact compatible events and cannot share one event.
+fn validate_value_uses(graph: &Graph) -> Result<(), InvalidGraph> {
+    let mut retained = BTreeSet::new();
+    for (span, value_use) in &graph.value_uses {
+        if value_use.kind == ValueUseKind::CallResult && !value_use.accesses.is_empty() {
+            return Err(InvalidGraph("independent call result retains stored access"));
+        }
+        if value_use.kind != ValueUseKind::CallResult && value_use.accesses.is_empty() {
+            return Err(InvalidGraph("stored value use has no retained access"));
+        }
+        let roles = value_use.accesses.iter().map(|access| access.role).collect::<Vec<_>>();
+        if value_use.kind != ValueUseKind::CallResult && value_use.result_map_err.is_some() {
+            return Err(InvalidGraph("stored value use retains a callback"));
+        }
+        if let Some(map_err) = value_use.result_map_err {
+            let invocation = graph
+                .invocations
+                .get(&map_err.invocation)
+                .ok_or(InvalidGraph("map_err value use has no exact invocation"))?;
+            if map_err.receiver != *span
+                || !invocation.arguments.iter().any(|argument| {
+                    argument.span == map_err.callback
+                        && argument.access == incan_semantics_core::IncanInputAccess::Inferred
+                        && argument.loan.is_none()
+                        && argument.source.is_none()
+                })
+            {
+                return Err(InvalidGraph("map_err value use differs from its invocation tuple"));
+            }
+        }
+        if !matches!(
+            roles.as_slice(),
+            [ValueUseRole::Stored] | [ValueUseRole::MatchSubject, ValueUseRole::MatchPayload]
+        ) && value_use.kind != ValueUseKind::CallResult
+        {
+            return Err(InvalidGraph(
+                "value-use access roles differ from their source classification",
+            ));
+        }
+        for classified in &value_use.accesses {
+            if !retained.insert(classified.node) {
+                return Err(InvalidGraph("value-use access is retained more than once"));
+            }
+            let node = graph
+                .nodes
+                .get(classified.node)
+                .ok_or(InvalidGraph("value-use access is outside callable"))?;
+            let expected = match value_use.kind {
+                ValueUseKind::Read => Access::Read,
+                ValueUseKind::Move => Access::Move,
+                ValueUseKind::CallResult => return Err(InvalidGraph("call result retains stored access")),
+            };
+            if node.span.expansion != span.expansion
+                || node.span.start < span.start
+                || node.span.end > span.end
+                || !matches!(&node.event,
+                    Event::Access { place, access, through }
+                        if place == &classified.place
+                            && *access == expected
+                            && *access == classified.access
+                            && *through == classified.through)
+            {
+                return Err(InvalidGraph("value-use access differs from its source classification"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One in-place dictionary lookup and the shared entry loans carried by its pattern bindings.
 ///
 /// An empty loan set represents a wildcard-only match. The lookup is read-only when every retained loan remains an
@@ -251,6 +372,8 @@ pub(in crate::typechecker) struct Graph {
     pub dependent_values: BTreeSet<HirSourceSpan>,
     /// Canonical owned destinations are distinct from local aliases and invocation-bounded argument owners.
     pub owned_locals: BTreeMap<CanonicalSymbolId, OwnedInitialization>,
+    /// Current-source classifications consumed by construction and access coverage. Restored graphs leave it empty.
+    pub value_uses: BTreeMap<HirSourceSpan, ValueUse>,
     /// Argument-to-loan bindings are retained at construction; lowering must not recover them from similar spans.
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
@@ -284,6 +407,7 @@ impl Graph {
             dependent_locals: BTreeMap::new(),
             dependent_values: BTreeSet::new(),
             owned_locals: BTreeMap::new(),
+            value_uses: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
             closures: BTreeMap::new(),
@@ -449,6 +573,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     }
     validate_invocations(graph)?;
     validate_owned_initializations(graph)?;
+    validate_value_uses(graph)?;
     operations::validate_operations(graph)?;
     validate_closures(graph)?;
     let mut origins = vec![None; graph.loans.len()];

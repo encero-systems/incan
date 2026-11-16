@@ -15,12 +15,19 @@ mod tests;
 
 /// Persist calls, local modes and whole control-flow graphs independently of declaration ownership metadata.
 pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fields) -> Result<(), NodeBindingError> {
+    if local.protocols.explicit_input_flow.values().any(|flow| {
+        matches!(flow,
+            InputFlow::Checked { graph, .. } | InputFlow::Invalid { graph, .. }
+                if !graph.value_uses.is_empty())
+    }) {
+        return Err(NodeBindingError::Unsupported("current-source value classification"));
+    }
     for (owner, decisions) in &local.protocols.explicit_input_copy {
         let mut row = vec![
             "input-copy".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "types".into(),
-            "1".into(),
+            "2".into(),
             positions.identity(owner)?,
         ];
         let mut entries = Vec::with_capacity(decisions.len());
@@ -87,7 +94,7 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "input-flow".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "graph".into(),
-            "4".into(),
+            "5".into(),
         ];
         match flow {
             InputFlow::Checked { graph, analysis } => {
@@ -127,8 +134,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
     let schema = match row.get(3).map(String::as_str) {
         Some("1") => 1,
         Some("2") => 2,
-        Some("3") => 3,
-        Some("4") => 4,
+        Some("5") => 5,
         _ => return Err(NodeBindingError::Unsupported("input record schema")),
     };
     let mut reader = Reader {
@@ -137,6 +143,9 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
     };
     match (row[0].as_str(), row[2].as_str()) {
         ("input-copy", "types") => {
+            if schema != 2 {
+                return Err(NodeBindingError::Unsupported("input-copy record schema"));
+            }
             let owner = reader.identity()?;
             if span_of(&owner) != anchor || local.protocols.explicit_input_copy.contains_key(&owner) {
                 return Err(NodeBindingError::WrongOwner);
@@ -162,6 +171,9 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             local.protocols.explicit_input_copy.insert(owner, decisions);
         }
         ("input-call", "contract") => {
+            if schema != 1 {
+                return Err(NodeBindingError::Unsupported("input-call record schema"));
+            }
             let kind = match reader.token()? {
                 "explicit" => InputCallKind::Explicit,
                 "ordinary" => InputCallKind::Ordinary,
@@ -201,6 +213,9 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             }
         }
         ("input-local", "mode") => {
+            if schema != 1 {
+                return Err(NodeBindingError::Unsupported("input-local record schema"));
+            }
             let binding = reader.identity()?;
             if span_of(&binding) != anchor {
                 return Err(NodeBindingError::WrongOwner);
@@ -232,6 +247,9 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
             }
         }
         ("input-flow", "graph") => {
+            if schema != 5 {
+                return Err(NodeBindingError::Unsupported("input-flow record schema"));
+            }
             let (owner, flow) = match reader.token()? {
                 "unavailable" => {
                     let owner = reader.identity()?;

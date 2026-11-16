@@ -8,9 +8,9 @@ use crate::ownership_metadata::{
 };
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
-use incan_lang::lang::types::ownership;
 use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::surface::result_methods::ResultMethodId;
+use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
