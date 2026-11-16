@@ -99,6 +99,43 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         local
     }
 
+    /// The arguments of a loop source the checker selected as `builtin`, spelled `name(...)` or
+    /// `std.builtins.name(...)`.
+    ///
+    /// `Ok(None)` when the checker selected no such builtin for the call. A plain spelling must also bind the
+    /// builtin's canonical declaration, so a same-spelled user function keeps its own path. `std.builtins.name(...)`
+    /// reaches the AST as a method call on the builtin namespace, which no binding can shadow, so the checker's
+    /// retained selection at the call span is its whole proof, as it is for the call itself. Either spelling then
+    /// takes the same loop representation. Explicit type arguments, which the checker refuses, are refused here too.
+    pub(super) fn checked_builtin_call_args<'expr>(
+        &self,
+        expr: &'expr ast::Spanned<ast::Expr>,
+        builtin: bir::BuiltinFnId,
+    ) -> Result<Option<&'expr [ast::CallArg]>, String> {
+        if self.type_info.resolved_builtin_call(expr.span) != Some(builtin) {
+            return Ok(None);
+        }
+        let name = incan_lang::lang::builtins::as_str(builtin);
+        let (type_args, args) = match &expr.node {
+            ast::Expr::Call(callee, type_args, args) => {
+                let ast::Expr::Ident(spelled) = &callee.node else {
+                    return Err(format!("unsupported builtin {name} callee shape"));
+                };
+                let declaration = self.declared_slots_for_direct_call(spelled, callee.span, expr.span)?;
+                if declaration.builtin != Some(builtin) {
+                    return Err(format!("builtin {name} lacks a matching checked canonical identity"));
+                }
+                (type_args, args)
+            }
+            ast::Expr::MethodCall(_, _, type_args, args) => (type_args, args),
+            _ => return Ok(None),
+        };
+        if !type_args.is_empty() {
+            return Err(format!("builtin {name} lacks a matching checked canonical identity"));
+        }
+        Ok(Some(args.as_slice()))
+    }
+
     /// Normalize only a checker-proven builtin range call, retaining argument evaluation before iteration.
     ///
     /// This is a representation of builtin iterator facts, not recognition of a same-spelled user function.
@@ -114,19 +151,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Paren(inner) = &expr.node {
             return self.builtin_range_loop_source(inner, scope, out);
         }
-        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
+        let Some(args) = self.checked_builtin_call_args(expr, bir::BuiltinFnId::Range)? else {
             return Ok(None);
         };
-        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range) {
-            return Ok(None);
-        }
-        let ast::Expr::Ident(name) = &callee.node else {
-            return Err("unsupported builtin range callee shape".into());
-        };
-        let declaration = self.declared_slots_for_direct_call(name, callee.span, expr.span)?;
-        if declaration.builtin != Some(bir::BuiltinFnId::Range) || !type_args.is_empty() {
-            return Err("builtin range lacks a matching checked canonical identity".into());
-        }
         if args.is_empty() || args.len() > 3 || args.iter().any(|arg| !matches!(arg, ast::CallArg::Positional(_))) {
             return Err("unsupported builtin range argument binding".into());
         }
@@ -194,8 +221,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Paren(inner) = &expr.node {
             return self.zero_based_unit_range_count(inner, scope, out);
         }
-        let ast::Expr::Call(_, _, args) = &expr.node else {
-            return Ok(None);
+        let args = match &expr.node {
+            ast::Expr::Call(_, _, args) | ast::Expr::MethodCall(_, _, _, args) => args,
+            _ => return Ok(None),
         };
         if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range)
             || !zero_based_unit_arguments(args)
