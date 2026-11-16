@@ -2,9 +2,10 @@
 
 use rustc_middle::ty::{self, Ty, TyCtxt, TypeFoldable, TypeFolder, TypeSuperFoldable};
 
-/// Restore independently elided native input loans before signature outlives checking (#2368).
-/// Existing source binders remain intact. Outputs are deliberately unchanged: an erased output cannot acquire a
-/// relationship to an input merely because their native carriers happen to match.
+/// Restore independently elided native input loans before signature outlives checking (#2368), and give an owned
+/// output trait object its default `'static` object bound (#2945). Existing source binders remain intact. No other
+/// output region changes: an erased output cannot acquire a relationship to an input merely because their native
+/// carriers happen to match.
 pub(crate) fn signature<'tcx>(tcx: TyCtxt<'tcx>, signature: ty::PolyFnSig<'tcx>) -> ty::PolyFnSig<'tcx> {
     let mut loans = InputLoans {
         tcx,
@@ -12,7 +13,7 @@ pub(crate) fn signature<'tcx>(tcx: TyCtxt<'tcx>, signature: ty::PolyFnSig<'tcx>)
     };
     let raw = signature.skip_binder();
     let mut types: Vec<_> = raw.inputs().iter().map(|input| input.fold_with(&mut loans)).collect();
-    types.push(raw.output());
+    types.push(raw.output().fold_with(&mut OwnedOutputObjects { tcx }));
     ty::Binder::bind_with_vars(
         ty::FnSig {
             inputs_and_output: tcx.mk_type_list(&types),
@@ -66,5 +67,35 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for InputLoans<'tcx> {
         let kind = ty::BoundRegionKind::Anon;
         self.bound.push(ty::BoundVariableKind::Region(kind));
         ty::Region::new_bound(self.tcx, ty::INNERMOST, ty::BoundRegion { var, kind })
+    }
+}
+
+/// A trait object owned by a function's result, such as `Box<dyn Any>`, has Rust's default object bound `'static`,
+/// which its metadata-erased object region stands for. Only that object region changes; a reference in the result
+/// keeps its own regions, so no output gains a loan.
+struct OwnedOutputObjects<'tcx> {
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> TypeFolder<TyCtxt<'tcx>> for OwnedOutputObjects<'tcx> {
+    /// Supply the native interner for folded types and regions.
+    fn cx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    /// Bound an erased owned object by `'static`; leave references and their referents as they are.
+    fn fold_ty(&mut self, value: Ty<'tcx>) -> Ty<'tcx> {
+        match value.kind() {
+            ty::Ref(..) => value,
+            ty::Dynamic(predicates, region) if region.is_erased() => {
+                Ty::new_dynamic(self.tcx, *predicates, self.tcx.lifetimes.re_static)
+            }
+            _ => value.super_fold_with(self),
+        }
+    }
+
+    /// Keep independently quantified predicates and nested signatures with their own binders.
+    fn fold_binder<T: TypeFoldable<TyCtxt<'tcx>>>(&mut self, value: ty::Binder<'tcx, T>) -> ty::Binder<'tcx, T> {
+        value
     }
 }
