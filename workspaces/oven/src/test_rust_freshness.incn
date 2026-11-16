@@ -721,3 +721,38 @@ pub def test_a_fact_out_directory_keys_by_its_loaf_relative_place_under_any_root
         Err(reason) =>
             assert "location-bearing environment OUT_DIR" in reason, reason
     return Ok(None)
+
+
+def archive_key(project: Path, archive: str) -> Result[str, str]:
+    """Key a crate that links the static library its link record archived in the recipe's directory of the Loaf."""
+    products = project.joinpath(".oven-link/twice-0123456789abcdef")
+    write(products.joinpath("libtwice.a"), archive)?
+    write(project.joinpath("src/lib.rs"), "extern \"C\" { pub fn twice(x: i32) -> i32; }\n")?
+    mut ledger = load_ledger(project.joinpath("ledger.json"), 0, "")
+    arguments = ["crate linked lib", "-L", f"native={products.0}", "-l", "static=twice"]
+    key = reconciled_rust_key(project, project, [project.joinpath("src/lib.rs").0], [], arguments, {}, [], "c", ledger)?
+    return Ok(key.digest)
+
+
+pub def test_a_static_library_a_unit_links_keys_it_by_its_bytes_under_any_root() -> Result[None, str]:
+    """
+    A unit carries the objects of each static library it links, and rustc's dependency file names none of them, so
+    the identity reads each library's bytes: another archive gives another identity, the same bytes under another
+    root the same one, and a library in no search directory refuses the identity.
+    """
+    scratch = scratch_directory()?
+    mut digests: list[str] = []
+    for root in ["first root", "second"]:
+        digests.append(archive_key(scratch.path().joinpath(root).joinpath("linked"), "!<arch>\none\n")?)
+    assert digests[0] == digests[1], f"{digests}"
+    changed = archive_key(scratch.path().joinpath("changed").joinpath("linked"), "!<arch>\ntwo\n")?
+    assert changed != digests[0], "a unit kept its identity when the static library it links changed"
+    project = scratch.path().joinpath("missing").joinpath("linked")
+    write(project.joinpath("src/lib.rs"), "pub fn call() {}\n")?
+    mut ledger = load_ledger(project.joinpath("ledger.json"), 0, "")
+    arguments = ["crate linked lib", "-L", f"native={project.joinpath("nowhere").0}", "-l", "static=twice"]
+    match reconciled_rust_key(project, project, [project.joinpath("src/lib.rs").0], [], arguments, {}, [], "c", ledger):
+        Ok(_) => fail("a unit whose static library is in no search directory was given an identity")
+        Err(reason) =>
+            assert "twice" in reason, reason
+    return Ok(None)
