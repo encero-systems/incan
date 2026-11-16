@@ -101,6 +101,34 @@ impl TypeCheckInfo {
                 Ok(Some(contract))
             }
             InputCallKind::Ordinary => {
+                let selected_result_map_err = call.callee
+                    == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+                    && self.resolved_builtin_method_call(call.site)
+                        == Some(incan_lang::lang::builtins::BuiltinMethodId::Result(
+                            incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                        ));
+                if selected_result_map_err {
+                    let callback_is_checked = matches!(call.parameters.as_slice(), [parameter]
+                        if matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
+                            if parameters.len() == 1));
+                    let result_is_checked = matches!(self.expr_type(call.site),
+                        Some(crate::symbols::ResolvedType::Generic(name, sides))
+                            if crate::typechecker::helpers::collection_type_id(name)
+                                == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                                && sides.len() == 2);
+                    if contract.is_some()
+                        || call.owner.is_none()
+                        || call.callee.kind != SemanticSourceTargetKind::Method
+                        || call.receiver != Some(crate::ast::Receiver::Immutable)
+                        || self.resolved_identity(call.site) != Some(&call.callee)
+                        || self.call_site_callable_params(call.site) != Some(call.parameters.as_slice())
+                        || !callback_is_checked
+                        || !result_is_checked
+                    {
+                        return Err("builtin Result.map_err invocation differs from its selected checked surface");
+                    }
+                    return Ok(None);
+                }
                 if !matches!(
                     call.callee.origin,
                     SymbolOrigin::Module(_) | SymbolOrigin::Package { .. }

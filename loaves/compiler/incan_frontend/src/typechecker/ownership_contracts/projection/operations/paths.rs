@@ -158,7 +158,8 @@ impl SourcePaths<'_> {
                     let evaluated = self.expression(&loop_.iter, incoming)?;
                     let header = self.node(evaluated)?;
                     let polled = self.expression(&loop_.iter, vec![header])?;
-                    self.repeat(header, &loop_.body, polled)?
+                    let initialized = self.region(loop_.pattern.span, polled);
+                    self.repeat(header, &loop_.body, initialized)?
                 }
                 Statement::Break(None) => {
                     self.loops
@@ -254,13 +255,14 @@ impl SourcePaths<'_> {
             return Ok(incoming);
         };
         match clause {
-            crate::ast::ComprehensionClause::For { iter, .. } => {
+            crate::ast::ComprehensionClause::For { pattern, iter } => {
                 let evaluated = self.expression(iter, incoming)?;
                 let header = self.node(evaluated)?;
                 let polled = self.expression(iter, vec![header])?;
-                let completed = self.comprehension(remaining, output, polled.clone())?;
+                let initialized = self.region(pattern.span, polled);
+                let completed = self.comprehension(remaining, output, initialized.clone())?;
                 self.connect(&completed, header);
-                Ok(polled)
+                Ok(initialized)
             }
             crate::ast::ComprehensionClause::If(condition) => {
                 let checked = self.expression(condition, incoming)?;

@@ -142,6 +142,10 @@ struct Builder<'a> {
     awaited: BTreeSet<Span>,
     /// Direct calls currently evaluated as the carrier of `?`; only their exact closed carrier may use that route.
     try_calls: BTreeSet<Span>,
+    /// Selected closed model calls currently authenticated as one exact fresh list element.
+    fresh_list_calls: BTreeSet<Span>,
+    /// Canonical locals introduced by the active loop headers; every poll produces fresh owned storage.
+    fresh_loop_locals: BTreeSet<CanonicalSymbolId>,
     constrained: BTreeSet<Root>,
     borrowed_inputs: BTreeSet<Root>,
     loops: Vec<LoopEdges>,
@@ -309,6 +313,8 @@ fn build_graph(
         closures: BTreeMap::new(),
         awaited: BTreeSet::new(),
         try_calls: BTreeSet::new(),
+        fresh_list_calls: BTreeSet::new(),
+        fresh_loop_locals: BTreeSet::new(),
         loops: Vec::new(),
         owned_source: None,
         view: None,
@@ -507,7 +513,7 @@ impl Builder<'_> {
                         }
                     }) =>
             {
-                self.scalar_list(entries, incoming)
+                self.scalar_list(entries, expression.span, incoming)
             }
             Expr::FString(parts) => self.formatted_text(parts, expression.span, incoming),
             // A returned view, including one `?` takes out of its carrier, is a place, not a value: it may be bound,

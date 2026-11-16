@@ -462,7 +462,7 @@ impl Builder<'_> {
     /// shared-borrowed through every poll, while an iterator result reuses the loans retained by that result.
     pub(super) fn for_header(
         &mut self,
-        _pattern: &Spanned<crate::ast::Pattern>,
+        pattern: &Spanned<crate::ast::Pattern>,
         iter: &Spanned<Expr>,
         span: Span,
         incoming: Vec<usize>,
@@ -475,6 +475,7 @@ impl Builder<'_> {
                 reason: "protocol iteration needs checked callable access facts".into(),
             });
         }
+        let fresh_pattern_items = self.register_fresh_loop_pattern(pattern);
         let candidate = self.checker.loop_item_candidates.get(&iter.span).cloned();
         let takes_items = self.checker.type_info.for_loop_takes_items(iter.span);
         let iterable = if takes_items { None } else { self.optional_place(iter)? };
@@ -535,7 +536,6 @@ impl Builder<'_> {
             }
         }
         if let Some(candidate) = candidate {
-            let item_roots = candidate.items.clone();
             for item in &candidate.items {
                 let root = Root::Binding(item.clone());
                 // The loop scope has closed before the callable graph is projected, so its ephemeral item bindings
@@ -561,22 +561,65 @@ impl Builder<'_> {
             self.graph
                 .item_taking_loops
                 .insert(iter.span, super::super::loop_items::GraphLoop { candidate, transfer });
-            for item in item_roots {
-                poll = self.event(
-                    poll,
-                    Event::Access {
-                        place: Place {
-                            root: Root::Binding(item),
-                            projection: Vec::new(),
-                        },
-                        access: Access::Replace,
-                        through: None,
+        }
+        for item in fresh_pattern_items {
+            poll = self.event(
+                poll,
+                Event::Access {
+                    place: Place {
+                        root: Root::Binding(item),
+                        projection: Vec::new(),
                     },
-                    span,
-                );
-            }
+                    access: Access::Replace,
+                    through: None,
+                },
+                pattern.span,
+            );
         }
         Ok((header, poll))
+    }
+
+    fn register_fresh_loop_pattern(
+        &mut self,
+        pattern: &Spanned<crate::ast::Pattern>,
+    ) -> Vec<incan_semantics_core::CanonicalSymbolId> {
+        let mut items = Vec::new();
+        self.collect_fresh_loop_pattern(pattern, &mut items);
+        items
+    }
+
+    fn collect_fresh_loop_pattern(
+        &mut self,
+        pattern: &Spanned<crate::ast::Pattern>,
+        items: &mut Vec<incan_semantics_core::CanonicalSymbolId>,
+    ) {
+        match &pattern.node {
+            crate::ast::Pattern::Binding(name) | crate::ast::Pattern::MutBinding(name) => {
+                if let Some(identity) = self
+                    .checker
+                    .type_info
+                    .resolved_write_identity(pattern.span, name)
+                    .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local)
+                    .cloned()
+                {
+                    self.fresh_loop_locals.insert(identity.clone());
+                    self.graph.permissions.entry(Root::Binding(identity.clone())).or_insert(Permission {
+                        exclusive: false,
+                        // The binding stays source-immutable; only the authenticated loop poll replaces it.
+                        writable: true,
+                        transferable: true,
+                    });
+                    items.push(identity);
+                }
+            }
+            crate::ast::Pattern::Tuple(pattern_items) => {
+                for item in pattern_items {
+                    self.collect_fresh_loop_pattern(item, items);
+                }
+            }
+            crate::ast::Pattern::Group(inner) => self.collect_fresh_loop_pattern(inner, items),
+            _ => {}
+        }
     }
 
     /// Iterate an evaluated iterable. A stored iterable stays shared-borrowed while the loop runs: each poll at the

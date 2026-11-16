@@ -314,14 +314,22 @@ impl TypeChecker {
             && arguments.len() == 2
             && Self::result_combinator_name(call.method)
         {
-            return Some(self.check_result_combinator_method(
+            let first_error = self.errors.len();
+            let result = self.check_result_combinator_method(
                 arguments[0].clone(),
                 arguments[1].clone(),
                 call.method,
                 call.args,
                 arg_types,
                 call.span,
-            ));
+            );
+            if self.errors.len() == first_error
+                && result_methods::from_str(call.method) == Some(ResultMethodId::MapErr)
+                && let Some(callback) = arg_types.first()
+            {
+                self.record_selected_result_map_err_input_call(callback, &result, call.span);
+            }
+            return Some(result);
         }
         self.check_generic_collection_method_call(call, base_ty, arg_types)
     }

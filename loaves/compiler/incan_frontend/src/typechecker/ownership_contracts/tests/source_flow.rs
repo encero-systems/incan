@@ -943,3 +943,219 @@ def main() -> Result[None, str]:
     }
     Ok(())
 }
+
+/// An immutable ordinary slot may receive one selected call's fresh closed result. A returned view remains stored
+/// caller-owned state and must not borrow this route merely because its presented value type matches the slot.
+#[test]
+fn ordinary_argument_accepts_only_fresh_closed_selected_call_results()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "def encode(value: Borrowed[int]) -> bytes:\n    return b\"row\"\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[int]) -> int:\n    return observe(encode(value))\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    let refused_source = "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef observe(value: bytes) -> int:\n    return len(value)\ndef inspect(value: Borrowed[bytes]) -> int:\n    return observe(view(value))\n";
+    let refused = checked(refused_source)?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing returned-view argument flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("returned view entered ordinary closed-result route: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, "ordinary argument requires inferred access or mutable binding facts");
+    assert_eq!(refused_source.get(unavailable.span.start..unavailable.span.end), Some("view(value)"));
+    assert!(
+        !refused.errors.is_empty()
+            && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+        "unrelated returned-view diagnostics: {:?}",
+        refused.errors
+    );
+    Ok(())
+}
+
+/// A selected ordinary call returning a closed model is fresh list-element storage. A previously stored model keeps
+/// its root and still needs retained-owner projection instead of acquiring transfer authority from the list literal.
+#[test]
+fn list_element_accepts_only_fresh_closed_selected_model_results()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "model Field:\n    value: bytes\ndef make(seed: int) -> Field:\n    return Field(value=b\"row\")\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    return [make(seed)]\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    for (label, refused_source, reason, stop) in [
+        (
+            "stored model",
+            "model Field:\n    value: bytes\ndef collect(seed: Borrowed[int]) -> list[Field]:\n    field = Field(value=b\"row\")\n    return [field]\n",
+            "list element needs checked retained-owner projection",
+            "field",
+        ),
+        (
+            "dependent call result",
+            "def view(value: Borrowed[bytes]) -> Borrowed[bytes] from value:\n    return value\ndef collect(value: Borrowed[bytes]) -> list[bytes]:\n    return [view(value)]\n",
+            "a returned view needs a local binding, a receiver or a returned view position",
+            "view(value)",
+        ),
+    ] {
+        let refused = checked(refused_source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} list flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered fresh list route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, reason, "{label}");
+        assert_eq!(refused_source.get(unavailable.span.start..unavailable.span.end), Some(stop), "{label}");
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+    Ok(())
+}
+
+/// A constructor field may materialize one indexed value from a fresh builtin-slice loop row. An ordinary stored
+/// list and a borrowed root remain outside that exact producer route, including when their element types match.
+#[test]
+fn constructor_field_index_requires_fresh_transferable_loop_row()
+-> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "model Field:\n    value: str\ndef collect(rows: Borrowed[list[list[str]]]) -> list[Field]:\n    mut fields: list[Field] = []\n    for row in rows[1:]:\n        fields.append(Field(value=row[0]))\n    return fields\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    for (label, source, expected, stop) in [
+        (
+            "stored local row",
+            "model Field:\n    value: str\ndef collect(seed: Borrowed[int]) -> Field:\n    row = [\"stored\"]\n    return Field(value=row[0])\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "row[0]",
+        ),
+        (
+            "borrowed row",
+            "model Field:\n    value: str\ndef collect(row: Borrowed[list[str]]) -> Field:\n    return Field(value=row[0])\n",
+            source::BORROWED_VALUE_IN_OWNED_FIELD,
+            "row[0]",
+        ),
+        (
+            "selected user index",
+            "class Row:\n    pub value: str\n    def __getitem__(self, index: int) -> str:\n        return self.value\nmodel Field:\n    value: str\ndef collect(row: Owned[Row]) -> Field:\n    return Field(value=row[0])\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "row[0]",
+        ),
+        (
+            "unproven Clone element",
+            "model Holder[T]:\n    value: T\ndef collect[T](tokens: Owned[list[T]]) -> Holder[T]:\n    return Holder(value=tokens[0])\n",
+            "non-Copy constructor field needs checked ownership transfer materialization",
+            "tokens[0]",
+        ),
+        (
+            "non-constructor list element",
+            "def collect(rows: Owned[list[str]]) -> list[str]:\n    return [rows[0]]\n",
+            "list element needs checked retained-owner projection",
+            "rows[0]",
+        ),
+    ] {
+        let refused = checked(source)?;
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} constructor flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered fresh loop-row route: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}");
+        assert_eq!(source.get(unavailable.span.start..unavailable.span.end), Some(stop), "{label}");
+        if label == "selected user index" {
+            assert!(
+                refused
+                    .type_info
+                    .calls
+                    .resolved_operator_calls
+                    .contains_key(&unavailable.span),
+                "user index fixture did not retain its selected operator"
+            );
+        }
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+    }
+    Ok(())
+}
+
+/// Every canonical loop-pattern local is reinitialized at the poll, even when its type is cloneable and therefore
+/// not an item-taking candidate. Reinitialization must not hide a same-iteration or outer-root use after transfer.
+#[test]
+fn cloneable_loop_pattern_reinitializes_without_suppressing_real_moves()
+-> Result<(), Box<dyn std::error::Error>> {
+    let declarations = "model Field:\n    value: str\ndef consume(value: Owned[str]) -> None:\n    pass\n";
+    let accepted_source = format!(
+        "{declarations}def inspect(fields: Borrowed[list[Field]]) -> str:\n    mut previous = \"\"\n    for field in fields:\n        if field.value == \"stop\":\n            consume(field.value)\n            return previous\n        previous = field.value\n    return previous\n"
+    );
+    let accepted = checked(&accepted_source)?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    for (label, body) in [
+        (
+            "same iteration",
+            "def inspect(fields: Borrowed[list[Field]]) -> str:\n    for field in fields:\n        consume(field.value)\n        if field.value == \"again\":\n            return field.value\n    return \"\"\n",
+        ),
+        (
+            "outer root",
+            "def inspect(fields: Borrowed[list[Field]]) -> str:\n    outer = Field(value=\"outer\")\n    for field in fields:\n        consume(outer.value)\n    return outer.value\n",
+        ),
+    ] {
+        let source = format!("{declarations}{body}");
+        let refused = checked(&source)?;
+        assert!(
+            !refused.errors.is_empty()
+                && refused.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0126")),
+            "{label} move produced unrelated diagnostics: {:?}",
+            refused.errors
+        );
+        let state = refused
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "inspect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} move flow"))?;
+        let InputFlow::Checked { analysis, .. } = state else {
+            return Err(format!("{label} move lost its checked conflict graph: {state:?}").into());
+        };
+        assert!(!analysis.conflicts.is_empty(), "{label} move lost its exact T0126 conflict");
+    }
+    Ok(())
+}

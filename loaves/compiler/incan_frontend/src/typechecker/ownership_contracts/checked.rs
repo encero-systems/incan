@@ -9,6 +9,8 @@ use crate::ownership_metadata::{
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
+use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -23,6 +25,48 @@ struct Signature<'a> {
 }
 
 impl TypeChecker {
+    /// Retain the compiler-selected `Result.map_err` call only after its callback and result have both checked.
+    /// This is the builtin combinator's exact selected surface, not a fallback for arbitrary builtin methods.
+    pub(in crate::typechecker) fn record_selected_result_map_err_input_call(
+        &mut self,
+        callback: &ResolvedType,
+        result: &ResolvedType,
+        span: Span,
+    ) {
+        let Some(owner) = self.current_body_identity().cloned() else {
+            return;
+        };
+        let Some(callee) = self.type_info.resolved_identity(span).cloned() else {
+            return;
+        };
+        let callback_is_checked = matches!(callback, ResolvedType::Function(parameters, _) if parameters.len() == 1);
+        let result_is_checked = matches!(result, ResolvedType::Generic(name, sides)
+            if crate::typechecker::helpers::collection_type_id(name)
+                == Some(incan_lang::lang::types::collections::CollectionTypeId::Result)
+                && sides.len() == 2);
+        if callee != crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            || self.type_info.resolved_builtin_method_call(span)
+                != Some(BuiltinMethodId::Result(ResultMethodId::MapErr))
+            || !callback_is_checked
+            || !result_is_checked
+        {
+            return;
+        }
+        let parameters = vec![CallableParam::positional(callback.clone())];
+        self.type_info.record_call_site_callable_params_exact(span, &parameters);
+        self.type_info.protocols.explicit_input_calls.insert(
+            span,
+            super::InputCall {
+                site: span,
+                kind: super::InputCallKind::Ordinary,
+                owner: Some(owner),
+                callee,
+                parameters,
+                receiver: Some(Receiver::Immutable),
+            },
+        );
+    }
+
     /// Retain successful selected calls in the isolated body writer. Ordinary candidates are discarded unless the
     /// completed body independently needs explicit-input analysis. Candidate speculation is discarded with its
     /// normal call artifacts, and a caller without annotations still owes its callee's explicit contract.

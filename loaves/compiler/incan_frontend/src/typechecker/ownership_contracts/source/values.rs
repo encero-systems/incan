@@ -45,6 +45,36 @@ impl Builder<'_> {
         )
     }
 
+    fn constructor_argument_types(&self, span: Span) -> Option<Vec<ResolvedType>> {
+        let ty = self.checker.type_info.expr_type(span)?;
+        let (owner, arguments) = match ty {
+            ResolvedType::Named(owner) => (owner, &[][..]),
+            ResolvedType::Generic(owner, arguments) => (owner, arguments.as_slice()),
+            _ => return None,
+        };
+        let (parameters, fields, order) = match self.checker.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => (&info.type_params, &info.fields, &info.field_order),
+            TypeInfo::Class(info) => (&info.type_params, &info.fields, &info.field_order),
+            TypeInfo::Newtype(info) => {
+                let underlying =
+                    substitute_resolved_type(&info.underlying, &type_param_subst_map(&info.type_params, arguments));
+                return Some(vec![underlying]);
+            }
+            _ => return None,
+        };
+        let substitution = type_param_subst_map(parameters, arguments);
+        let binding = self.checker.type_info.constructor_field_binding(span)?;
+        binding
+            .argument_slots
+            .iter()
+            .map(|slot| {
+                let name = order.get(*slot)?;
+                let field = fields.get(name)?;
+                Some(substitute_resolved_type(&field.ty, &substitution))
+            })
+            .collect()
+    }
+
     /// Mark the payloads of one selected source enum variant that store a direct or transitive borrow.
     pub(super) fn enum_view_constructor_fields(&self, callee: &Spanned<Expr>, span: Span) -> Option<Vec<bool>> {
         let Expr::Field(base, variant) = &callee.node else {
@@ -251,8 +281,18 @@ impl Builder<'_> {
     pub(super) fn scalar_list(
         &mut self,
         entries: &[ListEntry],
+        span: Span,
         mut incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        let element_type = match self.checker.type_info.expr_type(span) {
+            Some(ResolvedType::Generic(name, arguments))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::List) =>
+            {
+                arguments.first()
+            }
+            _ => None,
+        };
         for entry in entries {
             let value = match entry {
                 ListEntry::Element(value) => value,
@@ -273,7 +313,13 @@ impl Builder<'_> {
                         | ResolvedType::Unit
                 )
             );
-            if !copy_scalar && !self.fresh_or_copy_field(value) && !self.allow_fresh_aggregate_elements {
+            let fresh_selected_model = element_type
+                .is_some_and(|element| self.fresh_closed_selected_model_result(value, element));
+            if !copy_scalar
+                && !self.fresh_or_copy_field(value)
+                && !fresh_selected_model
+                && !self.allow_fresh_aggregate_elements
+            {
                 let path = self.optional_place(value)?.filter(|path| {
                     path.through.is_none()
                         && !self.borrowed_inputs.contains(&path.place.root)
@@ -306,9 +352,52 @@ impl Builder<'_> {
                 incoming = self.expression(value, incoming, true)?;
                 continue;
             }
-            incoming = self.expression(value, incoming, false)?;
+            if fresh_selected_model {
+                self.fresh_list_calls.insert(value.span);
+            }
+            let evaluated = self.expression(value, incoming, false);
+            if fresh_selected_model {
+                self.fresh_list_calls.remove(&value.span);
+            }
+            incoming = evaluated?;
         }
         Ok(incoming)
+    }
+
+    fn fresh_closed_selected_model_result(&self, value: &Spanned<Expr>, element: &ResolvedType) -> bool {
+        if !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
+            || self.checker.type_info.expr_type(value.span) != Some(element)
+            || self.checker.type_holds_borrow(element)
+            || self.checker.type_holds_native_loan(element)
+        {
+            return false;
+        }
+        let model = match element {
+            ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => {
+                matches!(self.checker.lookup_type_info(owner), Some(TypeInfo::Model(_)))
+            }
+            _ => false,
+        };
+        let Some(call) = self.checker.type_info.protocols.explicit_input_calls.get(&value.span) else {
+            return false;
+        };
+        if !model
+            || !matches!(
+                call.kind,
+                super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
+            )
+            || call.owner.as_ref() != Some(&self.owner)
+        {
+            return false;
+        }
+        let Ok(contract) = self.checker.type_info.selected_input_contract(call) else {
+            return false;
+        };
+        crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && self.checker.native_result_dependencies(value.span).is_ok_and(|value| value.is_none())
+            && !self.checker.native_result_is_independent(value.span)
+            && !self.checked_clone_call(value.span)
     }
 
     /// Evaluate a checked builtin-list concat operand without transferring any element root. A literal contributes
@@ -382,6 +471,7 @@ impl Builder<'_> {
             });
         }
         let view_arguments = self.constructor_view_fields(span);
+        let argument_types = self.constructor_argument_types(span);
         for (index, argument) in arguments.iter().enumerate() {
             let value = match argument {
                 CallArg::Positional(value) | CallArg::Named(_, value) => value,
@@ -400,7 +490,15 @@ impl Builder<'_> {
             if stores_view {
                 self.validate_view_field_source(value)?;
             }
+            let fresh_loop_index = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .is_some_and(|expected| self.fresh_loop_index_field(value, expected));
             if !stores_view && !self.fresh_or_copy_field(value) {
+                if fresh_loop_index {
+                    incoming = self.expression(value, incoming, false)?;
+                    continue;
+                }
                 let borrowed = self
                     .optional_place(value)?
                     .is_some_and(|path| path.through.is_some() || self.borrowed_inputs.contains(&path.place.root));
@@ -416,6 +514,37 @@ impl Builder<'_> {
             incoming = self.expression(value, incoming, false)?;
         }
         Ok(incoming)
+    }
+
+    fn fresh_loop_index_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        let Expr::Index(base, _) = &value.node else {
+            return false;
+        };
+        if self
+            .checker
+            .type_info
+            .calls
+            .resolved_operator_calls
+            .contains_key(&value.span)
+            || self.checker.type_info.expr_type(value.span) != Some(expected)
+            || !self.checker.is_clone_type(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+        {
+            return false;
+        }
+        let builtin_list = matches!(self.checker.type_info.expr_type(base.span),
+            Some(ResolvedType::Generic(name, arguments))
+                if incan_lang::lang::types::collections::from_str(name)
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                    && arguments.as_slice() == std::slice::from_ref(expected));
+        builtin_list
+            && self.optional_place(base).ok().flatten().is_some_and(|path| {
+                path.through.is_none()
+                    && path.place.projection.is_empty()
+                    && matches!(&path.place.root, super::Root::Binding(identity)
+                        if self.fresh_loop_locals.contains(identity))
+            })
     }
 
     /// Evaluate one enum construction whose checked payload layout holds a view, enforcing the callable's one source.

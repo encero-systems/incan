@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Spanned, Statement};
+use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Span, Spanned, Statement};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 mod paths;
@@ -321,6 +321,9 @@ impl CheckedInputBody<'_> {
             // A bound closure's body runs in its own frame when the closure is called; building it reads or borrows
             // only its captures, which its retained closure record covers.
             Expr::Closure(..) if self.graph.closures.contains_key(&expression.span) => {}
+            // The source builder admits only a capture-free literal in the exact checked `Result.map_err` callback
+            // slot. Its invocation argument retains that decision without inventing a local closure binding.
+            Expr::Closure(..) if self.capture_free_result_map_err_callback(expression.span) => {}
             // `await` suspends on its call; the call is the operation.
             Expr::Surface(surface) if super::super::builtins::awaited(surface).is_some() => {
                 if let Some(awaited) = super::super::builtins::awaited(surface) {
@@ -330,6 +333,31 @@ impl CheckedInputBody<'_> {
             _ => return Err("operation coverage requires an admitted expression"),
         }
         Ok(())
+    }
+
+    fn capture_free_result_map_err_callback(&self, callback: Span) -> bool {
+        self.graph.invocations.iter().any(|(span, invocation)| {
+            let Some(call) = self.facts.protocols.explicit_input_calls.get(span) else {
+                return false;
+            };
+            call.callee == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+                && call.receiver == Some(crate::ast::Receiver::Immutable)
+                && self.facts.resolved_builtin_method_call(*span)
+                    == Some(BuiltinMethodId::Result(
+                        incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                    ))
+                && invocation.callee == call.callee
+                && invocation.arguments.iter().any(|argument| {
+                    argument.span == callback
+                        && argument.access == incan_semantics_core::IncanInputAccess::Inferred
+                        && argument.loan.is_none()
+                        && argument.source.is_none()
+                        && call.parameters.get(argument.slot).is_some_and(|parameter| {
+                            matches!(&parameter.ty, crate::symbols::ResolvedType::Function(parameters, _)
+                                if parameters.len() == 1)
+                        })
+                })
+        })
     }
 
     /// Validate one free call from its selected builtin operands or explicit invocation record.

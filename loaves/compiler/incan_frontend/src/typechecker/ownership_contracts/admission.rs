@@ -314,12 +314,35 @@ impl CheckedInputBody<'_> {
                     && argument
                         .source
                         .as_ref()
-                        .is_some_and(|source| !source.projection.is_empty())
+                        .is_some_and(|source| {
+                            !source.projection.is_empty() && !self.reinitialized_pattern_projection(source)
+                        })
                 {
                     return Err("explicit projected transfer requires checked drop obligations");
                 }
             }
         }
         Ok(())
+    }
+
+    /// A whole loop-pattern owner is freshly replaced before every body execution. Its exact field transfer may
+    /// therefore finish this iteration without leaving partially moved storage live into the next poll.
+    fn reinitialized_pattern_projection(&self, source: &super::flow::Place) -> bool {
+        let super::flow::Root::Binding(identity) = &source.root else {
+            return false;
+        };
+        identity.kind == SemanticSourceTargetKind::Local
+            && source
+                .projection
+                .iter()
+                .all(|projection| matches!(projection, super::flow::Projection::Field(_)))
+            && self.graph.nodes.iter().any(|node| {
+                matches!(&node.event,
+                    super::flow::Event::Access {
+                        place,
+                        access: super::flow::Access::Replace,
+                        through: None,
+                    } if place.root == source.root && place.projection.is_empty())
+            })
     }
 }

@@ -485,6 +485,7 @@ impl Builder<'_> {
             && result_requirement.is_none()
             && !closed_try_carrier_result
             && !lends_nothing
+            && !self.fresh_list_calls.contains(&span)
             && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
             return Err(Unavailable {
@@ -521,6 +522,38 @@ impl Builder<'_> {
             completion_node: 0,
             final_accesses: Vec::new(),
         };
+        let selected_result_map_err = call.callee
+            == crate::symbols::canonical_builtin_member_identity("Result", "map_err")
+            && call.receiver == Some(Receiver::Immutable)
+            && self.checker.type_info.resolved_builtin_method_call(span)
+                == Some(BuiltinMethodId::Result(
+                    incan_lang::lang::surface::result_methods::ResultMethodId::MapErr,
+                ));
+        if selected_result_map_err
+            && !receiver.is_some_and(|receiver| {
+                matches!(receiver.node, Expr::Call(..))
+                    && self
+                        .checker
+                        .type_info
+                        .protocols
+                        .explicit_input_calls
+                        .get(&receiver.span)
+                        .is_some_and(|receiver_call| {
+                            receiver_call.kind == super::super::InputCallKind::Ordinary
+                                && matches!(receiver_call.callee.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+                                && self
+                                    .checker
+                                    .type_info
+                                    .selected_input_contract(receiver_call)
+                                    .is_ok_and(|contract| contract.is_none())
+                        })
+            })
+        {
+            return Err(Unavailable {
+                span,
+                reason: "call has no selected explicit input access facts".into(),
+            });
+        }
         if let Some(receiver) = receiver {
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, receiver.span);
@@ -643,6 +676,7 @@ impl Builder<'_> {
                 mode,
                 call.kind == super::super::InputCallKind::Ordinary,
                 closed_enum_parameter_observer,
+                selected_result_map_err,
                 matches!(
                     call.kind,
                     super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
@@ -758,6 +792,7 @@ impl Builder<'_> {
         mode: Option<OwnershipMode>,
         ordinary_callee: bool,
         closed_enum_parameter_observer: bool,
+        selected_result_map_err: bool,
         accepts_fresh_inferred: bool,
         invocation: Span,
         incoming: Vec<usize>,
@@ -783,6 +818,29 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
+            // An immutable ordinary slot may receive one exact selected call's fresh closed result. The selected
+            // inner call must carry no view, native, owned-result or clone obligation; dependent calls stay stored.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && self.fresh_closed_selected_call_argument(expression, parameter)? =>
+            {
+                self.expression(expression, incoming, true)
+                    .map(|outgoing| (outgoing, None))
+            }
+            // `Result.map_err` invokes its one checked callback without retaining it. A capture-free closure literal
+            // therefore evaluates no caller-owned storage; capturing callbacks still need the ordinary local-closure
+            // route so their loans remain live through invocation.
+            None if selected_result_map_err
+                && !parameter.is_mut
+                && matches!(expression.node, Expr::Closure(..))
+                && self.checker.type_info.expr_type(expression.span) == Some(&parameter.ty)
+                && self
+                    .checker
+                    .closure_captures(expression.span)
+                    .is_some_and(|captures| captures.is_empty()) =>
+            {
+                Ok((self.event(incoming, Event::Nothing, expression.span), None))
+            }
             // A fresh closed value has no caller-owned source to conflict with. Explicit boundaries and an ordinary
             // model constructor argument retain that checked independence without inventing a copy or loan.
             None if accepts_fresh_inferred
@@ -851,6 +909,51 @@ impl Builder<'_> {
                 reason: "ordinary argument requires inferred access or mutable binding facts".into(),
             }),
         }
+    }
+
+    fn fresh_closed_selected_call_argument(
+        &self,
+        expression: &Spanned<Expr>,
+        parameter: &CallableParam,
+    ) -> Result<bool, Unavailable> {
+        if !matches!(expression.node, Expr::Call(..) | Expr::MethodCall(..))
+            || self.checker.type_info.expr_type(expression.span) != Some(&parameter.ty)
+            || self.checker.type_holds_borrow(&parameter.ty)
+            || self.checker.type_holds_native_loan(&parameter.ty)
+        {
+            return Ok(false);
+        }
+        let Some(call) = self
+            .checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+        else {
+            return Ok(false);
+        };
+        if !matches!(
+            call.kind,
+            super::super::InputCallKind::Ordinary | super::super::InputCallKind::Explicit
+        )
+            || call.owner.as_ref() != Some(&self.owner)
+        {
+            return Ok(false);
+        }
+        let contract = self
+            .checker
+            .type_info
+            .selected_input_contract(call)
+            .map_err(|reason| Unavailable {
+                span: expression.span,
+                reason: reason.into(),
+            })?;
+        Ok(crate::ownership_metadata::returned_view(contract).is_ok_and(|view| view.is_none())
+            && crate::ownership_metadata::owned_result(contract).is_ok_and(|owned| owned.is_none())
+            && self.checker.native_result_dependencies(expression.span).is_ok_and(|value| value.is_none())
+            && !self.checker.native_result_is_independent(expression.span)
+            && !self.checked_clone_call(expression.span)
+            && plain_result(&parameter.ty))
     }
 
     /// Authenticate the only whole non-Copy Parameter observation currently retained by an ordinary inferred slot.
