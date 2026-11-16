@@ -91,8 +91,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
 
+        // A whole local's declaration types the combination; an explicit alias names its source owner's projected
+        // field, whose value type is the alias's own checked type, not the owner's.
         let lhs_ty = lhs_place
             .local_id()
+            .filter(|_| lhs_place.projection.is_empty())
             .and_then(|local| self.locals.get(local.index()).map(|decl| decl.ty.clone()))
             .or_else(|| lhs_place.global().map(|global| global.ty.clone()))
             .unwrap_or(lhs_ty);
