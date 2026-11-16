@@ -1,11 +1,13 @@
-Use an installed `0.6.0-dev.8` Oven executable and its matching toolchain archive. Installing an archive requires local Rust 1.98.0 with `rustc-dev` on a compatible host. The archive contains the compiler and its dependency closure; it does not contain the machine's Rust sysroot. Installing or packing a `.tar.zst` archive runs `tar` with `zstd`, so both must be on `PATH`; a minimal Linux image often has no `zstd`.
+Install from the release bundle for your host. A bundle holds the `incan` command, the `incan-lsp` language server and the toolchain archive, `toolchain.tar.zst`; the [release page](https://github.com/encero-systems/incan/releases) names the bundle for each host. Installing needs Rust 1.98.0 with `rustc-dev` on a compatible host, and [ORAS](https://oras.land) 1.3 pulls the bundle. The archive contains the compiler, its dependency closure and the standard library; it does not contain the machine's Rust sysroot.
 
 ```bash
 rustup toolchain install 1.98.0 --profile minimal --component rustc-dev
+oras pull ghcr.io/encero-systems/loaves.pub/toolchain/incan:<bundle for your host> --output incan-bundle
+chmod +x incan-bundle/incan incan-bundle/incan-lsp
+incan-bundle/incan toolchain install incan-bundle/toolchain.tar.zst
+cp incan-bundle/incan-lsp "$HOME/.incan/bin/"
+export PATH="$HOME/.incan/bin:$PATH"
 incan --version
-incan toolchain install incan-0.6.0-dev.8.tar.zst
 ```
 
-Set `INCAN_HOME` before installation to select a separate home. Keep it set when moving or copying that home to a different directory; all paths stored inside the packed toolchain are relative, while the machine-local Rust sysroot is rebound during installation. A toolchain built from the dev line ships its standard-library sources, so leave `INCAN_STDLIB` unset with it unless you work in a development checkout. The published `0.6.0-dev.8` archive ships no standard-library sources: every command run with it needs `INCAN_STDLIB` set to the `loaves/stdlib` directory of a checkout, and reports `no standard library` otherwise.
-
-The archive does not install Oven's executable itself. Keep the matching executable on `PATH` as `incan`; installing an archive adds `oven` beside it. The 0.5 direct installer and package-manager channels install a different CLI; they are not a dev.8 archive installer.
+Installation copies `incan` to `INCAN_HOME/bin` and adds `oven` beside it. `INCAN_HOME` is `~/.incan` unless you set it; set it before installation to select a separate home, and copy `incan-lsp` into that home's `bin` instead. Keep it set when moving or copying that home to a different directory: all paths stored inside the packed toolchain are relative, while the machine-local Rust sysroot is rebound during installation. Leave `INCAN_STDLIB` unset unless you work in a development checkout.
