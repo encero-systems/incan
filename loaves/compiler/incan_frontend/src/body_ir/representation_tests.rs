@@ -13,6 +13,7 @@ mod metadata;
 mod read_patterns;
 mod seed;
 mod shared_loans;
+mod view_clones;
 
 use baselines::{assert_free_function_input_baseline, assert_settled_function_seeds, capture_module_baseline};
 use carriers::{

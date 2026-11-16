@@ -205,15 +205,13 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
             .iter()
             .any(|error| error.stable_code() == Some("INCAN-T0126"))
     );
-    for source in [
-        "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n",
-        "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n",
-    ] {
-        assert!(
-            source_graph(source)?.is_err(),
-            "unprojected observer admitted: {source}"
-        );
-    }
+    // A user function named like an observer is an ordinary call: the shared input is shared for that call, which
+    // Body IR refuses later if the callee's realization would consume it, rather than read as the builtin reads it.
+    let user = "def inspect(value: Borrowed[str]) -> None:\n    user_print(value)\ndef user_print(value: str) -> None:\n    pass\n";
+    let graph = source_graph(user)?.map_err(|error| format!("{error:?}"))?;
+    assert!(graph.loans.iter().any(|loan| loan.kind == flow::LoanKind::Shared));
+    let hook = "def inspect(value: Borrowed[Measure]) -> int:\n    return len(value)\nclass Measure:\n    def __len__(self) -> int:\n        return 1\n";
+    assert!(source_graph(hook)?.is_err(), "unprojected observer admitted: {hook}");
     let shadowed = checked(
         "def inspect(value: Borrowed[str]) -> None:\n    print(value)\ndef print(value: str) -> None:\n    pass\n",
     )?;
