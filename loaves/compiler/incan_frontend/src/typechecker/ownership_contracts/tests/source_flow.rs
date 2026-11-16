@@ -10,6 +10,9 @@ fn module_constants_are_values_but_static_storage_remains_refused() -> Result<()
         "const LIMIT: int = 1\ndef cap(limit: int) -> int:\n    return limit\ndef inspect(value: Borrowed[int]) -> int:\n    return value + cap(LIMIT)\n",
     )?;
     assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
     assert!(
         accepted
             .type_info
@@ -61,6 +64,205 @@ fn explicit_input_uses_private_helper_fields_and_checked_local_compound_assignme
                 owner.declaration_name == "encode_record" && matches!(flow, InputFlow::Checked { .. })
             })
     );
+    Ok(())
+}
+
+/// Ordinary immutable helper slots retain inferred access to exact checked parameter/field places. Explicit owned
+/// slots must still refuse a projection rooted in a borrowed input instead of manufacturing a transfer.
+#[test]
+fn explicit_input_infers_only_checked_parameter_and_field_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Family:\n    Local\nmodel Record:\n    root: str\n    family: Family\ndef nonempty(value: str) -> bool:\n    return value != \"\"\ndef family_name(family: Family) -> str:\n    match family:\n        Family.Local => return \"local\"\ndef inspect(record: Borrowed[Record]) -> bool:\n    if not nonempty(record.root):\n        return false\n    return family_name(record.family) == \"local\"\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    let refused = checked(
+        "model Record:\n    root: str\ndef consume(value: Owned[str]) -> None:\n    pass\ndef inspect(record: Borrowed[Record]) -> None:\n    consume(record.root)\n",
+    )?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| {
+                error.stable_code() == Some("INCAN-T0126")
+                    && error.message == "This operation requires access not granted by its ownership contract"
+            }),
+        "borrowed field acquired an owned transfer: {:?}",
+        refused.errors
+    );
+    Ok(())
+}
+
+/// A checker-selected call returning a closed scalar is fresh variant storage. A place projected from a borrowed
+/// input remains unavailable as an owned payload without checked transfer materialization.
+#[test]
+fn explicit_input_variant_payload_accepts_only_fresh_closed_calls() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Value:\n    Text(str)\ndef inspect(values: Borrowed[list[str]]) -> Value:\n    return Value.Text(str(len(values)))\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    let refused_source = "enum Value:\n    Item(list[str])\ndef inspect(value: Owned[list[str]]) -> Value:\n    mut held: BorrowedMut[list[str]] = value\n    return Value.Item(held)\n";
+    let refused = checked(refused_source)?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing borrowed-payload source flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("borrowed payload admitted: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, source::BORROWED_VALUE_IN_OWNED_FIELD);
+    assert_eq!(refused_source.get(unavailable.span.start..unavailable.span.end), Some("held"));
+    assert!(refused.errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")));
+    Ok(())
+}
+
+/// A builtin list slice with a closed borrow-free result reads its checked base and bounds. A user-selected slice
+/// operator continues through the selected-call refusal rather than borrowing builtin list semantics.
+#[test]
+fn explicit_input_list_slice_requires_builtin_borrow_free_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "def inspect(rows: Borrowed[list[list[str]]]) -> int:\n    return len(rows[1:])\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "inspect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    let refused = checked(
+        "class Shelf with Sliceable[int]:\n    pub values: list[int]\n    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:\n        return self.values\ndef inspect(shelf: Borrowed[Shelf]) -> int:\n    return len(shelf[1:])\n",
+    )?;
+    let state = refused
+        .type_info
+        .protocols
+        .explicit_input_flow
+        .iter()
+        .find(|(owner, _)| owner.declaration_name == "inspect")
+        .map(|(_, state)| state)
+        .ok_or("missing selected-slice source flow")?;
+    let InputFlow::Unavailable(unavailable) = state else {
+        return Err(format!("user-selected slice admitted as builtin: {state:?}").into());
+    };
+    assert_eq!(unavailable.reason, "operator needs selected callable access facts");
+    assert!(refused.errors.iter().any(|error| error.stable_code() == Some("INCAN-T0123")));
+    Ok(())
+}
+
+/// An owned parameter can transfer a checked field into fresh aggregate storage. The same field under a borrowed
+/// parameter must remain refused; the list literal cannot hide a clone or partial ownership change.
+#[test]
+fn explicit_input_list_elements_require_transferable_field_roots() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    return [record.value]\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    let refused = [
+        (
+            "borrowed root",
+            "model Record:\n    value: str\ndef collect(record: Borrowed[Record]) -> list[str]:\n    return [record.value]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "borrowed alias",
+            "model Record:\n    value: str\ndef collect(record: Owned[Record]) -> list[str]:\n    let alias: Borrowed[Record] = record\n    return [alias.value]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "indexed element",
+            "def collect(values: Owned[list[str]]) -> list[str]:\n    return [values[0]]\n",
+            "list element needs checked retained-owner projection",
+        ),
+        (
+            "static root",
+            "model Record:\n    value: str\nstatic STORED: Record = Record(value=\"stored\")\ndef collect(seed: Borrowed[int]) -> list[str]:\n    return [STORED.value]\n",
+            "place is not a prepared parameter or checked local",
+        ),
+    ];
+    for (label, source, expected) in refused {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} source flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} entered owned list storage: {state:?}").into());
+        };
+        assert_eq!(unavailable.reason, expected, "{label}: {:?}", checker.errors);
+        assert!(
+            !checker.errors.is_empty()
+                && checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced an unrelated diagnostic: {:?}",
+            checker.errors
+        );
+    }
+    Ok(())
+}
+
+/// A builtin method may receive `?` applied to a checked fresh call result. A stored borrowed value remains refused
+/// as a non-Copy append argument and cannot acquire transfer materialization from the surrounding method call.
+#[test]
+fn explicit_input_builtin_method_accepts_only_fresh_try_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "enum Fault:\n    Bad\ndef make() -> Result[bytes, Fault]:\n    return Ok(b\"row\")\ndef collect(seed: Borrowed[int]) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(make()?)\n    return Ok(rows)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(accepted.type_info.protocols.explicit_input_flow.iter().any(|(owner, flow)| {
+        owner.declaration_name == "collect" && matches!(flow, InputFlow::Checked { .. })
+    }));
+
+    for (label, source) in [
+        (
+            "stored borrowed value",
+            "def collect(value: Borrowed[bytes]) -> list[bytes]:\n    mut rows: list[bytes] = []\n    rows.append(value)\n    return rows\n",
+        ),
+        (
+            "returned borrowed view",
+            "enum Fault:\n    Bad\ndef view(value: Borrowed[bytes]) -> Result[Borrowed[bytes], Fault] from value:\n    return Ok(value)\ndef collect(value: Borrowed[bytes]) -> Result[list[bytes], Fault]:\n    mut rows: list[bytes] = []\n    rows.append(view(value)?)\n    return Ok(rows)\n",
+        ),
+    ] {
+        let checker = checked(source)?;
+        let state = checker
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .find(|(owner, _)| owner.declaration_name == "collect")
+            .map(|(_, state)| state)
+            .ok_or_else(|| format!("missing {label} append source flow"))?;
+        let InputFlow::Unavailable(unavailable) = state else {
+            return Err(format!("{label} admitted as fresh append storage: {state:?}").into());
+        };
+        assert_eq!(
+            unavailable.reason,
+            "a non-Copy builtin method argument needs checked ownership transfer materialization",
+            "{label}: {:?}",
+            checker.errors
+        );
+        assert!(
+            !checker.errors.is_empty()
+                && checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{label} produced an unrelated diagnostic: {:?}",
+            checker.errors
+        );
+    }
     Ok(())
 }
 

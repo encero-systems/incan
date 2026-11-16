@@ -181,7 +181,10 @@ impl Builder<'_> {
                     reason: "builtin place method needs positional arguments".into(),
                 });
             };
-            if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
+            if !self.fresh_or_copy_field(value)
+                && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..))
+                && !self.transparent_selected_call_argument(value)
+            {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "a non-Copy builtin method argument needs checked ownership transfer materialization"
@@ -200,6 +203,29 @@ impl Builder<'_> {
             },
             span,
         ))
+    }
+
+    /// A transparent `?` or grouping wrapper preserves one checker-selected call's fresh, closed result. Stored
+    /// values and results capable of carrying source or native loans remain outside the builtin transfer route.
+    fn transparent_selected_call_argument(&self, value: &Spanned<Expr>) -> bool {
+        let mut call = value;
+        let mut wrapped = false;
+        while let Expr::Paren(inner) | Expr::Try(inner) = &call.node {
+            call = inner;
+            wrapped = true;
+        }
+        wrapped
+            && matches!(call.node, Expr::Call(..) | Expr::MethodCall(..))
+            && self.view_source(value).is_ok_and(|source| source.is_none())
+            && self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .contains_key(&call.span)
+            && self.checker.type_info.expr_type(value.span).is_some_and(|ty| {
+                !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
+            })
     }
 
     /// Primitive observers read their arguments through a checker-selected builtin identity. Nominal display and
@@ -752,18 +778,21 @@ impl Builder<'_> {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
             }
-            // A whole local may be observed by an ordinary helper while its body retains later storage. Parameters,
-            // projections and borrowed aliases still need an explicit access fact rather than inferred widening.
+            // A checked local or parameter, including a field-only path, may be observed by an immutable ordinary
+            // helper while its body retains storage. Indexes and borrowed aliases still need separate access facts.
             None if ordinary_callee
                 && !parameter.is_mut
                 && self.optional_place(expression)?.is_some_and(|path| {
                     path.through.is_none()
-                        && path.place.projection.is_empty()
-                        && matches!(
-                            path.place.root,
-                            Root::Binding(ref identity)
-                                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
-                        )
+                        && path
+                            .place
+                            .projection
+                            .iter()
+                            .all(|projection| matches!(projection, Projection::Field(_)))
+                        && matches!(&path.place.root, Root::Binding(identity)
+                            if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                                || (identity.kind == incan_semantics_core::SemanticSourceTargetKind::Parameter
+                                    && !path.place.projection.is_empty()))
                 }) =>
             {
                 self.expression(expression, incoming, false)

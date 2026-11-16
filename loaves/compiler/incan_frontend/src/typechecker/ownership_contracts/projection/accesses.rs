@@ -374,6 +374,21 @@ impl SourceAccesses<'_, '_> {
             // `?` consumes its carrier, as the source flow evaluates it; a local still holding a carried call is read
             // through its loan instead, as a match on it is.
             Expr::Try(inner) => self.expression(inner, self.proof.carrier_loan(inner).is_none())?,
+            Expr::Slice(base, slice) => {
+                if self
+                    .proof
+                    .facts
+                    .calls
+                    .resolved_operator_calls
+                    .contains_key(&expression.span)
+                {
+                    return Err("source access coverage needs builtin slice selection");
+                }
+                self.expression(base, false)?;
+                for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+                    self.expression(bound, false)?;
+                }
+            }
             Expr::Binary(left, _, right) => {
                 self.expression(left, false)?;
                 self.expression(right, false)?;
@@ -390,7 +405,9 @@ impl SourceAccesses<'_, '_> {
                     let ListEntry::Element(value) = entry else {
                         return Err("source access cannot infer spread evaluation");
                     };
-                    self.expression(value, false)?;
+                    // Source admission may retain an exact field move for one transferable scalar-list element.
+                    // Replay that existing event; this coverage pass cannot create transfer authority.
+                    self.retained_source(value, false)?;
                 }
             }
             Expr::Tuple(elements) => {
@@ -625,18 +642,21 @@ impl SourceAccesses<'_, '_> {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
-            let consume = carrier
-                || (construction
-                    && self.place(value)?.is_some_and(|(place, through)| {
-                        through.is_none()
-                            && self
-                                .proof
-                                .graph
-                                .permissions
-                                .get(&place.root)
-                                .is_some_and(|permission| permission.transferable)
-                    })
-                    && !self.copy_value(value)?);
+            if carrier {
+                self.retained_source(value, false)?;
+                continue;
+            }
+            let consume = construction
+                && self.place(value)?.is_some_and(|(place, through)| {
+                    through.is_none()
+                        && self
+                            .proof
+                            .graph
+                            .permissions
+                            .get(&place.root)
+                            .is_some_and(|permission| permission.transferable)
+                })
+                && !self.copy_value(value)?;
             if consume && let Some((place, _)) = self.place(value)? {
                 self.constrained.insert(place.root);
             }

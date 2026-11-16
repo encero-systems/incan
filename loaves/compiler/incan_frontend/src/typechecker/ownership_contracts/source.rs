@@ -14,6 +14,7 @@ use crate::ast::{
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::ownership::OwnershipMode;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -582,6 +583,7 @@ impl Builder<'_> {
                     outgoing,
                 )
             }
+            Expr::Slice(base, slice) => self.builtin_list_slice(base, slice, expression.span, incoming),
             Expr::ListComp(comprehension) => self.list_comprehension(comprehension, expression.span, incoming),
             Expr::DictComp(comprehension) => self.dict_comprehension(comprehension, expression.span, incoming),
             // `await` on a call suspends this body until the call's future completes, and the call's loans end there as
@@ -651,6 +653,54 @@ impl Builder<'_> {
                 reason: "expression needs checked call or dependency access facts".into(),
             }),
         }
+    }
+
+    /// A checker-selected builtin list slice reads its stored base and Copy bounds, then returns fresh storage. A
+    /// selected user operator was refused before dispatch, and reference-carrying elements need dependency facts.
+    fn builtin_list_slice(
+        &mut self,
+        base: &Spanned<Expr>,
+        slice: &crate::ast::SliceExpr,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let base_ty = self.checker.type_info.expr_type(base.span).ok_or(Unavailable {
+            span,
+            reason: "list slice has no checked base type".into(),
+        })?;
+        let result_ty = self.checker.type_info.expr_type(span).ok_or(Unavailable {
+            span,
+            reason: "list slice has no checked result type".into(),
+        })?;
+        let builtin_list = |ty: &ResolvedType| {
+            matches!(ty, ResolvedType::Generic(name, arguments)
+                if collections::from_str(name) == Some(CollectionTypeId::List) && arguments.len() == 1)
+        };
+        if base_ty != result_ty
+            || !builtin_list(base_ty)
+            || self.checker.type_holds_borrow(result_ty)
+            || self.checker.type_holds_native_loan(result_ty)
+        {
+            return Err(Unavailable {
+                span,
+                reason: "slice needs builtin borrow-free list facts".into(),
+            });
+        }
+        let mut outgoing = self.expression(base, incoming, false)?;
+        for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+            let ty = self.checker.type_info.expr_type(bound.span).ok_or(Unavailable {
+                span: bound.span,
+                reason: "slice bound has no checked type".into(),
+            })?;
+            if !self.copy_value(ty) {
+                return Err(Unavailable {
+                    span: bound.span,
+                    reason: "slice bound needs a checked Copy value".into(),
+                });
+            }
+            outgoing = self.expression(bound, outgoing, false)?;
+        }
+        Ok(outgoing)
     }
 
     /// Whether this expression names one of the non-copyable loop-item roots retained for graph settlement.

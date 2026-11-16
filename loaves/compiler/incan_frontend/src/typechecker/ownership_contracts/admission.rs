@@ -298,7 +298,11 @@ impl CheckedInputBody<'_> {
                             &source.root,
                             super::flow::Root::Binding(identity)
                                 if identity.kind == SemanticSourceTargetKind::Parameter
-                        )
+                        ) && (source.projection.is_empty()
+                            || source
+                                .projection
+                                .iter()
+                                .any(|projection| !matches!(projection, super::flow::Projection::Field(_))))
                     })
                     && !super::projection::closure_argument(self.graph, argument)
                 {

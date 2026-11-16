@@ -274,10 +274,37 @@ impl Builder<'_> {
                 )
             );
             if !copy_scalar && !self.fresh_or_copy_field(value) && !self.allow_fresh_aggregate_elements {
-                return Err(Unavailable {
-                    span: value.span,
-                    reason: "list element needs checked retained-owner projection".into(),
+                let path = self.optional_place(value)?.filter(|path| {
+                    path.through.is_none()
+                        && !self.borrowed_inputs.contains(&path.place.root)
+                        && matches!(&path.place.root,
+                            super::Root::Binding(identity)
+                                if matches!(identity.kind,
+                                    SemanticSourceTargetKind::Local | SemanticSourceTargetKind::Parameter))
+                        && !path.place.projection.is_empty()
+                        && path
+                            .place
+                            .projection
+                            .iter()
+                            .all(|projection| matches!(projection, super::Projection::Field(_)))
+                        && self
+                            .graph
+                            .permissions
+                            .get(&path.place.root)
+                            .is_some_and(|permission| permission.transferable)
+                        && self.checker.type_info.expr_type(value.span).is_some_and(|ty| {
+                            !self.checker.type_holds_borrow(ty) && !self.checker.type_holds_native_loan(ty)
+                        })
                 });
+                let Some(path) = path else {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "list element needs checked retained-owner projection".into(),
+                    });
+                };
+                self.constrained.insert(path.place.root);
+                incoming = self.expression(value, incoming, true)?;
+                continue;
             }
             incoming = self.expression(value, incoming, false)?;
         }
@@ -499,6 +526,11 @@ impl Builder<'_> {
                     || self
                         .checker
                         .type_info
+                        .expr_type(value.span)
+                        .is_some_and(super::call_results::plain_result)
+                    || self
+                        .checker
+                        .type_info
                         .resolved_identity(callee.span)
                         .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
                     || self
@@ -514,7 +546,11 @@ impl Builder<'_> {
                         })
             }
             Expr::MethodCall(..) => {
-                self.checked_clone_call(value.span)
+                self.checker
+                    .type_info
+                    .expr_type(value.span)
+                    .is_some_and(super::call_results::plain_result)
+                    || self.checked_clone_call(value.span)
                     || self
                         .checker
                         .type_info

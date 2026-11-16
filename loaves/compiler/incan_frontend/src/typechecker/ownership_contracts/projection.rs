@@ -128,7 +128,15 @@ impl TypeCheckInfo {
                             }
                             binding = Some(candidate);
                         }
-                        binding.ok_or("ordinary invocation has no canonical source header")?
+                        if let Some(binding) = binding {
+                            binding
+                        } else if matches!(call.callee.origin, SymbolOrigin::Package { .. })
+                            && !self.calls.body_ir_async_call_targets.contains_key(&call.site)
+                        {
+                            return Ok(None);
+                        } else {
+                            return Err("ordinary invocation has no canonical source header");
+                        }
                     }
                     SemanticSourceTargetKind::Method => {
                         let local = self

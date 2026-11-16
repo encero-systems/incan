@@ -233,6 +233,22 @@ impl CheckedInputBody<'_> {
                 self.visit_operation_expression(base, parameters, execution, seen)?;
                 self.visit_operation_expression(index, parameters, execution, seen)?;
             }
+            // Source admission separately proves this is the builtin borrow-free list route. Keep the coverage
+            // traversal closed over that route instead of treating a user-selected slice operator as builtin.
+            Expr::Slice(base, slice) => {
+                if self
+                    .facts
+                    .calls
+                    .resolved_operator_calls
+                    .contains_key(&expression.span)
+                {
+                    return Err("operation coverage needs builtin slice selection");
+                }
+                self.visit_operation_expression(base, parameters, execution, seen)?;
+                for bound in [&slice.start, &slice.end, &slice.step].into_iter().flatten() {
+                    self.visit_operation_expression(bound, parameters, execution, seen)?;
+                }
+            }
             Expr::Binary(left, _, right) => {
                 self.visit_operation_expression(left, parameters, execution, seen)?;
                 self.visit_operation_expression(right, parameters, execution, seen)?;
