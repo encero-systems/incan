@@ -157,7 +157,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if args.is_empty() || args.len() > 3 || args.iter().any(|arg| !matches!(arg, ast::CallArg::Positional(_))) {
             return Err("unsupported builtin range argument binding".into());
         }
-        if let [ast::CallArg::Positional(argument)] = args.as_slice()
+        if let [ast::CallArg::Positional(argument)] = args
             && let Some(range) = self.inline_range_loop_source(argument, scope, out)
         {
             return Ok(Some(range));
