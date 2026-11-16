@@ -146,3 +146,16 @@ fn property_view_result_reads_as_its_value_type() -> Result<(), Box<dyn std::err
     assert!(reads.is_empty(), "{reads:?}");
     Ok(())
 }
+
+/// Every nominal value type clones through the builtin Clone contract whether or not the standard `Clone` trait is in
+/// scope, as inside the Loaves the standard traits themselves build on: a value enum, an enum with payloads, a model,
+/// an element of a list of models and a field read through a reference all give an independent value of their own
+/// type.
+#[test]
+fn nominal_values_clone_without_the_standard_clone_trait() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "enum Kind(str):\n    One = \"one\"\n    Two = \"two\"\n\nenum Shape:\n    Dot\n    Line(int)\n\nmodel Entry:\n    key: str\n    kind: Kind\n\nmodel Holder:\n    entry: Entry\n\ndef copies(kind: Kind, shape: Shape, entry: Entry, entries: list[Entry], holder: &Holder) -> int:\n    a = kind.clone()\n    b = shape.clone()\n    c = entry.clone()\n    d = entries[0].clone()\n    mut e = holder.entry.clone()\n    e.key = \"x\"\n    return len(c.key) + len(d.key) + len(e.key)\n";
+    let checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+
+    Ok(())
+}
