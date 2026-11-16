@@ -1,0 +1,130 @@
+"""
+The request workers of one engine: processes that each settle one client's requests, apart from every other client's.
+
+A request's capture and settlement use process-wide state, and one compiler activation runs at a time in a process.
+So the engine settles nothing itself: it gives each client a worker of its own for as long as the client stays
+connected, and independent requests progress together. A worker a client has left serves the next client.
+"""
+
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from pub::incan_platform.ipc import dial
+from core_process import Process, executable, running, spawn_detached, terminate
+from engine_channel import Channel
+from engine_endpoint import handshake, transport, worker_socket
+from engine_messages import Message, Stop
+from engine_state import Identity
+from engine_wire import Refusal, zero_id
+
+const STARTUP_POLLS: int = 2500
+# A worker whose last connection closed has lost its engine, and leaves this many seconds later.
+const ORPHAN_SECONDS: int = 2
+
+
+class Worker:
+    """One request worker process and the engine's own connection to it."""
+
+    pub process: Process
+    pub socket: str
+    # The engine's connection: it keeps the worker from leaving as an orphan, and carries its Stop.
+    pub control: Channel
+    # Whether a client holds this worker.
+    pub held: bool = false
+
+
+pub class Workers:
+    """The workers one engine started, each held by at most one client."""
+
+    pub root: Path
+    pub identity: Identity
+    pub members: list[Worker] = []
+    pub started: int = 0
+
+    pub def take(mut self) -> Result[tuple[str, Channel], Refusal]:
+        """
+        A connection to a worker no client holds, named by the worker's socket. A worker that left is forgotten, and
+        one is started when every worker is held.
+        """
+        mut gone: list[str] = []
+        mut taken: Option[tuple[str, Channel]] = None
+        for index in range(len(self.members)):
+            mut member = self.members[index]
+            if member.held:
+                continue
+            match connected(member.socket, self.identity):
+                Ok(channel) =>
+                    member.held = true
+                    self.members[index] = member
+                    taken = Some((member.socket, channel))
+                    break
+                Err(_) =>
+                    # Reaping the worker that left keeps no process entry behind.
+                    _ = running(member.process)
+                    gone.append(member.socket)
+        if len(gone) > 0:
+            self.members = [member for member in self.members if member.socket not in gone]
+        if let Some(found) = taken:
+            return Ok(found)
+        mut worker = self.start()?
+        channel = connected(worker.socket, self.identity)?
+        worker.held = true
+        socket = worker.socket
+        self.members.append(worker)
+        return Ok((socket, channel))
+
+    pub def release(mut self, socket: str) -> None:
+        """The client that held the worker at `socket` left; the worker serves the next one."""
+        for index in range(len(self.members)):
+            mut member = self.members[index]
+            if member.socket == socket:
+                member.held = false
+                self.members[index] = member
+
+    pub def dismiss(mut self, socket: str) -> None:
+        """The client that held the worker at `socket` left in the middle of a request; the worker leaves after it."""
+        for index in range(len(self.members)):
+            mut member = self.members[index]
+            if member.socket == socket:
+                _ = member.control.send(zero_id(), Message.Stop(Stop(reason="its client left")))
+        self.members = [member for member in self.members if member.socket != socket]
+
+    pub def retire(mut self) -> None:
+        """Tell every worker to leave once the request it settles has completed."""
+        for index in range(len(self.members)):
+            mut member = self.members[index]
+            _ = member.control.send(zero_id(), Message.Stop(Stop(reason="the engine is leaving")))
+        self.members = []
+
+    def start(mut self) -> Result[Worker, Refusal]:
+        """Start one worker in this executable's request role and connect to it once it listens."""
+        program = executable().map_err(transport)?
+        self.started += 1
+        socket = worker_socket(self.root, self.identity, self.started)?
+        arguments = [
+            "--internal-engine-requests",
+            self.root.0,
+            self.identity.store_id,
+            self.identity.profile,
+            self.identity.service_generation,
+            self.identity.compiler_generation,
+            socket,
+            str(ORPHAN_SECONDS),
+        ]
+        mut process = spawn_detached(program, arguments, {}).map_err(transport)?
+        for _poll in range(STARTUP_POLLS):
+            match connected(socket, self.identity):
+                Ok(control) => return Ok(Worker(process=process, socket=socket, control=control))
+                Err(_) => pass
+            if not running(process).map_err(transport)?:
+                return Err(transport("engine request worker exited before Welcome"))
+            sleep(Duration.from_millis(2))
+        terminate(process).map_err(transport)?
+        return Err(transport("engine request worker did not acknowledge startup"))
+
+
+def connected(socket: str, identity: Identity) -> Result[Channel, Refusal]:
+    """Dial a worker and complete the engine handshake with it; after that the connection waits without a bound."""
+    mut channel = handshake(Channel(transport=dial(socket).map_err(transport)?), identity)?
+    channel.transport.wait_at_most(0)
+    return Ok(channel)

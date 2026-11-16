@@ -356,7 +356,7 @@ pub def notice_former_compiler_variables() -> None:
 
 
 def internal_role() -> bool:
-    """Whether this process is one of Oven's own internal roles, such as a resident owner, rather than a command."""
+    """Whether this process is one of Oven's own internal roles, such as the engine, rather than a command."""
     for argument in args():
         if str(argument).startswith("--internal"):
             return true

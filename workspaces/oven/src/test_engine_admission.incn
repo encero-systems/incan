@@ -8,7 +8,7 @@ from engine_actions import Pending, Ready
 from engine_channel import Channel
 from engine_endpoint import endpoint, handshake, owner_uid
 from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Stop, Submit
-from engine_service import serve_at_with
+from engine_requests import serve_requests_at
 from engine_state import Identity
 from engine_wire import Refusal, joined, scalar, zero_id
 from files import write
@@ -74,7 +74,8 @@ pub def test_handshakes_progress_while_an_earlier_request_settles() -> Result[No
 
 def delayed_service(store: Path, identity: Identity) -> Result[None, str]:
     """Run one real service whose request settler is held beyond the handshake deadline."""
-    return serve_at_with(store, identity, delayed_finish, 30).map_err(refusal_detail)
+    selected = endpoint(store, identity).map_err(refusal_detail)?
+    return serve_requests_at(store, identity, selected.socket, delayed_finish, 30).map_err(refusal_detail)
 
 
 def delayed_finish(_store: Path, pending: Pending) -> Result[Ready, str]:

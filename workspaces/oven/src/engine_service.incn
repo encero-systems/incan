@@ -1,47 +1,37 @@
-"""Serve disposable engine control state from Oven under the physical store's lifetime lock."""
+"""
+Serve one physical store's engine under the store's lifetime lock: admit clients and carry each client's requests to
+a request worker of its own.
 
-from rust::std::fs import symlink_metadata
-from rust::std::os::unix::fs import FileTypeExt
+The engine settles nothing in this process. Each connected client holds one request worker (`engine_workers.incn`),
+which captures and settles that client's requests (`engine_requests.incn`); this loop carries frames between the two
+and answers the service's own lifecycle messages. Independent requests therefore progress together, and a request
+that takes long holds no other client.
+"""
+
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
-from std.encoding.hex import hexlify
 from std.fs import Path
-from pub::incan_platform.ipc import Listener, listen, stale
-from decimal_text import digits_only
+from pub::incan_platform.ipc import Listener, listen
 from engine_admission import Arrival, Notice, arrivals, notices, start_admission
-from engine_channel import Channel, Envelope, deliver as send, refuse as send_refusal
-from engine_endpoint import endpoint, owner_uid, record_endpoint, transport, withdraw_endpoint
-from engine_messages import (
-    Accepted,
-    Cancelled,
-    Captured,
-    Complete,
-    Event,
-    Message,
-    BindingOutcome,
-    CompletionStatus,
-    EffectDisposition,
-)
+from engine_channel import Channel, Envelope, deliver, refuse
+from engine_endpoint import endpoint, record_endpoint, transport, withdraw_endpoint
+from engine_messages import Event, Message
+from engine_requests import idle_seconds, service_identity_of, withdraw_stale
 from engine_state import Identity, ServiceState
-from engine_epochs import prepare_submit
-from engine_actions import Pending, Ready, ExecutionLease, finish_request
-from engine_programs import read_program, program_handle
-from engine_messages import Resolve, Resolution
-from engine_messages import Submit
-from engine_wire import MAX_PAYLOAD, Refusal, RefusalKind
-from bakery import forget_verified, verification_entries
-from observation import trace
+from engine_wire import Refusal, RefusalKind
+from engine_workers import Workers
 from files import discard_file
-from jec import begin as begin_work, record as record_work
-from pub::incan_platform.trace import Operation, flush as flush_trace
+from pub::incan_platform.trace import flush as flush_trace
 
 
-pub class Client:
-    """A client's bounded volatile interests; disconnect releases exactly these reader pins and requests."""
+class Session:
+    """One welcomed client, the worker connection that settles its requests, and the requests still open on it."""
 
-    pub channel: Channel
-    pub pending: list[Pending] = []
-    pub pins: list[ExecutionLease] = []
+    pub client: Channel
+    # The held worker's socket and this client's connection to it; none before the client's first request.
+    pub worker: str = ""
+    pub lane: Option[Channel] = None
+    pub open: list[bytes] = []
     pub closed: bool = false
 
 
@@ -53,32 +43,12 @@ pub def serve(arguments: list[str]) -> Result[None, Refusal]:
                 "internal engine requires store directory, store id, profile, service/compiler generations and idle seconds",
             ),
         )
-    root = Path(arguments[0])
-    uid = owner_uid(root)?
-    identity = Identity(
-        store_id=arguments[1],
-        profile=arguments[2],
-        service_generation=arguments[3],
-        compiler_generation=arguments[4],
-        uid=uid,
-    )
-    if arguments[5] == "" or len(arguments[5]) > 9 or not digits_only(arguments[5]) or int(arguments[5]) < 1:
-        return Err(transport("engine idle timeout must be positive seconds"))
-    return serve_at(root, identity, int(arguments[5]))
+    root, identity = service_identity_of(arguments)?
+    return serve_at(root, identity, idle_seconds(arguments[5])?)
 
 
 pub def serve_at(root: Path, identity: Identity, idle: int = 600) -> Result[None, Refusal]:
     """Hold the store scheduling lock through startup, all client work and final socket withdrawal."""
-    return serve_at_with(root, identity, finish_request, idle)
-
-
-pub def serve_at_with(
-    root: Path,
-    identity: Identity,
-    settle_request: (Path, Pending) -> Result[Ready, str],
-    idle: int = 600,
-) -> Result[None, Refusal]:
-    """Serve with the supplied request settler, so admission can be tested against deterministically held work."""
     selected = endpoint(root, identity)?
     held = Path(selected.lock).try_lock_exclusive().map_err((error) => transport(error.message()))?
     if held is None:
@@ -89,36 +59,21 @@ pub def serve_at_with(
     # record only callers sharing this environment can.
     _ = record_endpoint(root, selected.socket)
     mut state = ServiceState(identity=identity, store=root, last_active=0)
-    outcome = event_loop(listener, state, settle_request, idle)
+    outcome = event_loop(listener, state, idle)
     withdraw_endpoint(root, selected.socket)
     discard_file(Path(selected.socket))
     return outcome
 
 
-def withdraw_stale(path: str) -> Result[None, Refusal]:
-    """Remove only an actual stale socket; ordinary files, symlinks and live endpoints are refused."""
-    if not Path(path).exists():
-        return Ok(None)
-    found = symlink_metadata(path).map_err((error) => transport(str(error)))?
-    if not found.file_type().is_socket() or not stale(path):
-        return Err(transport("engine endpoint is occupied; refusing to replace it"))
-    discard_file(Path(path))
-    return Ok(None)
-
-
-def event_loop(
-    listener: Listener,
-    mut state: ServiceState,
-    settle_request: (Path, Pending) -> Result[Ready, str],
-    idle: int,
-) -> Result[None, Refusal]:
+def event_loop(listener: Listener, mut state: ServiceState, idle: int) -> Result[None, Refusal]:
     """
-    Poll bounded client state and release it after use; no decoded compilation closure enters this process.
+    Carry frames between welcomed clients and their workers until the service stops or has been idle for `idle` seconds.
 
-    Connections are accepted and welcomed on the admission thread, so a request this loop settles holds no other
-    client's handshake. This loop services welcomed clients only.
+    Connections are accepted and welcomed on the admission thread. Nothing here waits for a request to settle, so
+    every client's frames move in every turn.
     """
-    mut clients: list[Client] = []
+    mut sessions: list[Session] = []
+    mut workers = Workers(root=state.store, identity=state.identity)
     announce, arriving = arrivals()
     telling, told = notices()
     admission = start_admission(listener, state.identity, announce, told)
@@ -136,220 +91,157 @@ def event_loop(
                         Arrival.Left => waiting -= 1
                         Arrival.Welcomed(channel) =>
                             waiting -= 1
-                            clients.append(Client(channel=channel))
+                            sessions.append(Session(client=channel))
                 Err(_) => break
-        if len(clients) > 0:
-            serviced = len(clients)
-            for index in range(len(clients)):
-                mut client = clients[index]
-                service_client(client, state, settle_request)
-                clients[index] = client
-            clients = [client for client in clients if not client.closed]
-            if len(clients) < serviced:
-                _ = telling.send(Notice.Released(serviced - len(clients)))
-        state.clients = len(clients) + waiting
+        if len(sessions) > 0:
+            serviced = len(sessions)
+            for index in range(len(sessions)):
+                mut session = sessions[index]
+                service_session(session, state, workers)
+                sessions[index] = session
+            sessions = [session for session in sessions if not session.closed]
+            if len(sessions) < serviced:
+                _ = telling.send(Notice.Released(serviced - len(sessions)))
+        state.clients = len(sessions) + waiting
         if state.stopping or state.exits(now, idle * 1000):
             break
         sleep(Duration.from_millis(2))
+    workers.retire()
     _ = telling.send(Notice.Closing)
     match admission.join():
         Ok(outcome) => return outcome.map_err(transport)
         Err(_) => return Err(transport("engine admission thread panicked"))
 
 
-def service_client(
-    mut client: Client,
-    mut state: ServiceState,
-    settle_request: (Path, Pending) -> Result[Ready, str],
-) -> None:
-    """One invalid connection retires only its own interests; other clients retain their requests."""
-    match poll_client(client, state, settle_request):
+def service_session(mut session: Session, mut state: ServiceState, mut workers: Workers) -> None:
+    """One failed connection ends only its own session; its worker serves the next client."""
+    match carry(session, state, workers):
         Ok(_) => pass
-        Err(_) => close_client(client, state)
-    if len(client.pending) == 0 and verification_entries() > 0:
-        released = verification_entries()
-        forget_verified()
-        trace(f"engine request released: captures=0 verification={verification_entries()} released={released}")
+        Err(_) => close_session(session, workers)
 
 
-def poll_client(
-    mut client: Client,
-    mut state: ServiceState,
-    settle_request: (Path, Pending) -> Result[Ready, str],
-) -> Result[None, Refusal]:
-    """Consume at most eight ready frames, then settle accepted requests within available credits."""
+def carry(mut session: Session, mut state: ServiceState, mut workers: Workers) -> Result[None, Refusal]:
+    """
+    Move at most eight ready frames each way.
+
+    1. The client's frames: lifecycle messages are answered here, request messages go to the client's worker.
+    2. The worker's frames go to the client while the client has a data credit for them.
+    """
+    # 1. A frame the worker has no credit for stays unread until the worker acknowledges earlier ones.
     for _turn in range(8):
-        if not client.channel.transport.readable().map_err(transport)?:
+        if blocked(session.lane) or not session.client.transport.readable().map_err(transport)?:
             break
-        frame = client.channel.receive()?
-        match handle(client, state, frame):
-            Err(reason) => send_refusal(client.channel, frame.header.request, reason, "request")?
+        frame = session.client.receive()?
+        match handle(session, state, workers, frame):
+            Err(reason) => refuse(session.client, frame.header.request, reason, "request")?
             Ok(_) => pass
-        client.channel.acknowledge(frame)?
+        session.client.acknowledge(frame)?
         if state.stopping:
             return Ok(None)
-    return settle(client, state, settle_request)
+    # 2. A worker that ended takes its open requests with it, each refused by name.
+    match session.lane:
+        None => return Ok(None)
+        Some(held) =>
+            mut lane = held
+            outcome = answer(session, lane)
+            session.lane = Some(lane)
+            match outcome:
+                Ok(_) => return Ok(None)
+                Err(reason) =>
+                    for request in session.open:
+                        _ = refuse(session.client, request, transport("the engine's request worker ended"), "request")
+                    return Err(reason)
 
 
-def handle(mut client: Client, mut state: ServiceState, frame: Envelope) -> Result[None, Refusal]:
-    """Handle E1 controls and drain observations before acknowledging Stop; unsupported execution families refuse."""
-    request = frame.header.request
-    match frame.message:
-        Message.Ack(_) => return Ok(None)
-        Message.Submit(submit) => return accept(client, state, request, submit)
-        Message.Cancel(cancel) =>
-            if cancel.interest_token not in [item.token for item in client.pending]:
-                return Err(
-                    Refusal(kind=RefusalKind.Identity, detail="interest belongs to another client or is complete"),
-                )
-            state.detach(request, cancel.interest_token)?
-            client.pending = [item for item in client.pending if item.token != cancel.interest_token]
-            return send(
-                client.channel,
-                request,
-                Message.Cancelled(
-                    Cancelled(interest_token=cancel.interest_token, effects_stopped=EffectDisposition.NoEffects),
-                ),
-            )
-        Message.Pin(pin) =>
-            mut found = false
-            for held in client.pins:
-                if held.token == pin.lease_id and held.snapshot == pin.snapshot and held.handle == pin.allowed_roots:
-                    found = true
-            if not found:
-                return Err(
-                    Refusal(
-                        kind=RefusalKind.Identity,
-                        detail="execution lease does not belong to this caller and result",
-                    ),
-                )
-            return send(client.channel, request, Message.Event(Event(status="Pinned", trace_handle=pin.lease_id)))
-        Message.Release(release) =>
-            if release.lease_id not in [held.token for held in client.pins]:
-                return Err(Refusal(kind=RefusalKind.Identity, detail="reader lease belongs to another client"))
-            state.release(release.lease_id)?
-            client.pins = [held for held in client.pins if held.token != release.lease_id]
-            return send(client.channel, request, Message.Event(Event(status="Released", trace_handle=release.lease_id)))
-        Message.Resolve(resolve) =>
-            mut outcome = Resolution.NotCommitted
-            if read_program(state.store, resolve.transaction).map_err(transport)? is not None:
-                outcome = Resolution.Committed
-            return send(
-                client.channel,
-                request,
-                Message.Resolve(Resolve(transaction=resolve.transaction, outcome=outcome)),
-            )
-        Message.Drain(_) =>
-            state.draining = true
-            return send(client.channel, request, Message.Event(Event(status="Draining", trace_handle="")))
-        Message.Stop(_) =>
-            state.stopping = true
-            _ = flush_trace()
-            return send(client.channel, request, Message.Event(Event(status="Stopping", trace_handle="")))
-        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
+def blocked(lane: Option[Channel]) -> bool:
+    """Whether the client's worker has no data credit left for another frame."""
+    match lane:
+        Some(held) => return held.pending.exhausted()
+        None => return false
 
 
-def accept(mut client: Client, mut state: ServiceState, request: bytes, submit: Submit) -> Result[None, Refusal]:
-    """Accept work before capture and name its initial store generation; completion publishes the whole request."""
-    if len(client.pending) == 4 or client.channel.pending.held() > 4:
-        return Err(Refusal(kind=RefusalKind.Busy, detail="client admission window is full"))
-    token = f"{hexlify(client.channel.session)}:{hexlify(request)}"
-    state.accept(request, submit.requested_roots, token)?
-    send(client.channel, request, Message.Accepted(Accepted(capture_token=token, interest_token=token)))?
-    capturing = begin_work()
-    captured_request = prepare_submit(state.store, submit)
-    record_work(Operation.EngineCapture, submit.requested_roots, capturing)
-    match captured_request:
-        Err(reason) =>
-            state.detach(request, token)?
-            return Err(transport(reason))
-        Ok(captured) =>
-            selected = f"snapshot:{captured.snapshot.generation}:{captured.snapshot.digest}"
-            client.pending.append(
-                Pending(
-                    request=request,
-                    token=token,
-                    capture=captured,
-                    producer=state.identity.compiler_generation,
-                    view=submit.view,
-                    proofs=submit.observation_policy == "proofs",
-                    command=submit.command,
-                    format=submit.options,
-                    directory=submit.directory,
-                    handle=program_handle(captured.identity, state.identity.compiler_generation, submit.view).map_err(
-                        transport,
-                    )?,
-                ),
-            )
-            return send(client.channel, request, Message.Captured(Captured(epoch=captured.identity, snapshot=selected)))
-
-
-def settle(
-    mut client: Client,
-    mut state: ServiceState,
-    settle_request: (Path, Pending) -> Result[Ready, str],
-) -> Result[None, Refusal]:
-    """Settle available requests, then replace the interest list after its iteration has ended."""
-    mut waiting: list[Pending] = []
-    for pending in client.pending:
-        if client.channel.pending.exhausted():
-            waiting.append(pending)
-            continue
-        match settle_request(state.store, pending):
-            Err(reason) =>
-                send_request_refusal(client.channel, state.store, pending.request, transport(reason), "unit-record")?
-            Ok(ready) =>
-                if ready.console != "":
-                    send(
-                        client.channel,
-                        pending.request,
-                        Message.Event(Event(status="Console", trace_handle=ready.console)),
-                    )?
-                match ready.pin:
-                    Some(pin) =>
-                        state.pin(pin.token)?
-                        client.pins.append(pin)
-                    None => pass
-                send(client.channel, pending.request, Message.Complete(ready.message))?
-        state.detach(pending.request, pending.token)?
-    client.pending = waiting
+def answer(mut session: Session, mut lane: Channel) -> Result[None, Refusal]:
+    """Carry the worker's ready frames to the client, and close each request its last frame ends."""
+    for _turn in range(8):
+        if session.client.pending.exhausted() or not lane.transport.readable().map_err(transport)?:
+            break
+        frame = lane.receive()?
+        request = frame.header.request
+        match frame.message:
+            Message.Ack(_) => pass
+            Message.Complete(_) =>
+                session.open = [held for held in session.open if held != request]
+                deliver(session.client, request, frame.message)?
+            Message.Refused(_) =>
+                session.open = [held for held in session.open if held != request]
+                deliver(session.client, request, frame.message)?
+            _ => deliver(session.client, request, frame.message)?
+        lane.acknowledge(frame)?
     return Ok(None)
 
 
-def close_client(mut client: Client, mut state: ServiceState) -> None:
-    """Drop only the disconnected client's volatile requests and scoped reader interests."""
-    for pending in client.pending:
-        state.detach(pending.request, pending.token)
-    for held in client.pins:
-        state.release(held.token)
-    client.pending = []
-    client.pins = []
-    client.closed = true
-
-
-def send_request_refusal(
-    mut channel: Channel,
-    store: Path,
-    request: bytes,
-    reason: Refusal,
-    command: str,
+def handle(
+    mut session: Session,
+    mut state: ServiceState,
+    mut workers: Workers,
+    frame: Envelope,
 ) -> Result[None, Refusal]:
-    """Keep control frames bounded while relaying an exact large diagnostic through the console channel."""
-    detail = reason.detail.encode("utf-8")
-    body_size = 14 + len(command.encode("utf-8")) + len(detail)
-    if body_size <= MAX_PAYLOAD:
-        return send_refusal(channel, request, reason, command)
-    prefix = store.joinpath("engine/console").joinpath(f"{hexlify(request)}-refusal").0
-    Path(f"{prefix}.err")
-        .write_text(reason.detail, "utf-8", "strict", None)
-        .map_err((error) => transport(f"cannot retain engine refusal: {error.message()}"))?
-    send(channel, request, Message.Event(Event(status="Console", trace_handle=prefix)))?
-    return send_refusal(
-        channel,
-        request,
-        Refusal(
-            kind=reason.kind,
-            detail="engine request refused; the full diagnostic was relayed through the console stream",
-        ),
-        command,
-    )
+    """Answer the service's lifecycle messages; every request message belongs to the client's worker."""
+    request = frame.header.request
+    match frame.message:
+        Message.Ack(_) => return Ok(None)
+        Message.Drain(_) =>
+            state.draining = true
+            return deliver(session.client, request, Message.Event(Event(status="Draining", trace_handle="")))
+        Message.Stop(_) =>
+            state.stopping = true
+            _ = flush_trace()
+            return deliver(session.client, request, Message.Event(Event(status="Stopping", trace_handle="")))
+        Message.Submit(_) =>
+            if state.draining or state.stopping:
+                return Err(Refusal(kind=RefusalKind.Draining, detail="engine is draining"))
+            session.open.append(request)
+            return to_worker(session, workers, frame)
+        Message.Resolve(_) => return to_worker(session, workers, frame)
+        Message.Cancel(_) => return to_held_worker(session, frame)
+        Message.Pin(_) => return to_held_worker(session, frame)
+        Message.Release(_) => return to_held_worker(session, frame)
+        _ => return Err(Refusal(kind=RefusalKind.Schema, detail="message family has no E1 handler"))
+
+
+def to_worker(mut session: Session, mut workers: Workers, frame: Envelope) -> Result[None, Refusal]:
+    """Carry a request to the client's worker, taking a worker for the client's first one."""
+    if session.lane is None:
+        socket, lane = workers.take()?
+        session.worker = socket
+        session.lane = Some(lane)
+    return to_held_worker(session, frame)
+
+
+def to_held_worker(mut session: Session, frame: Envelope) -> Result[None, Refusal]:
+    """Carry a message about an earlier request to the worker that holds it."""
+    match session.lane:
+        None =>
+            return Err(Refusal(kind=RefusalKind.Identity, detail="the message names no request or lease of this client"))
+        Some(held) =>
+            mut lane = held
+            sent = deliver(lane, frame.header.request, frame.message)
+            session.lane = Some(lane)
+            return sent
+
+
+def close_session(mut session: Session, mut workers: Workers) -> None:
+    """
+    Close both of the client's connections; the worker then drops the client's requests and reader pins. A worker
+    left in the middle of a request is dismissed instead of serving the next client behind that request.
+    """
+    _ = session.client.transport.close()
+    if let Some(lane) = session.lane:
+        _ = lane.transport.close()
+        if len(session.open) > 0:
+            workers.dismiss(session.worker)
+        else:
+            workers.release(session.worker)
+    session.lane = None
+    session.open = []
+    session.closed = true

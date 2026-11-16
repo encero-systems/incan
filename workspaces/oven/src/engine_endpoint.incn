@@ -3,6 +3,7 @@
 from rust::std::env::consts import OS
 from rust::std::fs import metadata
 from rust::std::os::unix::fs import MetadataExt
+from rust::std::process import id
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
@@ -44,6 +45,20 @@ pub def endpoint(root: Path, identity: Identity) -> Result[ServiceEndpoint, Refu
             startup_lock=directory.joinpath("startup.lock").0,
         ),
     )
+
+
+pub def worker_socket(root: Path, identity: Identity, serial: int) -> Result[str, Refusal]:
+    """
+    The private socket of one request worker of the engine this process is: named from the engine's identity, this
+    process and the worker's serial number, so no two engines and no two workers of one engine share it.
+    """
+    directory = root.joinpath("engine")
+    name = fingerprint([identity.store_id, identity.profile, identity.service_generation, str(id()), str(serial)]).map_err(
+        transport,
+    )?
+    path = f"{socket_prefix(directory.0).map_err(transport)?}w-{name[:20]}.sock"
+    bindable(path).map_err(transport)?
+    return Ok(path)
 
 
 pub def owner_uid(root: Path) -> Result[u32, Refusal]:

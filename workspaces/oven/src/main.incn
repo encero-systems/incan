@@ -8,6 +8,7 @@ from std.fs import Path
 from engine_client import execute as execute_records, execute_overlay, serve_overlays
 from overlay_request import parse_overlay, parse_serve
 from engine_proofs import report as proof_report
+from engine_requests import serve_requests as serve_engine_requests
 from engine_service import serve as serve_engine
 from engine_wire import refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
@@ -221,6 +222,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "--internal-engine":
         match serve_engine(rest):
+            Ok(_) => return
+            Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "--internal-engine-requests":
+        match serve_engine_requests(rest):
             Ok(_) => return
             Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
         return
