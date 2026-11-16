@@ -153,7 +153,7 @@ impl BodyBuilder<'_, '_> {
                 .is_some_and(|proof| proof.is_closure_argument(expression.span));
             let value = match argument.source {
                 // An ordinary inferred slot receives a value, passed as the ordinary call route passes it.
-                Some(CheckedInputSource::Place { .. }) if argument.access == IncanInputAccess::Inferred && !closure => {
+                Some(CheckedInputSource::Place { .. }) if argument.access.is_inferred() && !closure => {
                     self.lower_value_argument(expression, Some(&ty), scope, out)?
                 }
                 // A native reference is the view it already is (RFC 164, one type): it is passed as it is.

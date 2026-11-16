@@ -448,17 +448,18 @@ impl TypeCheckInfo {
             for argument in &invocation.arguments {
                 let declared = crate::ownership_metadata::direct_input_access(contract, argument.slot)?;
                 // A caller-visible `mut` slot writes through to its argument (RFC 129), so the call takes it
-                // exclusively although the slot declares no explicit mode.
-                let access = if declared == IncanInputAccess::Inferred
-                    && argument.access == IncanInputAccess::Exclusive
-                    && call
-                        .parameters
-                        .get(argument.slot)
-                        .is_some_and(|parameter| parameter.is_mut)
-                {
-                    IncanInputAccess::Exclusive
-                } else {
-                    declared
+                // exclusively although the slot declares no explicit mode; an ordinary slot shares a place reached
+                // through an explicit view, and Body IR refuses a realization that would consume it.
+                let mutable = call
+                    .parameters
+                    .get(argument.slot)
+                    .is_some_and(|parameter| parameter.is_mut);
+                let access = match (declared, argument.access) {
+                    (IncanInputAccess::Inferred, IncanInputAccess::Exclusive) if mutable => IncanInputAccess::Exclusive,
+                    (IncanInputAccess::Inferred, IncanInputAccess::InferredShared) if !mutable => {
+                        IncanInputAccess::InferredShared
+                    }
+                    _ => declared,
                 };
                 if argument.access != access {
                     return Err("invocation argument access differs from the selected parameter");

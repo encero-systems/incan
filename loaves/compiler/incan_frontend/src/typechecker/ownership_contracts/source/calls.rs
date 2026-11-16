@@ -613,6 +613,8 @@ impl Builder<'_> {
                     Some(OwnershipMode::Borrowed) => IncanInputAccess::Shared,
                     Some(OwnershipMode::BorrowedMut) => IncanInputAccess::Exclusive,
                     Some(OwnershipMode::Owned) => IncanInputAccess::Owned,
+                    // An ordinary slot that shares a place reached through an explicit view is realized shared.
+                    None if loan.is_some() => IncanInputAccess::InferredShared,
                     None => IncanInputAccess::Inferred,
                     Some(OwnershipMode::Reference) => {
                         return Err(Unavailable {
@@ -658,9 +660,10 @@ impl Builder<'_> {
     /// Evaluate one argument according to its selected slot. A borrowed place is evaluated once before taking its
     /// loan; an explicit ownership request constrains even an otherwise ordinary source binding. An ordinary inferred
     /// slot receives a value (RFC 129): a fresh value that can hold no borrow is evaluated into it, and an ordinary
-    /// place is read at the call. A place reached through an explicit view stays refused: whether the callee's inferred
-    /// realization shares it or would need a clone is not known here. A callable value's inferred slots still take
-    /// only Copy values.
+    /// place is read at the call. A place reached through an explicit view is shared for the call: the callee's
+    /// inferred realization must share it too, which Body IR checks once that realization is known, because a
+    /// consuming one would need a silent clone (RFC 164). A callable value's inferred slots still take only Copy
+    /// values.
     fn call_argument(
         &mut self,
         expression: &Spanned<Expr>,
@@ -706,6 +709,12 @@ impl Builder<'_> {
             {
                 self.expression(expression, incoming, false)
                     .map(|outgoing| (outgoing, None))
+            }
+            // A place reached through an explicit view is shared for the call, as a Borrowed[T] slot shares it.
+            None if self.optional_place(expression)?.is_some() || self.view_rooted(expression) => {
+                let (source, incoming) = self.borrowed_input_source(expression, invocation, incoming)?;
+                let loan = self.call_loan(source, false, false, expression.span);
+                Ok((self.event(incoming, Event::Borrow(loan), expression.span), Some(loan)))
             }
             _ => Err(Unavailable {
                 span: expression.span,
