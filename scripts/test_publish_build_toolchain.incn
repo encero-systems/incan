@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
-from publish_build_toolchain import HostBundle, push_arguments, validate
+from publish_build_toolchain import HostBundle, push_arguments, stage_host, validate
 from release_signer import BUNDLE_SUFFIX, SIGNED_ASSETS
 
 const SIGNATURE_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
@@ -53,4 +53,21 @@ def test_a_bundle_missing_a_signature_is_refused_by_name_before_any_push() -> Re
             Err(reason) =>
                 assert reason.endswith(f"{asset}{BUNDLE_SUFFIX}"), reason
         put(signature, f"signature of {asset}\n")?
+    return Ok(None)
+
+
+def test_the_staged_bundle_holds_each_asset_beside_its_signature_under_its_published_name() -> Result[None, str]:
+    """`oras push` publishes the staged directory, so `oras pull` gives each asset its signature beside it."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    bundle = signed_bundle(scratch.path().joinpath("signed"))?
+    staged = stage_host(bundle, scratch.path().joinpath("stage"))?
+    assert staged.0.endswith(TARGET), staged.0
+    for asset in SIGNED_ASSETS:
+        taken = staged.joinpath(asset).read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert taken == f"stand-in for {asset}\n", asset
+        signature = staged
+            .joinpath(asset + BUNDLE_SUFFIX)
+            .read_text("utf-8", "strict")
+            .map_err((error) => error.message())?
+        assert signature == f"signature of {asset}\n", asset
     return Ok(None)

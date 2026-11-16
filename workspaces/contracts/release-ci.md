@@ -35,14 +35,14 @@ The toolchain version directory remains `0.6.0-dev.9` because it is the installe
 
 ## Publication
 
-Publication is a separate maintainer operation. After both native hosts pass release qualification, authenticate oras and run:
+Publication is a separate maintainer operation. After both native hosts pass the tag's release workflow, download each host's `signed-bundle-<target>` artifact, which the sign job leaves with each asset beside its `ASSET.sigstore.json` and the verify job installed. Authenticate oras and run, with the paths inside those directories:
 
 ```sh
 incan run scripts/publish_build_toolchain.incn -- \
   COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP LINUX_ARCHIVE LINUX_OVEN LINUX_LSP
 ```
 
-The program validates both complete bundles before publishing either, pushes each annotated OCI artifact once, reads the digest returned by that push, and atomically rewrites `build-toolchain.json` only after both pushes succeed. It does not change repository variables. A failed second push can leave the first immutable artifact present, but the checked-in pin remains unchanged.
+The program validates both complete bundles before publishing either, refusing an asset without its signature beside it by the missing file's name, because a stamped `incan` installs an archive only with `toolchain.tar.zst.sigstore.json` beside it. It pushes each annotated OCI artifact once, each asset with its signature, reads the digest returned by that push, and atomically rewrites `build-toolchain.json` only after both pushes succeed. `oras pull` therefore gives every asset its signature beside it. It does not change repository variables. A failed second push can leave the first immutable artifact present, but the checked-in pin remains unchanged.
 
 ## Baseline maintenance
 
