@@ -1,4 +1,5 @@
 # behavior: A shared input passed by value to a generic native parameter is the native reference it is, so the parameter instantiates with `&str` and borrows the input for the call (RFC 164, one type).
+# pending: INCAN-T0126 refuses `drop(text)` as an ownership transfer out of a borrowed place: the native generic parameter still instantiates with the value type, not the reference the view is.
 # expect-stdout:
 #   5
 
