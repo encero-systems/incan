@@ -409,8 +409,11 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph namespace page disagrees with its requested source".into(),
             ));
         }
-        let checked = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(&record.interface)
-            .and_then(|interface| interface.installable())
+        let interface = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(&record.interface)
+            .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+        let package_requirements = interface.package_requirements().iter().cloned().collect();
+        let checked = interface
+            .installable()
             .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
         let body_ir =
             incan_semantics_core::executable_representation::decode_module(&record.body_ir).map_err(|error| {
@@ -446,6 +449,7 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             interface: checked,
             body_ir,
             lowering_inputs,
+            package_requirements,
         }))
     }
 }

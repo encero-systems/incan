@@ -441,49 +441,10 @@ pub fn required_loaf_identities(
             infos
                 .iter()
                 .copied()
-                .flat_map(|info| info.calls.body_ir_reexport_calls.values())
-                .map(|call| call.canonical.clone()),
+                .flat_map(incan_frontend::executable_resolution::checked_direct_requirements),
         )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.calls.source_display_methods.values().cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.declarations.body_ir_trait_adoptions.values())
-                .flatten()
-                .flat_map(|adoption| adoption.methods.iter().flatten().cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.expressions.validated_newtype_coercions.values())
-                .flat_map(|coercion| &coercion.steps)
-                .flat_map(|step| step.owner_identity.iter().chain(step.ctor_identity.iter()).cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(|info| info.declarations.body_ir_native_type_identities.values().cloned()),
-        )
-        .chain(
-            infos
-                .iter()
-                .copied()
-                .flat_map(incan_frontend::body_ir::registry_helper_identities),
-        )
+        // A module restored from its namespace record has no facts above; its record carries what it reaches.
+        .chain(analysis.namespace_package_requirements().iter().cloned())
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )

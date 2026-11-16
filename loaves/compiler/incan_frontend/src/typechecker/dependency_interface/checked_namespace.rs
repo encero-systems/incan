@@ -20,6 +20,9 @@ pub struct CheckedNamespaceInterface {
     /// an editable module's variants, fields, properties and methods keep theirs here (#3154).
     members: std::collections::BTreeMap<String, NamespaceMemberIdentities>,
     nominal_scope: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// The package declarations this module reaches by itself. A build that restores the module from this record has
+    /// none of its checker facts, so it reads here what the module needs loaded from its Loaves.
+    package_requirements: std::collections::BTreeSet<CanonicalSymbolId>,
 }
 
 /// The canonical identities of one declaration's members, by member name, as the cold checker recorded them.
@@ -36,7 +39,7 @@ struct NamespaceMemberIdentities {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 5;
+    const SCHEMA: u32 = 6;
 
     /// Capture one complete installable public namespace from an accepted editable module.
     ///
@@ -118,6 +121,10 @@ impl CheckedNamespaceInterface {
             identities,
             members,
             nominal_scope,
+            package_requirements: crate::executable_resolution::module_package_requirements(
+                checker.type_info(),
+                module_path,
+            ),
         }))
     }
 
@@ -138,6 +145,11 @@ impl CheckedNamespaceInterface {
     /// Return the source module key this interface installs.
     pub fn module_name(&self) -> &str {
         &self.module_name
+    }
+
+    /// Return the package declarations a build must load when it restores this module instead of checking it.
+    pub fn package_requirements(&self) -> &std::collections::BTreeSet<CanonicalSymbolId> {
+        &self.package_requirements
     }
 
     /// Return the canonical logical path this interface owns.

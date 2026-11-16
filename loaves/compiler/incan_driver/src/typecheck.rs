@@ -34,6 +34,9 @@ pub struct TypecheckedModules {
     pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
     /// Lowering witnesses carried by the complete namespace records admitted in this pass.
     pub namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    /// Package declarations the complete namespace records admitted in this pass reach, as their cold checks
+    /// recorded them: a restored module has no checker facts to compute them from.
+    pub namespace_package_requirements: Vec<incan_semantics_core::CanonicalSymbolId>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
@@ -79,6 +82,7 @@ pub fn typecheck_modules(
     let mut type_infos = Vec::with_capacity(modules.len());
     let mut namespace_bodies = Vec::with_capacity(modules.len());
     let mut namespace_lowering_inputs = Vec::new();
+    let mut namespace_package_requirements = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = import_cycle_peers(modules, own_standard_package);
     let related_sources = modules
@@ -190,6 +194,7 @@ pub fn typecheck_modules(
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir.clone()));
             namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
+            namespace_package_requirements.extend(record.package_requirements.iter().cloned());
             continue;
         }
         let _module_trace = tracing::trace_span!(
@@ -314,6 +319,7 @@ pub fn typecheck_modules(
             type_infos,
             namespace_bodies,
             namespace_lowering_inputs,
+            namespace_package_requirements,
             warnings: warnings_out,
         })
     } else {

@@ -37,6 +37,8 @@ pub struct GraphNamespaceRecord {
     pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
     /// Stable Body IR owner ids paired with the lowering witnesses authenticated by this namespace's cold check.
     pub lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    /// The package declarations the namespace reaches by itself, as its cold check recorded them.
+    pub package_requirements: Vec<incan_semantics_core::CanonicalSymbolId>,
 }
 
 /// Keyed source of independently bounded graph body pages.

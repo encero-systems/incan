@@ -27,6 +27,57 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_ide
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use crate::loaf_index::{LoafIndex, LoafIndexError};
 
+/// The declarations one checked module names beyond its fact graph: re-export, async and display call targets, adopted
+/// trait methods, newtype coercion owners, native carriers and registry helpers. Each is an execution root wherever its
+/// module is compiled, whether that module was checked in this activation or restored from its namespace record.
+pub fn checked_direct_requirements(info: &crate::typechecker::TypeCheckInfo) -> Vec<CanonicalSymbolId> {
+    info.calls
+        .body_ir_reexport_calls
+        .values()
+        .map(|call| call.canonical.clone())
+        .chain(info.calls.body_ir_async_call_targets.values().cloned())
+        .chain(info.calls.source_display_methods.values().cloned())
+        .chain(
+            info.declarations
+                .body_ir_trait_adoptions
+                .values()
+                .flatten()
+                .flat_map(|adoption| adoption.methods.iter().flatten().cloned()),
+        )
+        .chain(
+            info.expressions
+                .validated_newtype_coercions
+                .values()
+                .flat_map(|coercion| &coercion.steps)
+                .flat_map(|step| step.owner_identity.iter().chain(step.ctor_identity.iter()).cloned()),
+        )
+        .chain(info.declarations.body_ir_native_type_identities.values().cloned())
+        .chain(crate::body_ir::registry_helper_identities(info))
+        .collect()
+}
+
+/// Every package declaration one checked module reaches by itself: what its own facts reach from its declarations,
+/// and its direct requirements. A namespace record keeps this set, because a module restored from its record has no
+/// checker facts left to compute it from, and its bodies still need each declaration loaded from its Loaf.
+pub fn module_package_requirements(
+    info: &crate::typechecker::TypeCheckInfo,
+    module_path: &[String],
+) -> BTreeSet<CanonicalSymbolId> {
+    let facts = [info.semantic_fact_store(module_path)];
+    let roots = info
+        .declarations
+        .declaration_identities
+        .values()
+        .chain(info.declarations.member_declaration_identities.values())
+        .cloned();
+    incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
+        .reachable_from(roots)
+        .into_iter()
+        .chain(checked_direct_requirements(info))
+        .filter(|identity| matches!(identity.origin, SymbolOrigin::Package { .. }))
+        .collect()
+}
+
 /// Bound temporary storage while verifying the selected executable artifact's content digest.
 const CONTENT_DIGEST_BUFFER_BYTES: usize = 64 * 1024;
 

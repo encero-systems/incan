@@ -37,6 +37,7 @@ pub struct CompilationAnalysis {
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
     namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
     namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    namespace_package_requirements: Vec<incan_semantics_core::CanonicalSymbolId>,
 }
 
 impl CompilationAnalysis {
@@ -61,6 +62,12 @@ impl CompilationAnalysis {
     /// Return a whole-module Body IR record admitted with this source namespace.
     pub fn namespace_body_for_path(&self, path: &Path) -> Option<&incan_semantics_core::body_ir::BodyIrModule> {
         self.namespace_body_by_path.get(path).map(Arc::as_ref)
+    }
+
+    /// Return the package declarations the namespaces restored in this analysis pass reach. Their modules have no
+    /// checked facts here, so execution requirements read this beside the facts of the modules that were checked.
+    pub fn namespace_package_requirements(&self) -> &[incan_semantics_core::CanonicalSymbolId] {
+        &self.namespace_package_requirements
     }
 
     /// Return lowering witnesses carried by complete namespaces admitted in this analysis pass.
@@ -296,6 +303,7 @@ impl CompilationSession {
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let checked = self.typecheck_unit(modules, package, visit)?;
         let namespace_lowering_inputs = checked.namespace_lowering_inputs.clone();
+        let namespace_package_requirements = checked.namespace_package_requirements.clone();
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
@@ -318,6 +326,7 @@ impl CompilationSession {
             semantic_snapshots_by_path,
             namespace_body_by_path,
             namespace_lowering_inputs,
+            namespace_package_requirements,
         })
     }
 
