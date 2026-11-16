@@ -476,7 +476,54 @@ def activated(
             SlotActivation.Active(features, defaults, _) =>
                 declared = inputs.dependencies[slot.index].clone()
                 active.append(ActiveEdge(declaration=declared, features=features, defaults=defaults))
-    return Ok((intent, activation.effective_features, active))
+    return Ok((intent, activation.effective_features, combined_edges(active, configuration.triple, demand.project)?))
+
+
+def combined_edges(active: list[ActiveEdge], target: str, manifest: str) -> Result[list[ActiveEdge], str]:
+    """
+    One edge per key (RFC 119 rule 3): the entries of a key that apply on this target name one Loaf, and combine their
+    features, default features and version requirements; entries naming different Loaves are refused by name. An
+    entry whose target does not hold was never activated, so it contributes nothing.
+    """
+    mut edges: list[ActiveEdge] = []
+    mut positions: Dict[str, int] = {}
+    for edge in active:
+        alias = edge.declaration.alias
+        if alias not in positions:
+            positions[alias] = len(edges)
+            edges.append(edge)
+            continue
+        mut kept = edges[positions[alias]].clone()
+        first = source_place(kept.declaration)
+        second = source_place(edge.declaration)
+        if first != second:
+            rule = "the entries of one key that apply on a target must name one Loaf (RFC 119 rule 3)"
+            return Err(f"{manifest}: `{alias}` names {first} and {second} on {target}; {rule}")
+        kept.features = unique(kept.features + edge.features)
+        kept.defaults = kept.defaults or edge.defaults
+        kept.declaration.version_requirement = both_requirements(kept.declaration, edge.declaration)
+        edges[positions[alias]] = kept
+    return Ok(edges)
+
+
+def source_place(declaration: RustDependencyDeclaration) -> str:
+    """The Loaf a declaration names, with the directory a path declaration reaches it in."""
+    match declaration.source:
+        RustDependencySource.Path(relative, _) => return f"{declaration.package} at {relative}"
+        RustDependencySource.Registry(_) => return declaration.package
+
+
+def both_requirements(first: RustDependencyDeclaration, second: RustDependencyDeclaration) -> Option[str]:
+    """Every version requirement two combined entries state, conjoined; one stated twice is kept once."""
+    match first.version_requirement:
+        None => return second.version_requirement
+        Some(kept) =>
+            match second.version_requirement:
+                None => return Some(kept)
+                Some(added) =>
+                    if added == kept:
+                        return Some(kept)
+                    return Some(f"{kept}, {added}")
 
 
 def requested_features(demand: LocalDemand, manifest: RustDependencyCatalog) -> list[str]:
