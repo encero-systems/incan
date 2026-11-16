@@ -312,16 +312,33 @@ impl SourceAccesses<'_, '_> {
             && self.proof.graph.invocations.contains_key(&expression.span)
     }
 
-    /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
-    fn stored_place_access(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
-        self.place_evaluation(expression)?;
-        let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
-        if let flow::Root::Binding(root) = &place.root
+    /// Claim the dependency reads of a stored place rooted at a dependent local: every use of the local, or of a
+    /// projection of it, reads the borrows its value holds.
+    fn dependency_reads(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        if let Some((place, _)) = self.place(expression)?
+            && let flow::Root::Binding(root) = &place.root
             && let Some(loans) = self.proof.graph.dependent_locals.get(root)
         {
             let loans = loans.clone();
             self.closure_capture_accesses(expression.span, &loans)?;
         }
+        Ok(())
+    }
+
+    /// Claim the dependency reads of a borrowed stored place: the producer reads them where it borrows a place
+    /// written as a local, `self` or a projection of either, not one reached through a call.
+    fn borrowed_dependency_reads(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        if stored_chain(expression) {
+            self.dependency_reads(expression)?;
+        }
+        Ok(())
+    }
+
+    /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
+    fn stored_place_access(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        self.place_evaluation(expression)?;
+        self.dependency_reads(expression)?;
+        let (place, through) = self.place(expression)?.ok_or("source access has no stored place")?;
         let access = if consume
             && (through.is_some() || self.constrained.contains(&place.root))
             && !self.copy_value(expression)?
@@ -361,7 +378,10 @@ impl SourceAccesses<'_, '_> {
                     self.expression(value, true)?;
                 }
                 IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
-                    if source.is_some() => {}
+                    if source.is_some() =>
+                {
+                    self.borrowed_dependency_reads(value)?
+                }
                 IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive => {
                     self.expression(value, true)?
                 }
@@ -494,6 +514,7 @@ impl SourceAccesses<'_, '_> {
             let source = self.place(receiver)?;
             if source.is_some() {
                 self.place_evaluation(receiver)?;
+                self.borrowed_dependency_reads(receiver)?;
             } else {
                 self.expression(receiver, false)?;
             }
@@ -610,7 +631,7 @@ impl SourceAccesses<'_, '_> {
             flow::Root::Temporary { .. } => self.expression(receiver, true),
             flow::Root::Binding(_) => {
                 if self.place(receiver)?.is_some() {
-                    return Ok(());
+                    return self.borrowed_dependency_reads(receiver);
                 }
                 let inner = super::super::builtins::view_call(receiver);
                 if !self.proof.graph.invocations.contains_key(&inner.span) && self.proof.carrier_loan(inner).is_none() {
@@ -1098,6 +1119,15 @@ fn fresh_match_scrutinee(scrutinee: &Spanned<Expr>) -> bool {
     match &scrutinee.node {
         Expr::Call(..) | Expr::MethodCall(..) | Expr::Literal(_) => true,
         Expr::Paren(inner) => fresh_match_scrutinee(inner),
+        _ => false,
+    }
+}
+
+/// A place written as a local, `self` or a projection of either, with no call inside it.
+fn stored_chain(expression: &Spanned<Expr>) -> bool {
+    match &expression.node {
+        Expr::Ident(_) | Expr::SelfExpr => true,
+        Expr::Paren(base) | Expr::Field(base, _) | Expr::Index(base, _) => stored_chain(base),
         _ => false,
     }
 }

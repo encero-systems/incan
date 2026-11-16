@@ -470,26 +470,8 @@ impl Builder<'_> {
             }
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 let place = self.place(expression)?;
-                let mut incoming = self.evaluate_place(expression, incoming)?;
-                if let Root::Binding(root) = &place.place.root
-                    && let Some(loans) = self.graph.dependent_locals.get(root).cloned()
-                {
-                    for id in loans {
-                        let loan = self.graph.loans.get(id.0).ok_or(Unavailable {
-                            span: expression.span,
-                            reason: "dependent value has no retained source loan".into(),
-                        })?;
-                        incoming = self.event(
-                            incoming,
-                            Event::Access {
-                                place: loan.source.clone(),
-                                access: Access::Read,
-                                through: Some(id),
-                            },
-                            expression.span,
-                        );
-                    }
-                }
+                let incoming = self.evaluate_place(expression, incoming)?;
+                let incoming = self.read_dependencies(&place, expression.span, incoming)?;
                 let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
                     span: expression.span,
                     reason: "missing checked access type".into(),

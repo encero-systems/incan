@@ -217,6 +217,39 @@ impl Builder<'_> {
         }
     }
 
+    /// Read every dependency a local value retains where a place rooted at it is used. Reading, borrowing or calling
+    /// a method on a dependent local, or on a projection of it, uses the borrows its value holds, so the caller must
+    /// keep their sources valid there (RFC 164: every dependent use retains its source).
+    pub(super) fn read_dependencies(
+        &mut self,
+        path: &Path,
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let Root::Binding(root) = &path.place.root else {
+            return Ok(incoming);
+        };
+        let Some(loans) = self.graph.dependent_locals.get(root).cloned() else {
+            return Ok(incoming);
+        };
+        for id in loans {
+            let loan = self.graph.loans.get(id.0).ok_or(Unavailable {
+                span,
+                reason: "dependent value has no retained source loan".into(),
+            })?;
+            incoming = self.event(
+                incoming,
+                Event::Access {
+                    place: loan.source.clone(),
+                    access: Access::Read,
+                    through: Some(id),
+                },
+                span,
+            );
+        }
+        Ok(incoming)
+    }
+
     /// Evaluate a stored projection whose root is a checked returned-view call. The call creates the retained loan;
     /// field and element projections then narrow the access without pretending the call expression is stored.
     pub(super) fn projected_view_place(
