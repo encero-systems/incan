@@ -539,3 +539,58 @@ impl TypeChecker {
         open
     }
 }
+
+impl TypeChecker {
+    /// Call the callable a nominal receiver stores in a field named like the call, when its type declares no method of
+    /// that name: `self.callback(value)` reads the field and calls the value, as `(self.callback)(value)` does (#2948).
+    /// The field's identity at the call marks it, so Body IR calls the stored value rather than selecting a method.
+    pub(super) fn check_stored_callable_call(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        base_ty: &ResolvedType,
+        arg_types: &[ResolvedType],
+    ) -> Option<ResolvedType> {
+        let owner = match base_ty {
+            ResolvedType::SelfType => self.current_method_owner_type()?,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => (**inner).clone(),
+            other => other.clone(),
+        };
+        let (type_name, type_args) = match &owner {
+            ResolvedType::Named(name) => (name.clone(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.clone(), args.clone()),
+            _ => return None,
+        };
+        let stores_callable = match self.lookup_semantic_type_info(&type_name) {
+            Some(TypeInfo::Model(model)) => model
+                .fields
+                .get(call.method)
+                .is_some_and(|field| matches!(field.ty, ResolvedType::Function(..))),
+            Some(TypeInfo::Class(class)) => class
+                .fields
+                .get(call.method)
+                .is_some_and(|field| matches!(field.ty, ResolvedType::Function(..))),
+            _ => false,
+        };
+        if !stores_callable || !call.type_args.is_empty() {
+            return None;
+        }
+        let ResolvedType::Function(params, result) =
+            self.resolve_nominal_field_type(&type_name, Some(&type_args), call.method, call.span)?
+        else {
+            return None;
+        };
+        let mut type_bindings = std::collections::HashMap::new();
+        self.validate_callable_arg_bindings(
+            "<callable>",
+            &params,
+            call.args,
+            arg_types,
+            &mut type_bindings,
+            call.span,
+        );
+        let final_params = Self::substitute_callable_params(&params, &type_bindings);
+        self.type_info
+            .record_call_site_callable_params_for_dispatch(call.span, &final_params);
+        Some(substitute_resolved_type(&result, &type_bindings))
+    }
+}

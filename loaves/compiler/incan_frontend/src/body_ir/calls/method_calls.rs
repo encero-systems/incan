@@ -94,6 +94,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(value) = self.lower_stored_callable_method_call(recv, name, call, out) {
+            return Some(value);
+        }
         if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
             && incan_semantics_core::body_ir::native_nominal_item(owner)
                 .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
@@ -524,8 +527,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
     ///
     /// The expression's retained function signature owns argument binding. A call result or closure expression is an
-    /// owned value evaluated before its arguments. Reads of existing callable storage, explicit type applications,
-    /// rest parameters and open carriers remain named refusals; no declaration is selected by source spelling.
+    /// owned value evaluated before its arguments. A field read, `(self.callback)(value)`, calls the value the field
+    /// holds in place (#2948). Reads of other callable storage, explicit type applications, rest parameters and open
+    /// carriers remain named refusals; no declaration is selected by source spelling.
     pub(super) fn lower_evaluated_callable_call(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -536,6 +540,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if type_args.is_empty()
+            && let Some(value) = self.lower_stored_callable_expression_call(expression, args, span, scope, out)
+        {
+            return value;
+        }
         if !matches!(
             expression.node,
             ast::Expr::Call(..) | ast::Expr::MethodCall(..) | ast::Expr::Closure(..)
