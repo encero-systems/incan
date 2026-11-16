@@ -293,6 +293,19 @@ impl SourceAccesses<'_, '_> {
         }
     }
 
+    /// Whether the graph borrows a match's stored scrutinee for its arms instead of transferring it.
+    fn borrowed_match(&mut self, scrutinee: &Spanned<Expr>) -> Result<bool, &'static str> {
+        let Some((place, _)) = self.place(scrutinee)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .proof
+            .graph
+            .loans
+            .iter()
+            .any(|loan| loan.span == scrutinee.span && loan.kind == flow::LoanKind::Shared && loan.source == place))
+    }
+
     /// Whether a field spelling reads a computed property through its getter's checked invocation.
     fn property_invocation(&self, expression: &Spanned<Expr>) -> bool {
         self.proof.facts.computed_property_access(expression.span).is_some()
@@ -837,7 +850,12 @@ impl SourceAccesses<'_, '_> {
                 }) => {
                     let consumes_stored_value =
                         !fresh_match_scrutinee(scrutinee) && self.proof.carrier_loan(scrutinee).is_none();
-                    self.expression(scrutinee, consumes_stored_value)?;
+                    // A match on a place reached through a view borrows it; only its index operands run.
+                    if consumes_stored_value && self.borrowed_match(scrutinee)? {
+                        self.place_evaluation(scrutinee)?;
+                    } else {
+                        self.expression(scrutinee, consumes_stored_value)?;
+                    }
                     let mut reaches = false;
                     for arm in arms {
                         if let Some(guard) = &arm.node.guard {

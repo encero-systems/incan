@@ -464,6 +464,8 @@ impl Builder<'_> {
             {
                 Ok(None)
             }
+            // A projection of a returned or property view is reached through that call's result loan, not stored.
+            Expr::Field(_, _) | Expr::Index(_, _) if self.view_rooted(expression) => Ok(None),
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)
@@ -472,6 +474,20 @@ impl Builder<'_> {
                 self.place(expression).map(Some)
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Whether an expression is a returned or property view, or a field or element projection of one: its storage is
+    /// reached through the view's result loan, which `projected_view_place` evaluates.
+    pub(super) fn view_rooted(&self, expression: &Spanned<Expr>) -> bool {
+        match &expression.node {
+            Expr::Paren(inner) => self.view_rooted(inner),
+            Expr::Field(..) if self.property_read(expression) => self.view_source(expression).ok().flatten().is_some(),
+            Expr::Field(base, _) | Expr::Index(base, _) => self.view_rooted(base),
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Try(..) => {
+                self.view_source(expression).ok().flatten().is_some()
+            }
+            _ => false,
         }
     }
 

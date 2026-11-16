@@ -124,6 +124,7 @@ impl Builder<'_> {
         }
         let mut native = None;
         let mut aggregate = None;
+        let mut borrowed = false;
         let relation = self.call_relation(scrutinee)?;
         let carried = relation.as_ref().and_then(|relation| relation.carried);
         let aggregate_component = relation
@@ -156,6 +157,17 @@ impl Builder<'_> {
             let (evaluated, loans) = self.evaluate_native_result(scrutinee, &relation, incoming)?;
             native = Some((loans, payload));
             (evaluated, None)
+        } else if let Some((mut evaluated, loan, place)) = self.borrowed_match_scrutinee(scrutinee, &incoming)? {
+            // Every arm's payload views borrow the scrutinee as it is matched, each under a loan of its own.
+            let mut views = Vec::new();
+            for arm in arms {
+                self.borrowed_arm_binding(&arm.node.pattern, loan, &place, &mut views)?;
+            }
+            for view in views {
+                evaluated = self.event(evaluated, Event::Borrow(view), scrutinee.span);
+            }
+            borrowed = true;
+            (evaluated, None)
         } else {
             (self.owned_match_scrutinee(scrutinee, incoming)?, None)
         };
@@ -171,6 +183,7 @@ impl Builder<'_> {
             });
             match binding {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
+                None if borrowed => {}
                 None => {
                     self.arm_binding(
                         &arm.node.pattern,
@@ -666,6 +679,138 @@ impl Builder<'_> {
         }
     }
 
+    /// Borrow a match's stored scrutinee for its arms instead of transferring it: a non-Copy place reached through an
+    /// explicit view or a receiver, whose root grants no ownership transfer, or a returned or property view and its
+    /// projections. Its arms bind views of that storage (RFC 164).
+    fn borrowed_match_scrutinee(
+        &mut self,
+        scrutinee: &Spanned<Expr>,
+        incoming: &[usize],
+    ) -> Result<Option<(Vec<usize>, super::LoanId, Place)>, Unavailable> {
+        if self
+            .checker
+            .type_info
+            .expr_type(scrutinee.span)
+            .is_none_or(|ty| self.copy_value(ty))
+        {
+            return Ok(None);
+        }
+        let (incoming, path) = if self.view_rooted(scrutinee) {
+            match self.projected_view_place(scrutinee, incoming.to_vec())? {
+                Some(evaluated) => evaluated,
+                None => return Ok(None),
+            }
+        } else {
+            let Some(path) = self.optional_place(scrutinee)? else {
+                return Ok(None);
+            };
+            let borrowed = path.through.is_some()
+                || self
+                    .graph
+                    .permissions
+                    .get(&path.place.root)
+                    .is_some_and(|permission| !permission.transferable);
+            if !borrowed {
+                return Ok(None);
+            }
+            (self.evaluate_place(scrutinee, incoming.to_vec())?, path)
+        };
+        let place = path.place.clone();
+        let loan = self.call_loan(path, false, false, scrutinee.span);
+        Ok(Some((
+            self.event(incoming, Event::Borrow(loan), scrutinee.span),
+            loan,
+            place,
+        )))
+    }
+
+    /// Bind a borrowed match's payload names as views of its scrutinee `place`: each non-Copy binding holds its own
+    /// shared loan of that place under the match's `loan`, collected in `loans` for the match to take, so it keeps the
+    /// scrutinee borrowed while it is used. It reads through that loan and grants no transfer or write, so moving a
+    /// payload out needs an explicit clone. A Copy binding is an independent copy.
+    fn borrowed_arm_binding(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        loan: super::LoanId,
+        place: &Place,
+        loans: &mut Vec<super::LoanId>,
+    ) -> Result<(), Unavailable> {
+        match &pattern.node {
+            Pattern::Wildcard | Pattern::Literal(_) => Ok(()),
+            Pattern::Binding(name) => self.borrowed_name_binding(name, pattern.span, loan, place, loans),
+            Pattern::Group(inner) => self.borrowed_arm_binding(inner, loan, place, loans),
+            Pattern::Tuple(elements) => {
+                for element in elements {
+                    self.borrowed_arm_binding(element, loan, place, loans)?;
+                }
+                Ok(())
+            }
+            Pattern::Constructor(_, arguments) => {
+                for argument in arguments {
+                    let (PatternArg::Positional(payload) | PatternArg::Named(_, payload)) = argument;
+                    self.borrowed_arm_binding(payload, loan, place, loans)?;
+                }
+                Ok(())
+            }
+            Pattern::Or(alternatives) if alternatives.iter().all(|alternative| !binds_a_name(alternative)) => Ok(()),
+            Pattern::Or(_) => Err(Unavailable {
+                span: pattern.span,
+                reason: "match pattern needs checked binding access".into(),
+            }),
+        }
+    }
+
+    /// Bind one payload name of a borrowed match: a Copy value is its own owner, any other is a borrowed view of the
+    /// scrutinee under a loan of its own.
+    fn borrowed_name_binding(
+        &mut self,
+        name: &str,
+        span: Span,
+        loan: super::LoanId,
+        place: &Place,
+        loans: &mut Vec<super::LoanId>,
+    ) -> Result<(), Unavailable> {
+        let identity = self
+            .checker
+            .type_info
+            .resolved_write_identity(span, name)
+            .cloned()
+            .ok_or(Unavailable {
+                span,
+                reason: "missing checked match binding".into(),
+            })?;
+        self.root(&identity, span)?;
+        if self
+            .checker
+            .type_info
+            .resolved_write_type(span, name)
+            .is_some_and(|ty| self.copy_value(ty))
+        {
+            return Ok(());
+        }
+        let root = Root::Binding(identity);
+        self.graph.permissions.insert(
+            root.clone(),
+            super::Permission {
+                exclusive: false,
+                writable: false,
+                transferable: false,
+            },
+        );
+        self.constrained.insert(root);
+        let view = self.call_loan(
+            Path {
+                place: place.clone(),
+                through: Some(loan),
+            },
+            false,
+            false,
+            span,
+        );
+        loans.push(view);
+        self.native_arm_binding(name, span, &[view])
+    }
+
     /// Register checked pattern locals as fresh owners after the subject's transfer has been checked. Source enum
     /// constructors use their canonical variant identity, including through imports and aliases; their spelling
     /// grants no authority. Binding identities and permissions still come from pattern checking. Carrier views
@@ -714,9 +859,7 @@ impl Builder<'_> {
                     }
                 }
                 for argument in arguments {
-                    let PatternArg::Positional(payload) = argument else {
-                        return Err(unsupported());
-                    };
+                    let (PatternArg::Positional(payload) | PatternArg::Named(_, payload)) = argument;
                     if !independent && !matches!(payload.node, Pattern::Binding(_) | Pattern::Wildcard) {
                         return Err(unsupported());
                     }
@@ -724,6 +867,7 @@ impl Builder<'_> {
                 }
                 Ok(())
             }
+            Pattern::Or(alternatives) if alternatives.iter().all(|alternative| !binds_a_name(alternative)) => Ok(()),
             _ => Err(unsupported()),
         }
     }
@@ -736,5 +880,18 @@ fn fresh_scrutinee(scrutinee: &Spanned<Expr>) -> bool {
         Expr::Call(..) | Expr::MethodCall(..) | Expr::Literal(_) => true,
         Expr::Paren(inner) => fresh_scrutinee(inner),
         _ => false,
+    }
+}
+
+/// Whether a pattern binds any name, at any depth.
+fn binds_a_name(pattern: &Spanned<Pattern>) -> bool {
+    match &pattern.node {
+        Pattern::Binding(_) => true,
+        Pattern::Wildcard | Pattern::Literal(_) => false,
+        Pattern::Group(inner) => binds_a_name(inner),
+        Pattern::Tuple(elements) | Pattern::Or(elements) => elements.iter().any(binds_a_name),
+        Pattern::Constructor(_, arguments) => arguments.iter().any(|argument| match argument {
+            PatternArg::Positional(payload) | PatternArg::Named(_, payload) => binds_a_name(payload),
+        }),
     }
 }

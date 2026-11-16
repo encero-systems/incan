@@ -717,6 +717,7 @@ impl Builder<'_> {
     /// Whether a temporary argument is a fresh value: no returned or native view, and a type that can hold no borrow.
     fn fresh_argument(&mut self, expression: &Spanned<Expr>) -> Result<bool, Unavailable> {
         if self.view_source(expression)?.is_some()
+            || self.view_rooted(expression)
             || self
                 .native_result_relation(expression)?
                 .is_some_and(|relation| !relation.sources.is_empty())
@@ -741,6 +742,13 @@ impl Builder<'_> {
     ) -> Result<(Path, Vec<usize>), Unavailable> {
         if let Some(view) = self.view_source(expression)? {
             let (outgoing, source) = self.evaluate_view_source(expression, view, incoming)?;
+            return Ok((source, outgoing));
+        }
+        // A projection of a view is borrowed through the view's result loan.
+        if matches!(expression.node, Expr::Field(..) | Expr::Index(..))
+            && self.view_rooted(expression)
+            && let Some((outgoing, source)) = self.projected_view_place(expression, incoming.clone())?
+        {
             return Ok((source, outgoing));
         }
         if let Some(relation) = self.native_result_relation(expression)?
