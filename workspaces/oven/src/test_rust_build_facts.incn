@@ -17,9 +17,10 @@ def fixture(name: str) -> Result[str, str]:
 pub def test_a_build_script_crate_takes_the_fact_recorded_for_its_exact_binding() -> Result[None, str]:
     """
     A crate whose build script a recorded fact replaces is admitted. The fact for the exact toolchain, target, profile
-    and feature set gives its `--cfg` flags, its `OUT_DIR` and its environment. A near record is never taken: a binding
-    with no exact record refuses the unit by name and binding. A crate with no build script needs no record, and a
-    build script with no record at all is still refused when its Loaf is read.
+    and feature set gives its `--cfg` flags, its `OUT_DIR` and its environment, as the registry records it: each
+    variable a `literal` value or an `out` place under `OUT_DIR`. A near record is never taken: a binding with no exact
+    record refuses the unit by name and binding. A crate with no build script needs no record, and a build script with
+    no record at all is still refused when its Loaf is read.
     """
     scripted = fixture("scripted")?
     declared = rust_facet(scripted, false)?
@@ -31,6 +32,7 @@ pub def test_a_build_script_crate_takes_the_fact_recorded_for_its_exact_binding(
             environment = fact_environment(scripted, found)?
             assert environment["OUT_DIR"] == Path(scripted).joinpath("out").0
             assert environment["SCRIPTED_TABLE"] == "crc32"
+            assert environment["SCRIPTED_TABLES"] == environment["OUT_DIR"], environment["SCRIPTED_TABLES"]
     near: list[Tuple[str, str, list[str]]] = [
         (TOOLCHAIN, "release", ["std"]),
         (TOOLCHAIN, "bench", ["default", "std"]),

@@ -686,11 +686,15 @@ def standard_build(project: Path, stdlib: Path) -> Result[Output, str]:
 
 
 def out_key(project: Path, out: str) -> Result[str, str]:
-    """Key a crate whose compile sees `OUT_DIR=out` and reads one generated file, as a fresh process would."""
+    """
+    Key a crate whose compile sees `OUT_DIR=out`, and `OUT_TABLES` at the place in it a fact's `out` entry names, and
+    reads one generated file, as a fresh process would.
+    """
     mut ledger = load_ledger(project.joinpath("ledger.json"), 0, "")
     paths = [project.joinpath("src/lib.rs").0, project.joinpath(".oven-out/tag.rs").0]
-    environment = {"OUT_DIR": out}
-    key = reconciled_rust_key(project, project, paths, ["OUT_DIR"], ["crate snap lib"], environment, [], "c", ledger)?
+    environment = {"OUT_DIR": out, "OUT_TABLES": out}
+    variables = ["OUT_DIR", "OUT_TABLES"]
+    key = reconciled_rust_key(project, project, paths, variables, ["crate snap lib"], environment, [], "c", ledger)?
     return Ok(key.digest)
 
 
@@ -702,9 +706,9 @@ def generated_crate(project: Path, tag: str) -> Result[None, str]:
 
 pub def test_a_fact_out_directory_keys_by_its_loaf_relative_place_under_any_root() -> Result[None, str]:
     """
-    A build fact's `OUT_DIR` is spelled by its Loaf-relative place in the unit identity, so one crate under two absolute
-    roots has one identity, while its generated files still key by content. An `OUT_DIR` outside the Loaf, like any
-    other location-bearing value, still refuses a portable identity.
+    A build fact's `OUT_DIR`, and a variable it places in `OUT_DIR`, are spelled by their Loaf-relative place in the
+    unit identity, so one crate under two absolute roots has one identity, while its generated files still key by
+    content. An `OUT_DIR` outside the Loaf, like any other location-bearing value, still refuses a portable identity.
     """
     scratch = scratch_directory()?
     mut digests: list[str] = []
