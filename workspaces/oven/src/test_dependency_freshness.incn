@@ -311,8 +311,6 @@ model SemanticEditMatrix:
             .arg("build")
             .arg(target.0)
             .args(["--profile", "release"])
-            .env("OVEN_OWNER", "off")
-            .env("INCAN_ENGINE", "records")
             .env("INCAN_BAKERY", store.0)
             .env("INCAN_NATIVE_TIMING", "1")
             .env("INCAN_TRACE_DIR", trace.0)

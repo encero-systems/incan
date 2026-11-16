@@ -394,7 +394,6 @@ def refused_run(binary: str, source: Path, store: Path) -> Result[str, str]:
         .arg("run")
         .arg(source.0)
         .args(["--profile", "release"])
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -517,7 +516,7 @@ def started_run(binary: str, source: Path, store: Path) -> Result[Child, str]:
     """Start one records-engine run of `source` against `store`, collecting its report and output."""
     mut command = Command.new(binary)
     command.arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
-    command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0)
+    command.env("INCAN_BAKERY", store.0)
     command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
     return command.spawn().map_err((error) => f"cannot start {binary}: {error}")
 
@@ -620,7 +619,6 @@ def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonV
         .arg("build")
         .arg(app.0)
         .args(["--profile", "debug", "--engine-report"])
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -680,7 +678,6 @@ def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, 
         .arg("build")
         .arg(app.0)
         .args(["--profile", "debug", "--engine-report"])
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -716,7 +713,6 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
         .arg(source.0)
         .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -741,7 +737,6 @@ def lowering_example_run_with_fingerprints(
         .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
         .env("INCAN_NATIVE_FINGERPRINT_REPORT", source.parent().joinpath("native.fingerprints").0)
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?
@@ -768,7 +763,6 @@ def report_fixture_build(binary: str, project: Path, store: Path) -> Result[Json
         .arg("build")
         .arg(project.0)
         .args(["--profile", "release", "--engine-report"])
-        .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
         .output()
         .map_err((error) => str(error))?

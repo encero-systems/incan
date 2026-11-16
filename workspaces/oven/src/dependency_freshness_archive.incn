@@ -49,7 +49,7 @@ pub def verify_archive_members(scratch: Path) -> Result[None, str]:
         packed = pack.output().map_err((error) => str(error))?
         assert packed.status.success(), decoded(packed.stderr)
         mut install = Command.new(binary)
-        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0).env("OVEN_OWNER", "off")
+        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0)
         install.env_remove("INCAN_STDLIB")
         output = install.output().map_err((error) => str(error))?
         assert output.status.code() == Some(1i32), member
