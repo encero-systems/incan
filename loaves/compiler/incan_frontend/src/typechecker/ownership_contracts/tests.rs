@@ -3,6 +3,7 @@
 use super::*;
 
 mod body_projection;
+mod borrowed_matches;
 mod contracts_and_modes;
 mod explicit_calls;
 mod invocations_and_accesses;
