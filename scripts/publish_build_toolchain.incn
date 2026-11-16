@@ -77,7 +77,7 @@ pub def publish(arguments: list[str]) -> Result[Path, str]:
     return Ok(pins)
 
 
-def validate(bundle: HostBundle) -> Result[None, str]:
+pub def validate(bundle: HostBundle) -> Result[None, str]:
     """Refuse an incomplete host bundle before any registry mutation occurs."""
     for input in [bundle.archive, bundle.oven, bundle.lsp]:
         if not input.is_file():
@@ -116,7 +116,7 @@ def publish_host(commit: str, bundle: HostBundle, stage: Path) -> Result[str, st
     return Ok(f"{reference}@{digest}")
 
 
-def push_arguments(reference: str, commit: str, target: str) -> list[str]:
+pub def push_arguments(reference: str, commit: str, target: str) -> list[str]:
     """Return the stable oras push arguments and release annotations for one host."""
     return [
         "push",

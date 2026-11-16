@@ -1,0 +1,56 @@
+"""A published host bundle carries each signed asset's signature beside it, so a stamped `incan` installs what `oras pull` fetches."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from publish_build_toolchain import HostBundle, push_arguments, validate
+from release_signer import BUNDLE_SUFFIX, SIGNED_ASSETS
+
+const SIGNATURE_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
+const COMMIT: str = "0123456789abcdef0123456789abcdef01234567"
+const TARGET: str = "aarch64-apple-darwin"
+
+
+def put(path: Path, content: str) -> Result[None, str]:
+    """Write one text file."""
+    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+def signed_bundle(root: Path) -> Result[HostBundle, str]:
+    """A signed bundle directory, as the release workflow's sign job leaves it: each asset beside its signature."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    for asset in SIGNED_ASSETS:
+        put(root.joinpath(asset), f"stand-in for {asset}\n")?
+        put(root.joinpath(asset + BUNDLE_SUFFIX), f"signature of {asset}\n")?
+    return Ok(
+        HostBundle(
+            target=TARGET,
+            archive=root.joinpath("toolchain.tar.zst"),
+            oven=root.joinpath("incan"),
+            lsp=root.joinpath("incan-lsp"),
+        ),
+    )
+
+
+def test_the_pushed_bundle_carries_each_signed_asset_with_its_signature() -> Result[None, str]:
+    """Each asset a stamped release verifies is pushed with `ASSET.sigstore.json`, the name the stamped `incan` reads beside it."""
+    arguments = push_arguments(f"ghcr.io/encero-systems/toolchain:{COMMIT}-{TARGET}", COMMIT, TARGET)
+    for asset in SIGNED_ASSETS:
+        assert asset in [argument.split(":")[0] for argument in arguments], asset
+        assert f"{asset}{BUNDLE_SUFFIX}:{SIGNATURE_TYPE}" in arguments, asset
+    return Ok(None)
+
+
+def test_a_bundle_missing_a_signature_is_refused_by_name_before_any_push() -> Result[None, str]:
+    """A complete signed bundle validates; one without an asset's signature is refused, naming the missing file."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    bundle = signed_bundle(scratch.path().joinpath("signed"))?
+    validate(bundle)?
+    for asset in SIGNED_ASSETS:
+        signature = bundle.archive.parent().joinpath(asset + BUNDLE_SUFFIX)
+        signature.unlink().map_err((error) => error.message())?
+        match validate(bundle):
+            Ok(_) => return Err(f"a bundle without {asset}{BUNDLE_SUFFIX} validated")
+            Err(reason) =>
+                assert reason.endswith(f"{asset}{BUNDLE_SUFFIX}"), reason
+        put(signature, f"signature of {asset}\n")?
+    return Ok(None)
