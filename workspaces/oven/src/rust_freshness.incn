@@ -3,7 +3,16 @@
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
 from files import read, write
-from observation import Ledger, file_metadata, load_ledger, note_variable, observe, skipped_directory, SETTLE_SECONDS
+from observation import (
+    Ledger,
+    file_digest,
+    file_metadata,
+    load_ledger,
+    note_variable,
+    observe,
+    skipped_directory,
+    SETTLE_SECONDS,
+)
 from toolchain import Toolchain
 from unit_freshness import Key, compiler_fingerprint, fingerprint
 from unit_publication import published_identity, source_origins
@@ -138,12 +147,13 @@ pub def reconciled_rust_key(
     2. Frame effective invocation and observed environment facts independently of locations.
     3. Keep the input dimensions and publication provenance beside the completed identity.
     """
-    # 1. Naming a linked artifact never hashes its bytes.
+    # 1. Naming a linked unit never hashes its bytes; a static library, which has no recorded identity, is read.
     sources = recorded_sources(paths, project, ledger)?
     mut artifacts: list[str] = []
     for path in sorted(linked + extern_paths(arguments)):
         artifacts.append(published_identity(Path(path)).map_err((error) => f"artifacts: {error}")?)
     artifacts.extend(extern_identities(arguments)?)
+    artifacts.extend(static_libraries(arguments)?)
     # 2. Only compilation facts, not output directories or manifest publication metadata, decide identity.
     command = fingerprint(invocation_facts(arguments, project, directory))?
     authored = fingerprint(sorted(sources))?
@@ -199,6 +209,31 @@ def extern_identities(arguments: list[str]) -> Result[list[str], str]:
             producer = published_identity(Path("=".join(binding[1:]))).map_err((error) => f"artifacts: {error}")?
             identities.append(f"{binding[0]}={producer}")
     return Ok(sorted(identities))
+
+
+def static_libraries(arguments: list[str]) -> Result[list[str], str]:
+    """
+    The bytes of each static library the compile links (`-l static=NAME`, from its `-L native=` directories). The
+    unit carries the library's objects, and rustc's dependency file never names a native library.
+    """
+    mut directories: list[str] = []
+    mut names: list[str] = []
+    for index in range(1, len(arguments)):
+        if arguments[index - 1] == "-L" and arguments[index].startswith("native="):
+            directories.append(arguments[index][len("native="):])
+        elif arguments[index - 1] == "-l" and arguments[index].startswith("static="):
+            names.append(arguments[index][len("static="):])
+    mut libraries: list[str] = []
+    for name in names:
+        mut found = ""
+        for directory in directories:
+            library = Path(directory).joinpath(f"lib{name}.a")
+            if found == "" and library.is_file():
+                found = f"static {name} sha256:{file_digest(library)?}"
+        if found == "":
+            return Err(f"artifacts: static library {name} is in no `-L native=` directory")
+        libraries.append(found)
+    return Ok(libraries)
 
 
 pub def producer_arguments(arguments: list[str]) -> list[str]:
