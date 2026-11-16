@@ -532,11 +532,13 @@ impl CheckedInputBody<'_> {
         if !seen.operations.insert(operation) || retained.operands.len() != required.len() {
             return Err("operation dependencies do not match source operand coverage");
         }
+        // A structural marker evaluates nothing, as in the graph's own check: an enclosing call ends an argument there.
         for (index, node) in self.graph.nodes.iter().enumerate() {
             if node.span.expansion == operation.expansion
                 && operation.start <= node.span.start
                 && node.span.end <= operation.end
                 && index != retained.completion_node
+                && !matches!(node.event, flow::Event::Nothing)
                 && !retained
                     .operands
                     .iter()

@@ -334,6 +334,16 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
+    /// Claim a borrowed stored place's evaluation: the producer evaluates its index expressions once, in written order,
+    /// then reads the dependencies its root holds, before it takes the loan.
+    fn borrowed_place(&mut self, expression: &Spanned<Expr>) -> Result<(), &'static str> {
+        if stored_chain(expression) {
+            self.place_evaluation(expression)?;
+            self.dependency_reads(expression)?;
+        }
+        Ok(())
+    }
+
     /// Match one stored-place read or move, including dependencies held by an owned aggregate local.
     fn stored_place_access(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         self.place_evaluation(expression)?;
@@ -380,7 +390,7 @@ impl SourceAccesses<'_, '_> {
                 IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive
                     if source.is_some() =>
                 {
-                    self.borrowed_dependency_reads(value)?
+                    self.borrowed_place(value)?
                 }
                 IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive => {
                     self.expression(value, true)?
@@ -640,7 +650,7 @@ impl SourceAccesses<'_, '_> {
             flow::Root::Temporary { .. } => self.expression(receiver, true),
             flow::Root::Binding(_) => {
                 if self.place(receiver)?.is_some() {
-                    return self.borrowed_dependency_reads(receiver);
+                    return self.borrowed_place(receiver);
                 }
                 let inner = super::super::builtins::view_call(receiver);
                 if !self.proof.graph.invocations.contains_key(&inner.span) && self.proof.carrier_loan(inner).is_none() {
