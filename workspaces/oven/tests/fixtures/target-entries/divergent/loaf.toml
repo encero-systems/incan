@@ -1,0 +1,12 @@
+[project]
+name = "crates-io/entries-divergent"
+version = "1.0.0"
+
+[dependencies]
+serde = [
+  { loaf = "crates-io/serde", version = "^1.0.220", default-features = false, target = "x86_64-unknown-linux-gnu" },
+  { loaf = "crates-io/serde_core", version = "^1.0.220", default-features = false },
+]
+
+[rust]
+type = "lib"
