@@ -1,7 +1,11 @@
 """Preserve generic reference binders before specialization erases their relationship in concrete frame types."""
 
 from rust::incan_semantics_core import IncanInputAccess, IncanType as RustType
-from rust::incan_semantics_core::body_ir import Body
+from rust::incan_semantics_core::body_ir import (
+    Body,
+    CallableParam as RustCallableParam,
+    TraitTypeArgument as RustTraitTypeArgument,
+)
 from pub::incan_mir_plan import GenericLoan, PlanType
 from type_parameters import source_nominal_owner, source_nominal_owners
 
@@ -208,3 +212,60 @@ def child_binder(binder: str, index: int) -> str:
     if binder == "":
         return ""
     return f"{binder}_{index}"
+
+
+pub def owner_signature_lifetimes(
+    params: list[RustCallableParam],
+    result: RustType,
+    owners: list[RustTraitTypeArgument],
+) -> list[list[str]]:
+    """
+    Name the loans a closed nominal method's owner type arguments supply: 1. Visit each parameter and the result.
+    2. Omit annotations unless the result holds an owner loan. 3. Keep a source elision the owner loans make ambiguous.
+
+    `owners` are the owner's type parameter bindings in declaration order. Each reference inside an owner argument
+    takes that argument's binder at every occurrence, so a result that holds the owner's view borrows what the receiver
+    carries, not the receiver itself (#2972).
+    """
+    mut arguments: list[RustType] = []
+    for owner in owners:
+        arguments.append(owner.argument.clone())
+    # 1. The receiver and every other parameter name an owner argument's loans by the same binders as the result.
+    mut signature: list[list[str]] = []
+    for parameter in params:
+        signature.append(owner_type_lifetimes(parameter.ty, arguments))
+    returned = owner_type_lifetimes(result, arguments)
+    # 2. A result without an owner loan keeps ordinary elision, as it had before specialization.
+    mut owned = false
+    for name in returned:
+        if name != "":
+            owned = true
+    if not owned:
+        return []
+    signature.append(returned)
+    # 3. The one source-written input loan still ties a source-elided result reference.
+    retain_unique_source_elision(signature)
+    return signature
+
+
+def owner_type_lifetimes(ty: RustType, owners: list[RustType]) -> list[str]:
+    """Collect references in structural preorder, naming the loans an owner argument supplies by its binder."""
+    for index in range(len(owners)):
+        if owners[index] == ty:
+            return type_lifetimes(ty, [], [], f"o{index}")
+    mut loans: list[str] = []
+    match ty:
+        RustType.Ref(inner) =>
+            loans.append("")
+            loans.extend(owner_type_lifetimes(inner, owners))
+        RustType.RefMut(inner) =>
+            loans.append("")
+            loans.extend(owner_type_lifetimes(inner, owners))
+        RustType.Generic(base=_base, args=elements) =>
+            for element in elements:
+                loans.extend(owner_type_lifetimes(element, owners))
+        RustType.Tuple(elements) =>
+            for element in elements:
+                loans.extend(owner_type_lifetimes(element, owners))
+        _ => pass
+    return loans
