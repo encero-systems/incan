@@ -92,6 +92,7 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     own = overlay_with(binary, source, source, store, ["--hover", "5:5"])
     definition = overlay_with(binary, source, source, store, ["--definition", "6:17"])
     public_definition = overlay_with(binary, source, source, store, ["--definition", "7:17"])
+    references = overlay_with(binary, source, source, store, ["--references", "6:17"])
     if store.exists():
         stop_engine(binary, store)?
     _ = ran?
@@ -99,14 +100,17 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     own_answer = own?
     definition_answer = definition?
     public_definition_answer = public_definition?
+    references_answer = references?
     imported_text = imported_answer.to_json().map_err((error) => error.message())?
     own_text = own_answer.to_json().map_err((error) => error.message())?
     definition_text = definition_answer.to_json().map_err((error) => error.message())?
     public_definition_text = public_definition_answer.to_json().map_err((error) => error.message())?
+    references_text = references_answer.to_json().map_err((error) => error.message())?
     assert imported_text.contains("def value(scale: int) -> int"), imported_text
     assert own_text.contains("def main() -> None"), own_text
     assert definition_text.contains("helper.incn") and definition_text.contains("\"line\":1"), definition_text
     assert public_definition_text.contains("deps/checked/src/lib.incn") and public_definition_text.contains("\"line\":1"), public_definition_text
+    assert references_text.contains("helper.incn") and references_text.contains("main.incn"), references_text
     return Ok(None)
 
 
