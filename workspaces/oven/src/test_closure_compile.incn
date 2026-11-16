@@ -16,6 +16,11 @@ const TARGET: str = "aarch64-apple-darwin"
 def archived(name: str, sources: Path) -> Result[str, str]:
     """Archive one fixture Loaf's source into `sources/blobs/sha256/<hex>.tar` and return its `sha256:` digest."""
     fixture = Path(f"tests/fixtures/compile-closure/{name}").resolve().map_err((error) => error.message())?
+    return archived_tree(fixture, name, sources)
+
+
+def archived_tree(fixture: Path, name: str, sources: Path) -> Result[str, str]:
+    """Archive one Loaf source directory into `sources/blobs/sha256/<hex>.tar` and return its `sha256:` digest."""
     make_directory(sources)?
     staging = sources.joinpath(f"{name}.tar")
     output = Command.new("tar").arg("-cf").arg(staging.0).arg("-C").arg(fixture.0).arg(".").output().map_err(
@@ -140,3 +145,41 @@ pub def test_a_lock_s_registry_loaves_compile_from_their_archives_into_a_closure
 def items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
     """One required JSON array."""
     return value.require(key).and_then((field) => field.expect_array()).map_err((error) => f"{key}: {error.message()}")
+
+
+pub def test_a_loaf_whose_source_holds_a_bidirectional_control_is_refused_with_what_links_it() -> Result[None, str]:
+    """
+    RFC 175: Oven refuses source that holds a raw bidirectional control, in every file of a Loaf. A registry Loaf whose
+    archive holds one is refused by name, with the file named by its place in the Loaf, and so is every Loaf that links
+    it; the run still writes its closure document.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    marked = root.joinpath("marked/tiny-a")
+    make_directory(marked.parent())?
+    fixture = Path("tests/fixtures/compile-closure/tiny-a").resolve().map_err((error) => error.message())?
+    copied = Command.new("cp").arg("-R").arg(fixture.0).arg(marked.0).output().map_err((error) => error.to_string())?
+    assert copied.status.success(), "cannot copy tiny-a"
+    marked.joinpath("src/example.rs").write_bytes(b"// a mark \xe2\x80\x8e here\n").map_err((error) => error.message())?
+    sources = root.joinpath("sources")
+    index = root.joinpath("index")
+    first = archived_tree(marked, "tiny-a", sources)?
+    second = archived("tiny-b", sources)?
+    indexed(index, "tiny-a", first)?
+    indexed(index, "tiny-b", second)?
+    lock = root.joinpath("app.oven.lock")
+    fixture_lock(lock, first, second)?
+    result = root.joinpath("result")
+    options = ClosureOptions(locks=[lock.0], profile="release", sources=sources.0, index=index.0, out=result.0)
+    _ = compile_closure(options)?
+    document = JsonValue.parse(read(result.joinpath("closure.json"))?).map_err((error) => error.message())?
+    assert len(items(document, "units")?) == 0
+    mut reasons: Dict[str, str] = {}
+    for refusal in items(document, "refused")?:
+        reasons[text(refusal, "loaf")?] = text(refusal, "reason")?
+    assert len(reasons) == 2, f"{reasons}"
+    marked_reason = reasons["crates-io/tiny-a"]
+    assert "INCAN-P0101" in marked_reason and "LEFT-TO-RIGHT MARK" in marked_reason, marked_reason
+    assert "src/example.rs:1:" in marked_reason and root.0 not in marked_reason, marked_reason
+    assert "links crates-io/tiny-a 1.0.0" in reasons["crates-io/tiny-b"], reasons["crates-io/tiny-b"]
+    return Ok(None)
