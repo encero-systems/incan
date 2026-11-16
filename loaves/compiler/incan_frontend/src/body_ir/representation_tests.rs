@@ -11,6 +11,7 @@ mod comparison;
 mod equality;
 mod metadata;
 mod read_patterns;
+mod scalar_aliases;
 mod seed;
 mod shared_loans;
 mod view_clones;
