@@ -165,6 +165,7 @@ impl Builder<'_> {
     ) -> Result<Vec<usize>, Unavailable> {
         let (place, mut incoming) = if let Some(place) = self.optional_place(receiver)? {
             let incoming = self.evaluate_place(receiver, incoming)?;
+            let incoming = self.read_dependencies(&place, receiver.span, incoming)?;
             (place, incoming)
         } else {
             self.borrowed_input_source(receiver, span, incoming)?
@@ -780,7 +781,9 @@ impl Builder<'_> {
             ));
         }
         if let Some(source) = self.optional_place(expression)? {
-            return Ok((source, self.evaluate_place(expression, incoming)?));
+            let incoming = self.evaluate_place(expression, incoming)?;
+            let incoming = self.read_dependencies(&source, expression.span, incoming)?;
+            return Ok((source, incoming));
         }
         let ty = self.checker.type_info.expr_type(expression.span).ok_or(Unavailable {
             span: expression.span,
