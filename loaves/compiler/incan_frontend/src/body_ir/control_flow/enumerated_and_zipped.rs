@@ -12,25 +12,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Paren(inner) = &expr.node {
             return self.enumerated_loop_source(inner);
         }
-        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
-            return None;
-        };
-        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Enumerate) || !type_args.is_empty()
-        {
-            return None;
-        }
-        let ast::Expr::Ident(name) = &callee.node else {
-            return None;
-        };
-        if self
-            .declared_slots_for_direct_call(name, callee.span, expr.span)
-            .ok()?
-            .builtin
-            != Some(bir::BuiltinFnId::Enumerate)
-        {
-            return None;
-        }
-        let [ast::CallArg::Positional(source)] = args.as_slice() else {
+        let args = self
+            .checked_builtin_call_args(expr, bir::BuiltinFnId::Enumerate)
+            .ok()??;
+        let [ast::CallArg::Positional(source)] = args else {
             return None;
         };
         if !self.type_info.rust.iteration_hooks.contains_key(&source.span) {
@@ -246,24 +231,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Paren(inner) = &expr.node {
             return self.zipped_loop_sources(inner);
         }
-        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
-            return None;
-        };
-        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Zip) || !type_args.is_empty() {
-            return None;
-        }
-        let ast::Expr::Ident(name) = &callee.node else {
-            return None;
-        };
-        if self
-            .declared_slots_for_direct_call(name, callee.span, expr.span)
-            .ok()?
-            .builtin
-            != Some(bir::BuiltinFnId::Zip)
-        {
-            return None;
-        }
-        let [ast::CallArg::Positional(left), ast::CallArg::Positional(right)] = args.as_slice() else {
+        let args = self.checked_builtin_call_args(expr, bir::BuiltinFnId::Zip).ok()??;
+        let [ast::CallArg::Positional(left), ast::CallArg::Positional(right)] = args else {
             return None;
         };
         // Frozen legacy's two-range zip requires list storage it does not have; keep its existing named refusal.
