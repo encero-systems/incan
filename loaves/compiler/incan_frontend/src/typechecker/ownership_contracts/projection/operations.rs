@@ -6,7 +6,9 @@ use incan_lang::lang::builtins::BuiltinFnId;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
-use crate::ast::{AssertKind, CallArg, Condition, Expr, FStringPart, ListEntry, MatchBody, Spanned, Statement};
+use crate::ast::{
+    AssertKind, CallArg, Condition, DictEntry, Expr, FStringPart, ListEntry, MatchBody, Spanned, Statement,
+};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 mod paths;
@@ -277,9 +279,18 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
             }
-            Expr::Tuple(elements) => {
+            Expr::Tuple(elements) | Expr::Set(elements) => {
                 for element in elements {
                     self.visit_operation_expression(element, parameters, execution, seen)?;
+                }
+            }
+            Expr::Dict(entries) => {
+                for entry in entries {
+                    let DictEntry::Pair(key, value) = entry else {
+                        return Err("operation coverage cannot infer dict-spread access");
+                    };
+                    self.visit_operation_expression(key, parameters, execution, seen)?;
+                    self.visit_operation_expression(value, parameters, execution, seen)?;
                 }
             }
             Expr::ListComp(comprehension) => {

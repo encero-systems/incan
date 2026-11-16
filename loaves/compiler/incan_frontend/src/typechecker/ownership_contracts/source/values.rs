@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{Builder, ResolvedType, Unavailable};
-use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
+use crate::ast::{CallArg, DictEntry, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::TypeInfo;
 
@@ -284,6 +284,43 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// A tuple, set or dict literal constructs fresh storage from its elements in written order, keys before values,
+    /// as a list literal does: each element is a Copy value, a literal or a fresh result. A non-Copy stored place
+    /// would move or silently clone into it, so its transfer needs to be materialized first.
+    pub(super) fn fresh_literal<'e>(
+        &mut self,
+        elements: impl IntoIterator<Item = &'e Spanned<Expr>>,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        for element in elements {
+            if !self.fresh_or_copy_field(element) {
+                return Err(Unavailable {
+                    span: element.span,
+                    reason: "a non-Copy literal element needs checked ownership transfer materialization".into(),
+                });
+            }
+            incoming = self.expression(element, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
+    /// The keys and values of a dict literal in written order; an expansion has no fixed elements to evaluate.
+    pub(super) fn dict_literal_elements(entries: &[DictEntry]) -> Result<Vec<&Spanned<Expr>>, Unavailable> {
+        let mut elements = Vec::with_capacity(entries.len() * 2);
+        for entry in entries {
+            match entry {
+                DictEntry::Pair(key, value) => elements.extend([key, value]),
+                DictEntry::Spread(value) => {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "dict expansion needs checked entry access".into(),
+                    });
+                }
+            }
+        }
+        Ok(elements)
+    }
+
     /// A complete model or class field binding, declared in this project or by a provider, constructs fresh storage
     /// after evaluating supplied values in written order. Deferred defaults, native constructors and non-Copy place
     /// transfer require separate proofs.
@@ -490,6 +527,10 @@ impl Builder<'_> {
         }
         match &value.node {
             Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
+            Expr::Tuple(items) | Expr::Set(items) => items.iter().all(|item| self.fresh_or_copy_field(item)),
+            Expr::Dict(entries) => entries.iter().all(|entry| {
+                matches!(entry, DictEntry::Pair(key, value) if self.fresh_or_copy_field(key) && self.fresh_or_copy_field(value))
+            }),
             Expr::Field(_, _) => self
                 .checker
                 .type_info
