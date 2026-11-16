@@ -9,6 +9,7 @@ mod explicit_calls;
 mod generic_carriers;
 mod invocations_and_accesses;
 mod lazy_reader_control_flow;
+mod literals;
 mod one_type;
 mod ordinary_arguments;
 mod property_views;
