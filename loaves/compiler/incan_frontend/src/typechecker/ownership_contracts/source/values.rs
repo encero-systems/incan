@@ -494,8 +494,12 @@ impl Builder<'_> {
                 .as_ref()
                 .and_then(|types| types.get(index))
                 .is_some_and(|expected| self.fresh_loop_index_field(value, expected));
+            let fresh_loop_slice = argument_types
+                .as_ref()
+                .and_then(|types| types.get(index))
+                .is_some_and(|expected| self.fresh_loop_slice_field(value, expected));
             if !stores_view && !self.fresh_or_copy_field(value) {
-                if fresh_loop_index {
+                if fresh_loop_index || fresh_loop_slice {
                     incoming = self.expression(value, incoming, false)?;
                     continue;
                 }
@@ -538,6 +542,49 @@ impl Builder<'_> {
                 if incan_lang::lang::types::collections::from_str(name)
                     == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
                     && arguments.as_slice() == std::slice::from_ref(expected));
+        builtin_list
+            && self.optional_place(base).ok().flatten().is_some_and(|path| {
+                path.through.is_none()
+                    && path.place.projection.is_empty()
+                    && matches!(&path.place.root, super::Root::Binding(identity)
+                        if self.fresh_loop_locals.contains(identity))
+            })
+    }
+
+    fn fresh_loop_slice_field(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) -> bool {
+        let Expr::Slice(base, _) = &value.node else {
+            return false;
+        };
+        if self
+            .checker
+            .type_info
+            .calls
+            .resolved_operator_calls
+            .contains_key(&value.span)
+            || self.checker.type_info.expr_type(value.span) != Some(expected)
+            || !self.checker.is_clone_type(expected)
+            || self.checker.type_holds_borrow(expected)
+            || self.checker.type_holds_native_loan(expected)
+        {
+            return false;
+        }
+        let builtin_list = matches!(self.checker.type_info.expr_type(base.span),
+            Some(base_ty @ ResolvedType::Generic(name, arguments))
+                if base_ty == expected
+                    && incan_lang::lang::types::collections::from_str(name)
+                        == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                    && arguments.len() == 1
+                    && matches!(arguments.first(), Some(
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Numeric(_)
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )));
         builtin_list
             && self.optional_place(base).ok().flatten().is_some_and(|path| {
                 path.through.is_none()

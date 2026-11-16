@@ -691,7 +691,7 @@ impl SourceAccesses<'_, '_> {
                             .is_some_and(|permission| permission.transferable)
                 })
                 && !self.copy_value(value)?
-                && !self.fresh_loop_index_materialization(value)?;
+                && !self.fresh_loop_constructor_materialization(value)?;
             if consume && let Some((place, _)) = self.place(value)? {
                 self.constrained.insert(place.root);
             }
@@ -700,9 +700,37 @@ impl SourceAccesses<'_, '_> {
         Ok(())
     }
 
-    fn fresh_loop_index_materialization(&mut self, value: &Spanned<Expr>) -> Result<bool, &'static str> {
-        let Expr::Index(base, _) = &value.node else {
-            return Ok(false);
+    fn fresh_loop_constructor_materialization(&mut self, value: &Spanned<Expr>) -> Result<bool, &'static str> {
+        let (base, cloneable_result) = match &value.node {
+            Expr::Index(base, _) => (
+                base.as_ref(),
+                matches!(self.proof.facts.expr_type(value.span),
+                    Some(crate::symbols::ResolvedType::Str
+                        | crate::symbols::ResolvedType::Bytes
+                        | crate::symbols::ResolvedType::FrozenStr
+                        | crate::symbols::ResolvedType::FrozenBytes)),
+            ),
+            Expr::Slice(base, _) => {
+                let result = self.proof.facts.expr_type(value.span);
+                let cloneable = matches!(result,
+                    Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                        if incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                            && arguments.len() == 1
+                            && matches!(arguments.first(), Some(
+                                crate::symbols::ResolvedType::Int
+                                    | crate::symbols::ResolvedType::Float
+                                    | crate::symbols::ResolvedType::Numeric(_)
+                                    | crate::symbols::ResolvedType::Bool
+                                    | crate::symbols::ResolvedType::Str
+                                    | crate::symbols::ResolvedType::Bytes
+                                    | crate::symbols::ResolvedType::FrozenStr
+                                    | crate::symbols::ResolvedType::FrozenBytes
+                                    | crate::symbols::ResolvedType::Unit
+                            )));
+                (base.as_ref(), cloneable && self.proof.facts.expr_type(base.span) == result)
+            }
+            _ => return Ok(false),
         };
         if self
             .proof
@@ -710,21 +738,23 @@ impl SourceAccesses<'_, '_> {
             .calls
             .resolved_operator_calls
             .contains_key(&value.span)
-            || !matches!(self.proof.facts.expr_type(value.span),
-                Some(crate::symbols::ResolvedType::Str
-                    | crate::symbols::ResolvedType::Bytes
-                    | crate::symbols::ResolvedType::FrozenStr
-                    | crate::symbols::ResolvedType::FrozenBytes))
+            || !cloneable_result
         {
             return Ok(false);
         }
-        let element = self.proof.facts.expr_type(value.span);
-        let builtin_list = matches!(self.proof.facts.expr_type(base.span),
-            Some(crate::symbols::ResolvedType::Generic(name, arguments))
-                if incan_lang::lang::types::collections::from_str(name)
-                    == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
-                    && arguments.first() == element
-                    && arguments.len() == 1);
+        let builtin_list = match &value.node {
+            Expr::Index(_, _) => {
+                let element = self.proof.facts.expr_type(value.span);
+                matches!(self.proof.facts.expr_type(base.span),
+                    Some(crate::symbols::ResolvedType::Generic(name, arguments))
+                        if incan_lang::lang::types::collections::from_str(name)
+                            == Some(incan_lang::lang::types::collections::CollectionTypeId::List)
+                            && arguments.first() == element
+                            && arguments.len() == 1)
+            }
+            Expr::Slice(_, _) => true,
+            _ => false,
+        };
         Ok(builtin_list
             && self.place(base)?.is_some_and(|(place, through)| {
                 through.is_none()

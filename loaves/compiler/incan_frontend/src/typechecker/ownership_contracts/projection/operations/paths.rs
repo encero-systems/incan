@@ -222,6 +222,10 @@ impl SourcePaths<'_> {
     /// Other admitted expressions retain the established contiguous-region order.
     fn expression(&mut self, expression: &Spanned<Expr>, incoming: Vec<usize>) -> Result<Vec<usize>, &'static str> {
         match &expression.node {
+            Expr::Paren(inner) => {
+                let inner = self.expression(inner, incoming)?;
+                Ok(self.region(expression.span, inner))
+            }
             Expr::Binary(left, BinaryOp::And | BinaryOp::Or, right) => {
                 let left = self.expression(left, incoming)?;
                 let mut outgoing = self.expression(right, left.clone())?;
