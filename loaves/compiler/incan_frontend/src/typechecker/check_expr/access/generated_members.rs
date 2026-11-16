@@ -146,6 +146,57 @@ impl TypeChecker {
         Some(receiver.clone())
     }
 
+    /// Clone a model, class or enum value through the builtin Clone contract when no declared `clone` member resolved:
+    /// every such nominal derives `Clone` automatically, so its values clone whether or not the standard `Clone` trait
+    /// is in scope, as inside the Loaves the standard traits build on. A field or element read through a reference
+    /// clones to the nominal itself. A nominal holding a value that cannot be cloned is refused.
+    pub(super) fn clone_nominal_value(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if method != trait_bounds::rust::CLONE_METHOD {
+            return None;
+        }
+        let value = match receiver {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = value else {
+            return None;
+        };
+        if !matches!(
+            self.lookup_semantic_type_info(name),
+            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_))
+        ) {
+            return None;
+        }
+        if !self.validate_rust_method_type_arg_arity(method, &[], type_args, span) {
+            return Some(ResolvedType::Unknown);
+        }
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity("clone", 0, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        if !self.is_clone_type(value) {
+            self.errors
+                .push(errors::value_clone_requires_clone(&value.to_string(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info.record_resolved_identity(
+            span,
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+        self.type_info.record_resolved_builtin_method_call(
+            span,
+            BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
+        );
+        Some(value.clone())
+    }
+
     /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
     /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
     pub(super) fn record_body_ir_inferred_clone(

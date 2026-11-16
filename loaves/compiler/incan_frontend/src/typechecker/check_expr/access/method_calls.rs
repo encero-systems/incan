@@ -693,6 +693,10 @@ impl TypeChecker {
             return result;
         }
 
+        if let Some(ret) = self.clone_nominal_value(&base_ty, method, type_args, args, span) {
+            return ret;
+        }
+
         self.check_method_fallback(&call, &base_ty, &arg_types)
     }
 }
