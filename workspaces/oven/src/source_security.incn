@@ -10,7 +10,7 @@ pub class NativeSourceScanner:
     seen: set[str] = set()
 
     pub def validate(mut self, facets: list[LocalFacet]) -> Result[None, str]:
-        """Refuse the first raw bidirectional control in any selected local Rust or C source tree."""
+        """Refuse the first raw embedding, override or isolate control in any selected local Rust or C source tree."""
         for facet in facets:
             self.scan(Path(facet.project))?
         return Ok(None)
@@ -87,13 +87,11 @@ def skipped_directory(name: str) -> bool:
 
 
 def control_at(data: &bytes, index: int) -> Option[tuple[str, str]]:
-    """Decode the closed RFC 175 `Bidi_Control` set from UTF-8 bytes without embedding a raw control in Oven."""
-    if pair(data, index, 216, 156):
-        return Some(("\\u{61c}", "ARABIC LETTER MARK"))
-    if triple(data, index, 226, 128, 142):
-        return Some(("\\u{200e}", "LEFT-TO-RIGHT MARK"))
-    if triple(data, index, 226, 128, 143):
-        return Some(("\\u{200f}", "RIGHT-TO-LEFT MARK"))
+    """
+    Decode the controls RFC 175 refuses in Rust and C source from UTF-8 bytes, without embedding a raw control in Oven:
+    the embeddings and overrides U+202A to U+202E and the isolates U+2066 to U+2069, the set rustc's text-direction
+    lints refuse. The implicit marks U+061C, U+200E and U+200F are admitted there; Incan source refuses them too.
+    """
     names = [
         "LEFT-TO-RIGHT EMBEDDING",
         "RIGHT-TO-LEFT EMBEDDING",
@@ -109,11 +107,6 @@ def control_at(data: &bytes, index: int) -> Option[tuple[str, str]]:
         if triple(data, index, 226, 129, 166 + offset):
             return Some((f"\\u{{206{6 + offset}}}", isolates[offset]))
     return None
-
-
-def pair(data: &bytes, index: int, first: int, second: int) -> bool:
-    """Compare a two-byte UTF-8 sequence only after proving its bounds."""
-    return index + 1 < len(data) and int(data[index]) == first and int(data[index + 1]) == second
 
 
 def triple(data: &bytes, index: int, first: int, second: int, third: int) -> bool:
